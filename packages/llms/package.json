@@ -54,6 +54,8 @@
         "zod": "^3.25.0 || ^4.0.0"
     },
     "devDependencies": {
+        "unplugin-dts": "^1.0.2",
+        "vite": "^8.0.16",
         "vitest": "^4.1.8",
         "zod": "^4.4.3"
     }

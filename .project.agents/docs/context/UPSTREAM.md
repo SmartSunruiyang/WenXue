@@ -24,13 +24,17 @@
 | P4 | packages/llms/package.json | +devDep `vitest@^4.1.8` | 同上，test 脚本所需 |
 | P5 | 根 package.json | `pnpm.overrides: { "wxt>vite": "^6.3.4" }` | WXT 0.20.26 的 download 插件用 Vite 6+ hook filter 语法，Vite 5 不支持导致 wxt build 失败 |
 | P6 | apps/extension/package.json | +script `"build": "wxt build"` | 对齐根 `pnpm -r build` 聚合脚本 |
+| P7 | packages/{core,llms,page-controller,ui}/package.json | +devDep `vite@^8.0.16` | 各包 `build` 脚本直接执行 `vite build`；pnpm 隔离下必须显式声明 CLI 与 config import |
+| P8 | packages/{core,llms,page-controller,ui}/package.json | +devDep `unplugin-dts@^1.0.2` | 各包 `vite.config.js` 直接 import `unplugin-dts/vite` |
+| P9 | packages/{core,page-controller,ui}/package.json | +devDep `vite-plugin-css-injected-by-js@^5.0.1` | 对齐各包 `vite.config.js` 的 CSS 注入插件 import |
+| P10 | packages/{page-controller,ui}/package.json | +devDep `chalk@^5.6.2` | 对齐各包 `vite.config.js` 的构建日志 import |
 
 ## 已知差异与遗留
 
 - 上游 `wxt.config.js` 保留其官方 manifest `key`：未打包加载与商店版 PageAgent 共享扩展 ID，**两者不可同时安装**；M4 更换为问学自有 key。
 - 上游根 `overrides`（uuid、web-ext-run>tmp）未引入；install/audit 出问题时按需补 `pnpm.overrides` 并在此登记。
 - P5 新增 `pnpm.overrides: { "wxt>vite": "^6.3.4" }`：WXT 0.20.26 的 `download` 插件 `{ filter, handler }` hook 语法需 Vite 6+，否则 handler 对所有模块调用 `fetch(filePath)` 报错。
-- lib 四包的 `build`/`prepublishOnly`/`postpublish` 脚本在本仓为惰性脚本（源码直出，不发布）。
+- lib 四包的 `prepublishOnly`/`postpublish` 脚本在本仓为惰性脚本（源码直出，不发布）；`build` 脚本保留并补齐本地工具链依赖，用于根 `pnpm -r build` 门禁。
 
 ## 手动同步流程（升级上游时）
 
