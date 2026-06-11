@@ -167,4 +167,4 @@ sequenceDiagram
 | 3 | 是否需要 Windows arm64 产物 | 构建矩阵 +1 | M1 前决定 |
 | 4 | 海外模型（OpenAI/Anthropic）是否进默认预置列表 | 配置面板预设项 | M1 前决定，Demo 手填可用 |
 | 5 | 后端技术栈（网关/计费） | M2 架构 | M2 启动时专项设计 |
-| 6 | 仓库根是否放一行式 `CLAUDE.md` 指针指向 `.project.agents/CLAUDE.md`（Claude Code 仅自动读取仓库根，治理文件在子目录不会被自动加载） | 新会话能否自动加载项目规则 | ROADMAP M0 前决定，建议放 |
+| 6 | 仓库根是否放一行式 `CLAUDE.md` 指针指向 `.project.agents/CLAUDE.md`（Claude Code 仅自动读取仓库根，治理文件在子目录不会被自动加载） | 新会话能否自动加载项目规则 | **已决议**（2026-06-11）：放——根 `CLAUDE.md` 仅作指针，规则本体在 `.project.agents/` |
