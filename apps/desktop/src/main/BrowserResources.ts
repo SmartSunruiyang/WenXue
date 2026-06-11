@@ -1,6 +1,13 @@
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { Browser, BrowserPlatform, computeExecutablePath } from '@puppeteer/browsers'
-import lock from '../../browser.lock.json'
+
+interface BrowserLock {
+	version: string
+}
+
+const require = createRequire(import.meta.url)
+const lock = require('../../browser.lock.json') as BrowserLock
 
 export interface BrowserResourcesOptions {
 	repoRoot: string
