@@ -247,6 +247,6 @@ bug 来了不要直接钻进代码。按下列顺序：
 
 > 本节随项目演进，不是规则的一部分。由 Agent 在每个 milestone 后更新。
 
-- 当前状态：M0 基线整备完成——pnpm workspace 骨架 + 空 Electron 壳 + 根聚合脚本已就位，`pnpm build` 通过。
-- 已有工程结构：`apps/desktop/`（Electron 主进程/preload/渲染进程）、根 workspace 配置、Prettier/ESLint 基线。
-- 下一步合规动作：进入 M1（vendor page-agent 五包入库）或 M2（浏览器供应链与桌面底层模块），两者可并行；任何新增模块、目录或依赖方向先回写 `ARCHITECTURE.md`，再写代码。
+- 当前状态：M0 + M1 完成——vendor page-agent v1.9.0 五包入库，`pnpm -r test` 全绿，`wxt build` 产出 chrome-mv3 可手动加载。
+- 已有工程结构：`apps/desktop/`（Electron）、`apps/extension/`（WXT MV3 插件）、`packages/{core,llms,page-controller,ui}`（上游 vendor 四包）。
+- 下一步合规动作：进入 M2（浏览器供应链与桌面底层模块）；M1 人工验收待完成。任何新增模块、目录或依赖方向先回写 `ARCHITECTURE.md`，再写代码。
