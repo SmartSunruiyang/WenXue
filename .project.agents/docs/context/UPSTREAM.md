@@ -22,11 +22,14 @@
 | P2 | apps/extension/package.json | `@page-agent/*` 依赖 → `workspace:*` | 指向本仓 vendor 包 |
 | P3 | apps/extension/package.json | +devDep `zod@^4.4.3` | peer 依赖在 pnpm 隔离下无提升来源 |
 | P4 | packages/llms/package.json | +devDep `vitest@^4.1.8` | 同上，test 脚本所需 |
+| P5 | 根 package.json | `pnpm.overrides: { "wxt>vite": "^6.3.4" }` | WXT 0.20.26 的 download 插件用 Vite 6+ hook filter 语法，Vite 5 不支持导致 wxt build 失败 |
+| P6 | apps/extension/package.json | +script `"build": "wxt build"` | 对齐根 `pnpm -r build` 聚合脚本 |
 
 ## 已知差异与遗留
 
 - 上游 `wxt.config.js` 保留其官方 manifest `key`：未打包加载与商店版 PageAgent 共享扩展 ID，**两者不可同时安装**；M4 更换为问学自有 key。
 - 上游根 `overrides`（uuid、web-ext-run>tmp）未引入；install/audit 出问题时按需补 `pnpm.overrides` 并在此登记。
+- P5 新增 `pnpm.overrides: { "wxt>vite": "^6.3.4" }`：WXT 0.20.26 的 `download` 插件 `{ filter, handler }` hook 语法需 Vite 6+，否则 handler 对所有模块调用 `fetch(filePath)` 报错。
 - lib 四包的 `build`/`prepublishOnly`/`postpublish` 脚本在本仓为惰性脚本（源码直出，不发布）。
 
 ## 手动同步流程（升级上游时）

@@ -34,7 +34,7 @@
 - [x] 从上游快照复制 `packages/{ui,llms,page-controller,core}` 与 `apps/extension`，保留版权头与 LICENSE（不变量 I5；`third_party/page-agent/LICENSE` 入库）
 - [x] 包间依赖改 `workspace:*`，`pnpm -r test` 全绿
 - [x] 建立 `UPSTREAM.md`：上游地址、快照 commit、日期、本地改动清单、手动同步流程
-- [ ] `wxt build` 产出 `.output/chrome-mv3`
+- [x] `wxt build` 产出 `.output/chrome-mv3`
 - **验收**：在任意 Chromium 内核浏览器手动加载产物 → 侧边栏可打开，配置模型后跑通一个最小页面任务。
 
 ### M2 — 浏览器供应链与桌面底层（依赖 M0；与 M1 可并行）
