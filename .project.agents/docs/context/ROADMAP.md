@@ -43,7 +43,7 @@
 - **验收**：`pnpm -F desktop fetch-browser` 在 mac-arm64 / mac-x64 / win64 各拉取成功；vitest 全绿。
 
 ### M3 — 启动链路（依赖 M1 + M2）
-- [ ] BrowserSupervisor（spawn、exit/error 监听、状态机）+ 状态机单测
+- [x] BrowserSupervisor（spawn、exit/error 监听、状态机）+ 状态机单测
 - [ ] DesktopBridge 4 通道（契约见 ARCHITECTURE §3.2）
 - [ ] ConsoleUI 最小态（状态卡 + 启动按钮 + 版本 footer）
 - [ ] MainBootstrap：退出询问对话框、重复启动聚焦（I1）
