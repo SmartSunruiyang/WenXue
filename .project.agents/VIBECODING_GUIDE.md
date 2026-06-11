@@ -247,6 +247,6 @@ bug 来了不要直接钻进代码。按下列顺序：
 
 > 本节随项目演进，不是规则的一部分。由 Agent 在每个 milestone 后更新。
 
-<!-- ADS:FILL 由 /ads:init 在生成路线图后填入：当前状态、已有工程结构、下一步合规动作。 -->
-- 当前状态：问学 WenXue 刚完成 Day 0 起步，文档骨架已入位。
-- 下一步合规动作：按 `ROADMAP.md` 推进首个 milestone；任何新增模块、目录或依赖方向先回写 `ARCHITECTURE.md`，再写代码。
+- 当前状态：Day 0 完成——治理体系与全套上游文档已入位（PRD / ARCHITECTURE / TECH-INFRA / ROADMAP / CONVENTIONS / UIUX），代码尚未开始。
+- 已有工程结构：仅文档与治理骨架；`apps/` 与 `packages/` 由 ROADMAP M0/M1 建立。
+- 下一步合规动作：执行 ROADMAP M0 剩余项（pnpm workspace 骨架 + 空 Electron 壳 + 根聚合脚本）；任何新增模块、目录或依赖方向先回写 `ARCHITECTURE.md`，再写代码。

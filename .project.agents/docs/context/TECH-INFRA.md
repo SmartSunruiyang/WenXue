@@ -59,7 +59,8 @@ WenXue/
 │   ├── llms/                    # @page-agent/llms         → OpenAI-compatible 客户端
 │   ├── page-controller/         # @page-agent/page-controller → DOM 序列化与动作
 │   └── ui/                      # @page-agent/ui           → 共享 UI
-├── docs/                        # PRD.md / TECH-INFRA.md / UPSTREAM.md
+├── .project.agents/             # 治理与项目文档（ADS）
+│   └── docs/context/            # PRD / TECH-INFRA / ARCHITECTURE / ROADMAP / CONVENTIONS / UIUX / UPSTREAM
 ├── third_party/
 │   └── page-agent/LICENSE       # 上游 MIT 协议与版权声明
 ├── pnpm-workspace.yaml
@@ -69,7 +70,7 @@ WenXue/
 vendor 原则：
 
 - `packages/*` 四个库从上游 commit 快照复制，**包名不改**（`@page-agent/*`），`apps/extension` 内部以 `workspace:*` 引用，便于打补丁（默认模型、品牌文案、遮罩样式）；
-- `docs/UPSTREAM.md` 记录：上游仓库地址、快照 commit hash、快照日期、本地改动清单、手动同步流程（`git diff` 上游 tag 对应目录后挑拣合入）；
+- `.project.agents/docs/context/UPSTREAM.md` 记录：上游仓库地址、快照 commit hash、快照日期、本地改动清单、手动同步流程（`git diff` 上游 tag 对应目录后挑拣合入）；
 - 上游为 MIT：保留 `third_party/page-agent/LICENSE`，各 vendor 包内保留原始版权头与 NOTICE（含其对 browser-use 的致谢声明）。
 
 ## 3. 技术栈与版本策略
@@ -86,15 +87,15 @@ vendor 原则：
 
 ## 4. 桌面端（Electron）设计
 
-### 4.1 主进程模块
+### 4.1 主进程模块（模块卡片与契约的权威是 ARCHITECTURE §2/§3，此处为速览）
 
 | 模块 | 职责 |
 |---|---|
-| `BrowserRuntime` | 解析资源路径（CfT 二进制、插件目录）、组装启动参数、spawn 子进程 |
-| `ProcessSupervisor` | 持有子进程句柄；监听 `exit`/`error`；状态机：`idle → launching → running → idle`；崩溃（非 0 退出码）时通知 UI |
-| `ProfileManager` | 画像目录创建与定位。Demo 仅 `default` 一个画像，目录结构按多画像设计 |
-| `Paths` | 统一封装 `app.getPath('userData')` 下的目录布局 |
-| `Logger` | electron-log，主进程与 CfT stdout/stderr 各一份滚动日志 |
+| `BrowserResources` | 定位资源路径（CfT 二进制、插件产物）、读 `browser.lock.json` 提供版本（纯函数） |
+| `LaunchConfig` | 由路径参数组装 CfT argv（纯函数，参数全集见 §4.3） |
+| `BrowserSupervisor` | 持有子进程句柄；监听 `exit`/`error`；状态机：`idle → launching → running → idle`；崩溃（非 0 退出码）时通知 UI |
+| `ProfileStore` | 画像目录创建与定位。Demo 仅 `default` 一个画像，目录结构按多画像设计 |
+| `AppPaths` / `AppLogger` | `app.getPath('userData')` 目录布局 / electron-log，主进程与 CfT stdout/stderr 各一份滚动日志 |
 
 ### 4.2 数据目录布局（多开预留）
 

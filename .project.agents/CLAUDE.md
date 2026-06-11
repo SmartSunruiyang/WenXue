@@ -1,17 +1,15 @@
 # CLAUDE.md
 
 This file guides Claude Code (and other agents) when working in this repository.
-<!-- ADS:FILL Keep this file current. It is the project-level entry point: what this project is, how to build it, and the rules that gate every change. -->
 
 ## Project
 
-<!-- ADS:FILL One paragraph: what 问学 WenXue is, the platform/type, and where the code lives. -->
-`问学 WenXue` is a cross-platform desktop suite (Electron launcher + Chromium MV3 extension) in a pnpm monorepo built with TypeScript, Electron (electron-vite), React 19, Tailwind CSS 4, WXT, pnpm workspaces, vitest. Source lives in `apps/ 与 packages/`; tests in `各包内同目录的 *.test.ts`.
+`问学 WenXue`（ask for everything）是一个跨平台桌面套件：Electron 启动器内置 Chrome for Testing 浏览器，启动时注入「问学」MV3 插件（LLM 网页操作 Agent，fork 自 alibaba/page-agent，MIT）。pnpm monorepo：应用代码在 `apps/`（desktop、extension），vendor 的上游库在 `packages/`（`@page-agent/*`）；测试为各包内同目录的 `*.test.ts`。
 
-- Entry point: `apps/desktop/src/main/index.ts (Electron main) · apps/extension/src/entrypoints/ (WXT)`
-- {{KEY_FACT_1}}
-- {{KEY_FACT_2}}
-- Known environment constraints: {{ENV_CONSTRAINTS}}
+- Entry point: `apps/desktop/src/main/index.ts`（Electron 主进程）· `apps/extension/src/entrypoints/`（WXT）
+- 浏览器内核 = Chrome for Testing **打包内置**：品牌版 Chrome 137+ 已移除 `--load-extension`，CfT 永久保留（决策记录：TECH-INFRA §12）
+- 边界铁律：插件域管"智能"（Agent 循环、LLM、历史），桌面域管"运行时"（CfT 版本、画像、进程看护）；Demo 阶段两域**零运行时通信**（不变量 I3）
+- Known environment constraints: Node 22 LTS + pnpm 9（`packageManager` 字段）；CfT 二进制不入库，构建期拉取至 `.browsers/`（国内设 `PUPPETEER_DOWNLOAD_BASE_URL=https://registry.npmmirror.com/-/binary/chrome-for-testing`）；Demo 产物不签名（macOS 需手动放行）
 
 ## Common commands
 
@@ -26,14 +24,15 @@ pnpm dev
 pnpm -r test
 ```
 
-<!-- ADS:FILL Include any non-obvious setup, single-test invocation, or environment gotchas. -->
+根聚合脚本由 ROADMAP M0 落地（`pnpm build` = 插件构建 → 桌面构建，完整流水线见 TECH-INFRA §8.1）。单包操作用 `pnpm -F <pkg> <script>`（如 `pnpm -F desktop fetch-browser` 拉取 CfT、`pnpm -F extension build` 产出插件）。M0 之前这些命令尚不可用——属正常状态，不要试图"修复"。
 
 ## Architecture
 
 The implementation follows the module boundaries in `.project.agents/docs/context/ARCHITECTURE.md`:
 
-<!-- ADS:FILL One bullet per top-level module/layer — a single sentence on its responsibility. Mirror §2 of the architecture doc. Do NOT add modules here that aren't registered there. -->
-- {{MODULE_OVERVIEW}}
+- **桌面域**（`apps/desktop`）：AppPaths / AppLogger（L0 基础设施）→ BrowserResources（资源定位，纯）→ LaunchConfig（argv 组装，纯）→ ProfileStore + BrowserSupervisor（画像与进程状态机）→ DesktopBridge（4 通道 typed IPC）→ ConsoleUI（React 控制台）→ MainBootstrap（组装根）
+- **插件域**（`apps/extension` + vendor `packages/*`）：`@page-agent/ui · llms · page-controller · core`（上游快照，不变量 I5）→ MultiPageAgent（跨标签编排）+ SidepanelApp（对话/配置/历史 UI）→ ExtensionEntrypoints（组装根）
+- 两域之间**没有任何依赖边**（I3）；插件域只经 OpenAI-compatible HTTP 调 LLM（I4）；API Key 永不经过桌面端进程（I2）
 
 ## Project-level rules
 
@@ -48,18 +47,19 @@ The implementation follows the module boundaries in `.project.agents/docs/contex
 - **All project documentation lives under `.project.agents/docs/context/`** as a single flat directory. Canonical files:
   - `PRD.md` — product requirements (source of truth for behavior)
   - `ARCHITECTURE.md` — module boundaries, dependencies, contracts, directory layout
+  - `TECH-INFRA.md` — 基础设施权威：CfT 供应链、打包分发、CI、启动参数全集、关键决策记录（ADR）
   - `ROADMAP.md` — implementation milestones and acceptance checks
   - `CONVENTIONS.md` — naming, style, testing, repository conventions
   - `UIUX.md` — visual tokens + interaction details (source of truth for visuals)
-  <!-- ADS:FILL Add derived docs (implementation spec, asset checklist) here once they exist. -->
+  - `UPSTREAM.md` — vendor 同步记录（ROADMAP M1 建立后存在）
 
 - **Source-of-truth hierarchy** — on conflict, upstream wins:
 
   ```
-  PRD.md > ARCHITECTURE.md > UIUX.md > CONVENTIONS.md > derived docs
+  PRD.md > ARCHITECTURE.md > TECH-INFRA.md > UIUX.md > CONVENTIONS.md > derived docs
   ```
 
-  When an upstream doc changes, regenerate the affected sections of derived docs to stay in sync. Feature changes must update `PRD.md`; module/dependency changes must update `ARCHITECTURE.md` in the same commit. Do not let code and architecture drift for more than 24 hours.
+  分工备注：模块边界与依赖以 `ARCHITECTURE.md` 为准；供应链/打包/CI/签名以 `TECH-INFRA.md` 为准，两者按领域各自权威，顺序仅用于裁决重叠地带。When an upstream doc changes, regenerate the affected sections of derived docs to stay in sync. Feature changes must update `PRD.md`; module/dependency changes must update `ARCHITECTURE.md` in the same commit. Do not let code and architecture drift for more than 24 hours.
 
 - **Roadmap execution rules:**
   1. Advance in the order set by `.project.agents/docs/context/ROADMAP.md` and the logs in `.project.agents/log/`. Tick each checkbox in the same commit that completes it.

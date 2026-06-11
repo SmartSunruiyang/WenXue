@@ -1,7 +1,5 @@
 # Repository Guidelines
 
-<!-- ADS:FILL AGENTS.md is the cross-vendor contributor guide (Claude, Codex, and others read it). Keep it in English by convention. It overlaps CLAUDE.md on purpose — this is the canonical version for non-Claude agents. -->
-
 ## Authority & Required Reading
 Rules in `.project.agents/CLAUDE.md` apply to every agent working here. Direct user instructions still take precedence.
 
@@ -10,15 +8,14 @@ The canonical contributor guide is `.project.agents/AGENTS.md`. Do not create or
 Before any code-changing task, read `.project.agents/SELF_CONSTRAINTS.md` and `.project.agents/VIBECODING_GUIDE.md`, then run `git status --short`. For product work, also read the relevant sections of `PRD.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and `CONVENTIONS.md` under `.project.agents/docs/context/`.
 
 ## Project Structure & Module Organization
-<!-- ADS:FILL One paragraph: what the project is, where source/tests/assets live. -->
-`问学 WenXue` is a cross-platform desktop suite (Electron launcher + Chromium MV3 extension) in a pnpm monorepo built with TypeScript, Electron (electron-vite), React 19, Tailwind CSS 4, WXT, pnpm workspaces, vitest. Source is in `apps/ 与 packages/`; tests in `各包内同目录的 *.test.ts`.
+`问学 WenXue` ("WenXue — ask for everything") is a cross-platform desktop suite: an Electron launcher that ships a bundled Chrome for Testing browser and injects the WenXue MV3 extension (an LLM web-operation agent forked from alibaba/page-agent, MIT). It is a pnpm monorepo: application code lives in `apps/` (`desktop`, `extension`); vendored upstream libraries live in `packages/` (`@page-agent/ui`, `llms`, `page-controller`, `core`). Tests are co-located `*.test.ts` files next to the unit under test.
 
-Target architecture is documented in `ARCHITECTURE.md`: {{MODULE_LIST_ONE_LINE}}.
+Target architecture is documented in `ARCHITECTURE.md`: a desktop domain (AppPaths/AppLogger → BrowserResources → LaunchConfig → ProfileStore/BrowserSupervisor → DesktopBridge → ConsoleUI → MainBootstrap) and an extension domain (vendored `@page-agent/*` → MultiPageAgent + SidepanelApp → ExtensionEntrypoints); the two process domains share **no runtime dependency edge** (invariant I3).
 
 ## Source-of-Truth Rules
 `PRD.md` defines behavior and scope.
 `UIUX.md` defines visual and interaction rules.
-`ARCHITECTURE.md` is the authority for modules, dependencies, contracts, and directory layout. Derived documents (implementation spec, asset checklist) follow upstream changes, not the other way around.
+`ARCHITECTURE.md` is the authority for modules, dependencies, contracts, and directory layout. `TECH-INFRA.md` is the authority for supply chain, packaging, CI, and launch flags. Derived documents (implementation spec, asset checklist) follow upstream changes, not the other way around.
 
 Feature changes must update `PRD.md`. Module, dependency, entity, or invariant changes must update `ARCHITECTURE.md` in the same commit. Do not let code and architecture drift for more than 24 hours.
 
@@ -32,28 +29,26 @@ pnpm build
 pnpm -r test
 ```
 
-<!-- ADS:FILL Note any environment requirement that makes these commands fail (toolchain version, selected SDK, env vars). -->
+Requires Node 22 LTS and pnpm 9 (declared via `packageManager`). Root aggregate scripts land with ROADMAP M0 — before M0 completes they do not exist yet, which is expected. Use `pnpm -F <pkg> <script>` for per-package work (e.g. `pnpm -F desktop fetch-browser`, `pnpm -F extension build`). Browser binaries are fetched at build time into the gitignored `.browsers/`; in China set `PUPPETEER_DOWNLOAD_BASE_URL=https://registry.npmmirror.com/-/binary/chrome-for-testing`.
 
 ## Architecture & Coding Style
-<!-- ADS:FILL Language conventions, indentation, naming summary. -->
-Use {{LANGUAGE_CONVENTIONS}}, {{INDENTATION}}. {{NAMING_SUMMARY}}. Name files after their primary type/unit.
+Use TypeScript in strict mode, tab indentation with single quotes, no semicolons, and 100-column lines (Prettier config inherited from upstream page-agent; never hand-format). PascalCase for types/interfaces/enums/React components, camelCase for functions/variables, SCREAMING_SNAKE_CASE for compile-time constants. Name files after their primary type/unit.
 
 Do not add modules that are not registered in `ARCHITECTURE.md`. Preserve the dependency DAG; no reverse dependencies, no cross-feature imports, and no direct access to another module's private implementation. Avoid empty names such as `Manager`, `Helper`, `Util`, or `Common`.
 
-UI/presentation code should consume state and send intents only — put business logic in services/use cases, and keep data-model types thin. {{LAYERING_RULE}}
+UI/presentation code should consume state and send intents only — put business logic in services/use cases, and keep data-model types thin. The Electron renderer never touches Node APIs: all OS work crosses the 4-channel typed IPC bridge (`DesktopBridge`) into main-process services. Vendored `@page-agent/*` packages keep their upstream names, layout, and public APIs; record every local patch in `UPSTREAM.md` (invariant I5).
 
 ## Testing Guidelines
-<!-- ADS:FILL Preferred framework + which modules MUST have tests + what requires real-environment validation. -->
-Use {{TEST_FRAMEWORK}}. Required coverage areas from `ARCHITECTURE.md`: {{REQUIRED_TEST_MODULES}}. Test filenames should mirror the unit under test.
+Use vitest. Required coverage areas from `ARCHITECTURE.md`: `LaunchConfig`, `BrowserResources`, `ProfileStore`, the `BrowserSupervisor` state machine (mock `child_process`), and the vendored upstream suites (never delete or skip them; local vendor patches need regression tests). Test filenames should mirror the unit under test.
 
-{{REAL_ENV_VALIDATION}} require real-environment validation; mock/simulator-only evidence is not enough for those claims.
+Packaged-app browser launch + extension injection (CDP smoke test), installer runs on clean macOS/Windows machines, and live end-to-end LLM calls require real-environment validation; mock/simulator-only evidence is not enough for those claims.
 
 ## Git, Logs, and PRs
-Do not pile new work onto unrelated dirty changes without calling it out. Prefer Conventional Commits such as `feat: ...`, `fix: ...`, `docs: ...`.
+Do not pile new work onto unrelated dirty changes without calling it out. Prefer Conventional Commits such as `feat(desktop): ...`, `fix(ext): ...`, `docs: ...` (allowed types: feat/fix/docs/refactor/test/chore/build/ci; scopes: desktop/ext/vendor/infra/docs).
 
 Each independently verifiable feature, milestone, non-trivial fix, or refactor needs an execution log in `.project.agents/log/YYYY-MM-DD-<slug>.md` unless it is only a minor documentation edit. Logs must include what changed, relevant commits (or "uncommitted" with reason), verification performed, and next steps.
 
 Pull requests should include scope, linked issues, screenshots for UI changes, environment/device coverage, and any documentation updates.
 
 ## Security & Configuration
-Do not commit secrets, credentials, build output, or personal IDE files. Agent configuration and generated agent notes belong under `.project.agents/`, not the repository root, `.claude/`, or a global home directory.
+Do not commit secrets, credentials, build output, or personal IDE files. Agent configuration and generated agent notes belong under `.project.agents/`, not the repository root, `.claude/`, or a global home directory. Never log or transmit the user's LLM API key or conversation content through the desktop process (invariant I2); the extension talks to the LLM endpoint directly over HTTPS and nothing else (invariant I4).
