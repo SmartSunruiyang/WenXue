@@ -39,7 +39,7 @@
 
 ### M2 — 浏览器供应链与桌面底层（依赖 M0；与 M1 可并行）
 - [x] `apps/desktop/browser.lock.json`（锁定当时 CfT Stable 版本）+ `scripts/fetch-browser.ts`（@puppeteer/browsers，支持 `PUPPETEER_DOWNLOAD_BASE_URL` 镜像）
-- [ ] 实现 AppPaths / AppLogger / BrowserResources / LaunchConfig / ProfileStore（ARCHITECTURE §2.1 L0–L3 中的无 spawn 部分）+ 单测
+- [x] 实现 AppPaths / AppLogger / BrowserResources / LaunchConfig / ProfileStore（ARCHITECTURE §2.1 L0–L3 中的无 spawn 部分）+ 单测
 - **验收**：`pnpm -F desktop fetch-browser` 在 mac-arm64 / mac-x64 / win64 各拉取成功；vitest 全绿。
 
 ### M3 — 启动链路（依赖 M1 + M2）
