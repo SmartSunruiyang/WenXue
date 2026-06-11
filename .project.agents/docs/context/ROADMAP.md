@@ -25,9 +25,9 @@
 ### M0 — 基线整备
 - [x] 版本控制 + ignore + 文档零点提交（`f27e6fb` → `9c39e5e`）
 - [x] 文档体系入位（PRD / ARCHITECTURE / TECH-INFRA / ROADMAP / CONVENTIONS / UIUX + 治理文件）
-- [ ] pnpm workspace 骨架：`pnpm-workspace.yaml`、根 `package.json`（`packageManager`）、`.nvmrc`、Prettier/ESLint 基线（继承上游配置，见 CONVENTIONS §2.1）
-- [ ] 空 Electron 壳（electron-vite 模板级主窗口）可构建可运行
-- [ ] 根聚合脚本就位：`pnpm build` / `pnpm dev` / `pnpm -r test`
+- [x] pnpm workspace 骨架：`pnpm-workspace.yaml`、根 `package.json`（`packageManager`）、`.nvmrc`、Prettier/ESLint 基线（继承上游配置，见 CONVENTIONS §2.1）
+- [x] 空 Electron 壳（electron-vite 模板级主窗口）可构建可运行
+- [x] 根聚合脚本就位：`pnpm build` / `pnpm dev` / `pnpm -r test`
 - **验收**：克隆仓库 → `pnpm i` → `pnpm build` 一次成功；`pnpm dev` 打开空白主窗口。
 
 ### M1 — vendor page-agent 五包（依赖 M0；与 M2 可并行）

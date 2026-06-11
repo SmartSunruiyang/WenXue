@@ -247,6 +247,6 @@ bug 来了不要直接钻进代码。按下列顺序：
 
 > 本节随项目演进，不是规则的一部分。由 Agent 在每个 milestone 后更新。
 
-- 当前状态：Day 0 完成——治理体系与全套上游文档已入位（PRD / ARCHITECTURE / TECH-INFRA / ROADMAP / CONVENTIONS / UIUX），代码尚未开始。
-- 已有工程结构：仅文档与治理骨架；`apps/` 与 `packages/` 由 ROADMAP M0/M1 建立。
-- 下一步合规动作：执行 ROADMAP M0 剩余项（pnpm workspace 骨架 + 空 Electron 壳 + 根聚合脚本）；任何新增模块、目录或依赖方向先回写 `ARCHITECTURE.md`，再写代码。
+- 当前状态：M0 基线整备完成——pnpm workspace 骨架 + 空 Electron 壳 + 根聚合脚本已就位，`pnpm build` 通过。
+- 已有工程结构：`apps/desktop/`（Electron 主进程/preload/渲染进程）、根 workspace 配置、Prettier/ESLint 基线。
+- 下一步合规动作：进入 M1（vendor page-agent 五包入库）或 M2（浏览器供应链与桌面底层模块），两者可并行；任何新增模块、目录或依赖方向先回写 `ARCHITECTURE.md`，再写代码。
