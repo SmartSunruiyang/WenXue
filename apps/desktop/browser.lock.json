@@ -1,0 +1,27 @@
+{
+	"browser": "chrome",
+	"channel": "stable",
+	"version": "149.0.7827.55",
+	"revision": "1625079",
+	"source": {
+		"lastKnownGoodVersionsWithDownloads": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+		"timestamp": "2026-06-10T21:32:27.128Z"
+	},
+	"platforms": [
+		{
+			"name": "mac-arm64",
+			"puppeteerPlatform": "mac_arm",
+			"archive": "chrome-mac-arm64.zip"
+		},
+		{
+			"name": "mac-x64",
+			"puppeteerPlatform": "mac",
+			"archive": "chrome-mac-x64.zip"
+		},
+		{
+			"name": "win64",
+			"puppeteerPlatform": "win64",
+			"archive": "chrome-win64.zip"
+		}
+	]
+}
