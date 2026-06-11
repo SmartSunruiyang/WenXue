@@ -11,15 +11,24 @@ class FakeBrowserProcess extends EventEmitter {
 	stderr = new PassThrough()
 	killCalls = 0
 
+	constructor(
+		private readonly exitOnKill: {
+			code: number | null
+			signal: NodeJS.Signals | null
+		} = { code: 0, signal: null },
+	) {
+		super()
+	}
+
 	kill(): boolean {
 		this.killCalls += 1
-		this.emit('exit', 0, null)
+		this.emit('exit', this.exitOnKill.code, this.exitOnKill.signal)
 		return true
 	}
 }
 
-function createSupervisorHarness() {
-	const child = new FakeBrowserProcess()
+function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
+	const child = options.child ?? new FakeBrowserProcess()
 	const spawns: Array<{ binary: string; argv: string[] }> = []
 	const focusCalls: Array<{ binary: string; argv: string[] }> = []
 	const events: BrowserStatus[] = []
@@ -134,6 +143,18 @@ describe('BrowserSupervisor', () => {
 
 		expect(child.killCalls).toBe(1)
 		expect(supervisor.status()).toBe('idle')
+	})
+
+	it('treats signal exit during requested shutdown as idle', async () => {
+		const child = new FakeBrowserProcess({ code: null, signal: 'SIGTERM' })
+		const { supervisor, events } = createSupervisorHarness({ child })
+
+		await supervisor.launch()
+		child.emit('spawn')
+		await supervisor.requestShutdown()
+
+		expect(supervisor.status()).toBe('idle')
+		expect(events).toEqual(['launching', 'running', 'idle'])
 	})
 
 	it('resolves shutdown without throwing when idle', async () => {

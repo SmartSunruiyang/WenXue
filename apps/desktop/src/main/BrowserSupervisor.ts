@@ -32,6 +32,7 @@ export class BrowserSupervisor {
 	private readonly listeners = new Set<StatusListener>()
 	private statusValue: BrowserStatus = 'idle'
 	private child: BrowserProcessLike | undefined
+	private shutdownRequestedFor: BrowserProcessLike | undefined
 	private currentBinary: string | undefined
 	private currentArgv: string[] | undefined
 
@@ -101,6 +102,7 @@ export class BrowserSupervisor {
 			const timer = setTimeout(settle, 2000)
 
 			child.on('exit', settle)
+			this.shutdownRequestedFor = child
 			child.kill()
 		})
 	}
@@ -121,8 +123,10 @@ export class BrowserSupervisor {
 		child.on('exit', (code, signal) => {
 			if (this.child !== child) return
 
+			const wasRequestedShutdown = this.shutdownRequestedFor === child
+			const wasNormalExit = (code === 0 || code === null) && signal === null
 			this.clearCurrentProcess()
-			this.setStatus((code === 0 || code === null) && signal === null ? 'idle' : 'error')
+			this.setStatus(wasRequestedShutdown || wasNormalExit ? 'idle' : 'error')
 		})
 	}
 
@@ -137,6 +141,7 @@ export class BrowserSupervisor {
 
 	private clearCurrentProcess(): void {
 		this.child = undefined
+		this.shutdownRequestedFor = undefined
 		this.currentBinary = undefined
 		this.currentArgv = undefined
 	}
