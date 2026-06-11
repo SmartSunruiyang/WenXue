@@ -1,0 +1,14 @@
+This repository vendors code from Page Agent (https://github.com/alibaba/page-agent),
+Copyright (c) Alibaba, licensed under the MIT License (see LICENSE in this directory).
+
+Upstream acknowledgment, preserved as required:
+
+DOM processing components and prompt are derived from browser-use:
+
+Browser Use <https://github.com/browser-use/browser-use>
+Copyright (c) 2024 Gregor Zunic
+Licensed under the MIT License
+
+We gratefully acknowledge the browser-use project and its contributors for their
+excellent work on web automation and DOM interaction patterns that helped make
+this project possible.

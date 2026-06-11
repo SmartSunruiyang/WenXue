@@ -31,7 +31,7 @@
 - **验收**：克隆仓库 → `pnpm i` → `pnpm build` 一次成功；`pnpm dev` 打开空白主窗口。
 
 ### M1 — vendor page-agent 五包（依赖 M0；与 M2 可并行）
-- [ ] 从上游快照复制 `packages/{ui,llms,page-controller,core}` 与 `apps/extension`，保留版权头与 LICENSE（不变量 I5；`third_party/page-agent/LICENSE` 入库）
+- [x] 从上游快照复制 `packages/{ui,llms,page-controller,core}` 与 `apps/extension`，保留版权头与 LICENSE（不变量 I5；`third_party/page-agent/LICENSE` 入库）
 - [ ] 包间依赖改 `workspace:*`，`pnpm -r test` 全绿
 - [ ] 建立 `UPSTREAM.md`：上游地址、快照 commit、日期、本地改动清单、手动同步流程
 - [ ] `wxt build` 产出 `.output/chrome-mv3`
