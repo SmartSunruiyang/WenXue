@@ -46,7 +46,7 @@
 - [x] BrowserSupervisor（spawn、exit/error 监听、状态机）+ 状态机单测
 - [x] DesktopBridge 4 通道（契约见 ARCHITECTURE §3.2）
 - [x] ConsoleUI 最小态（状态卡 + 启动按钮 + 版本 footer）
-- [ ] MainBootstrap：退出询问对话框、重复启动聚焦（I1）
+- [x] MainBootstrap：退出询问对话框、重复启动聚焦（I1）
 - **验收**：dev 模式点「启动浏览器」→ CfT 拉起且问学插件出现在工具栏；状态 `idle→launching→running→idle` 全程正确；重复点击不开第二实例；浏览器被手动关闭后状态回落。
 
 ### M4 — 品牌化与默认配置（依赖 M3）
