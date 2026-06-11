@@ -1,0 +1,29 @@
+export type BrowserStatus = 'idle' | 'launching' | 'running' | 'error'
+
+export interface LaunchResult {
+	ok: boolean
+	error?: string
+}
+
+export interface AppVersions {
+	app: string
+	browser: string
+	extension: string
+}
+
+declare global {
+	interface Window {
+		wenxue: {
+			browser: {
+				launch(): Promise<LaunchResult>
+				getStatus(): Promise<BrowserStatus>
+				onStatusChange(cb: (status: BrowserStatus) => void): () => void
+			}
+			app: {
+				getVersions(): Promise<AppVersions>
+			}
+		}
+	}
+}
+
+export {}

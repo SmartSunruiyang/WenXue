@@ -1,9 +1,16 @@
 "use strict";
 const electron = require("electron");
 electron.contextBridge.exposeInMainWorld("wenxue", {
-  versions: {
-    node: () => process.versions.node,
-    chrome: () => process.versions.chrome,
-    electron: () => process.versions.electron
+  browser: {
+    launch: () => electron.ipcRenderer.invoke("browser:launch"),
+    getStatus: () => electron.ipcRenderer.invoke("browser:getStatus"),
+    onStatusChange: (cb) => {
+      const listener = (_event, status) => cb(status);
+      electron.ipcRenderer.on("browser:status-changed", listener);
+      return () => electron.ipcRenderer.off("browser:status-changed", listener);
+    }
+  },
+  app: {
+    getVersions: () => electron.ipcRenderer.invoke("app:getVersions")
   }
 });

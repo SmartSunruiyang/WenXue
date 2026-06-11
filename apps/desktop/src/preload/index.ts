@@ -1,9 +1,16 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 contextBridge.exposeInMainWorld('wenxue', {
-  versions: {
-    node: () => process.versions.node,
-    chrome: () => process.versions.chrome,
-    electron: () => process.versions.electron,
-  },
+	browser: {
+		launch: () => ipcRenderer.invoke('browser:launch'),
+		getStatus: () => ipcRenderer.invoke('browser:getStatus'),
+		onStatusChange: (cb: (status: string) => void) => {
+			const listener = (_event: IpcRendererEvent, status: string) => cb(status)
+			ipcRenderer.on('browser:status-changed', listener)
+			return () => ipcRenderer.off('browser:status-changed', listener)
+		},
+	},
+	app: {
+		getVersions: () => ipcRenderer.invoke('app:getVersions'),
+	},
 })
