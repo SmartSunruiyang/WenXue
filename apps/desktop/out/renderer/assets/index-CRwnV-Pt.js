@@ -12441,8 +12441,128 @@ function checkDCE() {
 }
 var clientExports = client.exports;
 const ReactDOM = /* @__PURE__ */ getDefaultExportFromCjs(clientExports);
+const strings = {
+  brand: "问学 WenXue",
+  slogan: "ask for everything",
+  status: {
+    idle: "未运行",
+    launching: "启动中",
+    running: "浏览器运行中",
+    error: "启动异常"
+  },
+  description: {
+    idle: "浏览器尚未启动。",
+    launching: "正在启动 Chrome for Testing",
+    running: "问学浏览器已启动。",
+    error: "浏览器启动或运行异常。可重新启动，或查看日志定位原因。"
+  },
+  action: {
+    launch: "启动浏览器",
+    focus: "聚焦窗口",
+    relaunch: "重新启动"
+  },
+  versionLabel: {
+    app: "App",
+    browser: "Browser",
+    extension: "Extension"
+  }
+};
+const statusTone = {
+  idle: "border-slate-200 bg-white text-slate-700",
+  launching: "border-amber-200 bg-amber-50 text-amber-800",
+  running: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  error: "border-red-200 bg-red-50 text-red-800"
+};
+const statusDot = {
+  idle: "bg-slate-400",
+  launching: "bg-amber-500",
+  running: "bg-emerald-500",
+  error: "bg-red-500"
+};
 function App() {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-screen items-center justify-center bg-gray-50", children: /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-4xl font-bold text-gray-900", children: "问学 WenXue" }) });
+  const [status, setStatus] = reactExports.useState("idle");
+  const [versions, setVersions] = reactExports.useState({
+    app: "unknown",
+    browser: "unknown",
+    extension: "unknown"
+  });
+  const [launchError, setLaunchError] = reactExports.useState();
+  reactExports.useEffect(() => {
+    let mounted = true;
+    const unsubscribe = window.wenxue.browser.onStatusChange((next) => {
+      if (!mounted) return;
+      setStatus(next);
+      if (next !== "error") {
+        setLaunchError(void 0);
+      }
+    });
+    window.wenxue.browser.getStatus().then((next) => {
+      if (mounted) setStatus(next);
+    });
+    window.wenxue.app.getVersions().then((next) => {
+      if (mounted) setVersions(next);
+    });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+  const actionLabel = reactExports.useMemo(() => {
+    if (status === "running") return strings.action.focus;
+    if (status === "error") return strings.action.relaunch;
+    return strings.action.launch;
+  }, [status]);
+  const launchBrowser = reactExports.useCallback(async () => {
+    setLaunchError(void 0);
+    if (status !== "running") {
+      setStatus("launching");
+    }
+    const result = await window.wenxue.browser.launch();
+    if (!result.ok) {
+      setStatus("error");
+      setLaunchError(result.error);
+    }
+  }, [status]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "flex min-h-screen bg-slate-50 px-6 py-5 text-slate-950", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mx-auto flex w-full max-w-[432px] flex-col justify-between gap-5", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-2xl font-semibold leading-tight", children: strings.brand }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: strings.slogan })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `rounded-lg border p-5 shadow-sm ${statusTone[status]}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `h-3 w-3 rounded-full ${statusDot[status]}` }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg font-semibold", children: strings.status[status] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm opacity-80", children: strings.description[status] })
+        ] })
+      ] }),
+      launchError ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 rounded-md bg-white/70 px-3 py-2 text-sm text-red-700", children: launchError }) : null,
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: "mt-5 inline-flex h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300",
+          disabled: status === "launching",
+          onClick: launchBrowser,
+          type: "button",
+          children: [
+            status === "launching" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" }) : null,
+            actionLabel
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("footer", { className: "grid grid-cols-3 gap-2 border-t border-slate-200 pt-3 font-mono text-[11px] text-slate-500", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(VersionItem, { label: strings.versionLabel.app, value: versions.app }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(VersionItem, { label: strings.versionLabel.browser, value: versions.browser }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(VersionItem, { label: strings.versionLabel.extension, value: versions.extension })
+    ] })
+  ] }) });
+}
+function VersionItem({ label, value }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-slate-400", children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-slate-700", children: value })
+  ] });
 }
 ReactDOM.createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(React$2.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
