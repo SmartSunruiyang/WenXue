@@ -38,7 +38,7 @@
 - **验收**：在任意 Chromium 内核浏览器手动加载产物 → 侧边栏可打开，配置模型后跑通一个最小页面任务。
 
 ### M2 — 浏览器供应链与桌面底层（依赖 M0；与 M1 可并行）
-- [x] `apps/desktop/browser.lock.json`（锁定当时 CfT Stable 版本）+ `scripts/fetch-browser.ts`（@puppeteer/browsers，支持 `PUPPETEER_DOWNLOAD_BASE_URL` 镜像）
+- [x ] `apps/desktop/browser.lock.json`（锁定当时 CfT Stable 版本）+ `scripts/fetch-browser.ts`（@puppeteer/browsers，支持 `PUPPETEER_DOWNLOAD_BASE_URL` 镜像）
 - [x] 实现 AppPaths / AppLogger / BrowserResources / LaunchConfig / ProfileStore（ARCHITECTURE §2.1 L0–L3 中的无 spawn 部分）+ 单测
 - **验收**：`pnpm -F desktop fetch-browser` 在 mac-arm64 / mac-x64 / win64 各拉取成功；vitest 全绿。
 

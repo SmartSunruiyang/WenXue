@@ -11,13 +11,13 @@
 
 ### 1.1 实体
 
-| 实体 | 关键字段 | 关系 | 持久化与生命周期 |
-|---|---|---|---|
-| BrowserProfile | id（目录名，demo 固定 `default`）、dirPath、createdAt | 1:N → 运行中的浏览器实例（瞬态） | 是：磁盘目录 `<userData>/profiles/<id>`，首次启动创建，删除即重置 |
-| BrowserRuntimeDescriptor | version、platform、binaryPath | 被 LaunchConfig / 版本查询消费 | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更 |
-| ModelConfig | baseURL、apiKey、model、language | 被 Agent 循环消费 | 是：`chrome.storage.local`（仅本机，I2） |
-| AgentTask | id、instruction、status、startedAt、finishedAt | 1:N → AgentActivity | 是：插件 IndexedDB，用户可删 |
-| AgentActivity | taskId、type、payload、ts | 属于 AgentTask | 是：插件 IndexedDB，随任务删除 |
+| 实体                     | 关键字段                                                                                                                                                 | 关系                             | 持久化与生命周期                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------- |
+| BrowserProfile           | id（目录名，demo 固定 `default`）、dirPath、createdAt                                                                                                    | 1:N → 运行中的浏览器实例（瞬态） | 是：磁盘目录 `<userData>/profiles/<id>`，首次启动创建，删除即重置 |
+| BrowserRuntimeDescriptor | version、platform、binaryPath                                                                                                                            | 被 LaunchConfig / 版本查询消费   | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更  |
+| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage | 被 Agent 循环与插件 UI 消费      | 是：`chrome.storage.local`（仅本机，I2）                          |
+| AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                           | 1:N → AgentActivity              | 是：插件 IndexedDB，用户可删                                      |
+| AgentActivity            | taskId、type、payload、ts                                                                                                                                | 属于 AgentTask                   | 是：插件 IndexedDB，随任务删除                                    |
 
 ### 1.2 派生概念（非持久化）
 
@@ -144,7 +144,7 @@
 - 持有状态：窗口句柄
 ```
 
-### 2.2 插件域（apps/extension + packages/*）
+### 2.2 插件域（apps/extension + packages/\*）
 
 vendor 四包为上游快照（粗粒度卡片；内部实现以上游为准，本域约束是：不逆向依赖、不 reach into 内部实现、改动登记 UPSTREAM.md）：
 
@@ -176,10 +176,20 @@ vendor 四包为上游快照（粗粒度卡片；内部实现以上游为准，�
 fork 应用层（apps/extension）：
 
 ```
+## 模块名：ExtensionSettingsConfig（L4/纯配置）
+- 职责：定义内置模型 ID、厂商预设、自定义厂商与自定义模型结构；归一化 selectedModelId/customModels；将设置页源数据解析为 Agent 可用的 llmConfig
+- 不负责：不读写 chrome.storage；不渲染 UI；不发 LLM 请求
+- 输入：设置页表单值与 chrome.storage 中的 ModelConfig
+- 输出：ExtConfig / LLMConfig
+- 关键类型/接口：CustomModelConfig · ModelProviderPreset · resolveSelectedLLMConfig · normalizeCustomModels · buildSettingsConfig
+- 持有状态：无（纯函数）
+```
+
+```
 ## 模块名：SidepanelApp（L5）
-- 职责：侧边栏对话流、模型配置面板、任务历史 UI
+- 职责：侧边栏对话流、右上角更多菜单、语言快捷入口、任务历史 UI、options 设置页 UI、自定义模型列表与默认模型选择
 - 不负责：不实现 Agent 循环；不直接发 LLM 请求
-- 输入：MultiPageAgent、@page-agent/ui
+- 输入：MultiPageAgent、ExtensionSettingsConfig、@page-agent/ui
 - 输出：用户
 - 持有状态：UI 态；读写 ModelConfig（chrome.storage.local）与历史（IndexedDB）
 ```
@@ -195,7 +205,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：ExtensionEntrypoints（L6/组装根）
-- 职责：background service worker、content scripts、main-world 注入的装配与消息路由
+- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由
 - 不负责：业务决策
 - 持有状态：会话级路由表
 ```
@@ -223,6 +233,7 @@ graph TD
         ExtensionEntrypoints --> SidepanelApp
         ExtensionEntrypoints --> MultiPageAgent
         SidepanelApp --> MultiPageAgent
+        SidepanelApp --> ExtensionSettingsConfig
         SidepanelApp --> PA_UI["@page-agent/ui"]
         MultiPageAgent --> PA_CORE["@page-agent/core"]
         MultiPageAgent --> PA_PC["@page-agent/page-controller"]
@@ -233,6 +244,7 @@ graph TD
 > 跨两个 subgraph **不存在任何边**（I3）。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。手工验证：所有箭头自高层指向低层，无环。
 
 ### 3.1 依赖方向规则
+
 - 高层依赖低层；**反向依赖一律禁止**，需要时用接口/回调倒置。
 - 跨模块只走 §3.2 声明的接口契约，不 reach into 内部实现。
 
@@ -272,13 +284,13 @@ graph TD
 
 ## 4. 持久化与边界
 
-| 数据 | 位置 | 谁写 | 边界约束 |
-|---|---|---|---|
-| 画像数据（cookie、登录态、浏览记录） | `<userData>/profiles/<id>/` | 仅 CfT 进程 | 桌面端只创建目录，永不读内容 |
-| 运行日志 | `<userData>/logs/` | AppLogger | 不含 Key/对话内容（I2） |
-| ModelConfig（含 API Key） | `chrome.storage.local` | SidepanelApp 配置面板 | 不出本机（I2） |
-| 任务历史 | 插件 IndexedDB | MultiPageAgent / SidepanelApp | 不出本机；用户可清空 |
-| browser.lock.json | 仓库 `apps/desktop/` | 开发者（升级 CfT 时） | 构建期消费，运行期只读 |
+| 数据                                          | 位置                        | 谁写                                      | 边界约束                                                                                                 |
+| --------------------------------------------- | --------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 画像数据（cookie、登录态、浏览记录）          | `<userData>/profiles/<id>/` | 仅 CfT 进程                               | 桌面端只创建目录，永不读内容                                                                             |
+| 运行日志                                      | `<userData>/logs/`          | AppLogger                                 | 不含 Key/对话内容（I2）                                                                                  |
+| ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`      | SidepanelApp options 设置页与语言快捷入口 | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置 |
+| 任务历史                                      | 插件 IndexedDB              | MultiPageAgent / SidepanelApp             | 不出本机；用户可清空                                                                                     |
+| browser.lock.json                             | 仓库 `apps/desktop/`        | 开发者（升级 CfT 时）                     | 构建期消费，运行期只读                                                                                   |
 
 出网边界：插件域 → 用户配置的 LLM baseURL（HTTPS）是**唯一**业务出网；桌面域 demo 阶段零出网；CfT 自身的浏览流量属用户行为，不在系统边界内。
 
@@ -313,6 +325,7 @@ WenXue/
 ```
 
 ## 7. 自检（架构健康度三问）
+
 1. 出 bug 了，能否 30 秒内指出"是哪个模块的责任"？
 2. 整体替换模块 X，改动能否控制在 X 内部 + 一个接口适配层？
 3. 加新功能，能否立刻说出它属于哪个模块、或要新增哪个模块？
@@ -323,6 +336,7 @@ WenXue/
 - 代码尚未开始，暂无其他登记负债。未登记的负债 = 红线（SELF_CONSTRAINTS §F）。
 
 ## 9. 文档变更协议
+
 - 加/删模块或改依赖方向 → 改本文 §2 + §3，同一 commit。
 - 改对外签名 → 先改 §3.2，再改代码。
 - 与 `PRD.md` 冲突 → 以 `PRD.md` 为准，回改本文。
