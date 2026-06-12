@@ -11,8 +11,10 @@ import type {
 import type { LLMConfig } from '@page-agent/llms'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { loadStoredConfig, saveStoredConfig } from '@/lib/configStorage'
+import type { UILanguage } from '@/lib/i18n'
+import type { CustomModelConfig } from '@/lib/modelConfig'
 import { MultiPageAgent } from './MultiPageAgent'
-import { DEMO_CONFIG, migrateLegacyEndpoint } from './constants'
 
 /** Language preference: undefined means follow system */
 export type LanguagePreference = SupportedLanguage | undefined
@@ -27,6 +29,9 @@ export interface AdvancedConfig {
 
 export interface ExtConfig extends LLMConfig, AdvancedConfig {
 	language?: LanguagePreference
+	uiLanguage?: UILanguage
+	selectedModelId?: string
+	customModels?: CustomModelConfig[]
 }
 
 export interface UseAgentResult {
@@ -49,31 +54,25 @@ export function useAgent(): UseAgentResult {
 	const [config, setConfig] = useState<ExtConfig | null>(null)
 
 	useEffect(() => {
-		chrome.storage.local.get(['llmConfig', 'language', 'advancedConfig']).then((result) => {
-			let llmConfig = (result.llmConfig as LLMConfig) ?? DEMO_CONFIG
-			const language = (result.language as SupportedLanguage) || undefined
-			const advancedConfig = (result.advancedConfig as AdvancedConfig) ?? {}
-
-			// Auto-migrate legacy testing endpoints
-			const migrated = migrateLegacyEndpoint(llmConfig)
-			if (migrated !== llmConfig) {
-				llmConfig = migrated
-				chrome.storage.local.set({ llmConfig: migrated })
-			} else if (!result.llmConfig) {
-				chrome.storage.local.set({ llmConfig: DEMO_CONFIG })
-			}
-
-			setConfig({ ...llmConfig, ...advancedConfig, language })
-		})
+		loadStoredConfig().then(setConfig)
 	}, [])
 
 	useEffect(() => {
 		if (!config) return
 
-		const { systemInstruction, ...agentConfig } = config
+		const agentConfig = {
+			baseURL: config.baseURL,
+			model: config.model,
+			apiKey: config.apiKey,
+			language: config.language,
+			maxSteps: config.maxSteps,
+			experimentalLlmsTxt: config.experimentalLlmsTxt,
+			experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
+			disableNamedToolChoice: config.disableNamedToolChoice,
+		}
 		const agent = new MultiPageAgent({
 			...agentConfig,
-			instructions: systemInstruction ? { system: systemInstruction } : undefined,
+			instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
 		})
 		agentRef.current = agent
 
@@ -119,34 +118,9 @@ export function useAgent(): UseAgentResult {
 		agentRef.current?.stop()
 	}, [])
 
-	const configure = useCallback(
-		async ({
-			language,
-			maxSteps,
-			systemInstruction,
-			experimentalLlmsTxt,
-			experimentalIncludeAllTabs,
-			disableNamedToolChoice,
-			...llmConfig
-		}: ExtConfig) => {
-			await chrome.storage.local.set({ llmConfig })
-			if (language) {
-				await chrome.storage.local.set({ language })
-			} else {
-				await chrome.storage.local.remove('language')
-			}
-			const advancedConfig: AdvancedConfig = {
-				maxSteps,
-				systemInstruction,
-				experimentalLlmsTxt,
-				experimentalIncludeAllTabs,
-				disableNamedToolChoice,
-			}
-			await chrome.storage.local.set({ advancedConfig })
-			setConfig({ ...llmConfig, ...advancedConfig, language })
-		},
-		[]
-	)
+	const configure = useCallback(async (nextConfig: ExtConfig) => {
+		setConfig(await saveStoredConfig(chrome.storage.local, nextConfig))
+	}, [])
 
 	return {
 		status,

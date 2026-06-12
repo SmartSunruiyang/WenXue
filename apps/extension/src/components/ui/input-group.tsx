@@ -21,9 +21,9 @@ function InputGroup({ className, ...props }: React.ComponentProps<'div'>) {
 				'has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>[data-align=block-start]]:[&>input]:pb-3',
 				'has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-end]]:[&>input]:pt-3',
 
-				// Focus state — soft multi-color glow matching ai-motion palette
-				'has-[[data-slot=input-group-control]:focus-visible]:border-blue-400/60',
-				'has-[[data-slot=input-group-control]:focus-visible]:shadow-[0_0_0_1px_rgba(57,182,255,0.2),0_0_8px_rgba(57,182,255,0.15),0_0_16px_rgba(189,69,251,0.1)]',
+				// Focus state — soft neutral glow (brand: restrained black-gray, no accent colors)
+				'has-[[data-slot=input-group-control]:focus-visible]:border-foreground/30',
+				'has-[[data-slot=input-group-control]:focus-visible]:shadow-[0_0_0_1px_rgba(0,0,0,0.10),0_0_8px_rgba(0,0,0,0.08),0_0_16px_rgba(0,0,0,0.06)]',
 
 				// Error state.
 				'has-[[data-slot][aria-invalid=true]]:ring-destructive/20 has-[[data-slot][aria-invalid=true]]:border-destructive dark:has-[[data-slot][aria-invalid=true]]:ring-destructive/40',

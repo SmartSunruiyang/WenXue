@@ -1,0 +1,342 @@
+import { createContext, useContext, useEffect, useState } from 'react'
+
+export type UILanguage = 'zh-CN' | 'en-US'
+
+export const DEFAULT_UI_LANGUAGE: UILanguage = 'zh-CN'
+
+const translations = {
+	'zh-CN': {
+		// Status
+		statusReady: '就绪',
+		statusRunning: '运行中',
+		statusDone: '完成',
+		statusError: '错误',
+
+		// ConfigPanel
+		settings: '设置',
+		settingsPageTitle: '扩展设置',
+		settingsPageSubtitle: '模型、语言、授权与高级选项',
+		settingsSaved: '已保存',
+		settingsMenu: '更多',
+		menuSettings: '设置',
+		menuLanguage: '语言',
+		quickInterfaceLanguage: '界面',
+		quickResponseLanguage: '回复',
+		settingsSectionAccount: '账户与连接',
+		settingsSectionAccountDesc: '管理本机授权令牌。',
+		settingsSectionModel: '模型',
+		settingsSectionModelDesc: '选择默认模型，添加独立保存密钥的自定义模型。',
+		settingsSectionLanguage: '语言',
+		settingsSectionLanguageDesc: '选择插件界面语言与 Agent 回复语言。',
+		settingsSectionAdvanced: '高级',
+		settingsSectionAdvancedDesc: '调整执行步数、系统指令与实验性能力。',
+		settingsSectionAbout: '关于',
+		settingsSectionAboutDesc: '查看版本、源码、主页与隐私链接。',
+		userAuthToken: '用户认证令牌',
+		userAuthTokenDesc: '用于订阅和用量管理。',
+		showToken: '显示令牌',
+		hideToken: '隐藏令牌',
+		copyToken: '复制令牌',
+		tokenCopied: '令牌已复制',
+		showApiKey: '显示 API Key',
+		hideApiKey: '隐藏 API Key',
+		hubLink: '管理问学 Hub',
+		baseUrl: '基础 URL',
+		testingApiNotice: '您正在使用测试 API。使用即表示您同意',
+		termsAndPrivacy: '使用条款与隐私政策',
+		model: '模型',
+		apiKey: 'API 密钥',
+		defaultModel: '默认模型',
+		customModels: '自定义模型',
+		customModelsDesc: '每个模型单独保存厂商、URL、API Key 和模型名。',
+		addCustomModel: '添加自定义模型',
+		addCustomModelDesc: '选择厂商会自动填入 URL，保存后会出现在默认模型下拉菜单里。',
+		noCustomModels: '还没有自定义模型，点击加号添加。',
+		provider: '厂商',
+		customProvider: '自定义厂商',
+		customProviderDesc: '自己填写厂商名称和 URL',
+		customProviderName: '厂商名称',
+		customProviderNamePlaceholder: '例如 Moonshot / OpenAI / 本地模型',
+		customModelUrl: 'URL',
+		customModelApiKey: 'API Key',
+		customModelName: '模型名',
+		customModelNamePlaceholder: '例如 deepseek-chat / qwen-plus',
+		selectedModel: '当前',
+		modelApiKeySet: 'API Key 已单独保存',
+		modelApiKeyMissing: '未设置 API Key',
+		removeModel: '删除模型',
+		add: '添加',
+		close: '关闭',
+		uiLanguageLabel: '界面语言',
+		responseLanguage: '响应语言',
+		langSystem: '跟随系统',
+		langEnglish: 'English',
+		langChinese: '中文',
+		advanced: '高级设置',
+		maxSteps: '最大步数',
+		systemInstruction: '系统指令',
+		systemInstructionPlaceholder: '为 Agent 添加额外指令...',
+		disableNamedToolChoice: '禁用 named tool_choice',
+		experimentalLlmsTxt: '实验性 llms.txt 支持',
+		experimentalIncludeAllTabs: '实验性包含所有标签页',
+		cancel: '取消',
+		save: '保存',
+		version: '版本',
+		sourceCode: '源代码',
+		homePage: '主页',
+		privacy: '隐私',
+		builtWith: '由',
+		builtWithSuffix: '用 ❤️ 构建',
+
+		// App (side panel)
+		task: '任务',
+		describeTask: '描述您的任务...（Enter 发送）',
+		stopTask: '停止任务',
+		send: '发送',
+		selectModel: '选择模型',
+		manageModels: '管理模型',
+		taskHint1: '在作业页面让 AI 帮你完成',
+		taskHint2: '直接输入你想要 AI 做什么',
+		taskHint3: '总结这个网页的核心内容',
+		taskHint4: '帮我填写当前页面的表单',
+		taskHint5: '找到页面里的报名入口并打开',
+		taskHint6: '对比打开的几个标签页里的价格',
+		aiDisclaimer: '内容由 AI 生成',
+		pinTip: '💡 将问学固定到工具栏',
+		pinTipHow: '点击图钉按钮固定问学',
+		pinTipDismiss: '知道了',
+
+		// HistoryList
+		history: '历史记录',
+		back: '返回',
+		clearAll: '全部清除',
+		noHistory: '暂无历史记录',
+		steps: '步骤',
+		justNow: '刚刚',
+		timeAgoMinutes: '分钟前',
+		timeAgoHours: '小时前',
+		timeAgoDays: '天前',
+		runAgain: '重新运行',
+		exportJson: '导出 JSON',
+		delete: '删除',
+
+		// HistoryDetail
+		loading: '加载中...',
+
+		// cards
+		result: '结果',
+		success: '成功',
+		failed: '失败',
+		step: '步骤',
+		actions: '操作',
+		thinking: '思考中...',
+		executing: '执行中',
+		executed: '已完成',
+		retrying: '重试中',
+		evalLabel: '评估',
+		memoryLabel: '记忆',
+		taskStopped: '已停止',
+		errorNextStep: '请检查模型配置或页面状态，然后重试。',
+		resultDone: '已完成',
+		resultFailed: '未完成',
+		userTakeoverNeeded: '需要你接管当前页面后继续。',
+		rawRequest: '原始请求',
+		rawResponse: '原始响应',
+		expandLongContent: '展开',
+		collapseLongContent: '收起',
+		copy: '复制',
+		copySystem: '复制 System',
+		copyUser: '复制 User',
+		copied: '已复制!',
+	},
+	'en-US': {
+		statusReady: 'Ready',
+		statusRunning: 'Running',
+		statusDone: 'Done',
+		statusError: 'Error',
+
+		settings: 'Settings',
+		settingsPageTitle: 'Extension Settings',
+		settingsPageSubtitle: 'Model, language, authorization, and advanced options',
+		settingsSaved: 'Saved',
+		settingsMenu: 'More',
+		menuSettings: 'Settings',
+		menuLanguage: 'Language',
+		quickInterfaceLanguage: 'Interface',
+		quickResponseLanguage: 'Response',
+		settingsSectionAccount: 'Account & Connection',
+		settingsSectionAccountDesc: 'Manage the local auth token.',
+		settingsSectionModel: 'Model',
+		settingsSectionModelDesc: 'Choose the default model and add custom models with separate keys.',
+		settingsSectionLanguage: 'Language',
+		settingsSectionLanguageDesc:
+			'Choose the extension interface language and agent response language.',
+		settingsSectionAdvanced: 'Advanced',
+		settingsSectionAdvancedDesc:
+			'Tune execution steps, system instructions, and experimental options.',
+		settingsSectionAbout: 'About',
+		settingsSectionAboutDesc: 'View version, source, homepage, and privacy links.',
+		userAuthToken: 'User Auth Token',
+		userAuthTokenDesc: 'Used for subscription and usage management.',
+		showToken: 'Show token',
+		hideToken: 'Hide token',
+		copyToken: 'Copy token',
+		tokenCopied: 'Token copied',
+		showApiKey: 'Show API key',
+		hideApiKey: 'Hide API key',
+		hubLink: 'Manage 问学 Hub',
+		baseUrl: 'Base URL',
+		testingApiNotice: 'You are using our testing API. By using this you agree to the',
+		termsAndPrivacy: 'Terms of Use & Privacy Policy',
+		model: 'Model',
+		apiKey: 'API Key',
+		defaultModel: 'Default model',
+		customModels: 'Custom models',
+		customModelsDesc: 'Each model stores its provider, URL, API key, and model name separately.',
+		addCustomModel: 'Add custom model',
+		addCustomModelDesc:
+			'Choosing a provider fills the URL automatically. The model appears in the default model menu after adding.',
+		noCustomModels: 'No custom models yet. Use the plus button to add one.',
+		provider: 'Provider',
+		customProvider: 'Custom provider',
+		customProviderDesc: 'Enter the provider name and URL yourself',
+		customProviderName: 'Provider name',
+		customProviderNamePlaceholder: 'For example Moonshot / OpenAI / Local model',
+		customModelUrl: 'URL',
+		customModelApiKey: 'API Key',
+		customModelName: 'Model name',
+		customModelNamePlaceholder: 'For example deepseek-chat / qwen-plus',
+		selectedModel: 'Current',
+		modelApiKeySet: 'API key saved separately',
+		modelApiKeyMissing: 'API key missing',
+		removeModel: 'Remove model',
+		add: 'Add',
+		close: 'Close',
+		uiLanguageLabel: 'Interface Language',
+		responseLanguage: 'Response Language',
+		langSystem: 'System',
+		langEnglish: 'English',
+		langChinese: '中文',
+		advanced: 'Advanced',
+		maxSteps: 'Max Steps',
+		systemInstruction: 'System Instruction',
+		systemInstructionPlaceholder: 'Additional instructions for the agent...',
+		disableNamedToolChoice: 'Disable named tool_choice',
+		experimentalLlmsTxt: 'Experimental llms.txt support',
+		experimentalIncludeAllTabs: 'Experimental include all tabs',
+		cancel: 'Cancel',
+		save: 'Save',
+		version: 'Version',
+		sourceCode: 'Source Code',
+		homePage: 'Home Page',
+		privacy: 'Privacy',
+		builtWith: 'Built with',
+		builtWithSuffix: 'by',
+
+		task: 'Task',
+		describeTask: 'Describe your task... (Enter to send)',
+		stopTask: 'Stop task',
+		send: 'Send',
+		selectModel: 'Select model',
+		manageModels: 'Manage models',
+		taskHint1: 'On a homework page, let AI finish it for you',
+		taskHint2: 'Just type what you want AI to do',
+		taskHint3: 'Summarize the key points of this page',
+		taskHint4: 'Fill out the form on this page for me',
+		taskHint5: 'Find the sign-up link and open it',
+		taskHint6: 'Compare prices across my open tabs',
+		aiDisclaimer: 'AI-generated content',
+		pinTip: '💡 Pin 问学 to the toolbar',
+		pinTipHow: 'Click the pin button to pin 问学',
+		pinTipDismiss: 'Got it',
+
+		history: 'History',
+		back: 'Back',
+		clearAll: 'Clear All',
+		noHistory: 'No history yet',
+		steps: 'steps',
+		justNow: 'just now',
+		timeAgoMinutes: 'm ago',
+		timeAgoHours: 'h ago',
+		timeAgoDays: 'd ago',
+		runAgain: 'Run again',
+		exportJson: 'Export JSON',
+		delete: 'Delete',
+
+		loading: 'Loading...',
+
+		result: 'Result',
+		success: 'Success',
+		failed: 'Failed',
+		step: 'Step',
+		actions: 'Actions',
+		thinking: 'Thinking...',
+		executing: 'Executing',
+		executed: 'Done',
+		retrying: 'Retrying',
+		evalLabel: 'Eval',
+		memoryLabel: 'Memory',
+		taskStopped: 'Stopped',
+		errorNextStep: 'Check the model settings or page state, then try again.',
+		resultDone: 'Done',
+		resultFailed: 'Not completed',
+		userTakeoverNeeded: 'You need to take over the current page before continuing.',
+		rawRequest: 'Raw Request',
+		rawResponse: 'Raw Response',
+		expandLongContent: 'Expand',
+		collapseLongContent: 'Collapse',
+		copy: 'Copy',
+		copySystem: 'Copy System',
+		copyUser: 'Copy User',
+		copied: 'Copied!',
+	},
+} as const
+
+export type TranslationKey = keyof (typeof translations)['zh-CN']
+
+function getTranslations(lang: UILanguage) {
+	return translations[lang] ?? translations[DEFAULT_UI_LANGUAGE]
+}
+
+interface I18nContextValue {
+	lang: UILanguage
+	t: (key: TranslationKey) => string
+	setLang: (lang: UILanguage) => void
+}
+
+const I18nContext = createContext<I18nContextValue>({
+	lang: DEFAULT_UI_LANGUAGE,
+	t: (key) => getTranslations(DEFAULT_UI_LANGUAGE)[key],
+	setLang: () => {},
+})
+
+export function I18nProvider({ children }: { children: React.ReactNode }) {
+	const [lang, setLang] = useState<UILanguage>(DEFAULT_UI_LANGUAGE)
+
+	useEffect(() => {
+		chrome.storage.local.get('uiLanguage').then((result) => {
+			if (result.uiLanguage === 'zh-CN' || result.uiLanguage === 'en-US') {
+				setLang(result.uiLanguage)
+			}
+		})
+
+		const listener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+			if (changes.uiLanguage) {
+				const v = changes.uiLanguage.newValue
+				if (v === 'zh-CN' || v === 'en-US') {
+					setLang(v)
+				}
+			}
+		}
+		chrome.storage.onChanged.addListener(listener)
+		return () => chrome.storage.onChanged.removeListener(listener)
+	}, [])
+
+	const t = (key: TranslationKey) => getTranslations(lang)[key]
+
+	return <I18nContext.Provider value={{ lang, t, setLang }}>{children}</I18nContext.Provider>
+}
+
+export function useI18n() {
+	return useContext(I18nContext)
+}
