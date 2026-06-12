@@ -48,10 +48,21 @@ export default defineConfig({
 		permissions: ['tabs', 'tabGroups', 'sidePanel', 'storage'],
 		host_permissions: ['<all_urls>'],
 		icons: {
+			16: 'assets/page-agent-16.png',
+			32: 'assets/page-agent-32.png',
+			48: 'assets/page-agent-48.png',
 			64: 'assets/page-agent-64.png',
+			128: 'assets/page-agent-128.png',
 		},
 		action: {
 			default_title: '__MSG_extActionTitle__',
+			default_icon: {
+				16: 'assets/page-agent-16.png',
+				32: 'assets/page-agent-32.png',
+				48: 'assets/page-agent-48.png',
+				64: 'assets/page-agent-64.png',
+				128: 'assets/page-agent-128.png',
+			},
 		},
 		web_accessible_resources: [
 			{

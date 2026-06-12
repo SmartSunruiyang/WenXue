@@ -2,7 +2,7 @@ import { FoldVertical, Plug, PlugZap, Square, UnfoldVertical, Unplug } from 'luc
 import { useEffect, useRef, useState } from 'react'
 
 import { useAgent } from '@/agent/useAgent'
-import { ActivityCard, EventCard } from '@/components/cards'
+import { Conversation } from '@/components/conversation'
 import { Logo, MotionOverlay, StatusDot } from '@/components/misc'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -28,9 +28,10 @@ export default function App() {
 		connecting: 'Connecting…',
 		disconnected: new URLSearchParams(location.search).get('ws') ? 'Disconnected' : 'No connection',
 	}[wsState]
+	const showEmptySession = !currentTask && history.length === 0 && !isRunning
 
 	return (
-		<div className="flex h-screen bg-background">
+		<div className="flex h-screen w-full min-w-0 max-w-full overflow-x-hidden bg-background">
 			{/* Left — Protocol docs */}
 			<aside className="w-80 shrink-0 border-r flex flex-col bg-muted/20">
 				<a
@@ -40,7 +41,7 @@ export default function App() {
 					className="flex items-center gap-2 px-5 h-12 border-b hover:bg-muted/30 transition-colors"
 				>
 					<Logo className="size-5" />
-					<span className="text-sm font-semibold tracking-tight">Page Agent Hub</span>
+					<span className="text-sm font-semibold tracking-tight">问学 Hub</span>
 					<span className="text-[9px] font-medium uppercase tracking-wider text-amber-600 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5">
 						Beta
 					</span>
@@ -49,8 +50,7 @@ export default function App() {
 				<div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
 					<div className="text-xs text-muted-foreground leading-relaxed space-y-2">
 						<p>
-							Page Agent Hub lets local apps (e.g. MCP servers) control the Page Agent extension via
-							WebSocket.
+							问学 Hub lets local apps (e.g. MCP servers) control the 问学 extension via WebSocket.
 						</p>
 						<p>
 							Check out the official{' '}
@@ -88,7 +88,7 @@ export default function App() {
 			</aside>
 
 			{/* Right — Live session */}
-			<main className="flex-1 flex flex-col min-w-0 relative">
+			<main className="relative flex min-w-0 flex-1 flex-col overflow-x-hidden">
 				<MotionOverlay active={isRunning} />
 
 				<header className="flex items-center justify-between border-b px-5 h-12">
@@ -107,21 +107,12 @@ export default function App() {
 					</div>
 				</header>
 
-				{/* Task banner */}
-				{currentTask && (
-					<div className="border-b px-5 py-2 bg-muted/30">
-						<div className="text-[10px] text-muted-foreground uppercase tracking-wide">
-							Current Task
-						</div>
-						<div className="text-sm font-medium truncate" title={currentTask}>
-							{currentTask}
-						</div>
-					</div>
-				)}
-
 				{/* Event stream */}
-				<div ref={historyRef} className="flex-1 overflow-y-auto p-5 space-y-2">
-					{!currentTask && history.length === 0 && !isRunning && (
+				<div
+					ref={historyRef}
+					className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4"
+				>
+					{showEmptySession ? (
 						<div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
 							<WsIcon className="size-10 opacity-30" />
 							<p className="text-sm">
@@ -130,13 +121,16 @@ export default function App() {
 									: 'No active session'}
 							</p>
 						</div>
+					) : (
+						<div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden">
+							<Conversation
+								task={currentTask}
+								events={history}
+								activity={activity}
+								running={isRunning}
+							/>
+						</div>
 					)}
-
-					{history.map((event, index) => (
-						<EventCard key={index} event={event} />
-					))}
-
-					{activity && <ActivityCard activity={activity} />}
 				</div>
 			</main>
 		</div>

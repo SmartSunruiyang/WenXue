@@ -12,16 +12,17 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { type SessionRecord, clearSessions, deleteSession, listSessions } from '@/lib/db'
 import { downloadHistoryExport } from '@/lib/history-export'
+import { type TranslationKey, useI18n } from '@/lib/i18n'
 
-function timeAgo(ts: number): string {
+function timeAgo(ts: number, t: (key: TranslationKey) => string): string {
 	const seconds = Math.floor((Date.now() - ts) / 1000)
-	if (seconds < 60) return 'just now'
+	if (seconds < 60) return t('justNow')
 	const minutes = Math.floor(seconds / 60)
-	if (minutes < 60) return `${minutes}m ago`
+	if (minutes < 60) return `${minutes}${t('timeAgoMinutes')}`
 	const hours = Math.floor(minutes / 60)
-	if (hours < 24) return `${hours}h ago`
+	if (hours < 24) return `${hours}${t('timeAgoHours')}`
 	const days = Math.floor(hours / 24)
-	return `${days}d ago`
+	return `${days}${t('timeAgoDays')}`
 }
 
 export function HistoryList({
@@ -33,6 +34,7 @@ export function HistoryList({
 	onBack: () => void
 	onRerun: (task: string) => void
 }) {
+	const { t } = useI18n()
 	const [sessions, setSessions] = useState<SessionRecord[]>([])
 	const [loading, setLoading] = useState(true)
 
@@ -75,12 +77,12 @@ export function HistoryList({
 					size="icon-sm"
 					onClick={onBack}
 					className="cursor-pointer"
-					aria-label="Back"
-					title="Back"
+					aria-label={t('back')}
+					title={t('back')}
 				>
 					<ArrowLeft className="size-3.5" />
 				</Button>
-				<span className="text-sm font-medium flex-1">History</span>
+				<span className="text-sm font-medium flex-1">{t('history')}</span>
 				{sessions.length > 0 && (
 					<Button
 						variant="ghost"
@@ -92,7 +94,7 @@ export function HistoryList({
 						className="text-[10px] text-muted-foreground hover:text-destructive cursor-pointer h-6 px-2"
 					>
 						<Trash2 className="size-3 mr-1" />
-						Clear All
+						{t('clearAll')}
 					</Button>
 				)}
 			</header>
@@ -116,7 +118,7 @@ export function HistoryList({
 				{!loading && sessions.length === 0 && (
 					<div className="flex flex-col items-center justify-center h-40 gap-2 text-muted-foreground">
 						<History className="size-8 opacity-30" />
-						<p className="text-xs">No history yet</p>
+						<p className="text-xs">{t('noHistory')}</p>
 					</div>
 				)}
 
@@ -140,14 +142,14 @@ export function HistoryList({
 							<p className="text-xs font-medium truncate">{session.task}</p>
 							<div className="flex items-center mt-0.5">
 								<p className="text-[10px] text-muted-foreground">
-									{timeAgo(session.createdAt)} · {session.history.length} steps
+									{timeAgo(session.createdAt, t)} · {session.history.length} {t('steps')}
 								</p>
 								<div className="flex items-center gap-0.5 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
 									<button
 										type="button"
 										onClick={(e) => handleRerun(e, session.task)}
 										className="p-0.5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-										title="Run task again"
+										title={t('runAgain')}
 										aria-label={`Run history task again: ${session.task}`}
 									>
 										<RotateCcw className="size-3" />
@@ -156,7 +158,7 @@ export function HistoryList({
 										type="button"
 										onClick={(e) => handleExport(e, session)}
 										className="p-1 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-										title="Export history JSON"
+										title={t('exportJson')}
 										aria-label={`Export history for ${session.task}`}
 									>
 										<ArrowDownToLine className="size-3" />
@@ -165,7 +167,7 @@ export function HistoryList({
 										type="button"
 										onClick={(e) => handleDelete(e, session.id)}
 										className="p-0.5 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-										title="Delete history"
+										title={t('delete')}
 										aria-label={`Delete history for ${session.task}`}
 									>
 										<Trash2 className="size-3" />

@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { type SessionRecord, deleteSession, getSession } from '@/lib/db'
+import { useI18n } from '@/lib/i18n'
 
-import { EventCard } from './cards'
+import { Conversation } from './conversation'
 
 export function HistoryDetail({
 	sessionId,
@@ -15,6 +16,7 @@ export function HistoryDetail({
 	onBack: () => void
 	onRerun: (task: string) => void
 }) {
+	const { t } = useI18n()
 	const [session, setSession] = useState<SessionRecord | null>(null)
 
 	useEffect(() => {
@@ -24,35 +26,27 @@ export function HistoryDetail({
 	if (!session) {
 		return (
 			<div className="flex items-center justify-center h-screen text-xs text-muted-foreground">
-				Loading...
+				{t('loading')}
 			</div>
 		)
 	}
 
 	return (
-		<div className="flex flex-col h-screen bg-background">
+		<div className="flex h-screen w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-background">
 			{/* Header */}
-			<header className="flex items-center gap-2 border-b px-3 py-2">
+			<header className="flex items-center gap-2 px-3 py-2">
 				<Button variant="ghost" size="icon-sm" onClick={onBack} className="cursor-pointer">
 					<ArrowLeft className="size-3.5" />
 				</Button>
-				<span className="text-sm font-medium truncate">History</span>
-			</header>
-
-			{/* Task */}
-			<div className="border-b px-3 py-2 bg-muted/30">
-				<div className="text-[10px] text-muted-foreground uppercase tracking-wide">Task</div>
-				<div className="text-xs font-medium" title={session.task}>
-					{session.task}
-				</div>
-				<div className="mt-2 flex items-center gap-2">
+				<span className="text-sm font-medium truncate">{t('history')}</span>
+				<div className="ml-auto flex items-center gap-2">
 					<button
 						type="button"
 						onClick={() => onRerun(session.task)}
 						className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
 					>
 						<RotateCcw className="size-3" />
-						Run again
+						{t('runAgain')}
 					</button>
 					<button
 						type="button"
@@ -63,16 +57,14 @@ export function HistoryDetail({
 						className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
 					>
 						<Trash2 className="size-3" />
-						Delete
+						{t('delete')}
 					</button>
 				</div>
-			</div>
+			</header>
 
 			{/* Events (read-only) */}
-			<div className="flex-1 overflow-y-auto p-3 space-y-2">
-				{session.history.map((event, index) => (
-					<EventCard key={index} event={event} />
-				))}
+			<div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-4 pt-2">
+				<Conversation task={session.task} events={session.history} />
 			</div>
 		</div>
 	)
