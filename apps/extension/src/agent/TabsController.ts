@@ -163,6 +163,13 @@ export class TabsController {
 			throw new Error(`Tab ID ${tabId} not found in tab list.`)
 		}
 
+		// best-effort visual follow; logical switch proceeds even if the tab vanished mid-flight
+		await sendMessage({
+			type: 'TAB_CONTROL',
+			action: 'activate_tab',
+			payload: { tabId },
+		})
+
 		await this.updateCurrentTabId(tabId)
 
 		return `✅ Switched to tab ID ${tabId}.`
@@ -367,6 +374,7 @@ export type TabAction =
 	| 'get_active_tab'
 	| 'get_tab_info'
 	| 'open_new_tab'
+	| 'activate_tab'
 	| 'create_tab_group'
 	| 'update_tab_group'
 	| 'add_tab_to_group'

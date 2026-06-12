@@ -46,10 +46,23 @@ export function handleTabControlMessage(
 		case 'open_new_tab': {
 			debug('open_new_tab', payload)
 			chrome.tabs
-				.create({ url: payload.url, active: false })
+				.create({ url: payload.url, active: true })
 				.then((newTab) => {
 					debug('open_new_tab: success', newTab)
 					sendResponse({ success: true, tabId: newTab.id })
+				})
+				.catch((error) => {
+					sendResponse({ error: error instanceof Error ? error.message : String(error) })
+				})
+			return true // async response
+		}
+
+		case 'activate_tab': {
+			debug('activate_tab', payload)
+			chrome.tabs
+				.update(payload.tabId, { active: true })
+				.then(() => {
+					sendResponse({ success: true })
 				})
 				.catch((error) => {
 					sendResponse({ error: error instanceof Error ? error.message : String(error) })

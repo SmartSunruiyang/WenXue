@@ -59,5 +59,5 @@ async function openOrFocusHubTab(wsPort: number) {
 		return
 	}
 
-	await chrome.tabs.create({ url: `${hubUrl}?ws=${wsPort}`, pinned: true })
+	await chrome.tabs.create({ url: `${hubUrl}?ws=${wsPort}`, pinned: true, active: true })
 }
