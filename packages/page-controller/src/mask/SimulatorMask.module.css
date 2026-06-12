@@ -11,3 +11,186 @@
 .wrapper.visible {
 	display: block;
 }
+
+/* ---- 问学流体玻璃遮罩边框（Liquid Glass frame, UIUX §5）---- */
+
+@property --page-agent-flow {
+	syntax: '<angle>';
+	inherits: false;
+	initial-value: 0deg;
+}
+
+.liquidFrame {
+	position: absolute;
+	inset: 0;
+	border-radius: 16px;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 0.6s ease;
+	--page-agent-solid: 10px;
+	--page-agent-mid: 24px;
+	--page-agent-feather: 48px;
+}
+
+.liquidFrame.liquidFrameOn {
+	opacity: 1;
+}
+
+.liquidFrame:not(.liquidFrameOn) > * {
+	animation-play-state: paused;
+}
+
+/* 由实到虚遮罩：外侧实体玻璃带 → 缓出羽化消散（两方向渐变取并集） */
+.liquidGlass,
+.liquidFlow,
+.liquidFlowAlt {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	mask:
+		linear-gradient(
+			to right,
+			#000 var(--page-agent-solid),
+			rgb(0 0 0 / 0.25) var(--page-agent-mid),
+			transparent var(--page-agent-feather),
+			transparent calc(100% - var(--page-agent-feather)),
+			rgb(0 0 0 / 0.25) calc(100% - var(--page-agent-mid)),
+			#000 calc(100% - var(--page-agent-solid))
+		),
+		linear-gradient(
+			to bottom,
+			#000 var(--page-agent-solid),
+			rgb(0 0 0 / 0.25) var(--page-agent-mid),
+			transparent var(--page-agent-feather),
+			transparent calc(100% - var(--page-agent-feather)),
+			rgb(0 0 0 / 0.25) calc(100% - var(--page-agent-mid)),
+			#000 calc(100% - var(--page-agent-solid))
+		);
+}
+
+/* 主体：黑灰白液态玻璃环带 */
+.liquidGlass {
+	backdrop-filter: blur(8px) saturate(140%) brightness(1.05);
+	background: linear-gradient(
+		155deg,
+		rgb(255 255 255 / 0.3),
+		rgb(255 255 255 / 0.1) 32%,
+		rgb(128 128 136 / 0.08) 55%,
+		rgb(22 22 26 / 0.22) 100%
+	);
+}
+
+.liquidFrameDark .liquidGlass {
+	background: linear-gradient(
+		155deg,
+		rgb(255 255 255 / 0.1),
+		rgb(140 140 150 / 0.05) 40%,
+		rgb(8 8 10 / 0.3) 100%
+	);
+}
+
+/* 彩色光：只沿边缘环带流动 */
+.liquidFlow,
+.liquidFlowAlt {
+	filter: blur(11px);
+	opacity: 0.85;
+	background: conic-gradient(
+		from var(--page-agent-flow),
+		transparent 2%,
+		rgb(122 162 255 / 0.55) 9%,
+		transparent 17%,
+		rgb(186 140 255 / 0.42) 28%,
+		transparent 38%,
+		rgb(96 216 190 / 0.5) 55%,
+		transparent 64%,
+		rgb(255 176 150 / 0.34) 82%,
+		transparent 93%
+	);
+	animation:
+		pageAgentFlowSpin 9s linear infinite,
+		pageAgentJelly 4.2s ease-in-out infinite;
+}
+
+.liquidFlowAlt {
+	filter: blur(16px);
+	opacity: 0.5;
+	background: conic-gradient(
+		from var(--page-agent-flow),
+		transparent 6%,
+		rgb(96 216 190 / 0.4) 16%,
+		transparent 27%,
+		rgb(122 162 255 / 0.36) 47%,
+		transparent 58%,
+		rgb(186 140 255 / 0.4) 76%,
+		transparent 88%
+	);
+	animation:
+		pageAgentFlowSpinRev 14s linear infinite,
+		pageAgentJelly 5.6s ease-in-out -2s infinite;
+}
+
+/* 最外缘流光玻璃环：清晰可见的彩色脉冲细环（白玻璃底，随流转动） */
+.liquidRing {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	padding: 4px;
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	mask-composite: exclude;
+	background: conic-gradient(
+		from var(--page-agent-flow),
+		rgb(255 255 255 / 0.65),
+		rgb(96 140 255 / 1) 8%,
+		rgb(255 255 255 / 0.65) 18%,
+		rgb(168 110 255 / 0.95) 30%,
+		rgb(255 255 255 / 0.65) 42%,
+		rgb(56 208 172 / 1) 56%,
+		rgb(255 255 255 / 0.65) 68%,
+		rgb(255 150 112 / 0.9) 82%,
+		rgb(255 255 255 / 0.65) 100%
+	);
+	animation: pageAgentFlowSpin 9s linear infinite;
+}
+
+/* 玻璃外缘高光 + 柔和内里光泽（无硬内边） */
+.liquidEdge {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	box-shadow:
+		inset 0 0 0 1px rgb(255 255 255 / 0.55),
+		inset 0 0 20px rgb(255 255 255 / 0.12),
+		inset 0 0 56px rgb(20 20 24 / 0.04);
+}
+
+@keyframes pageAgentFlowSpin {
+	to {
+		--page-agent-flow: 360deg;
+	}
+}
+
+@keyframes pageAgentFlowSpinRev {
+	to {
+		--page-agent-flow: -360deg;
+	}
+}
+
+@keyframes pageAgentJelly {
+	0%,
+	100% {
+		transform: scale(1);
+	}
+	50% {
+		transform: scale(0.9965);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.liquidFlow,
+	.liquidFlowAlt,
+	.liquidRing {
+		animation: none;
+	}
+}

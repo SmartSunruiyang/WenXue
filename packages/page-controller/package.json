@@ -46,7 +46,6 @@
         "postpublish": "node ../../scripts/post-publish.js"
     },
     "dependencies": {
-        "ai-motion": "^0.4.8"
     },
     "devDependencies": {
         "chalk": "^5.6.2",

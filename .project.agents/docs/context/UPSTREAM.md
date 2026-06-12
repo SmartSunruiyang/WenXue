@@ -28,6 +28,8 @@
 | P8 | packages/{core,llms,page-controller,ui}/package.json | +devDep `unplugin-dts@^1.0.2` | 各包 `vite.config.js` 直接 import `unplugin-dts/vite` |
 | P9 | packages/{core,page-controller,ui}/package.json | +devDep `vite-plugin-css-injected-by-js@^5.0.1` | 对齐各包 `vite.config.js` 的 CSS 注入插件 import |
 | P10 | packages/{page-controller,ui}/package.json | +devDep `chalk@^5.6.2` | 对齐各包 `vite.config.js` 的构建日志 import |
+| P11 | packages/page-controller/src/mask/{SimulatorMask.ts,SimulatorMask.module.css} | 页面遮罩边框由 ai-motion WebGL 跑马灯替换为自绘流体玻璃（Liquid Glass）CSS 边框 | 问学品牌动效（UIUX §5）；纯 CSS 实现，去除 WebGL2 依赖 |
+| P12 | packages/page-controller/package.json | 移除 dependency `ai-motion` | P11 后该包无引用（原唯一运行时依赖） |
 
 ## 已知差异与遗留
 

@@ -1,5 +1,3 @@
-import { Motion } from 'ai-motion'
-
 import { isPageDark } from './checkDarkMode'
 
 import styles from './SimulatorMask.module.css'
@@ -8,9 +6,10 @@ import cursorStyles from './cursor.module.css'
 export class SimulatorMask extends EventTarget {
 	shown: boolean = false
 	wrapper = document.createElement('div')
-	motion: Motion | null = null
 
 	#disposed = false
+
+	#frame = document.createElement('div')
 
 	#cursor = document.createElement('div')
 
@@ -28,17 +27,22 @@ export class SimulatorMask extends EventTarget {
 		this.wrapper.setAttribute('data-browser-use-ignore', 'true')
 		this.wrapper.setAttribute('data-page-agent-ignore', 'true')
 
-		try {
-			const motion = new Motion({
-				mode: isPageDark() ? 'dark' : 'light',
-				styles: { position: 'absolute', inset: '0' },
-			})
-			this.motion = motion
-			this.wrapper.appendChild(motion.element)
-			motion.autoResize(this.wrapper)
-		} catch (e) {
-			console.warn('[SimulatorMask] Motion overlay unavailable:', e)
+		// 流体玻璃边框（Liquid Glass frame）
+		this.#frame.className = isPageDark()
+			? `${styles.liquidFrame} ${styles.liquidFrameDark}`
+			: styles.liquidFrame
+		for (const layerClass of [
+			styles.liquidGlass,
+			styles.liquidFlow,
+			styles.liquidFlowAlt,
+			styles.liquidRing,
+			styles.liquidEdge,
+		]) {
+			const layer = document.createElement('div')
+			layer.className = layerClass
+			this.#frame.appendChild(layer)
 		}
+		this.wrapper.appendChild(this.#frame)
 
 		// Capture all mouse, keyboard, and wheel events
 		this.wrapper.addEventListener('click', (e) => {
@@ -179,10 +183,11 @@ export class SimulatorMask extends EventTarget {
 		if (this.shown || this.#disposed) return
 
 		this.shown = true
-		this.motion?.start()
-		this.motion?.fadeIn()
-
 		this.wrapper.classList.add(styles.visible)
+		// 等 display 生效后再加类，让 opacity 过渡能播放
+		requestAnimationFrame(() => {
+			if (this.shown && !this.#disposed) this.#frame.classList.add(styles.liquidFrameOn)
+		})
 
 		// Initialize cursor position
 		this.#currentCursorX = window.innerWidth / 2
@@ -197,8 +202,7 @@ export class SimulatorMask extends EventTarget {
 		if (!this.shown || this.#disposed) return
 
 		this.shown = false
-		this.motion?.fadeOut()
-		this.motion?.pause()
+		this.#frame.classList.remove(styles.liquidFrameOn)
 
 		this.#cursor.classList.remove(cursorStyles.clicking)
 
@@ -210,7 +214,6 @@ export class SimulatorMask extends EventTarget {
 	dispose() {
 		this.#disposed = true
 		console.log('dispose SimulatorMask')
-		this.motion?.dispose()
 		this.wrapper.remove()
 		this.dispatchEvent(new Event('dispose'))
 	}
