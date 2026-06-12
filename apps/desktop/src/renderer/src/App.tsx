@@ -2,6 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { strings } from './strings'
 import type { AppVersions, BrowserStatus } from './wenxue'
 
+function useDarkMode() {
+	const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+	useEffect(() => {
+		const mq = window.matchMedia('(prefers-color-scheme: dark)')
+		const handler = (e: MediaQueryListEvent) => setDark(e.matches)
+		mq.addEventListener('change', handler)
+		return () => mq.removeEventListener('change', handler)
+	}, [])
+	return dark
+}
+
 const statusTone: Record<BrowserStatus, string> = {
 	idle: 'border-slate-200 bg-white text-slate-700',
 	launching: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -17,6 +28,7 @@ const statusDot: Record<BrowserStatus, string> = {
 }
 
 export default function App() {
+	const dark = useDarkMode()
 	const [status, setStatus] = useState<BrowserStatus>('idle')
 	const [versions, setVersions] = useState<AppVersions>({
 		app: 'unknown',
@@ -71,8 +83,11 @@ export default function App() {
 		<main className="flex min-h-screen bg-slate-50 px-6 py-5 text-slate-950">
 			<section className="mx-auto flex w-full max-w-[432px] flex-col justify-between gap-5">
 				<header>
-					<p className="text-2xl font-semibold leading-tight">{strings.brand}</p>
-					<p className="mt-1 text-sm text-slate-500">{strings.slogan}</p>
+					<img
+						src={dark ? '/darkslogen.png' : '/lightslogen.png'}
+						alt={strings.brand}
+						className="h-10 w-auto"
+					/>
 				</header>
 
 				<div className={`rounded-lg border p-5 shadow-sm ${statusTone[status]}`}>

@@ -104,6 +104,7 @@ function createControlWindow(
 		height: 360,
 		resizable: true,
 		maximizable: false,
+		icon: path.join(__dirname, '../../resources/icon.png'),
 		webPreferences: {
 			preload: path.join(__dirname, '../preload/index.js'),
 			contextIsolation: true,
