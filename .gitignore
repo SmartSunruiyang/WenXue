@@ -29,6 +29,7 @@ secrets.*
 *.tmp
 tmp/
 .cache/
+.codegraph/
 
 # --- Build output (ADS: append stack-specific rules below) ---
 # e.g. node: node_modules/ dist/ ; python: __pycache__/ .venv/ *.pyc ;
