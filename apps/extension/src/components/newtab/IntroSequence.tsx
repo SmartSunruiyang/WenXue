@@ -48,7 +48,12 @@ export function IntroSequence({ dark, children, onComplete }: Props) {
 					'-=0.4',
 				)
 			}
-		})()
+		})().catch(() => {
+			if (!killed) {
+				setDone(true)
+				onCompleteRef.current()
+			}
+		})
 		return () => {
 			killed = true
 			tl?.kill()
@@ -58,7 +63,7 @@ export function IntroSequence({ dark, children, onComplete }: Props) {
 	return (
 		<div className="absolute inset-0">
 			{!done && <GlassPortalScene dark={dark} onReady={(h) => (handleRef.current = h)} />}
-			<div ref={contentRef} className="relative z-10 h-full">
+			<div ref={contentRef} className="relative z-10 h-full opacity-0">
 				{children}
 			</div>
 		</div>

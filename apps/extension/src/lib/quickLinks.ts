@@ -81,7 +81,8 @@ export function reorderQuickLinks(list: QuickLink[], fromId: string, toIndex: nu
 	if (from === -1) return list
 	const next = [...list]
 	const [moved] = next.splice(from, 1)
-	const clamped = Math.max(0, Math.min(toIndex, next.length))
+	const target = from < toIndex ? toIndex - 1 : toIndex
+	const clamped = Math.max(0, Math.min(target, next.length))
 	next.splice(clamped, 0, moved)
 	return next
 }

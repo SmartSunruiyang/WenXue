@@ -55,6 +55,7 @@ export function QuickLinksGrid({ links, onChange }: Props) {
 					>
 						<a
 							href={link.url}
+							draggable={false}
 							className="flex flex-col items-center gap-1.5"
 							title={link.url}
 						>
@@ -84,6 +85,11 @@ export function QuickLinksGrid({ links, onChange }: Props) {
 				<button
 					type="button"
 					onClick={() => setAdding(true)}
+					onDragOver={(e) => e.preventDefault()}
+					onDrop={() => {
+						if (dragId) onChange(reorderQuickLinks(links, dragId, links.length))
+						setDragId(null)
+					}}
 					aria-label={t('ntAddLink')}
 					className="flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
 				>

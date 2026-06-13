@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { useI18n } from '@/lib/i18n'
 import type { QuickLink } from '@/lib/quickLinks'
@@ -20,6 +20,14 @@ export function QuickLinkEditor({ initial, onSubmit, onClose }: Props) {
 		onSubmit({ title, url, icon })
 	}
 
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') onClose()
+		}
+		window.addEventListener('keydown', onKey)
+		return () => window.removeEventListener('keydown', onKey)
+	}, [onClose])
+
 	return (
 		<div
 			className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -28,52 +36,61 @@ export function QuickLinkEditor({ initial, onSubmit, onClose }: Props) {
 			<div
 				className="w-80 max-w-[90vw] rounded-xl border bg-card p-4 shadow-2xl"
 				onClick={(e) => e.stopPropagation()}
+				role="dialog"
+				aria-modal="true"
+				aria-label={initial ? t('ntEditLink') : t('ntAddLink')}
 			>
 				<p className="mb-3 text-sm font-semibold">
 					{initial ? t('ntEditLink') : t('ntAddLink')}
 				</p>
-				<label className="block space-y-1">
-					<span className="text-xs text-muted-foreground">{t('ntLinkTitle')}</span>
-					<input
-						autoFocus
-						value={title}
-						onChange={(e) => setTitle(e.target.value)}
-						className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					/>
-				</label>
-				<label className="mt-3 block space-y-1">
-					<span className="text-xs text-muted-foreground">{t('ntLinkUrl')}</span>
-					<input
-						value={url}
-						onChange={(e) => setUrl(e.target.value)}
-						placeholder="example.com"
-						className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					/>
-				</label>
-				<label className="mt-3 block space-y-1">
-					<span className="text-xs text-muted-foreground">{t('ntLinkIcon')}</span>
-					<input
-						value={icon}
-						onChange={(e) => setIcon(e.target.value)}
-						className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					/>
-				</label>
-				<div className="mt-4 flex justify-end gap-2">
-					<button
-						type="button"
-						onClick={onClose}
-						className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent cursor-pointer"
-					>
-						{t('ntCancel')}
-					</button>
-					<button
-						type="button"
-						onClick={submit}
-						className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 cursor-pointer"
-					>
-						{t('ntSave')}
-					</button>
-				</div>
+				<form
+					onSubmit={(e) => {
+						e.preventDefault()
+						submit()
+					}}
+				>
+					<label className="block space-y-1">
+						<span className="text-xs text-muted-foreground">{t('ntLinkTitle')}</span>
+						<input
+							autoFocus
+							value={title}
+							onChange={(e) => setTitle(e.target.value)}
+							className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						/>
+					</label>
+					<label className="mt-3 block space-y-1">
+						<span className="text-xs text-muted-foreground">{t('ntLinkUrl')}</span>
+						<input
+							value={url}
+							onChange={(e) => setUrl(e.target.value)}
+							placeholder="example.com"
+							className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						/>
+					</label>
+					<label className="mt-3 block space-y-1">
+						<span className="text-xs text-muted-foreground">{t('ntLinkIcon')}</span>
+						<input
+							value={icon}
+							onChange={(e) => setIcon(e.target.value)}
+							className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						/>
+					</label>
+					<div className="mt-4 flex justify-end gap-2">
+						<button
+							type="button"
+							onClick={onClose}
+							className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent cursor-pointer"
+						>
+							{t('ntCancel')}
+						</button>
+						<button
+							type="submit"
+							className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 cursor-pointer"
+						>
+							{t('ntSave')}
+						</button>
+					</div>
+				</form>
 			</div>
 		</div>
 	)

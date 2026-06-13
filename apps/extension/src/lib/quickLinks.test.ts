@@ -63,4 +63,14 @@ describe('CRUD + reorder', () => {
 	it('reorders to index', () => {
 		expect(reorderQuickLinks(base, '2', 0).map((l) => l.id)).toEqual(['2', '1'])
 	})
+	it('reorders forward without off-by-one (insert before drop target)', () => {
+		const four = [
+			{ id: 'a', title: 'A', url: 'https://a.test/' },
+			{ id: 'b', title: 'B', url: 'https://b.test/' },
+			{ id: 'c', title: 'C', url: 'https://c.test/' },
+			{ id: 'd', title: 'D', url: 'https://d.test/' },
+		]
+		expect(reorderQuickLinks(four, 'a', 2).map((l) => l.id)).toEqual(['b', 'a', 'c', 'd'])
+		expect(reorderQuickLinks(four, 'd', 1).map((l) => l.id)).toEqual(['a', 'd', 'b', 'c'])
+	})
 })

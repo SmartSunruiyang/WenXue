@@ -26,7 +26,9 @@ export default function App() {
 	const { t } = useI18n()
 	const [links, setLinks] = useState<QuickLink[] | null>(null)
 	const [onboardingDone, setOnboardingDone] = useState(true)
-	const [mode, setMode] = useState<'intro' | 'calm'>('calm')
+	const [mode, setMode] = useState<'intro' | 'calm'>(() =>
+		decideMode({ introPlayed: hasIntroPlayed(), reducedMotion: prefersReducedMotion() }),
+	)
 	const [introKey, setIntroKey] = useState(0)
 	const dark =
 		typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
@@ -34,7 +36,6 @@ export default function App() {
 	useEffect(() => {
 		loadQuickLinks().then(setLinks)
 		loadOnboardingDone().then(setOnboardingDone)
-		setMode(decideMode({ introPlayed: hasIntroPlayed(), reducedMotion: prefersReducedMotion() }))
 	}, [])
 
 	const updateLinks = (next: QuickLink[]) => {
