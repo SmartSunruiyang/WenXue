@@ -1,7 +1,49 @@
+import { useEffect, useState } from 'react'
+
+import { MotionOverlay } from '@/components/misc'
+import { BrandHero } from '@/components/newtab/BrandHero'
+import { OnboardingChecklist } from '@/components/newtab/OnboardingChecklist'
+import { QuickLinksGrid } from '@/components/newtab/QuickLinksGrid'
+import { SettingsEntry } from '@/components/newtab/SettingsEntry'
+import type { QuickLink } from '@/lib/quickLinks'
+import {
+	loadOnboardingDone,
+	loadQuickLinks,
+	saveOnboardingDone,
+	saveQuickLinks,
+} from '@/lib/quickLinksStorage'
+
 export default function App() {
+	const [links, setLinks] = useState<QuickLink[] | null>(null)
+	const [onboardingDone, setOnboardingDone] = useState(true)
+
+	useEffect(() => {
+		loadQuickLinks().then(setLinks)
+		loadOnboardingDone().then(setOnboardingDone)
+	}, [])
+
+	const updateLinks = (next: QuickLink[]) => {
+		setLinks(next)
+		saveQuickLinks(chrome.storage.local, next)
+	}
+	const markOnboarding = (done: boolean) => {
+		setOnboardingDone(done)
+		saveOnboardingDone(chrome.storage.local, done)
+	}
+
 	return (
-		<div className="relative min-h-screen w-full bg-background text-foreground flex items-center justify-center">
-			<p className="text-muted-foreground text-sm">问学 · 新标签页</p>
+		<div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground">
+			<MotionOverlay active />
+
+			<div className="absolute right-5 top-5 z-20">
+				<SettingsEntry />
+			</div>
+
+			<main className="relative z-10 mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center gap-8 px-6 py-16">
+				<BrandHero />
+				{links && <QuickLinksGrid links={links} onChange={updateLinks} />}
+				<OnboardingChecklist done={onboardingDone} onDone={markOnboarding} />
+			</main>
 		</div>
 	)
 }
