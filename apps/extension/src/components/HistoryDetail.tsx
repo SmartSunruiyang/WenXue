@@ -1,4 +1,4 @@
-import { ArrowLeft, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RotateCcw, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -11,10 +11,14 @@ export function HistoryDetail({
 	sessionId,
 	onBack,
 	onRerun,
+	onGoToSession,
+	canGoToSession = true,
 }: {
 	sessionId: string
 	onBack: () => void
 	onRerun: (task: string) => void
+	onGoToSession: (session: SessionRecord) => void
+	canGoToSession?: boolean
 }) {
 	const { t } = useI18n()
 	const [session, setSession] = useState<SessionRecord | null>(null)
@@ -40,6 +44,19 @@ export function HistoryDetail({
 				</Button>
 				<span className="text-sm font-medium truncate">{t('history')}</span>
 				<div className="ml-auto flex items-center gap-2">
+					<Button
+						type="button"
+						variant="secondary"
+						size="sm"
+						onClick={() => onGoToSession(session)}
+						disabled={!canGoToSession}
+						className="h-7 px-2 text-[10px]"
+						aria-label={`${t('goToSession')}: ${session.task}`}
+						title={t('goToSession')}
+					>
+						<ArrowRight className="size-3" />
+						{t('goToSession')}
+					</Button>
 					<button
 						type="button"
 						onClick={() => onRerun(session.task)}

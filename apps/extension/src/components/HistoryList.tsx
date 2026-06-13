@@ -1,6 +1,7 @@
 import {
 	ArrowDownToLine,
 	ArrowLeft,
+	ArrowRight,
 	CheckCircle,
 	History,
 	RotateCcw,
@@ -29,14 +30,26 @@ export function HistoryList({
 	onSelect,
 	onBack,
 	onRerun,
+	onGoToSession,
+	canGoToSession = true,
+	enterOrigin,
 }: {
 	onSelect: (id: string) => void
 	onBack: () => void
 	onRerun: (task: string) => void
+	onGoToSession: (session: SessionRecord) => void
+	canGoToSession?: boolean
+	enterOrigin?: { x: number; y: number } | null
 }) {
 	const { t } = useI18n()
 	const [sessions, setSessions] = useState<SessionRecord[]>([])
 	const [loading, setLoading] = useState(true)
+	const surfaceStyle = enterOrigin
+		? ({
+				'--wx-history-origin-x': `${enterOrigin.x}px`,
+				'--wx-history-origin-y': `${enterOrigin.y}px`,
+			} as React.CSSProperties)
+		: undefined
 
 	const load = useCallback(async () => {
 		try {
@@ -68,10 +81,24 @@ export function HistoryList({
 		onRerun(task)
 	}
 
+	const handleGoToSession = (e: React.MouseEvent, session: SessionRecord) => {
+		e.stopPropagation()
+		onGoToSession(session)
+	}
+
+	const handleCardKeyDown = (e: React.KeyboardEvent, id: string) => {
+		if (e.key !== 'Enter' && e.key !== ' ') return
+		e.preventDefault()
+		onSelect(id)
+	}
+
 	return (
-		<div className="flex flex-col h-screen bg-background">
+		<div
+			className="wx-history-surface flex h-screen flex-col overflow-hidden bg-background"
+			style={surfaceStyle}
+		>
 			{/* Header */}
-			<header className="flex items-center gap-2 border-b px-3 py-2">
+			<header className="relative z-10 flex items-center gap-2 px-3 py-2">
 				<Button
 					variant="ghost"
 					size="icon-sm"
@@ -100,11 +127,14 @@ export function HistoryList({
 			</header>
 
 			{/* List */}
-			<div className="flex-1 overflow-y-auto">
+			<div className="relative z-10 flex-1 space-y-2 overflow-y-auto px-3 pb-3 pt-2">
 				{loading && (
-					<div className="flex flex-col" aria-label="Loading history" aria-busy="true">
+					<div className="space-y-2" aria-label="Loading history" aria-busy="true">
 						{[...Array(4)].map((_, i) => (
-							<div key={i} className="flex items-start gap-2 px-3 py-2.5 border-b">
+							<div
+								key={i}
+								className="flex items-start gap-2 rounded-lg border border-border/50 bg-card/70 p-3 shadow-sm"
+							>
 								<div className="size-3.5 mt-0.5 rounded-full bg-muted animate-pulse shrink-0" />
 								<div className="flex-1 space-y-1.5">
 									<div className="h-2.5 bg-muted animate-pulse rounded w-3/4" />
@@ -116,7 +146,7 @@ export function HistoryList({
 				)}
 
 				{!loading && sessions.length === 0 && (
-					<div className="flex flex-col items-center justify-center h-40 gap-2 text-muted-foreground">
+					<div className="flex h-40 flex-col items-center justify-center gap-2 text-muted-foreground">
 						<History className="size-8 opacity-30" />
 						<p className="text-xs">{t('noHistory')}</p>
 					</div>
@@ -128,7 +158,8 @@ export function HistoryList({
 						role="button"
 						tabIndex={0}
 						onClick={() => onSelect(session.id)}
-						className="w-full text-left px-3 py-2.5 border-b hover:bg-muted/50 transition-colors cursor-pointer flex items-start gap-2 group"
+						onKeyDown={(e) => handleCardKeyDown(e, session.id)}
+						className="group flex w-full cursor-pointer items-start gap-2 rounded-lg border border-border/60 bg-card/85 p-3 text-left shadow-[0_8px_24px_rgb(0_0_0/0.05)] transition-all hover:-translate-y-0.5 hover:border-border hover:bg-card hover:shadow-[0_12px_30px_rgb(0_0_0/0.08)] focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-card/70"
 					>
 						{/* Status icon */}
 						{session.status === 'completed' ? (
@@ -138,13 +169,28 @@ export function HistoryList({
 						)}
 
 						{/* Content */}
-						<div className="flex-1 min-w-0">
+						<div className="min-w-0 flex-1">
 							<p className="text-xs font-medium truncate">{session.task}</p>
-							<div className="flex items-center mt-0.5">
+							<div className="mt-0.5 flex items-center">
 								<p className="text-[10px] text-muted-foreground">
 									{timeAgo(session.createdAt, t)} · {session.history.length} {t('steps')}
 								</p>
-								<div className="flex items-center gap-0.5 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+							</div>
+							<div className="mt-2 flex items-center gap-1.5">
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									onClick={(e) => handleGoToSession(e, session)}
+									disabled={!canGoToSession}
+									className="h-6 rounded-md px-2 text-[10px]"
+									title={t('goToSession')}
+									aria-label={`${t('goToSession')}: ${session.task}`}
+								>
+									<ArrowRight className="size-3" />
+									{t('goToSession')}
+								</Button>
+								<div className="ml-auto flex items-center gap-0.5">
 									<button
 										type="button"
 										onClick={(e) => handleRerun(e, session.task)}

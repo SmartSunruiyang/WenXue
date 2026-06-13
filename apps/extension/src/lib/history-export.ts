@@ -1,6 +1,6 @@
 import type { HistoricalEvent } from '@page-agent/core'
 
-const EXPORT_FILE_PREFIX = 'page-agent-history'
+const EXPORT_FILE_PREFIX = 'wenxue-history'
 const MAX_TASK_SLUG_LENGTH = 40
 
 export function serializeHistoryExport(history: HistoricalEvent[]): string {
@@ -19,7 +19,7 @@ export function buildHistoryExportFilename(task: string, createdAt: number): str
 export function downloadHistoryExport(
 	task: string,
 	createdAt: number,
-	history: HistoricalEvent[]
+	history: HistoricalEvent[],
 ): void {
 	const filename = buildHistoryExportFilename(task, createdAt)
 	const content = serializeHistoryExport(history)

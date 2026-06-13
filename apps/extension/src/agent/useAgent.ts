@@ -43,6 +43,7 @@ export interface UseAgentResult {
 	execute: (task: string) => Promise<ExecutionResult>
 	stop: () => void
 	resetConversation: () => boolean
+	restoreConversation: (session: RestorableAgentConversation) => boolean
 	configure: (config: ExtConfig) => Promise<void>
 }
 
@@ -58,6 +59,12 @@ export type AgentConversationContent = Pick<
 	'history' | 'activity' | 'currentTask'
 >
 
+export interface RestorableAgentConversation {
+	task: string
+	history: HistoricalEvent[]
+	status: Extract<AgentStatus, 'completed' | 'error'>
+}
+
 export function hasAgentConversationContent({
 	currentTask,
 	history,
@@ -72,6 +79,19 @@ export function createClearedAgentConversationState(): AgentConversationState {
 		history: [],
 		activity: null,
 		currentTask: '',
+	}
+}
+
+export function createRestoredAgentConversationState({
+	task,
+	history,
+	status,
+}: RestorableAgentConversation): AgentConversationState {
+	return {
+		status,
+		history: [...history],
+		activity: null,
+		currentTask: task,
 	}
 }
 
@@ -159,6 +179,17 @@ export function useAgent(): UseAgentResult {
 		return true
 	}, [])
 
+	const restoreConversation = useCallback((session: RestorableAgentConversation) => {
+		if (agentRef.current?.status === 'running') return false
+
+		const nextState = createRestoredAgentConversationState(session)
+		setStatus(nextState.status)
+		setHistory(nextState.history)
+		setActivity(nextState.activity)
+		setCurrentTask(nextState.currentTask)
+		return true
+	}, [])
+
 	const configure = useCallback(async (nextConfig: ExtConfig) => {
 		setConfig(await saveStoredConfig(chrome.storage.local, nextConfig))
 	}, [])
@@ -172,6 +203,7 @@ export function useAgent(): UseAgentResult {
 		execute,
 		stop,
 		resetConversation,
+		restoreConversation,
 		configure,
 	}
 }

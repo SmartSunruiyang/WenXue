@@ -24,6 +24,13 @@ describe('normalizeUrl', () => {
 })
 
 describe('normalizeQuickLinks', () => {
+	it('uses the WenXue default quick entries in order', () => {
+		expect(DEFAULT_QUICK_LINKS.map(({ title, url }) => ({ title, url }))).toEqual([
+			{ title: '百度', url: 'https://www.baidu.com' },
+			{ title: '学习通', url: 'https://www.chaoxing.com' },
+			{ title: '必应中国', url: 'https://cn.bing.com' },
+		])
+	})
 	it('falls back to defaults for non-array', () => {
 		expect(normalizeQuickLinks(undefined)).toEqual(DEFAULT_QUICK_LINKS)
 	})

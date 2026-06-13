@@ -197,7 +197,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：NewTabHome（L5）
-- 职责：接管新标签页；首次 onboarding、快捷入口仪表盘（增删改排序）、设置入口、液态玻璃入场动效
+- 职责：接管新标签页；首次 onboarding、快捷入口仪表盘（增删改排序）、设置/刷新入口、白底同步滑入动效
 - 不负责：不实现 Agent 循环 / 不发 LLM 请求 / 不收集 API Key / 不跨域调用桌面端
 - 输入：chrome.storage.local（QuickLink、newtabOnboardingDone）、@page-agent/ui、openExtensionOptionsPage
 - 输出：用户；经 chrome.tabs 打开站点

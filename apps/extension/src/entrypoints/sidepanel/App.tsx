@@ -23,7 +23,7 @@ import {
 	InputGroupButton,
 	InputGroupTextarea,
 } from '@/components/ui/input-group'
-import { saveSession } from '@/lib/db'
+import { type SessionRecord, saveSession } from '@/lib/db'
 import { openExtensionOptionsPage } from '@/lib/extensionPages'
 import type { UILanguage } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n'
@@ -64,8 +64,14 @@ export default function App() {
 		execute,
 		stop,
 		resetConversation,
+		restoreConversation,
 		configure,
 	} = useAgent()
+	const isRunning = status === 'running'
+	const hasVisibleConversation = hasAgentConversationContent({ currentTask, history, activity })
+	const [historyEnterOrigin, setHistoryEnterOrigin] = useState<{ x: number; y: number } | null>(
+		null,
+	)
 
 	// Persist session when task finishes
 	const prevStatusRef = useRef(status)
@@ -107,6 +113,30 @@ export default function App() {
 		[execute, status],
 	)
 
+	const handleOpenHistory = useCallback((button: HTMLButtonElement) => {
+		const rect = button.getBoundingClientRect()
+
+		setHistoryEnterOrigin({
+			x: rect.left + rect.width / 2,
+			y: rect.top + rect.height / 2,
+		})
+		setView({ name: 'history' })
+	}, [])
+
+	const handleGoToSession = useCallback(
+		(session: SessionRecord) => {
+			if (!restoreConversation(session)) return
+
+			setInputValue('')
+			setView({ name: 'chat' })
+			window.requestAnimationFrame(() => {
+				if (historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight
+				textareaRef.current?.focus()
+			})
+		},
+		[restoreConversation],
+	)
+
 	const handleSubmit = useCallback(
 		(e?: React.SyntheticEvent) => {
 			e?.preventDefault()
@@ -143,6 +173,9 @@ export default function App() {
 				onSelect={(id) => setView({ name: 'history-detail', sessionId: id })}
 				onBack={() => setView({ name: 'chat' })}
 				onRerun={runTask}
+				onGoToSession={handleGoToSession}
+				canGoToSession={!isRunning}
+				enterOrigin={historyEnterOrigin}
 			/>
 		)
 	}
@@ -153,14 +186,14 @@ export default function App() {
 				sessionId={view.sessionId}
 				onBack={() => setView({ name: 'history' })}
 				onRerun={runTask}
+				onGoToSession={handleGoToSession}
+				canGoToSession={!isRunning}
 			/>
 		)
 	}
 
 	// --- Chat view ---
 
-	const isRunning = status === 'running'
-	const hasVisibleConversation = hasAgentConversationContent({ currentTask, history, activity })
 	const showEmptyState = !hasVisibleConversation && !isRunning
 	const handleNewConversation = () => {
 		if (isRunning || clearingConversation) return
@@ -214,7 +247,7 @@ export default function App() {
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						onClick={() => setView({ name: 'history' })}
+						onClick={(event) => handleOpenHistory(event.currentTarget)}
 						className={cn('cursor-pointer', clearingConversation && 'wx-history-collect-target')}
 						aria-label={t('history')}
 						title={t('history')}

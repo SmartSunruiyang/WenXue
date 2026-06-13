@@ -36,11 +36,11 @@ export function QuickLinksGrid({ links, onChange }: Props) {
 	const [dragId, setDragId] = useState<string | null>(null)
 
 	return (
-		<div className="w-full">
-			<p className="mb-2 px-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+		<div className="flex w-full flex-col items-center">
+			<p className="mb-2 px-1 text-center text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
 				{t('ntQuickLinks')}
 			</p>
-			<div className="grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2">
+			<div className="flex w-full max-w-[38rem] flex-wrap justify-center gap-2">
 				{links.map((link, index) => (
 					<div
 						key={link.id}
@@ -51,7 +51,7 @@ export function QuickLinksGrid({ links, onChange }: Props) {
 							if (dragId && dragId !== link.id) onChange(reorderQuickLinks(links, dragId, index))
 							setDragId(null)
 						}}
-						className="group relative flex flex-col items-center gap-1.5 rounded-xl border bg-card p-3 transition-colors hover:bg-accent"
+						className="group relative flex min-h-[76px] w-[104px] flex-col items-center gap-1.5 rounded-xl border bg-card p-3 transition-colors hover:bg-accent"
 					>
 						<a
 							href={link.url}
@@ -91,7 +91,7 @@ export function QuickLinksGrid({ links, onChange }: Props) {
 						setDragId(null)
 					}}
 					aria-label={t('ntAddLink')}
-					className="flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+					className="flex min-h-[76px] w-[104px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
 				>
 					<Plus className="size-5" />
 					<span className="text-xs">{t('ntAddLink')}</span>
