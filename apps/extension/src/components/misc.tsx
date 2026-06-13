@@ -34,22 +34,13 @@ export function StatusDot({ status }: { status: AgentStatus }) {
 }
 
 export function Logo({ className }: { className?: string }) {
-	return (
-		<img
-			src="/assets/wenxue-logo-1254.png"
-			alt="问学 WenXue"
-			className={cn('', className)}
-		/>
-	)
+	return <img src="/assets/wenxue-logo-1254.png" alt="问学 WenXue" className={cn('', className)} />
 }
 
 // Full-screen liquid-glass frame, shown only while running (UIUX §5)
 export function MotionOverlay({ active }: { active: boolean }) {
 	return (
-		<div
-			aria-hidden
-			className={cn('wx-liquid-frame z-10 overflow-hidden', active && 'wx-active')}
-		>
+		<div aria-hidden className={cn('wx-liquid-frame z-10 overflow-hidden', active && 'wx-active')}>
 			<div className="wx-liquid-glass" />
 			<div className="wx-liquid-flow" />
 			<div className="wx-liquid-flow wx-liquid-flow--alt" />
@@ -62,14 +53,14 @@ export function MotionOverlay({ active }: { active: boolean }) {
 // Empty state with logo
 export function EmptyState() {
 	return (
-		<div className="flex flex-col items-center justify-center h-full gap-4 text-center px-6">
-			<div className="wx-empty-logo-float grid place-items-center">
-				<Logo className="wx-empty-logo size-20 select-none pointer-events-none" />
+		<div className="wx-brand-stack flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+			<div className="wx-brand-logo-motion grid place-items-center">
+				<Logo className="wx-brand-logo size-20 select-none pointer-events-none" />
 			</div>
 			<img
 				src="/assets/wenxue-slogan.png"
 				alt="问学 — ask for everything"
-				className="w-56 max-w-full select-none pointer-events-none"
+				className="wx-brand-slogan w-56 max-w-full select-none pointer-events-none"
 			/>
 		</div>
 	)

@@ -44,7 +44,7 @@ import {
 
 type View = { name: 'chat' } | { name: 'history' } | { name: 'history-detail'; sessionId: string }
 
-const NEW_CONVERSATION_DELETE_ANIMATION_MS = 180
+const NEW_CONVERSATION_COLLECT_ANIMATION_MS = 520
 
 export default function App() {
 	const [view, setView] = useState<View>({ name: 'chat' })
@@ -178,7 +178,7 @@ export default function App() {
 			setClearingConversation(false)
 			clearConversationTimeoutRef.current = null
 			window.requestAnimationFrame(() => textareaRef.current?.focus())
-		}, NEW_CONVERSATION_DELETE_ANIMATION_MS)
+		}, NEW_CONVERSATION_COLLECT_ANIMATION_MS)
 	}
 
 	return (
@@ -205,14 +205,17 @@ export default function App() {
 						title={t('newConversation')}
 					>
 						<Plus
-							className={cn('size-3.5 transition-transform', clearingConversation && 'rotate-45')}
+							className={cn(
+								'size-3.5 transition-all',
+								clearingConversation && 'scale-75 opacity-50',
+							)}
 						/>
 					</Button>
 					<Button
 						variant="ghost"
 						size="icon-sm"
 						onClick={() => setView({ name: 'history' })}
-						className="cursor-pointer"
+						className={cn('cursor-pointer', clearingConversation && 'wx-history-collect-target')}
 						aria-label={t('history')}
 						title={t('history')}
 					>
@@ -228,8 +231,7 @@ export default function App() {
 					ref={historyRef}
 					className={cn(
 						'min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-4 pt-2',
-						clearingConversation &&
-							'pointer-events-none motion-safe:animate-out motion-safe:fade-out-0 motion-safe:slide-out-to-bottom-2 motion-safe:zoom-out-95 motion-reduce:opacity-0',
+						clearingConversation && 'wx-conversation-collect-to-history pointer-events-none',
 					)}
 					aria-hidden={clearingConversation || undefined}
 				>

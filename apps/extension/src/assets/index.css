@@ -133,27 +133,47 @@
 	}
 }
 
-/* ---- Empty state WenXue logo floating breath ---- */
+/* ---- Sidepanel home brand mark ---- */
 
-.wx-empty-logo-float {
+.wx-brand-stack {
+	animation: wx-brand-stack-reveal 0.95s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.wx-brand-logo-motion {
 	position: relative;
-	animation: wx-empty-logo-float 4.2s ease-in-out infinite;
+	animation: wx-brand-logo-hover 4.8s ease-in-out infinite;
 	transform-origin: center;
 }
 
-.wx-empty-logo {
+.wx-brand-logo {
 	position: relative;
 	z-index: 1;
 	opacity: 0.9;
-	animation: wx-empty-logo-breathe 4.2s ease-in-out infinite;
+	animation: wx-brand-logo-breathe 4.8s ease-in-out infinite;
 	transform-origin: center;
 }
 
-.dark .wx-empty-logo {
+.wx-brand-slogan {
+	opacity: 0.88;
+	animation: wx-brand-slogan-reveal 1.05s cubic-bezier(0.2, 0.8, 0.2, 1) 0.12s both;
+}
+
+.dark .wx-brand-logo {
 	filter: invert(1);
 }
 
-@keyframes wx-empty-logo-float {
+@keyframes wx-brand-stack-reveal {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes wx-brand-logo-hover {
 	0%,
 	100% {
 		transform: translateY(0);
@@ -163,23 +183,115 @@
 	}
 }
 
-@keyframes wx-empty-logo-breathe {
+@keyframes wx-brand-logo-breathe {
 	0%,
 	100% {
 		opacity: 0.88;
 		transform: scale(1);
 	}
 	50% {
-		opacity: 0.96;
-		transform: scale(1.018);
+		opacity: 0.98;
+		transform: scale(1.022);
+	}
+}
+
+@keyframes wx-brand-slogan-reveal {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 0.88;
+		transform: translateY(0);
+	}
+}
+
+.wx-conversation-collect-to-history {
+	position: relative;
+	transform-origin: calc(100% - 12px) -26px;
+	will-change: transform, opacity, filter;
+	animation: wx-conversation-collect-to-history 0.52s cubic-bezier(0.16, 0.84, 0.22, 1) both;
+}
+
+.wx-conversation-collect-to-history::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background:
+		radial-gradient(circle at 82% 8%, rgb(255 255 255 / 0.75), transparent 12%),
+		radial-gradient(circle at 68% 18%, rgb(96 216 190 / 0.28), transparent 18%),
+		radial-gradient(circle at 92% 4%, rgb(122 162 255 / 0.32), transparent 16%);
+	opacity: 0;
+	animation: wx-conversation-collect-spark 0.52s ease-out both;
+}
+
+.wx-history-collect-target {
+	animation: wx-history-collect-target 0.62s cubic-bezier(0.16, 0.84, 0.22, 1) both;
+}
+
+@keyframes wx-conversation-collect-to-history {
+	0% {
+		opacity: 1;
+		filter: blur(0);
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+	48% {
+		opacity: 0.9;
+		filter: blur(1px);
+		transform: translate3d(18%, -12%, 0) scale(0.72);
+	}
+	100% {
+		opacity: 0;
+		filter: blur(8px);
+		transform: translate3d(48%, -42%, 0) scale(0.08);
+	}
+}
+
+@keyframes wx-conversation-collect-spark {
+	20% {
+		opacity: 0;
+	}
+	58% {
+		opacity: 1;
+		transform: scale(0.92);
+	}
+	100% {
+		opacity: 0;
+		transform: scale(0.18) translate3d(46%, -36%, 0);
+	}
+}
+
+@keyframes wx-history-collect-target {
+	0%,
+	100% {
+		transform: scale(1);
+		box-shadow: none;
+	}
+	54% {
+		transform: scale(1.12);
+		box-shadow: 0 0 0 7px rgb(0 0 0 / 0.08);
+	}
+	72% {
+		transform: scale(0.96);
+		box-shadow: 0 0 0 3px rgb(0 0 0 / 0.04);
 	}
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.wx-empty-logo-float,
-	.wx-empty-logo {
+	.wx-brand-stack,
+	.wx-brand-logo-motion,
+	.wx-brand-logo,
+	.wx-brand-slogan,
+	.wx-conversation-collect-to-history,
+	.wx-conversation-collect-to-history::after,
+	.wx-history-collect-target {
 		animation: none;
 		transform: none;
+	}
+
+	.wx-conversation-collect-to-history {
+		opacity: 0;
 	}
 }
 

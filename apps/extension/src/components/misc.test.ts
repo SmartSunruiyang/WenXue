@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url'
 import { isValidElement, type ReactElement } from 'react'
 import { describe, expect, test } from 'vitest'
 
-import { Logo } from './misc'
+import { EmptyState, Logo } from './misc'
 
 const HIGH_RES_LOGO_SRC = '/assets/wenxue-logo-1254.png'
 const HIGH_RES_LOGO_FILE = fileURLToPath(
-	new URL('../../public/assets/wenxue-logo-1254.png', import.meta.url)
+	new URL('../../public/assets/wenxue-logo-1254.png', import.meta.url),
 )
 
 function readPngDimensions(filePath: string) {
@@ -35,5 +35,20 @@ describe('Logo', () => {
 
 		expect(dimensions.width).toBeGreaterThanOrEqual(1024)
 		expect(dimensions.height).toBeGreaterThanOrEqual(1024)
+	})
+})
+
+describe('EmptyState', () => {
+	test('renders only the centered animated brand mark and slogan on the sidepanel home', () => {
+		const emptyState = EmptyState() as ReactElement<{ className: string; children: ReactElement[] }>
+		const [logoWrap, slogan] = emptyState.props.children
+		const logo = logoWrap.props.children as ReactElement<{ className: string }>
+
+		expect(emptyState.props.className).toContain('wx-brand-stack')
+		expect(logoWrap.props.className).toContain('wx-brand-logo-motion')
+		expect(logo.props.className).toContain('wx-brand-logo')
+		expect(logo.props.className).not.toContain('shadow')
+		expect(slogan.props.className).toContain('wx-brand-slogan')
+		expect(emptyState.props.children).toHaveLength(2)
 	})
 })
