@@ -4,6 +4,7 @@ import {
 	EllipsisVertical,
 	History,
 	Languages,
+	Plus,
 	Send,
 	Settings,
 	Square,
@@ -34,18 +35,37 @@ import {
 } from '@/lib/modelConfig'
 import { cn } from '@/lib/utils'
 
-import { type ExtConfig, type LanguagePreference, useAgent } from '../../agent/useAgent'
+import {
+	type ExtConfig,
+	type LanguagePreference,
+	hasAgentConversationContent,
+	useAgent,
+} from '../../agent/useAgent'
 
 type View = { name: 'chat' } | { name: 'history' } | { name: 'history-detail'; sessionId: string }
+
+const NEW_CONVERSATION_DELETE_ANIMATION_MS = 180
 
 export default function App() {
 	const [view, setView] = useState<View>({ name: 'chat' })
 	const [inputValue, setInputValue] = useState('')
+	const [clearingConversation, setClearingConversation] = useState(false)
 	const historyRef = useRef<HTMLDivElement>(null)
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
+	const clearConversationTimeoutRef = useRef<number | null>(null)
 	const { t } = useI18n()
 
-	const { status, history, activity, currentTask, config, execute, stop, configure } = useAgent()
+	const {
+		status,
+		history,
+		activity,
+		currentTask,
+		config,
+		execute,
+		stop,
+		resetConversation,
+		configure,
+	} = useAgent()
 
 	// Persist session when task finishes
 	const prevStatusRef = useRef(status)
@@ -100,6 +120,14 @@ export default function App() {
 		stop()
 	}, [stop])
 
+	useEffect(() => {
+		return () => {
+			if (clearConversationTimeoutRef.current) {
+				window.clearTimeout(clearConversationTimeoutRef.current)
+			}
+		}
+	}, [])
+
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
 			e.preventDefault()
@@ -132,7 +160,26 @@ export default function App() {
 	// --- Chat view ---
 
 	const isRunning = status === 'running'
-	const showEmptyState = !currentTask && history.length === 0 && !isRunning
+	const hasVisibleConversation = hasAgentConversationContent({ currentTask, history, activity })
+	const showEmptyState = !hasVisibleConversation && !isRunning
+	const handleNewConversation = () => {
+		if (isRunning || clearingConversation) return
+
+		setView({ name: 'chat' })
+		if (!hasVisibleConversation) {
+			resetConversation()
+			textareaRef.current?.focus()
+			return
+		}
+
+		setClearingConversation(true)
+		clearConversationTimeoutRef.current = window.setTimeout(() => {
+			resetConversation()
+			setClearingConversation(false)
+			clearConversationTimeoutRef.current = null
+			window.requestAnimationFrame(() => textareaRef.current?.focus())
+		}, NEW_CONVERSATION_DELETE_ANIMATION_MS)
+	}
 
 	return (
 		<div className="relative flex h-screen w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-background">
@@ -151,6 +198,19 @@ export default function App() {
 					<Button
 						variant="ghost"
 						size="icon-sm"
+						onClick={handleNewConversation}
+						disabled={isRunning || clearingConversation}
+						className="cursor-pointer"
+						aria-label={t('newConversation')}
+						title={t('newConversation')}
+					>
+						<Plus
+							className={cn('size-3.5 transition-transform', clearingConversation && 'rotate-45')}
+						/>
+					</Button>
+					<Button
+						variant="ghost"
+						size="icon-sm"
 						onClick={() => setView({ name: 'history' })}
 						className="cursor-pointer"
 						aria-label={t('history')}
@@ -166,7 +226,12 @@ export default function App() {
 			<main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 				<div
 					ref={historyRef}
-					className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-4 pt-2"
+					className={cn(
+						'min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-4 pt-2',
+						clearingConversation &&
+							'pointer-events-none motion-safe:animate-out motion-safe:fade-out-0 motion-safe:slide-out-to-bottom-2 motion-safe:zoom-out-95 motion-reduce:opacity-0',
+					)}
+					aria-hidden={clearingConversation || undefined}
 				>
 					{showEmptyState ? (
 						<EmptyState />
