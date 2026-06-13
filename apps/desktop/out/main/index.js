@@ -25,8 +25,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const log = require("electron-log/main");
 const fs$1 = require("node:fs/promises");
-const childProcess = require("node:child_process");
 const node_module = require("node:module");
+const childProcess = require("node:child_process");
 require("node:events");
 const os = require("node:os");
 require("node:readline");
@@ -65,134 +65,6 @@ class AppPaths {
     await fs$1.mkdir(this.profilesRoot(), { recursive: true });
     await fs$1.mkdir(this.logsDir(), { recursive: true });
   }
-}
-function buildArgv(opts) {
-  const argv = [
-    `--user-data-dir=${opts.userDataDir}`,
-    `--load-extension=${opts.extensionDir}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--hide-crash-restore-bubble"
-  ];
-  if (opts.debugPipe) {
-    argv.push("--remote-debugging-pipe");
-  }
-  if (opts.startUrl) {
-    argv.push(opts.startUrl);
-  }
-  return argv;
-}
-class BrowserSupervisor {
-  constructor(deps) {
-    this.deps = deps;
-    this.listeners = /* @__PURE__ */ new Set();
-    this.statusValue = "idle";
-    this.spawnBrowser = deps.spawnBrowser ?? defaultSpawnBrowser;
-    this.focusExisting = deps.focusExisting ?? defaultFocusExisting;
-  }
-  async launch(profileId = "default") {
-    if (this.statusValue === "launching") return;
-    if (this.statusValue === "running") {
-      if (this.currentBinary && this.currentArgv) {
-        await this.focusExisting(this.currentBinary, this.currentArgv);
-      }
-      return;
-    }
-    const userDataDir = await this.deps.profiles.ensureProfile(profileId);
-    const binary = this.deps.resources.browserBinary();
-    const argv = buildArgv({
-      userDataDir,
-      extensionDir: this.deps.resources.extensionDir()
-    });
-    this.setStatus("launching");
-    let child;
-    try {
-      child = this.spawnBrowser(binary, argv);
-    } catch (error) {
-      this.clearCurrentProcess();
-      this.setStatus("error");
-      throw error;
-    }
-    this.child = child;
-    this.currentBinary = binary;
-    this.currentArgv = [...argv];
-    this.attachBrowserLogs(profileId, child);
-    this.bindChildEvents(child);
-  }
-  status() {
-    return this.statusValue;
-  }
-  onStatusChange(cb) {
-    this.listeners.add(cb);
-    return () => {
-      this.listeners.delete(cb);
-    };
-  }
-  async requestShutdown() {
-    const child = this.child;
-    if (!child) return;
-    await new Promise((resolve) => {
-      let settled = false;
-      const settle = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve();
-      };
-      const timer = setTimeout(settle, 2e3);
-      child.on("exit", settle);
-      this.shutdownRequestedFor = child;
-      child.kill();
-    });
-  }
-  bindChildEvents(child) {
-    child.on("spawn", () => {
-      if (this.child === child) {
-        this.setStatus("running");
-      }
-    });
-    child.on("error", (error) => {
-      if (this.child !== child) return;
-      this.deps.logger.log("BrowserSupervisor", "error", error.message);
-      this.clearCurrentProcess();
-      this.setStatus("error");
-    });
-    child.on("exit", (code, signal) => {
-      if (this.child !== child) return;
-      const wasRequestedShutdown = this.shutdownRequestedFor === child;
-      const wasNormalExit = (code === 0 || code === null) && signal === null;
-      this.clearCurrentProcess();
-      this.setStatus(wasRequestedShutdown || wasNormalExit ? "idle" : "error");
-    });
-  }
-  attachBrowserLogs(profileId, child) {
-    if (child.stdout) {
-      this.deps.logger.attachStream(profileId, child.stdout);
-    }
-    if (child.stderr) {
-      this.deps.logger.attachStream(profileId, child.stderr);
-    }
-  }
-  clearCurrentProcess() {
-    this.child = void 0;
-    this.shutdownRequestedFor = void 0;
-    this.currentBinary = void 0;
-    this.currentArgv = void 0;
-  }
-  setStatus(next) {
-    if (next === this.statusValue) return;
-    this.statusValue = next;
-    this.listeners.forEach((listener) => {
-      listener(next);
-    });
-  }
-}
-function defaultSpawnBrowser(binary, argv) {
-  return childProcess.spawn(binary, argv, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
-}
-function defaultFocusExisting(binary, argv) {
-  const process2 = childProcess.spawn(binary, argv, { detached: true, stdio: "ignore" });
-  process2.unref();
 }
 /**
  * @license
@@ -897,6 +769,135 @@ function createBrowserResources(options) {
     }
   };
 }
+function buildArgv(opts) {
+  const argv = [
+    `--user-data-dir=${opts.userDataDir}`,
+    `--load-extension=${opts.extensionDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--hide-crash-restore-bubble"
+  ];
+  if (opts.debugPipe) {
+    argv.push("--remote-debugging-pipe");
+  }
+  if (opts.startUrl) {
+    argv.push(opts.startUrl);
+  }
+  return argv;
+}
+class BrowserSupervisor {
+  constructor(deps) {
+    this.deps = deps;
+    this.listeners = /* @__PURE__ */ new Set();
+    this.statusValue = "idle";
+    this.spawnBrowser = deps.spawnBrowser ?? defaultSpawnBrowser;
+    this.focusExisting = deps.focusExisting ?? defaultFocusExisting;
+  }
+  async launch(profileId = "default") {
+    if (this.statusValue === "launching") return;
+    if (this.statusValue === "running") {
+      if (this.currentBinary && this.currentArgv) {
+        await this.focusExisting(this.currentBinary, this.currentArgv);
+      }
+      return;
+    }
+    const userDataDir = await this.deps.profiles.ensureProfile(profileId);
+    const binary = this.deps.resources.browserBinary();
+    const argv = buildArgv({
+      userDataDir,
+      extensionDir: this.deps.resources.extensionDir(),
+      startUrl: "chrome://newtab"
+    });
+    this.setStatus("launching");
+    let child;
+    try {
+      child = this.spawnBrowser(binary, argv);
+    } catch (error) {
+      this.clearCurrentProcess();
+      this.setStatus("error");
+      throw error;
+    }
+    this.child = child;
+    this.currentBinary = binary;
+    this.currentArgv = [...argv];
+    this.attachBrowserLogs(profileId, child);
+    this.bindChildEvents(child);
+  }
+  status() {
+    return this.statusValue;
+  }
+  onStatusChange(cb) {
+    this.listeners.add(cb);
+    return () => {
+      this.listeners.delete(cb);
+    };
+  }
+  async requestShutdown() {
+    const child = this.child;
+    if (!child) return;
+    await new Promise((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(settle, 2e3);
+      child.on("exit", settle);
+      this.shutdownRequestedFor = child;
+      child.kill();
+    });
+  }
+  bindChildEvents(child) {
+    child.on("spawn", () => {
+      if (this.child === child) {
+        this.setStatus("running");
+      }
+    });
+    child.on("error", (error) => {
+      if (this.child !== child) return;
+      this.deps.logger.log("BrowserSupervisor", "error", error.message);
+      this.clearCurrentProcess();
+      this.setStatus("error");
+    });
+    child.on("exit", (code, signal) => {
+      if (this.child !== child) return;
+      const wasRequestedShutdown = this.shutdownRequestedFor === child;
+      const wasNormalExit = (code === 0 || code === null) && signal === null;
+      this.clearCurrentProcess();
+      this.setStatus(wasRequestedShutdown || wasNormalExit ? "idle" : "error");
+    });
+  }
+  attachBrowserLogs(profileId, child) {
+    if (child.stdout) {
+      this.deps.logger.attachStream(profileId, child.stdout);
+    }
+    if (child.stderr) {
+      this.deps.logger.attachStream(profileId, child.stderr);
+    }
+  }
+  clearCurrentProcess() {
+    this.child = void 0;
+    this.shutdownRequestedFor = void 0;
+    this.currentBinary = void 0;
+    this.currentArgv = void 0;
+  }
+  setStatus(next) {
+    if (next === this.statusValue) return;
+    this.statusValue = next;
+    this.listeners.forEach((listener) => {
+      listener(next);
+    });
+  }
+}
+function defaultSpawnBrowser(binary, argv) {
+  return childProcess.spawn(binary, argv, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+}
+function defaultFocusExisting(binary, argv) {
+  const process2 = childProcess.spawn(binary, argv, { detached: true, stdio: "ignore" });
+  process2.unref();
+}
 function registerDesktopBridge(options) {
   options.ipcMain.handle("browser:launch", async () => {
     try {
@@ -915,6 +916,14 @@ function registerDesktopBridge(options) {
       browser: options.resources.browserVersion(),
       extension: readExtensionVersion(options.resources.extensionDir())
     };
+  });
+  options.ipcMain.handle("app:openLogs", async () => {
+    try {
+      await options.openLogs();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: toUserSafeMessage(error) };
+    }
   });
   return options.supervisor.onStatusChange(options.sendStatus);
 }
@@ -989,6 +998,12 @@ async function startMainBootstrap() {
     supervisor,
     resources,
     getAppVersion: () => electron.app.getVersion(),
+    openLogs: async () => {
+      const message = await electron.shell.openPath(paths.logsDir());
+      if (message.length > 0) {
+        throw new Error(message);
+      }
+    },
     sendStatus: (status) => currentWindow?.webContents.send("browser:status-changed", status)
   });
   const createWindow = () => {
@@ -1026,8 +1041,10 @@ function resolveRepoRoot(start) {
 }
 function createControlWindow(electron, supervisor) {
   const win = new electron.BrowserWindow({
-    width: 480,
-    height: 360,
+    width: 500,
+    height: 440,
+    minWidth: 480,
+    minHeight: 400,
     resizable: true,
     maximizable: false,
     icon: path.join(__dirname, "../../resources/icon.png"),

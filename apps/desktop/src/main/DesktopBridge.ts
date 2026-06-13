@@ -18,11 +18,14 @@ export interface LaunchResult {
 	error?: string
 }
 
+export type OpenLogsResult = LaunchResult
+
 export interface DesktopBridgeOptions {
 	ipcMain: IpcMainLike
 	supervisor: Pick<BrowserSupervisor, 'launch' | 'status' | 'onStatusChange'>
 	resources: BrowserResources
 	getAppVersion: () => string
+	openLogs: () => Promise<void>
 	sendStatus: (status: BrowserStatus) => void
 }
 
@@ -45,6 +48,15 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 			app: options.getAppVersion(),
 			browser: options.resources.browserVersion(),
 			extension: readExtensionVersion(options.resources.extensionDir()),
+		}
+	})
+
+	options.ipcMain.handle('app:openLogs', async (): Promise<OpenLogsResult> => {
+		try {
+			await options.openLogs()
+			return { ok: true }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
 		}
 	})
 

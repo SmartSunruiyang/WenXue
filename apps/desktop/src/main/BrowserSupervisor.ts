@@ -56,6 +56,7 @@ export class BrowserSupervisor {
 		const argv = buildArgv({
 			userDataDir,
 			extensionDir: this.deps.resources.extensionDir(),
+			startUrl: 'chrome://newtab',
 		})
 
 		this.setStatus('launching')

@@ -5,6 +5,8 @@ export interface LaunchResult {
 	error?: string
 }
 
+export type OpenLogsResult = LaunchResult
+
 export interface AppVersions {
 	app: string
 	browser: string
@@ -21,6 +23,7 @@ declare global {
 			}
 			app: {
 				getVersions(): Promise<AppVersions>
+				openLogs(): Promise<OpenLogsResult>
 			}
 		}
 	}

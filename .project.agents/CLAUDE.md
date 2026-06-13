@@ -30,7 +30,7 @@ pnpm -r test
 
 The implementation follows the module boundaries in `.project.agents/docs/context/ARCHITECTURE.md`:
 
-- **桌面域**（`apps/desktop`）：AppPaths / AppLogger（L0 基础设施）→ BrowserResources（资源定位，纯）→ LaunchConfig（argv 组装，纯）→ ProfileStore + BrowserSupervisor（画像与进程状态机）→ DesktopBridge（4 通道 typed IPC）→ ConsoleUI（React 控制台）→ MainBootstrap（组装根）
+- **桌面域**（`apps/desktop`）：AppPaths / AppLogger（L0 基础设施）→ BrowserResources（资源定位，纯）→ LaunchConfig（argv 组装，纯）→ ProfileStore + BrowserSupervisor（画像与进程状态机）→ DesktopBridge（typed IPC，契约见 ARCHITECTURE §3.2）→ ConsoleUI（React 控制台）→ MainBootstrap（组装根）
 - **插件域**（`apps/extension` + vendor `packages/*`）：`@page-agent/ui · llms · page-controller · core`（上游快照，不变量 I5）→ MultiPageAgent（跨标签编排）+ SidepanelApp（对话/配置/历史 UI）→ ExtensionEntrypoints（组装根）
 - 两域之间**没有任何依赖边**（I3）；插件域只经 OpenAI-compatible HTTP 调 LLM（I4）；API Key 永不经过桌面端进程（I2）
 

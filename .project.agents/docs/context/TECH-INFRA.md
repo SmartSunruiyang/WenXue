@@ -128,6 +128,7 @@ vendor 原则：
 | `browser:getStatus` | renderer → main | 查询状态机当前态 |
 | `browser:status-changed` | main → renderer（事件） | 状态变更推送 |
 | `app:getVersions` | renderer → main | App / CfT / 插件三方版本号 |
+| `app:openLogs` | renderer → main | 打开本机日志目录 |
 
 安全基线：`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`；渲染层不接触 Node API。
 
@@ -226,7 +227,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 ## 10. 安全与隐私基线
 
 - API Key 与对话数据仅存于本机浏览器画像（`chrome.storage.local` / IndexedDB），问学侧（Demo 期）无任何服务器接触用户数据；
-- Electron 渲染层全沙箱（contextIsolation + sandbox），IPC 面最小化（4 个通道）；
+- Electron 渲染层全沙箱（contextIsolation + sandbox），IPC 面最小化且必须登记于 `ARCHITECTURE.md §3.2`；
 - CfT 日常启动不开远程调试端口/管道；
 - 插件权限最小化（改造清单 #4），页面级 API 默认关闭（#5）；
 - 画像目录权限沿用 OS 用户级隔离；不写入任何系统级配置（无需管理员权限安装）。

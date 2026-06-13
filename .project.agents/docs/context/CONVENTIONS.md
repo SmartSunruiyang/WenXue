@@ -41,7 +41,7 @@
 
 ### 2.2 分层纪律
 - 渲染层（ConsoleUI / SidepanelApp）只消费状态、发送意图；不触 Node API、不写业务判断。
-- Node / OS 能力只存在于 Electron 主进程，经 `DesktopBridge` 的 typed IPC 暴露（4 通道之外的访问 = 违规）。
+- Node / OS 能力只存在于 Electron 主进程，经 `DesktopBridge` 的 typed IPC 暴露（ARCHITECTURE §3.2 登记通道之外的访问 = 违规）。
 - 业务编排在 L3–L5 服务模块；类型定义保持瘦（优先无方法的 `interface`/`type`）。
 
 ### 2.3 并发 / 2.4 错误处理

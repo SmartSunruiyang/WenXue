@@ -3,8 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserResources } from './BrowserResources'
-import { registerDesktopBridge, type IpcMainLike } from './DesktopBridge'
 import type { BrowserStatus } from './BrowserSupervisor'
+import { registerDesktopBridge, type IpcMainLike } from './DesktopBridge'
 
 class FakeIpcMain implements IpcMainLike {
 	handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -29,6 +29,7 @@ function createBridgeHarness() {
 	let statusListener: ((status: BrowserStatus) => void) | undefined
 	const ipcMain = new FakeIpcMain()
 	const launch = vi.fn(async () => undefined)
+	const openLogs = vi.fn(async () => undefined)
 	const unsubscribe = vi.fn()
 	const sendStatus = vi.fn()
 	const supervisor = {
@@ -51,12 +52,14 @@ function createBridgeHarness() {
 		supervisor,
 		resources,
 		getAppVersion: () => '0.0.0',
+		openLogs,
 		sendStatus,
 	})
 
 	return {
 		ipcMain,
 		launch,
+		openLogs,
 		sendStatus,
 		unsubscribe,
 		emitStatus(next: BrowserStatus) {
@@ -70,11 +73,9 @@ describe('registerDesktopBridge', () => {
 	it('registers only the invoke channels from the desktop IPC contract', () => {
 		const { ipcMain } = createBridgeHarness()
 
-		expect(Array.from(ipcMain.handlers.keys()).sort()).toEqual([
-			'app:getVersions',
-			'browser:getStatus',
-			'browser:launch',
-		])
+		expect(Array.from(ipcMain.handlers.keys()).sort()).toEqual(
+			['app:openLogs', 'app:getVersions', 'browser:getStatus', 'browser:launch'].sort(),
+		)
 	})
 
 	it('returns launch success and failure payloads', async () => {
@@ -96,6 +97,16 @@ describe('registerDesktopBridge', () => {
 		await expect(handler?.()).resolves.toBe('running')
 	})
 
+	it('opens logs with success and failure payloads', async () => {
+		const { ipcMain, openLogs } = createBridgeHarness()
+		const handler = ipcMain.handlers.get('app:openLogs')
+
+		await expect(handler?.()).resolves.toEqual({ ok: true })
+
+		openLogs.mockRejectedValueOnce(new Error('cannot open logs'))
+		await expect(handler?.()).resolves.toEqual({ ok: false, error: 'cannot open logs' })
+	})
+
 	it('broadcasts supervisor status changes and returns the unsubscribe function', () => {
 		const { emitStatus, sendStatus, unsubscribe } = createBridgeHarness()
 		const unregister = registerDesktopBridge({
@@ -114,6 +125,7 @@ describe('registerDesktopBridge', () => {
 				browserVersion: () => '149.0.7827.55',
 			},
 			getAppVersion: () => '0.0.0',
+			openLogs: vi.fn(async () => undefined),
 			sendStatus,
 		})
 

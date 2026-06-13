@@ -124,36 +124,192 @@
 	}
 }
 
-@keyframes glow-a {
-	0%,
-	100% {
-		opacity: 0.45;
-		transform: scale(1);
-	}
-	50% {
-		opacity: 0;
-		transform: scale(1.1);
-	}
-}
-
-@keyframes glow-b {
-	0%,
-	100% {
-		opacity: 0;
-		transform: scale(1.1);
-	}
-	50% {
-		opacity: 0.45;
-		transform: scale(1);
-	}
-}
-
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
 	}
 	body {
 		@apply bg-background text-foreground;
+	}
+}
+
+/* ---- Empty state WenXue logo floating breath ---- */
+
+.wx-empty-logo-float {
+	position: relative;
+	animation: wx-empty-logo-float 4.2s ease-in-out infinite;
+	transform-origin: center;
+}
+
+.wx-empty-logo {
+	position: relative;
+	z-index: 1;
+	opacity: 0.9;
+	animation: wx-empty-logo-breathe 4.2s ease-in-out infinite;
+	transform-origin: center;
+}
+
+.dark .wx-empty-logo {
+	filter: invert(1);
+}
+
+@keyframes wx-empty-logo-float {
+	0%,
+	100% {
+		transform: translateY(0);
+	}
+	50% {
+		transform: translateY(-7px);
+	}
+}
+
+@keyframes wx-empty-logo-breathe {
+	0%,
+	100% {
+		opacity: 0.88;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.96;
+		transform: scale(1.018);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wx-empty-logo-float,
+	.wx-empty-logo {
+		animation: none;
+		transform: none;
+	}
+}
+
+/* ---- Newtab stagger enter animations ---- */
+
+[data-stagger] {
+	animation: wx-stagger-in 0.5s ease-out both;
+}
+
+[data-stagger]:nth-child(2) {
+	animation-delay: 0.1s;
+}
+
+[data-stagger]:nth-child(3) {
+	animation-delay: 0.2s;
+}
+
+[data-stagger]:nth-child(4) {
+	animation-delay: 0.3s;
+}
+
+@keyframes wx-stagger-in {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-stagger] {
+		animation: none;
+	}
+}
+
+/* ---- Newtab edge marquee (runs from top-left, clockwise) ---- */
+
+@property --wx-marquee-angle {
+	syntax: '<angle>';
+	inherits: false;
+	initial-value: 315deg;
+}
+
+.wx-marquee-edge {
+	position: absolute;
+	inset: 0;
+	border-radius: 16px;
+	pointer-events: none;
+	z-index: 5;
+	opacity: 0;
+	animation: wx-marquee-fade-in 1s ease-out 0.3s both;
+}
+
+.wx-marquee-edge::before {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	padding: 2px;
+	background: conic-gradient(
+		from var(--wx-marquee-angle),
+		rgb(255 255 255 / 0.95) 0%,
+		rgb(96 140 255 / 0.8) 4%,
+		rgb(168 110 255 / 0.6) 10%,
+		transparent 20%,
+		transparent 100%
+	);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	mask-composite: exclude;
+	animation: wx-marquee-spin 4s linear infinite;
+}
+
+.wx-marquee-edge::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	padding: 4px;
+	background: conic-gradient(
+		from var(--wx-marquee-angle),
+		rgb(255 255 255 / 0.5) 0%,
+		rgb(96 140 255 / 0.4) 5%,
+		rgb(168 110 255 / 0.2) 12%,
+		transparent 22%,
+		transparent 100%
+	);
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	mask-composite: exclude;
+	filter: blur(6px);
+	animation: wx-marquee-spin 4s linear infinite;
+}
+
+@keyframes wx-marquee-spin {
+	from {
+		--wx-marquee-angle: 315deg;
+	}
+	to {
+		--wx-marquee-angle: 675deg;
+	}
+}
+
+@keyframes wx-marquee-fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wx-marquee-edge,
+	.wx-marquee-edge::before,
+	.wx-marquee-edge::after {
+		animation: none;
 	}
 }
 

@@ -114,7 +114,7 @@
 
 ```
 ## 模块名：DesktopBridge
-- 职责：preload contextBridge + IPC 通道注册；渲染层访问主进程的唯一入口（4 通道）
+- 职责：preload contextBridge + IPC 通道注册；渲染层访问主进程的唯一入口（5 通道）
 - 不负责：不含业务逻辑（仅转译与入参校验）；不出现插件域数据（I2/I3）
 - 输入：BrowserSupervisor、BrowserResources
 - 输出：ConsoleUI（window.wenxue.*）
@@ -268,6 +268,7 @@ graph TD
 //   browser:getStatus      invoke () => BrowserStatus                             // 'idle'|'launching'|'running'|'error'
 //   browser:status-changed event  (status: BrowserStatus)                         // main → renderer
 //   app:getVersions        invoke () => { app: string; browser: string; extension: string }
+//   app:openLogs           invoke () => Promise<{ ok: boolean; error?: string }>  // 打开本机日志目录，不传插件域数据
 
 // module: BrowserSupervisor
 //   launch(profileId = 'default'): Promise<void>        // I1：running 时不二次 spawn，转为聚焦

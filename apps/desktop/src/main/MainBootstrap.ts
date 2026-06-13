@@ -1,10 +1,10 @@
+import type { BrowserWindow, Event as ElectronEvent } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import type { BrowserWindow, Event as ElectronEvent } from 'electron'
 import { createAppLogger } from './AppLogger'
 import { AppPaths } from './AppPaths'
-import { BrowserSupervisor, type BrowserStatus } from './BrowserSupervisor'
 import { createBrowserResources } from './BrowserResources'
+import { BrowserSupervisor, type BrowserStatus } from './BrowserSupervisor'
 import { registerDesktopBridge } from './DesktopBridge'
 import { ProfileStore } from './ProfileStore'
 
@@ -53,6 +53,12 @@ export async function startMainBootstrap(): Promise<void> {
 		supervisor,
 		resources,
 		getAppVersion: () => electron.app.getVersion(),
+		openLogs: async () => {
+			const message = await electron.shell.openPath(paths.logsDir())
+			if (message.length > 0) {
+				throw new Error(message)
+			}
+		},
 		sendStatus: (status) => currentWindow?.webContents.send('browser:status-changed', status),
 	})
 
@@ -100,8 +106,10 @@ function createControlWindow(
 	supervisor: BrowserSupervisor,
 ): BrowserWindow {
 	const win = new electron.BrowserWindow({
-		width: 480,
-		height: 360,
+		width: 500,
+		height: 440,
+		minWidth: 480,
+		minHeight: 400,
 		resizable: true,
 		maximizable: false,
 		icon: path.join(__dirname, '../../resources/icon.png'),

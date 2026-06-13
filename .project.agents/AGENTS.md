@@ -36,7 +36,7 @@ Use TypeScript in strict mode, tab indentation with single quotes, no semicolons
 
 Do not add modules that are not registered in `ARCHITECTURE.md`. Preserve the dependency DAG; no reverse dependencies, no cross-feature imports, and no direct access to another module's private implementation. Avoid empty names such as `Manager`, `Helper`, `Util`, or `Common`.
 
-UI/presentation code should consume state and send intents only — put business logic in services/use cases, and keep data-model types thin. The Electron renderer never touches Node APIs: all OS work crosses the 4-channel typed IPC bridge (`DesktopBridge`) into main-process services. Vendored `@page-agent/*` packages keep their upstream names, layout, and public APIs; record every local patch in `UPSTREAM.md` (invariant I5).
+UI/presentation code should consume state and send intents only — put business logic in services/use cases, and keep data-model types thin. The Electron renderer never touches Node APIs: all OS work crosses the typed IPC bridge (`DesktopBridge`, contract in `ARCHITECTURE.md §3.2`) into main-process services. Vendored `@page-agent/*` packages keep their upstream names, layout, and public APIs; record every local patch in `UPSTREAM.md` (invariant I5).
 
 ## Testing Guidelines
 Use vitest. Required coverage areas from `ARCHITECTURE.md`: `LaunchConfig`, `BrowserResources`, `ProfileStore`, the `BrowserSupervisor` state machine (mock `child_process`), and the vendored upstream suites (never delete or skip them; local vendor patches need regression tests). Test filenames should mirror the unit under test.

@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('wenxue', {
 	},
 	app: {
 		getVersions: () => ipcRenderer.invoke('app:getVersions'),
+		openLogs: () => ipcRenderer.invoke('app:openLogs'),
 	},
 })

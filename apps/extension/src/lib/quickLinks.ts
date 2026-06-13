@@ -9,6 +9,7 @@ export const DEFAULT_QUICK_LINKS: QuickLink[] = [
 	{ id: 'baidu', title: '百度', url: 'https://www.baidu.com' },
 	{ id: 'doc', title: '问学文档', url: 'https://alibaba.github.io/page-agent' },
 	{ id: 'github', title: 'GitHub', url: 'https://github.com/alibaba/page-agent' },
+	{ id: 'chaoxing', title: '超星学习通', url: 'https://www.chaoxing.com' },
 ]
 
 export function normalizeUrl(input: string): string | null {

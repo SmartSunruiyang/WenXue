@@ -11,6 +11,7 @@ electron.contextBridge.exposeInMainWorld("wenxue", {
     }
   },
   app: {
-    getVersions: () => electron.ipcRenderer.invoke("app:getVersions")
+    getVersions: () => electron.ipcRenderer.invoke("app:getVersions"),
+    openLogs: () => electron.ipcRenderer.invoke("app:openLogs")
   }
 });

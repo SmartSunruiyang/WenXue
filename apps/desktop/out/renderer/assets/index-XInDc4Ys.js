@@ -12441,9 +12441,318 @@ function checkDCE() {
 }
 var clientExports = client.exports;
 const ReactDOM = /* @__PURE__ */ getDefaultExportFromCjs(clientExports);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const mergeClasses = (...classes) => classes.filter((className, index2, array) => {
+  return Boolean(className) && className.trim() !== "" && array.indexOf(className) === index2;
+}).join(" ").trim();
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const toKebabCase = (string) => string.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const toCamelCase = (string) => string.replace(
+  /^([A-Z])|[\s-_]+(\w)/g,
+  (match, p1, p2) => p2 ? p2.toUpperCase() : p1.toLowerCase()
+);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const toPascalCase = (string) => {
+  const camelCase = toCamelCase(string);
+  return camelCase.charAt(0).toUpperCase() + camelCase.slice(1);
+};
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+var defaultAttributes = {
+  xmlns: "http://www.w3.org/2000/svg",
+  width: 24,
+  height: 24,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round"
+};
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const hasA11yProp = (props) => {
+  for (const prop in props) {
+    if (prop.startsWith("aria-") || prop === "role" || prop === "title") {
+      return true;
+    }
+  }
+  return false;
+};
+const LucideContext = reactExports.createContext({});
+const useLucideContext = () => reactExports.useContext(LucideContext);
+const Icon = reactExports.forwardRef(
+  ({ color, size, strokeWidth, absoluteStrokeWidth, className = "", children, iconNode, ...rest }, ref) => {
+    const {
+      size: contextSize = 24,
+      strokeWidth: contextStrokeWidth = 2,
+      absoluteStrokeWidth: contextAbsoluteStrokeWidth = false,
+      color: contextColor = "currentColor",
+      className: contextClass = ""
+    } = useLucideContext() ?? {};
+    const calculatedStrokeWidth = absoluteStrokeWidth ?? contextAbsoluteStrokeWidth ? Number(strokeWidth ?? contextStrokeWidth) * 24 / Number(size ?? contextSize) : strokeWidth ?? contextStrokeWidth;
+    return reactExports.createElement(
+      "svg",
+      {
+        ref,
+        ...defaultAttributes,
+        width: size ?? contextSize ?? defaultAttributes.width,
+        height: size ?? contextSize ?? defaultAttributes.height,
+        stroke: color ?? contextColor,
+        strokeWidth: calculatedStrokeWidth,
+        className: mergeClasses("lucide", contextClass, className),
+        ...!children && !hasA11yProp(rest) && { "aria-hidden": "true" },
+        ...rest
+      },
+      [
+        ...iconNode.map(([tag, attrs]) => reactExports.createElement(tag, attrs)),
+        ...Array.isArray(children) ? children : [children]
+      ]
+    );
+  }
+);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const createLucideIcon = (iconName, iconNode) => {
+  const Component2 = reactExports.forwardRef(
+    ({ className, ...props }, ref) => reactExports.createElement(Icon, {
+      ref,
+      iconNode,
+      className: mergeClasses(
+        `lucide-${toKebabCase(toPascalCase(iconName))}`,
+        `lucide-${iconName}`,
+        className
+      ),
+      ...props
+    })
+  );
+  Component2.displayName = toPascalCase(iconName);
+  return Component2;
+};
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$d = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
+const Check = createLucideIcon("check", __iconNode$d);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$c = [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+];
+const CircleCheck = createLucideIcon("circle-check", __iconNode$c);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$b = [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3", key: "1u773s" }],
+  ["path", { d: "M12 17h.01", key: "p32p05" }]
+];
+const CircleQuestionMark = createLucideIcon("circle-question-mark", __iconNode$b);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$a = [["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }]];
+const Circle = createLucideIcon("circle", __iconNode$a);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$9 = [
+  ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }],
+  ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
+  ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
+  ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
+  ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
+];
+const Focus = createLucideIcon("focus", __iconNode$9);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$8 = [
+  [
+    "path",
+    {
+      d: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2",
+      key: "usdka0"
+    }
+  ]
+];
+const FolderOpen = createLucideIcon("folder-open", __iconNode$8);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$7 = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
+const LoaderCircle = createLucideIcon("loader-circle", __iconNode$7);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$6 = [
+  [
+    "path",
+    {
+      d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z",
+      key: "10ikf1"
+    }
+  ]
+];
+const Play = createLucideIcon("play", __iconNode$6);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$5 = [
+  ["path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", key: "1357e3" }],
+  ["path", { d: "M3 3v5h5", key: "1xhq8a" }]
+];
+const RotateCcw = createLucideIcon("rotate-ccw", __iconNode$5);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$4 = [
+  [
+    "path",
+    {
+      d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+      key: "oel41y"
+    }
+  ],
+  ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+];
+const ShieldCheck = createLucideIcon("shield-check", __iconNode$4);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$3 = [
+  [
+    "path",
+    {
+      d: "M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z",
+      key: "1s2grr"
+    }
+  ],
+  ["path", { d: "M20 2v4", key: "1rf3ol" }],
+  ["path", { d: "M22 4h-4", key: "gwowj6" }],
+  ["circle", { cx: "4", cy: "20", r: "2", key: "6kqj1y" }]
+];
+const Sparkles = createLucideIcon("sparkles", __iconNode$3);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$2 = [
+  ["path", { d: "M12 19h8", key: "baeox8" }],
+  ["path", { d: "m4 17 6-6-6-6", key: "1yngyt" }]
+];
+const Terminal = createLucideIcon("terminal", __iconNode$2);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$1 = [
+  [
+    "path",
+    {
+      d: "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3",
+      key: "wmoenq"
+    }
+  ],
+  ["path", { d: "M12 9v4", key: "juzpu7" }],
+  ["path", { d: "M12 17h.01", key: "p32p05" }]
+];
+const TriangleAlert = createLucideIcon("triangle-alert", __iconNode$1);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode = [
+  [
+    "path",
+    {
+      d: "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",
+      key: "1xq2db"
+    }
+  ]
+];
+const Zap = createLucideIcon("zap", __iconNode);
 const strings = {
   brand: "问学 WenXue",
   slogan: "ask for everything",
+  shellLabel: "问学桌面启动器",
+  runtimeLabel: "DESKTOP",
+  statusCapsuleLabel: "浏览器运行状态",
   status: {
     idle: "未运行",
     launching: "启动中",
@@ -12451,35 +12760,77 @@ const strings = {
     error: "启动异常"
   },
   description: {
-    idle: "浏览器尚未启动。",
-    launching: "正在启动 Chrome for Testing",
-    running: "问学浏览器已启动。",
+    idle: "浏览器尚未启动。点击后会打开独立的问学浏览器。",
+    launching: "正在准备浏览器与问学插件。",
+    running: "在浏览器工具栏打开问学侧边栏，输入你的任务。",
     error: "浏览器启动或运行异常。可重新启动，或查看日志定位原因。"
   },
   action: {
     launch: "启动浏览器",
     focus: "聚焦窗口",
-    relaunch: "重新启动"
+    relaunch: "重新启动",
+    openLogs: "查看日志"
   },
+  launchTimeline: {
+    title: "启动序列",
+    items: ["检查资源", "启动浏览器", "加载插件"]
+  },
+  onboarding: {
+    title: "第一次使用问学",
+    items: [
+      "启动独立的问学浏览器。",
+      "在工具栏打开或固定问学插件。",
+      "需要自定义模型时，进入插件设置页添加 OpenAI-compatible 模型。",
+      "打开目标网页，在侧边栏输入自然语言任务。",
+      "执行过程中可随时停止或人工接管。"
+    ]
+  },
+  errorFallback: "浏览器启动或运行异常。请重新启动；若仍失败，请查看主进程日志定位原因。",
+  openLogsFallback: "无法打开日志目录。请在系统的应用数据目录中手动查看问学日志。",
   versionLabel: {
     app: "App",
     browser: "Browser",
     extension: "Extension"
   }
 };
-const statusTone = {
-  idle: "border-slate-200 bg-white text-slate-700",
-  launching: "border-amber-200 bg-amber-50 text-amber-800",
-  running: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  error: "border-red-200 bg-red-50 text-red-800"
-};
-const statusDot = {
-  idle: "bg-slate-400",
-  launching: "bg-amber-500",
-  running: "bg-emerald-500",
-  error: "bg-red-500"
+function useDarkMode() {
+  const [dark, setDark] = reactExports.useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
+  reactExports.useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e) => setDark(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return dark;
+}
+const statusPresentation = {
+  idle: {
+    code: "IDLE",
+    icon: ShieldCheck,
+    panelClassName: "status-panel--idle",
+    timelineIndex: -1
+  },
+  launching: {
+    code: "IGNITION",
+    icon: LoaderCircle,
+    panelClassName: "status-panel--launching",
+    timelineIndex: 1
+  },
+  running: {
+    code: "ONLINE",
+    icon: Zap,
+    panelClassName: "status-panel--running",
+    timelineIndex: 2
+  },
+  error: {
+    code: "FAULT",
+    icon: TriangleAlert,
+    panelClassName: "status-panel--error",
+    timelineIndex: -1
+  }
 };
 function App() {
+  const dark = useDarkMode();
   const [status, setStatus] = reactExports.useState("idle");
   const [versions, setVersions] = reactExports.useState({
     app: "unknown",
@@ -12487,6 +12838,7 @@ function App() {
     extension: "unknown"
   });
   const [launchError, setLaunchError] = reactExports.useState();
+  const [openLogsError, setOpenLogsError] = reactExports.useState();
   reactExports.useEffect(() => {
     let mounted = true;
     const unsubscribe = window.wenxue.browser.onStatusChange((next) => {
@@ -12494,6 +12846,7 @@ function App() {
       setStatus(next);
       if (next !== "error") {
         setLaunchError(void 0);
+        setOpenLogsError(void 0);
       }
     });
     window.wenxue.browser.getStatus().then((next) => {
@@ -12507,13 +12860,27 @@ function App() {
       unsubscribe();
     };
   }, []);
-  const actionLabel = reactExports.useMemo(() => {
-    if (status === "running") return strings.action.focus;
-    if (status === "error") return strings.action.relaunch;
-    return strings.action.launch;
+  const action = reactExports.useMemo(() => {
+    if (status === "running") {
+      return {
+        icon: Focus,
+        label: strings.action.focus
+      };
+    }
+    if (status === "error") {
+      return {
+        icon: RotateCcw,
+        label: strings.action.relaunch
+      };
+    }
+    return {
+      icon: Play,
+      label: strings.action.launch
+    };
   }, [status]);
   const launchBrowser = reactExports.useCallback(async () => {
     setLaunchError(void 0);
+    setOpenLogsError(void 0);
     if (status !== "running") {
       setStatus("launching");
     }
@@ -12523,45 +12890,159 @@ function App() {
       setLaunchError(result.error);
     }
   }, [status]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "flex min-h-screen bg-slate-50 px-6 py-5 text-slate-950", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mx-auto flex w-full max-w-[432px] flex-col justify-between gap-5", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-2xl font-semibold leading-tight", children: strings.brand }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: strings.slogan })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `rounded-lg border p-5 shadow-sm ${statusTone[status]}`, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `h-3 w-3 rounded-full ${statusDot[status]}` }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg font-semibold", children: strings.status[status] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm opacity-80", children: strings.description[status] })
-        ] })
-      ] }),
-      launchError ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 rounded-md bg-white/70 px-3 py-2 text-sm text-red-700", children: launchError }) : null,
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
+  const openLogs = reactExports.useCallback(async () => {
+    setOpenLogsError(void 0);
+    const result = await window.wenxue.app.openLogs();
+    if (!result.ok) {
+      setOpenLogsError(result.error ?? strings.openLogsFallback);
+    }
+  }, []);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: `launcher-root launcher-root--${status}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "launcher-grid", "aria-hidden": "true" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "launcher-shell", "aria-label": strings.shellLabel, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(BrandHeader, { dark, status }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        BrowserStatusPanel,
         {
-          className: "mt-5 inline-flex h-10 w-full items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300",
-          disabled: status === "launching",
-          onClick: launchBrowser,
-          type: "button",
-          children: [
-            status === "launching" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" }) : null,
-            actionLabel
-          ]
+          actionIcon: action.icon,
+          actionLabel: action.label,
+          launchError,
+          onAction: launchBrowser,
+          onOpenLogs: openLogs,
+          openLogsError,
+          status
         }
-      )
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("footer", { className: "grid grid-cols-3 gap-2 border-t border-slate-200 pt-3 font-mono text-[11px] text-slate-500", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(VersionItem, { label: strings.versionLabel.app, value: versions.app }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(VersionItem, { label: strings.versionLabel.browser, value: versions.browser }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(VersionItem, { label: strings.versionLabel.extension, value: versions.extension })
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(OnboardingChecklist, { status }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(VersionFooter, { versions })
     ] })
-  ] }) });
+  ] });
 }
-function VersionItem({ label, value }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-slate-400", children: label }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-slate-700", children: value })
+function BrandHeader({ dark, status }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "brand-header", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand-lockup", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "brand-mark-wrap", children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { "aria-hidden": "true", className: "brand-mark", src: "/logo.png" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand-copy", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "img",
+          {
+            alt: strings.brand,
+            className: "brand-wordmark",
+            src: dark ? "/darkslogen.png" : "/lightslogen.png"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: strings.slogan })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-capsule", "aria-label": strings.statusCapsuleLabel, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `status-capsule__dot status-capsule__dot--${status}` }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.status[status] })
+    ] })
+  ] });
+}
+function BrowserStatusPanel({
+  actionIcon: ActionIcon,
+  actionLabel,
+  launchError,
+  onAction,
+  onOpenLogs,
+  openLogsError,
+  status
+}) {
+  const presentation = statusPresentation[status];
+  const StatusIcon = presentation.icon;
+  const isLaunching = status === "launching";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("article", { className: `energy-frame status-panel ${presentation.panelClassName}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__head", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-panel__icon", "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(StatusIcon, { className: isLaunching ? "motion-spin" : void 0, size: 20 }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__copy", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__eyebrow", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: presentation.code }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.runtimeLabel })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: strings.status[status] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: strings.description[status] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(LaunchTimeline, { activeIndex: presentation.timelineIndex, status }),
+    status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__alerts", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "status-panel__error", title: launchError ?? strings.errorFallback, children: launchError ?? strings.errorFallback }),
+      openLogsError ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "status-panel__error", title: openLogsError, children: openLogsError }) : null
+    ] }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__actions", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "primary-action", disabled: isLaunching, onClick: onAction, type: "button", children: [
+        isLaunching ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { "aria-hidden": "true", className: "motion-spin", size: 17 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(ActionIcon, { "aria-hidden": "true", size: 17 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: actionLabel })
+      ] }),
+      status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "secondary-action", onClick: onOpenLogs, type: "button", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, { "aria-hidden": "true", size: 16 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.action.openLogs })
+      ] }) : null
+    ] })
+  ] });
+}
+function LaunchTimeline({ activeIndex, status }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { className: "launch-timeline", "aria-label": strings.launchTimeline.title, children: strings.launchTimeline.items.map((item, index2) => {
+    const complete = status === "running" || status === "launching" && index2 < activeIndex;
+    const active = status === "launching" && index2 === activeIndex;
+    const failed = status === "error" && index2 === 1;
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "li",
+      {
+        className: `launch-timeline__item ${complete ? "launch-timeline__item--complete" : ""} ${active ? "launch-timeline__item--active" : ""} ${failed ? "launch-timeline__item--failed" : ""}`,
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "launch-timeline__marker", "aria-hidden": "true", children: complete ? /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 11 }) : null }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: item })
+        ]
+      },
+      item
+    );
+  }) });
+}
+function OnboardingChecklist({ status }) {
+  const browserStarted = status === "launching" || status === "running";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "onboarding-panel", "aria-labelledby": "onboarding-title", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Sparkles, { "aria-hidden": "true", size: 15 }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "onboarding-title", children: strings.onboarding.title })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { className: "onboarding-list", children: strings.onboarding.items.map((item, index2) => {
+      const complete = index2 === 0 && browserStarted;
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: complete ? "onboarding-list__item--complete" : "", children: [
+        complete ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { "aria-hidden": "true", size: 15 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Circle, { "aria-hidden": "true", size: 15 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: item })
+      ] }, item);
+    }) })
+  ] });
+}
+function VersionFooter({ versions }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("footer", { className: "version-footer", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(VersionItem, { icon: Terminal, label: strings.versionLabel.app, value: versions.app }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      VersionItem,
+      {
+        icon: ShieldCheck,
+        label: strings.versionLabel.browser,
+        value: versions.browser
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      VersionItem,
+      {
+        icon: CircleQuestionMark,
+        label: strings.versionLabel.extension,
+        value: versions.extension
+      }
+    )
+  ] });
+}
+function VersionItem({ icon: Icon2, label, value }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "version-item", title: `${label}: ${value}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { "aria-hidden": "true", size: 13 }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: value })
+    ] })
   ] });
 }
 ReactDOM.createRoot(document.getElementById("root")).render(
