@@ -1,10 +1,19 @@
+import { RotateCcw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { MotionOverlay } from '@/components/misc'
 import { BrandHero } from '@/components/newtab/BrandHero'
+import { IntroSequence } from '@/components/newtab/IntroSequence'
 import { OnboardingChecklist } from '@/components/newtab/OnboardingChecklist'
 import { QuickLinksGrid } from '@/components/newtab/QuickLinksGrid'
 import { SettingsEntry } from '@/components/newtab/SettingsEntry'
+import { useI18n } from '@/lib/i18n'
+import {
+	decideMode,
+	hasIntroPlayed,
+	markIntroPlayed,
+	prefersReducedMotion,
+} from '@/lib/newtabMode'
 import type { QuickLink } from '@/lib/quickLinks'
 import {
 	loadOnboardingDone,
@@ -14,12 +23,18 @@ import {
 } from '@/lib/quickLinksStorage'
 
 export default function App() {
+	const { t } = useI18n()
 	const [links, setLinks] = useState<QuickLink[] | null>(null)
 	const [onboardingDone, setOnboardingDone] = useState(true)
+	const [mode, setMode] = useState<'intro' | 'calm'>('calm')
+	const [introKey, setIntroKey] = useState(0)
+	const dark =
+		typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
 
 	useEffect(() => {
 		loadQuickLinks().then(setLinks)
 		loadOnboardingDone().then(setOnboardingDone)
+		setMode(decideMode({ introPlayed: hasIntroPlayed(), reducedMotion: prefersReducedMotion() }))
 	}, [])
 
 	const updateLinks = (next: QuickLink[]) => {
@@ -30,20 +45,55 @@ export default function App() {
 		setOnboardingDone(done)
 		saveOnboardingDone(chrome.storage.local, done)
 	}
+	const finishIntro = () => {
+		markIntroPlayed()
+		setMode('calm')
+	}
+	const replay = () => {
+		setMode('intro')
+		setIntroKey((k) => k + 1)
+	}
+
+	const content = (
+		<>
+			<div className="absolute right-5 top-5 z-20 flex gap-2">
+				<button
+					type="button"
+					onClick={replay}
+					aria-label={t('ntReplayIntro')}
+					title={t('ntReplayIntro')}
+					className="flex size-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+				>
+					<RotateCcw className="size-4" />
+				</button>
+				<SettingsEntry />
+			</div>
+			<main className="relative z-10 mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center gap-8 px-6 py-16">
+				<div data-stagger>
+					<BrandHero />
+				</div>
+				{links && (
+					<div data-stagger className="w-full">
+						<QuickLinksGrid links={links} onChange={updateLinks} />
+					</div>
+				)}
+				<div data-stagger>
+					<OnboardingChecklist done={onboardingDone} onDone={markOnboarding} />
+				</div>
+			</main>
+		</>
+	)
 
 	return (
 		<div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground">
 			<MotionOverlay active />
-
-			<div className="absolute right-5 top-5 z-20">
-				<SettingsEntry />
-			</div>
-
-			<main className="relative z-10 mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center gap-8 px-6 py-16">
-				<BrandHero />
-				{links && <QuickLinksGrid links={links} onChange={updateLinks} />}
-				<OnboardingChecklist done={onboardingDone} onDone={markOnboarding} />
-			</main>
+			{mode === 'intro' ? (
+				<IntroSequence key={introKey} dark={dark} onComplete={finishIntro}>
+					{content}
+				</IntroSequence>
+			) : (
+				content
+			)}
 		</div>
 	)
 }
