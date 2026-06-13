@@ -18,6 +18,7 @@
 | ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage | 被 Agent 循环与插件 UI 消费      | 是：`chrome.storage.local`（仅本机，I2）                          |
 | AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                           | 1:N → AgentActivity              | 是：插件 IndexedDB，用户可删                                      |
 | AgentActivity            | taskId、type、payload、ts                                                                                                                                | 属于 AgentTask                   | 是：插件 IndexedDB，随任务删除                                    |
+| QuickLink                | id、title、url、icon?                                                                                                                                    | 属于 NewTabHome 仪表盘           | 是：chrome.storage.local（newtabQuickLinks，仅本机，I2）          |
 
 ### 1.2 派生概念（非持久化）
 
@@ -195,6 +196,15 @@ fork 应用层（apps/extension）：
 ```
 
 ```
+## 模块名：NewTabHome（L5）
+- 职责：接管新标签页；首次 onboarding、快捷入口仪表盘（增删改排序）、设置入口、液态玻璃入场动效
+- 不负责：不实现 Agent 循环 / 不发 LLM 请求 / 不收集 API Key / 不跨域调用桌面端
+- 输入：chrome.storage.local（QuickLink、newtabOnboardingDone）、@page-agent/ui、openExtensionOptionsPage
+- 输出：用户；经 chrome.tabs 打开站点
+- 持有状态：UI 态；读写 QuickLink 与 onboarding 标志
+```
+
+```
 ## 模块名：MultiPageAgent（L5）
 - 职责：跨标签页任务编排（TabsController / RemotePageController 经 background-content 协作）
 - 不负责：不渲染 UI
@@ -205,7 +215,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：ExtensionEntrypoints（L6/组装根）
-- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由
+- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由、newtab 页面装配
 - 不负责：业务决策
 - 持有状态：会话级路由表
 ```
@@ -231,6 +241,8 @@ graph TD
     end
     subgraph 插件域
         ExtensionEntrypoints --> SidepanelApp
+        ExtensionEntrypoints --> NewTabHome
+        NewTabHome --> PA_UI["@page-agent/ui"]
         ExtensionEntrypoints --> MultiPageAgent
         SidepanelApp --> MultiPageAgent
         SidepanelApp --> ExtensionSettingsConfig
@@ -290,6 +302,7 @@ graph TD
 | 运行日志                                      | `<userData>/logs/`          | AppLogger                                 | 不含 Key/对话内容（I2）                                                                                  |
 | ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`      | SidepanelApp options 设置页与语言快捷入口 | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置 |
 | 任务历史                                      | 插件 IndexedDB              | MultiPageAgent / SidepanelApp             | 不出本机；用户可清空                                                                                     |
+| 快捷入口与 onboarding 标志                    | chrome.storage.local        | NewTabHome                                | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                        |
 | browser.lock.json                             | 仓库 `apps/desktop/`        | 开发者（升级 CfT 时）                     | 构建期消费，运行期只读                                                                                   |
 
 出网边界：插件域 → 用户配置的 LLM baseURL（HTTPS）是**唯一**业务出网；桌面域 demo 阶段零出网；CfT 自身的浏览流量属用户行为，不在系统边界内。
