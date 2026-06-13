@@ -7,10 +7,8 @@ import App from './App'
 
 import '@/assets/index.css'
 
-const mq = window.matchMedia('(prefers-color-scheme: dark)')
-const applyTheme = (dark: boolean) => document.documentElement.classList.toggle('dark', dark)
-applyTheme(mq.matches)
-mq.addEventListener('change', (e) => applyTheme(e.matches))
+// 新标签页固定白底（浅色），不跟随系统深色
+document.documentElement.classList.remove('dark')
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
 	<ErrorBoundary>
