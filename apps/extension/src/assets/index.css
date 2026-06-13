@@ -398,20 +398,120 @@
 	overflow: hidden;
 }
 
+/* Liquid Glass 流动光效边框 — 与网页覆盖层同色系 */
 .wx-onboarding-trigger::after,
 .wx-onboarding-panel::before {
 	content: '';
 	position: absolute;
 	inset: -1px;
+	border-radius: inherit;
 	pointer-events: none;
-	background:
-		radial-gradient(circle at 18% 44%, rgb(0 0 0 / 0.22) 0 1.5px, transparent 2.5px),
-		radial-gradient(circle at 76% 26%, rgb(0 0 0 / 0.18) 0 1px, transparent 2px),
-		radial-gradient(circle at 84% 72%, rgb(0 0 0 / 0.14) 0 1.5px, transparent 2.5px),
-		radial-gradient(circle at 32% 78%, rgb(0 0 0 / 0.12) 0 1px, transparent 2px);
 	opacity: 0;
-	transform: scale(0.84);
-	animation: wx-onboarding-motes 0.58s ease-out both;
+	transform: scale(0.92);
+	--wx-ob-flow: 0deg;
+	--wx-ob-solid: 2px;
+	--wx-ob-mid: 6px;
+	--wx-ob-feather: 14px;
+	background:
+		/* 玻璃底 */
+		linear-gradient(
+			155deg,
+			rgb(255 255 255 / 0.25),
+			rgb(255 255 255 / 0.08) 32%,
+			rgb(128 128 136 / 0.06) 55%,
+			rgb(22 22 26 / 0.15) 100%
+		),
+		/* 主色彩流 */
+		conic-gradient(
+			from var(--wx-ob-flow),
+			transparent 2%,
+			rgb(122 162 255 / 0.5) 9%,
+			transparent 17%,
+			rgb(186 140 255 / 0.38) 28%,
+			transparent 38%,
+			rgb(96 216 190 / 0.45) 55%,
+			transparent 64%,
+			rgb(255 176 150 / 0.3) 82%,
+			transparent 93%
+		),
+		/* 反向副流 */
+		conic-gradient(
+			from var(--wx-ob-flow),
+			transparent 6%,
+			rgb(96 216 190 / 0.32) 16%,
+			transparent 27%,
+			rgb(122 162 255 / 0.28) 47%,
+			transparent 58%,
+			rgb(186 140 255 / 0.32) 76%,
+			transparent 88%
+		);
+	mask:
+		linear-gradient(
+			to right,
+			#000 var(--wx-ob-solid),
+			rgb(0 0 0 / 0.3) var(--wx-ob-mid),
+			transparent var(--wx-ob-feather),
+			transparent calc(100% - var(--wx-ob-feather)),
+			rgb(0 0 0 / 0.3) calc(100% - var(--wx-ob-mid)),
+			#000 calc(100% - var(--wx-ob-solid))
+		),
+		linear-gradient(
+			to bottom,
+			#000 var(--wx-ob-solid),
+			rgb(0 0 0 / 0.3) var(--wx-ob-mid),
+			transparent var(--wx-ob-feather),
+			transparent calc(100% - var(--wx-ob-feather)),
+			rgb(0 0 0 / 0.3) calc(100% - var(--wx-ob-mid)),
+			#000 calc(100% - var(--wx-ob-solid))
+		);
+	animation: wx-onboarding-liquid-in 0.58s ease-out both;
+}
+
+.wx-onboarding-trigger::after {
+	filter: blur(6px);
+}
+
+.wx-onboarding-panel::before {
+	filter: blur(8px);
+}
+
+/* 最外缘彩色脉冲细环 */
+.wx-onboarding-trigger::before,
+.wx-onboarding-panel::after {
+	content: '';
+	position: absolute;
+	inset: -1px;
+	border-radius: inherit;
+	pointer-events: none;
+	opacity: 0;
+	--wx-ob-flow: 0deg;
+	padding: 1.5px;
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	mask-composite: exclude;
+	background: conic-gradient(
+		from var(--wx-ob-flow),
+		rgb(255 255 255 / 0.55),
+		rgb(96 140 255 / 0.9) 8%,
+		rgb(255 255 255 / 0.55) 18%,
+		rgb(168 110 255 / 0.85) 30%,
+		rgb(255 255 255 / 0.55) 42%,
+		rgb(56 208 172 / 0.9) 56%,
+		rgb(255 255 255 / 0.55) 68%,
+		rgb(255 150 112 / 0.8) 82%,
+		rgb(255 255 255 / 0.55) 100%
+	);
+	animation: wx-onboarding-liquid-in 0.58s ease-out both;
+}
+
+.wx-onboarding-trigger:hover::after,
+.wx-onboarding-trigger:hover::before,
+.wx-onboarding-panel:hover::before,
+.wx-onboarding-panel:hover::after {
+	animation:
+		wx-onboarding-liquid-in 0.58s ease-out both,
+		wx-ob-flow-spin 9s linear infinite;
 }
 
 .wx-onboarding-panel {
@@ -423,8 +523,35 @@
 	animation: wx-onboarding-close 0.28s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
-.wx-onboarding-panel--closing::before {
-	animation: wx-onboarding-motes 0.28s ease-in reverse both;
+.wx-onboarding-panel--closing::before,
+.wx-onboarding-panel--closing::after {
+	animation: wx-onboarding-liquid-in 0.28s ease-in reverse both;
+}
+
+@keyframes wx-onboarding-liquid-in {
+	from {
+		opacity: 0;
+		transform: scale(0.92);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+@keyframes wx-ob-flow-spin {
+	to {
+		--wx-ob-flow: 360deg;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wx-onboarding-trigger::after,
+	.wx-onboarding-trigger::before,
+	.wx-onboarding-panel::before,
+	.wx-onboarding-panel::after {
+		animation: wx-onboarding-liquid-in 0.58s ease-out both !important;
+	}
 }
 
 @keyframes wx-onboarding-open {
@@ -453,26 +580,8 @@
 	}
 }
 
-@keyframes wx-onboarding-motes {
-	0% {
-		opacity: 0;
-		transform: translate3d(0, 8px, 0) scale(0.84);
-	}
-	46% {
-		opacity: 0.9;
-	}
-	100% {
-		opacity: 0;
-		transform: translate3d(0, -14px, 0) scale(1.08);
-	}
-}
-
 @media (prefers-reduced-motion: reduce) {
-	[data-newtab-enter],
-	.wx-onboarding-trigger::after,
-	.wx-onboarding-panel,
-	.wx-onboarding-panel::before,
-	.wx-onboarding-panel--closing {
+	[data-newtab-enter] {
 		animation: none;
 		filter: none;
 		transform: none;
@@ -482,6 +591,12 @@
 /* ---- 问学流体玻璃运行态边框（Liquid Glass frame, UIUX §5）---- */
 
 @property --wx-flow {
+	syntax: '<angle>';
+	inherits: false;
+	initial-value: 0deg;
+}
+
+@property --wx-ob-flow {
 	syntax: '<angle>';
 	inherits: false;
 	initial-value: 0deg;
