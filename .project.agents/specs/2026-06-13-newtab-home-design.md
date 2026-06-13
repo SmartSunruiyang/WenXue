@@ -124,7 +124,7 @@ apps/extension/src/components/newtab/   # 本页专属组件
 
 ## 7. 默认内容
 
-- **默认快捷入口**（用户可全改）：问学文档、GitHub、搜索（必应/Google）、末位「＋ 自定义」。
+- **默认快捷入口**（用户可全改）：百度（国内，首位）、问学文档、GitHub、末位「＋ 自定义」。引导页**不设搜索框**（只放快捷入口磁贴）。
 - **Onboarding 4 步**（浏览器侧，动词开头、具体）：
   1. 打开或固定问学侧边栏（工具栏点问学图标）。
   2. 默认用内置模型即可；要自定义模型 → 进设置页加 OpenAI-compatible 模型。
@@ -167,4 +167,5 @@ apps/extension/src/components/newtab/   # 本页专属组件
 ## 14. 已解决的决策 / 开放项
 
 - 已定：视觉野心＝炫酷首屏·克制日常；形态＝newtab override；首屏方向＝B 液态玻璃之门；模块名＝`NewTabHome`；默认入口与 onboarding 文案如上。
-- 开放（实现时确认）：默认搜索用必应还是 Google；磁贴图标来源（favicon 抓取 vs 内置 lucide/simple-icons）；入场时长微调。
+- 已定（用户反馈）：默认首位快捷入口＝百度（国内）；引导页不设搜索框。
+- 开放（实现时确认）：磁贴图标来源（favicon 抓取 vs 内置 lucide/simple-icons）；入场时长微调。

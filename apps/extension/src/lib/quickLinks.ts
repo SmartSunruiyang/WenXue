@@ -6,9 +6,9 @@ export interface QuickLink {
 }
 
 export const DEFAULT_QUICK_LINKS: QuickLink[] = [
+	{ id: 'baidu', title: '百度', url: 'https://www.baidu.com' },
 	{ id: 'doc', title: '问学文档', url: 'https://alibaba.github.io/page-agent' },
 	{ id: 'github', title: 'GitHub', url: 'https://github.com/alibaba/page-agent' },
-	{ id: 'bing', title: '必应', url: 'https://www.bing.com' },
 ]
 
 export function normalizeUrl(input: string): string | null {
