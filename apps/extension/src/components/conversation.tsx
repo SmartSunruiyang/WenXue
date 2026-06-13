@@ -10,6 +10,7 @@ import type {
 import { Check, ChevronRight, CircleAlert, Hand, X } from 'lucide-react'
 import { useState } from 'react'
 
+import { Markdown } from '@/components/markdown'
 import { useI18n } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
@@ -457,18 +458,9 @@ function ThinkingDots() {
 }
 
 function FinalText({ text }: { text: string }) {
-	const paragraphs = text.trim() ? text.trim().split(/\n{2,}/) : ['']
 	return (
-		<div className="mt-3 min-w-0 max-w-full overflow-x-hidden space-y-2.5 text-sm leading-relaxed text-foreground">
-			{paragraphs.map((paragraph, index) => (
-				<ExpandableText
-					key={index}
-					text={paragraph}
-					maxChars={260}
-					collapsedClassName="line-clamp-5"
-					className="whitespace-pre-wrap [overflow-wrap:anywhere]"
-				/>
-			))}
+		<div className="mt-3">
+			<Markdown text={text} />
 		</div>
 	)
 }
