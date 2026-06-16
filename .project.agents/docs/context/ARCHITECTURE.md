@@ -214,6 +214,18 @@ fork 应用层（apps/extension）：
 ```
 
 ```
+## 模块名：chaoxing/*（L5）
+- 职责：学习通作业/考试求解器。solve.ts 智能域编排「读题→并发 LLM 生成结构化答案→回填→翻页→汇总」；
+  adapter.content.ts 内容脚本持有学习通 DOM 读取/回填，经与 RemotePageController 同传输的 RPC 与智能域通信；
+  工具经 customTools 注入，向 Agent 暴露单一高层工具 chaoxing_solve
+- 不负责：不自动提交（交卷由用户完成）；不绕过登录/验证码/人脸识别/字体反爬等任何防护；不改 vendor packages/*（I5）
+- 输入：@page-agent/llms（仅 zodToOpenAITool）、RemotePageController、学习通页面 DOM
+- 输出：经 customTools 注入 ExtensionEntrypoints 的 Agent 工具集
+- 关键类型/接口：createChaoxingTools(deps) → chaoxing_solve · extractQuestions / fillAnswers / gotoNextPage
+- 持有状态：单次求解的运行中流水线状态
+```
+
+```
 ## 模块名：ExtensionEntrypoints（L6/组装根）
 - 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由、newtab 页面装配
 - 不负责：业务决策
@@ -244,16 +256,19 @@ graph TD
         ExtensionEntrypoints --> NewTabHome
         NewTabHome --> PA_UI["@page-agent/ui"]
         ExtensionEntrypoints --> MultiPageAgent
+        ExtensionEntrypoints --> Chaoxing["chaoxing/*"]
         SidepanelApp --> MultiPageAgent
         SidepanelApp --> ExtensionSettingsConfig
         SidepanelApp --> PA_UI["@page-agent/ui"]
         MultiPageAgent --> PA_CORE["@page-agent/core"]
         MultiPageAgent --> PA_PC["@page-agent/page-controller"]
+        Chaoxing --> PA_LLMS["@page-agent/llms"]
+        Chaoxing --> PA_PC["@page-agent/page-controller"]
         PA_CORE --> PA_LLMS["@page-agent/llms"]
     end
 ```
 
-> 跨两个 subgraph **不存在任何边**（I3）。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。手工验证：所有箭头自高层指向低层，无环。
+> 跨两个 subgraph **不存在任何边**（I3）。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。手工验证：所有箭头自高层指向低层，无环。
 
 ### 3.1 依赖方向规则
 
@@ -328,8 +343,9 @@ WenXue/
 │   │   ├── scripts/                 # fetch-browser.ts / smoke-launch.ts（构建工具，非运行时模块）
 │   │   ├── browser.lock.json        # BrowserRuntimeDescriptor 版本来源
 │   │   └── electron-builder.yml
-│   └── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · ExtensionEntrypoints
-│       └── src/entrypoints/         # background / content / main-world / sidepanel
+│   └── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · chaoxing/* · ExtensionEntrypoints
+│       ├── src/entrypoints/         # background / content / main-world / sidepanel
+│       └── src/agent/chaoxing/      # chaoxing/*：solve.ts · adapter.content.ts · tools.ts（学习通求解器）
 ├── packages/                        # vendor：@page-agent/{ui, llms, page-controller, core}（I5）
 ├── third_party/page-agent/LICENSE   # 上游 MIT 协议与版权声明
 ├── .project.agents/                 # 治理（CLAUDE/AGENTS/约束/指南/log）
