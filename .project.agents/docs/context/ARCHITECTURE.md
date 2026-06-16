@@ -170,8 +170,8 @@ vendor 四包为上游快照（粗粒度卡片；内部实现以上游为准，�
 
 ```
 ## 模块名：@page-agent/core（L4）
-- 职责：PageAgentCore Agent 循环（系统提示词、工具执行、活动流、ExecutionResult）
-- 不负责：不直接操作多标签（MultiPageAgent 的事）；不渲染历史 UI
+- 职责：PageAgentCore Agent 循环（系统提示词、工具执行、活动流、ExecutionResult、可恢复人工接管状态）
+- 不负责：不直接操作多标签（MultiPageAgent 的事）；不渲染历史 UI；不决定问学产品层卡住阈值
 ```
 
 fork 应用层（apps/extension）：
@@ -188,7 +188,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：SidepanelApp（L5）
-- 职责：侧边栏对话流、右上角更多菜单、语言快捷入口、任务历史 UI、options 设置页 UI、自定义模型列表与默认模型选择
+- 职责：侧边栏对话流、人工接管/暂停/继续 UI、右上角更多菜单、语言快捷入口、任务历史 UI、options 设置页 UI、自定义模型列表与默认模型选择
 - 不负责：不实现 Agent 循环；不直接发 LLM 请求
 - 输入：MultiPageAgent、ExtensionSettingsConfig、@page-agent/ui
 - 输出：用户
@@ -206,7 +206,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：MultiPageAgent（L5）
-- 职责：跨标签页任务编排（TabsController / RemotePageController 经 background-content 协作）
+- 职责：多标签编排、当前标签加载等待、问学产品层卡住检测（连续 3 次重复动作触发人工接管）
 - 不负责：不渲染 UI
 - 输入：@page-agent/core、@page-agent/page-controller
 - 输出：SidepanelApp

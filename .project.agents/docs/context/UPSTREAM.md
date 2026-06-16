@@ -4,32 +4,32 @@
 
 ## 当前快照
 
-| 项 | 值 |
-|---|---|
-| 上游 | https://github.com/alibaba/page-agent.git |
-| 基准 | tag `v1.9.0`（2026-06-08 发布） |
-| 上游 commit | `3a2f0a41ec697896730dc1b81b437e3842ac5e18` |
-| 本仓 pristine 导入 commit | `f5131c2` |
-| 本仓适配补丁 commit | `2476e12` |
-| 导入范围 | packages/{core,llms,page-controller,ui} → packages/*；packages/extension → apps/extension；LICENSE+NOTICE → third_party/page-agent/ |
-| 未导入 | packages/{page-agent,mcp,website}、scripts/、根配置（root 由本仓自管） |
+| 项                        | 值                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 上游                      | https://github.com/alibaba/page-agent.git                                                                                            |
+| 基准                      | tag `v1.9.0`（2026-06-08 发布）                                                                                                      |
+| 上游 commit               | `3a2f0a41ec697896730dc1b81b437e3842ac5e18`                                                                                           |
+| 本仓 pristine 导入 commit | `f5131c2`                                                                                                                            |
+| 本仓适配补丁 commit       | `2476e12`                                                                                                                            |
+| 导入范围                  | packages/{core,llms,page-controller,ui} → packages/\*；packages/extension → apps/extension；LICENSE+NOTICE → third_party/page-agent/ |
+| 未导入                    | packages/{page-agent,mcp,website}、scripts/、根配置（root 由本仓自管）                                                               |
 
 ## 本地补丁清单（相对 pristine）
 
-| # | 文件 | 改动 | 原因 |
-|---|---|---|---|
-| P1 | apps/extension/package.json | name → `extension` | 对齐 `pnpm -F extension`；应用层 fork 不受 I5 约束 |
-| P2 | apps/extension/package.json | `@page-agent/*` 依赖 → `workspace:*` | 指向本仓 vendor 包 |
-| P3 | apps/extension/package.json | +devDep `zod@^4.4.3` | peer 依赖在 pnpm 隔离下无提升来源 |
-| P4 | packages/llms/package.json | +devDep `vitest@^4.1.8` | 同上，test 脚本所需 |
-| P5 | 根 package.json | `pnpm.overrides: { "wxt>vite": "^6.3.4" }` | WXT 0.20.26 的 download 插件用 Vite 6+ hook filter 语法，Vite 5 不支持导致 wxt build 失败 |
-| P6 | apps/extension/package.json | +script `"build": "wxt build"` | 对齐根 `pnpm -r build` 聚合脚本 |
-| P7 | packages/{core,llms,page-controller,ui}/package.json | +devDep `vite@^8.0.16` | 各包 `build` 脚本直接执行 `vite build`；pnpm 隔离下必须显式声明 CLI 与 config import |
-| P8 | packages/{core,llms,page-controller,ui}/package.json | +devDep `unplugin-dts@^1.0.2` | 各包 `vite.config.js` 直接 import `unplugin-dts/vite` |
-| P9 | packages/{core,page-controller,ui}/package.json | +devDep `vite-plugin-css-injected-by-js@^5.0.1` | 对齐各包 `vite.config.js` 的 CSS 注入插件 import |
-| P10 | packages/{page-controller,ui}/package.json | +devDep `chalk@^5.6.2` | 对齐各包 `vite.config.js` 的构建日志 import |
-| P11 | packages/page-controller/src/mask/{SimulatorMask.ts,SimulatorMask.module.css} | 页面遮罩边框由 ai-motion WebGL 跑马灯替换为自绘流体玻璃（Liquid Glass）CSS 边框 | 问学品牌动效（UIUX §5）；纯 CSS 实现，去除 WebGL2 依赖 |
-| P12 | packages/page-controller/package.json | 移除 dependency `ai-motion` | P11 后该包无引用（原唯一运行时依赖） |
+| #   | 文件                                                                          | 改动                                                                            | 原因                                                                                      |
+| --- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| P1  | apps/extension/package.json                                                   | name → `extension`                                                              | 对齐 `pnpm -F extension`；应用层 fork 不受 I5 约束                                        |
+| P2  | apps/extension/package.json                                                   | `@page-agent/*` 依赖 → `workspace:*`                                            | 指向本仓 vendor 包                                                                        |
+| P3  | apps/extension/package.json                                                   | +devDep `zod@^4.4.3`                                                            | peer 依赖在 pnpm 隔离下无提升来源                                                         |
+| P4  | packages/llms/package.json                                                    | +devDep `vitest@^4.1.8`                                                         | 同上，test 脚本所需                                                                       |
+| P5  | 根 package.json                                                               | `pnpm.overrides: { "wxt>vite": "^6.3.4" }`                                      | WXT 0.20.26 的 download 插件用 Vite 6+ hook filter 语法，Vite 5 不支持导致 wxt build 失败 |
+| P6  | apps/extension/package.json                                                   | +script `"build": "wxt build"`                                                  | 对齐根 `pnpm -r build` 聚合脚本                                                           |
+| P7  | packages/{core,llms,page-controller,ui}/package.json                          | +devDep `vite@^8.0.16`                                                          | 各包 `build` 脚本直接执行 `vite build`；pnpm 隔离下必须显式声明 CLI 与 config import      |
+| P8  | packages/{core,llms,page-controller,ui}/package.json                          | +devDep `unplugin-dts@^1.0.2`                                                   | 各包 `vite.config.js` 直接 import `unplugin-dts/vite`                                     |
+| P9  | packages/{core,page-controller,ui}/package.json                               | +devDep `vite-plugin-css-injected-by-js@^5.0.1`                                 | 对齐各包 `vite.config.js` 的 CSS 注入插件 import                                          |
+| P10 | packages/{page-controller,ui}/package.json                                    | +devDep `chalk@^5.6.2`                                                          | 对齐各包 `vite.config.js` 的构建日志 import                                               |
+| P11 | packages/page-controller/src/mask/{SimulatorMask.ts,SimulatorMask.module.css} | 页面遮罩边框由 ai-motion WebGL 跑马灯替换为自绘流体玻璃（Liquid Glass）CSS 边框 | 问学品牌动效（UIUX §5）；纯 CSS 实现，去除 WebGL2 依赖                                    |
+| P12 | packages/page-controller/package.json                                         | 移除 dependency `ai-motion`                                                     | P11 后该包无引用（原唯一运行时依赖）                                                      |
 
 ## 已知差异与遗留
 
@@ -44,3 +44,9 @@
 2. 逐包 `diff -ruN <本仓包目录> /tmp/pa-new/packages/<包>`，剔除 P1–P4 与 M4 品牌化改动后评审 diff；
 3. 挑拣合入（不整目录覆盖），重跑本计划 Task 5 验证；
 4. 更新本文快照表与补丁清单，commit message 注明新旧 tag。
+
+## Local patch: resumable manual takeover
+
+- Scope: `packages/core`
+- Reason: WenXue removes user-facing step limits and adds recoverable human takeover for login, captcha, permission, unavailable pages, and stuck repeated actions.
+- Upstream sync note: keep the patch isolated to public types, PageAgentCore loop control, tools, and prompts so future alibaba/page-agent syncs can diff it cleanly.
