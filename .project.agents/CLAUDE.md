@@ -44,7 +44,7 @@ The implementation follows the module boundaries in `.project.agents/docs/contex
 
 - **Agent settings live under `.project.agents/`.** Any `settings.json` or other configuration you generate for your own use MUST be written to `.project.agents/` (or a subdirectory) — never the project root, `.claude/`, or `~/.claude/`. This keeps repo-tracked agent state contained.
 
-- **All project documentation lives under `.project.agents/docs/context/`** as a single flat directory. Canonical files:
+- **Canonical project documentation lives under `.project.agents/docs/context/`** as a single flat directory. Canonical files:
   - `PRD.md` — product requirements (source of truth for behavior)
   - `ARCHITECTURE.md` — module boundaries, dependencies, contracts, directory layout
   - `TECH-INFRA.md` — 基础设施权威：CfT 供应链、打包分发、CI、启动参数全集、关键决策记录（ADR）
@@ -52,6 +52,13 @@ The implementation follows the module boundaries in `.project.agents/docs/contex
   - `CONVENTIONS.md` — naming, style, testing, repository conventions
   - `UIUX.md` — visual tokens + interaction details (source of truth for visuals)
   - `UPSTREAM.md` — vendor 同步记录（ROADMAP M1 建立后存在）
+
+- **Superpowers specs and plans live under `.project.agents/docs/superpowers/`.**
+  - Specs: `.project.agents/docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
+  - Plans: `.project.agents/docs/superpowers/plans/YYYY-MM-DD-<topic>.md`
+  - Do not create `.project.agents/specs/`, `.project.agents/plans/`, root-level `docs/superpowers/`, or store Superpowers specs/plans in `.project.agents/docs/context/`.
+  - Plans should link their specs with relative sibling paths, e.g. `../specs/YYYY-MM-DD-<topic>-design.md`.
+  - Superpowers docs are derived planning artifacts. Behavior/module changes still update canonical upstream docs in `.project.agents/docs/context/`.
 
 - **Source-of-truth hierarchy** — on conflict, upstream wins:
 

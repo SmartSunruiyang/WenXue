@@ -8,7 +8,7 @@
 
 **Tech Stack:** WXT 0.20 · React 19 · Tailwind 4（语义 token）· three（懒加载）· gsap（懒加载）· vitest · `chrome.storage.local`。
 
-**Spec:** `.project.agents/specs/2026-06-13-newtab-home-design.md`
+**Spec:** `../specs/2026-06-13-newtab-home-design.md`
 
 **前置：** 已在分支 `feat/newtab-home` 上（spec 已提交）。所有命令从仓库根运行。改扩展源码后需 `pnpm -F extension build`（见项目 memory）。
 
@@ -17,6 +17,7 @@
 ## 文件结构（先锁定边界）
 
 新增：
+
 - `apps/extension/src/entrypoints/newtab/{index.html,main.tsx,App.tsx}` — 入口与装配根
 - `apps/extension/src/lib/quickLinks.ts` (+ `.test.ts`) — 快捷入口纯模型
 - `apps/extension/src/lib/quickLinksStorage.ts` (+ `.test.ts`) — 持久化（复用 `ConfigStorageArea` 接口）
@@ -30,6 +31,7 @@
 - `apps/extension/src/components/newtab/IntroSequence.tsx` — GSAP 时间线（懒加载）
 
 修改：
+
 - `apps/extension/src/lib/i18n.tsx` — 追加 newtab 文案 key（zh-CN + en-US）
 - `apps/extension/wxt.config.js` — 仅在 WXT 未自动注册 newtab 时显式声明（见 Task 6）；Task 14 加 three/gsap 分包
 - `.project.agents/docs/context/{ARCHITECTURE,PRD,UIUX}.md` — 登记模块/功能/视觉方向（Task 1）
@@ -39,6 +41,7 @@
 ## Task 1: 上游文档登记（先于代码 —— 硬约束 B1/A3）
 
 **Files:**
+
 - Modify: `.project.agents/docs/context/ARCHITECTURE.md`
 - Modify: `.project.agents/docs/context/PRD.md`
 - Modify: `.project.agents/docs/context/UIUX.md`
@@ -111,6 +114,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 2: 引入 three / gsap 依赖
 
 **Files:**
+
 - Modify: `apps/extension/package.json`（pnpm 自动写入）
 
 - [ ] **Step 1: 安装依赖**
@@ -137,6 +141,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 3: QuickLinks 纯模型（TDD）
 
 **Files:**
+
 - Create: `apps/extension/src/lib/quickLinks.ts`
 - Test: `apps/extension/src/lib/quickLinks.test.ts`
 
@@ -329,6 +334,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 4: 两态判定 + 会话标志（TDD）
 
 **Files:**
+
 - Create: `apps/extension/src/lib/newtabMode.ts`
 - Test: `apps/extension/src/lib/newtabMode.test.ts`
 
@@ -338,7 +344,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 // apps/extension/src/lib/newtabMode.test.ts
 import { describe, expect, it } from 'vitest'
 
-import { decideMode, hasIntroPlayed, markIntroPlayed, type SessionFlagStore } from '@/lib/newtabMode'
+import {
+	decideMode,
+	hasIntroPlayed,
+	markIntroPlayed,
+	type SessionFlagStore,
+} from '@/lib/newtabMode'
 
 function fakeSession(): SessionFlagStore {
 	const m = new Map<string, string>()
@@ -422,6 +433,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 5: 快捷入口持久化（TDD，复用 ConfigStorageArea）
 
 **Files:**
+
 - Create: `apps/extension/src/lib/quickLinksStorage.ts`
 - Test: `apps/extension/src/lib/quickLinksStorage.test.ts`
 
@@ -499,10 +511,7 @@ export async function loadQuickLinks(
 	return normalizeQuickLinks(r[QUICK_LINKS_KEY])
 }
 
-export async function saveQuickLinks(
-	storage: ConfigStorageArea,
-	list: QuickLink[],
-): Promise<void> {
+export async function saveQuickLinks(storage: ConfigStorageArea, list: QuickLink[]): Promise<void> {
 	await storage.set({ [QUICK_LINKS_KEY]: list })
 }
 
@@ -513,10 +522,7 @@ export async function loadOnboardingDone(
 	return r[ONBOARDING_DONE_KEY] === true
 }
 
-export async function saveOnboardingDone(
-	storage: ConfigStorageArea,
-	done: boolean,
-): Promise<void> {
+export async function saveOnboardingDone(storage: ConfigStorageArea, done: boolean): Promise<void> {
 	await storage.set({ [ONBOARDING_DONE_KEY]: done })
 }
 ```
@@ -540,6 +546,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 6: newtab 入口骨架 + manifest 注册
 
 **Files:**
+
 - Create: `apps/extension/src/entrypoints/newtab/index.html`
 - Create: `apps/extension/src/entrypoints/newtab/main.tsx`
 - Create: `apps/extension/src/entrypoints/newtab/App.tsx`
@@ -587,7 +594,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 		<I18nProvider>
 			<App />
 		</I18nProvider>
-	</ErrorBoundary>
+	</ErrorBoundary>,
 )
 ```
 
@@ -638,6 +645,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 7: i18n 文案
 
 **Files:**
+
 - Modify: `apps/extension/src/lib/i18n.tsx`
 
 - [ ] **Step 1: 在 `translations['zh-CN']` 末尾（`copied` 之后）追加**
@@ -706,6 +714,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 8: BrandHero + SettingsEntry
 
 **Files:**
+
 - Create: `apps/extension/src/components/newtab/BrandHero.tsx`
 - Create: `apps/extension/src/components/newtab/SettingsEntry.tsx`
 
@@ -776,6 +785,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 9: QuickLinksGrid + QuickLinkEditor
 
 **Files:**
+
 - Create: `apps/extension/src/components/newtab/QuickLinkEditor.tsx`
 - Create: `apps/extension/src/components/newtab/QuickLinksGrid.tsx`
 
@@ -814,9 +824,7 @@ export function QuickLinkEditor({ initial, onSubmit, onClose }: Props) {
 				className="w-80 max-w-[90vw] rounded-xl border bg-card p-4 shadow-2xl"
 				onClick={(e) => e.stopPropagation()}
 			>
-				<p className="mb-3 text-sm font-semibold">
-					{initial ? t('ntEditLink') : t('ntAddLink')}
-				</p>
+				<p className="mb-3 text-sm font-semibold">{initial ? t('ntEditLink') : t('ntAddLink')}</p>
 				<label className="block space-y-1">
 					<span className="text-xs text-muted-foreground">{t('ntLinkTitle')}</span>
 					<input
@@ -924,11 +932,7 @@ export function QuickLinksGrid({ links, onChange }: Props) {
 						}}
 						className="group relative flex flex-col items-center gap-1.5 rounded-xl border bg-card p-3 transition-colors hover:bg-accent"
 					>
-						<a
-							href={link.url}
-							className="flex flex-col items-center gap-1.5"
-							title={link.url}
-						>
+						<a href={link.url} className="flex flex-col items-center gap-1.5" title={link.url}>
 							<Favicon link={link} />
 							<span className="line-clamp-1 max-w-full text-xs text-foreground">{link.title}</span>
 						</a>
@@ -1006,6 +1010,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 10: OnboardingChecklist
 
 **Files:**
+
 - Create: `apps/extension/src/components/newtab/OnboardingChecklist.tsx`
 
 - [ ] **Step 1: 实现（4 步，可折叠，持久化 done 标志）**
@@ -1103,6 +1108,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 11: App 常态组装（可用的克制仪表盘，零 WebGL）
 
 **Files:**
+
 - Modify: `apps/extension/src/entrypoints/newtab/App.tsx`
 
 > 本任务交付一个完整可用的常态仪表盘（含流体玻璃包边、快捷入口、onboarding、设置）。入场动效在 Task 12-13 叠加。
@@ -1181,6 +1187,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 12: GlassPortalScene（Three.js 折射，懒加载）
 
 **Files:**
+
 - Create: `apps/extension/src/components/newtab/GlassPortalScene.tsx`
 
 > 折射/调色是迭代视觉项；以下为可运行基线，手动验收时再调参（厚度、ior、流光饱和度、相机）。`prefers-reduced-motion` 与卸载时必须释放 GPU 上下文。
@@ -1339,6 +1346,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 13: IntroSequence（GSAP）+ 两态接入 App
 
 **Files:**
+
 - Create: `apps/extension/src/components/newtab/IntroSequence.tsx`
 - Modify: `apps/extension/src/entrypoints/newtab/App.tsx`
 
@@ -1422,86 +1430,80 @@ export function IntroSequence({ dark, children, onComplete }: Props) {
 // 顶部补充：
 import { IntroSequence } from '@/components/newtab/IntroSequence'
 import { RotateCcw } from 'lucide-react'
-import {
-	decideMode,
-	hasIntroPlayed,
-	markIntroPlayed,
-	prefersReducedMotion,
-} from '@/lib/newtabMode'
+import { decideMode, hasIntroPlayed, markIntroPlayed, prefersReducedMotion } from '@/lib/newtabMode'
 ```
 
 在组件内、`updateLinks` 之后加：
 
 ```tsx
-	const { t } = useI18n() // 顶部已可从 useI18n 引入；若未引入则加 import { useI18n } from '@/lib/i18n'
-	const [mode, setMode] = useState<'intro' | 'calm'>('calm')
-	const [introKey, setIntroKey] = useState(0)
-	const dark =
-		typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+const { t } = useI18n() // 顶部已可从 useI18n 引入；若未引入则加 import { useI18n } from '@/lib/i18n'
+const [mode, setMode] = useState<'intro' | 'calm'>('calm')
+const [introKey, setIntroKey] = useState(0)
+const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
 
-	useEffect(() => {
-		const next = decideMode({
-			introPlayed: hasIntroPlayed(),
-			reducedMotion: prefersReducedMotion(),
-		})
-		setMode(next)
-	}, [])
+useEffect(() => {
+	const next = decideMode({
+		introPlayed: hasIntroPlayed(),
+		reducedMotion: prefersReducedMotion(),
+	})
+	setMode(next)
+}, [])
 
-	const finishIntro = () => {
-		markIntroPlayed()
-		setMode('calm')
-	}
-	const replay = () => {
-		setMode('intro')
-		setIntroKey((k) => k + 1)
-	}
+const finishIntro = () => {
+	markIntroPlayed()
+	setMode('calm')
+}
+const replay = () => {
+	setMode('intro')
+	setIntroKey((k) => k + 1)
+}
 ```
 
 `return` 用：
 
 ```tsx
-	const content = (
-		<>
-			<div className="absolute right-5 top-5 z-20 flex gap-2">
-				<button
-					type="button"
-					onClick={replay}
-					aria-label={t('ntReplayIntro')}
-					title={t('ntReplayIntro')}
-					className="flex size-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
-				>
-					<RotateCcw className="size-4" />
-				</button>
-				<SettingsEntry />
-			</div>
-			<main className="relative z-10 mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center gap-8 px-6 py-16">
-				<div data-stagger>
-					<BrandHero />
-				</div>
-				{links && (
-					<div data-stagger className="w-full">
-						<QuickLinksGrid links={links} onChange={updateLinks} />
-					</div>
-				)}
-				<div data-stagger>
-					<OnboardingChecklist done={onboardingDone} onDone={markOnboarding} />
-				</div>
-			</main>
-		</>
-	)
-
-	return (
-		<div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground">
-			<MotionOverlay active />
-			{mode === 'intro' ? (
-				<IntroSequence key={introKey} dark={dark} onComplete={finishIntro}>
-					{content}
-				</IntroSequence>
-			) : (
-				content
-			)}
+const content = (
+	<>
+		<div className="absolute right-5 top-5 z-20 flex gap-2">
+			<button
+				type="button"
+				onClick={replay}
+				aria-label={t('ntReplayIntro')}
+				title={t('ntReplayIntro')}
+				className="flex size-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+			>
+				<RotateCcw className="size-4" />
+			</button>
+			<SettingsEntry />
 		</div>
-	)
+		<main className="relative z-10 mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center gap-8 px-6 py-16">
+			<div data-stagger>
+				<BrandHero />
+			</div>
+			{links && (
+				<div data-stagger className="w-full">
+					<QuickLinksGrid links={links} onChange={updateLinks} />
+				</div>
+			)}
+			<div data-stagger>
+				<OnboardingChecklist done={onboardingDone} onDone={markOnboarding} />
+			</div>
+		</main>
+	</>
+)
+
+return (
+	<div className="relative min-h-screen w-full overflow-hidden bg-background text-foreground">
+		<MotionOverlay active />
+		{mode === 'intro' ? (
+			<IntroSequence key={introKey} dark={dark} onComplete={finishIntro}>
+				{content}
+			</IntroSequence>
+		) : (
+			content
+		)}
+	</div>
+)
 ```
 
 - [ ] **Step 3: 构建并手动验收**
@@ -1523,6 +1525,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 14: 分包、全量验收与执行日志
 
 **Files:**
+
 - Modify: `apps/extension/wxt.config.js`
 - Create: `.project.agents/log/2026-06-13-newtab-home.md`
 

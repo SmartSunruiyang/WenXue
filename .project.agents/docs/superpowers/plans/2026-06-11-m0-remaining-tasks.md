@@ -5,11 +5,11 @@
 
 ## 任务总览
 
-| 序号 | 任务 | 产出物 |
-|---|---|---|
-| 1 | pnpm workspace 骨架 | `pnpm-workspace.yaml`、根 `package.json`、`.nvmrc`、Prettier/ESLint 配置 |
-| 2 | 空 Electron 壳 | `apps/desktop/` 完整目录结构 + 可运行的空白窗口 |
-| 3 | 根聚合脚本 | 根 `package.json` 中的 `build`/`dev`/`test` 脚本 |
+| 序号 | 任务                | 产出物                                                                   |
+| ---- | ------------------- | ------------------------------------------------------------------------ |
+| 1    | pnpm workspace 骨架 | `pnpm-workspace.yaml`、根 `package.json`、`.nvmrc`、Prettier/ESLint 配置 |
+| 2    | 空 Electron 壳      | `apps/desktop/` 完整目录结构 + 可运行的空白窗口                          |
+| 3    | 根聚合脚本          | 根 `package.json` 中的 `build`/`dev`/`test` 脚本                         |
 
 ## 依赖关系
 
@@ -33,28 +33,28 @@ packages:
 
 ```json
 {
-  "name": "wenxue",
-  "private": true,
-  "packageManager": "pnpm@9.15.0",
-  "engines": {
-    "node": ">=22.0.0"
-  },
-  "scripts": {
-    "build": "pnpm -r build",
-    "dev": "pnpm -F desktop dev",
-    "test": "pnpm -r test",
-    "lint": "eslint .",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
-  },
-  "devDependencies": {
-    "prettier": "^3.4.0",
-    "prettier-plugin-organize-imports": "^4.1.0",
-    "eslint": "^9.15.0",
-    "typescript-eslint": "^8.15.0",
-    "@eslint-react/eslint-plugin": "^1.19.0",
-    "typescript": "^5.7.0"
-  }
+	"name": "wenxue",
+	"private": true,
+	"packageManager": "pnpm@9.15.0",
+	"engines": {
+		"node": ">=22.0.0"
+	},
+	"scripts": {
+		"build": "pnpm -r build",
+		"dev": "pnpm -F desktop dev",
+		"test": "pnpm -r test",
+		"lint": "eslint .",
+		"format": "prettier --write .",
+		"format:check": "prettier --check ."
+	},
+	"devDependencies": {
+		"prettier": "^3.4.0",
+		"prettier-plugin-organize-imports": "^4.1.0",
+		"eslint": "^9.15.0",
+		"typescript-eslint": "^8.15.0",
+		"@eslint-react/eslint-plugin": "^1.19.0",
+		"typescript": "^5.7.0"
+	}
 }
 ```
 
@@ -67,6 +67,7 @@ packages:
 ### 1.4 Prettier 配置 (.prettierrc)
 
 继承上游 page-agent 配置：
+
 - tab 缩进 (`useTabs: true`)
 - 单引号 (`singleQuote: true`)
 - 无分号 (`semi: false`)
@@ -75,17 +76,18 @@ packages:
 
 ```json
 {
-  "useTabs": true,
-  "singleQuote": true,
-  "semi": false,
-  "printWidth": 100,
-  "plugins": ["prettier-plugin-organize-imports"]
+	"useTabs": true,
+	"singleQuote": true,
+	"semi": false,
+	"printWidth": 100,
+	"plugins": ["prettier-plugin-organize-imports"]
 }
 ```
 
 ### 1.5 ESLint 配置 (eslint.config.js)
 
 使用 flat config 格式（ESLint 9）：
+
 - typescript-eslint
 - @eslint-react
 
@@ -95,15 +97,15 @@ import tseslint from 'typescript-eslint'
 import react from '@eslint-react/eslint-plugin'
 
 export default tseslint.config(
-  eslint.configs.recommended,
-  ...tseslint.configs.recommended,
-  {
-    files: ['**/*.{ts,tsx}'],
-    ...react.configs['recommended-typescript'],
-  },
-  {
-    ignores: ['**/node_modules/**', '**/dist/**', '**/.output/**'],
-  }
+	eslint.configs.recommended,
+	...tseslint.configs.recommended,
+	{
+		files: ['**/*.{ts,tsx}'],
+		...react.configs['recommended-typescript'],
+	},
+	{
+		ignores: ['**/node_modules/**', '**/dist/**', '**/.output/**'],
+	},
 )
 ```
 
@@ -152,30 +154,30 @@ apps/desktop/
 
 ```json
 {
-  "name": "desktop",
-  "private": true,
-  "version": "0.0.0",
-  "main": "./out/main/index.js",
-  "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "electron-log": "^5.2.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^33.2.0",
-    "electron-vite": "^2.3.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.0",
-    "tailwindcss": "^4.0.0",
-    "@tailwindcss/vite": "^4.0.0"
-  }
+	"name": "desktop",
+	"private": true,
+	"version": "0.0.0",
+	"main": "./out/main/index.js",
+	"scripts": {
+		"dev": "electron-vite dev",
+		"build": "electron-vite build",
+		"preview": "electron-vite preview",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"electron-log": "^5.2.0"
+	},
+	"devDependencies": {
+		"@vitejs/plugin-react": "^4.3.4",
+		"electron": "^33.2.0",
+		"electron-vite": "^2.3.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0",
+		"typescript": "^5.7.0",
+		"vitest": "^2.1.0",
+		"tailwindcss": "^4.0.0",
+		"@tailwindcss/vite": "^4.0.0"
+	}
 }
 ```
 
@@ -188,20 +190,20 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  main: {
-    plugins: [externalizeDepsPlugin()],
-  },
-  preload: {
-    plugins: [externalizeDepsPlugin()],
-  },
-  renderer: {
-    resolve: {
-      alias: {
-        '@': resolve('src/renderer/src'),
-      },
-    },
-    plugins: [react(), tailwindcss()],
-  },
+	main: {
+		plugins: [externalizeDepsPlugin()],
+	},
+	preload: {
+		plugins: [externalizeDepsPlugin()],
+	},
+	renderer: {
+		resolve: {
+			alias: {
+				'@': resolve('src/renderer/src'),
+			},
+		},
+		plugins: [react(), tailwindcss()],
+	},
 })
 ```
 
@@ -212,36 +214,36 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
 
 function createWindow() {
-  const win = new BrowserWindow({
-    width: 800,
-    height: 600,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  })
+	const win = new BrowserWindow({
+		width: 800,
+		height: 600,
+		webPreferences: {
+			preload: join(__dirname, '../preload/index.js'),
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+		},
+	})
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+	if (process.env.ELECTRON_RENDERER_URL) {
+		win.loadURL(process.env.ELECTRON_RENDERER_URL)
+	} else {
+		win.loadFile(join(__dirname, '../renderer/index.html'))
+	}
 }
 
 app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+	if (process.platform !== 'darwin') {
+		app.quit()
+	}
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow()
-  }
+	if (BrowserWindow.getAllWindows().length === 0) {
+		createWindow()
+	}
 })
 ```
 
@@ -252,11 +254,11 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 // 基础 API，后续 M3 扩展为 DesktopBridge
 contextBridge.exposeInMainWorld('wenxue', {
-  versions: {
-    node: () => process.versions.node,
-    chrome: () => process.versions.chrome,
-    electron: () => process.versions.electron,
-  },
+	versions: {
+		node: () => process.versions.node,
+		chrome: () => process.versions.chrome,
+		electron: () => process.versions.electron,
+	},
 })
 ```
 
@@ -265,15 +267,15 @@ contextBridge.exposeInMainWorld('wenxue', {
 ```html
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>问学 WenXue</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="./src/main.tsx"></script>
-  </body>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>问学 WenXue</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script type="module" src="./src/main.tsx"></script>
+	</body>
 </html>
 ```
 
@@ -286,9 +288,9 @@ import App from './App'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
+	<React.StrictMode>
+		<App />
+	</React.StrictMode>,
 )
 ```
 
@@ -296,29 +298,26 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
 ```tsx
 export default function App() {
-  return (
-    <div className="flex h-screen items-center justify-center bg-gray-50">
-      <h1 className="text-4xl font-bold text-gray-900">问学 WenXue</h1>
-    </div>
-  )
+	return (
+		<div className="flex h-screen items-center justify-center bg-gray-50">
+			<h1 className="text-4xl font-bold text-gray-900">问学 WenXue</h1>
+		</div>
+	)
 }
 ```
 
 ### 2.9 src/renderer/src/index.css
 
 ```css
-@import 'tailwindcss'
+@import 'tailwindcss';
 ```
 
 ### 2.10 tsconfig.json
 
 ```json
 {
-  "files": [],
-  "references": [
-    { "path": "./tsconfig.node.json" },
-    { "path": "./tsconfig.web.json" }
-  ]
+	"files": [],
+	"references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.web.json" }]
 }
 ```
 
@@ -326,21 +325,17 @@ export default function App() {
 
 ```json
 {
-  "compilerOptions": {
-    "composite": true,
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "outDir": "./out",
-    "strict": true,
-    "skipLibCheck": true
-  },
-  "include": [
-    "electron.vite.config.ts",
-    "src/main/**/*",
-    "src/preload/**/*"
-  ]
+	"compilerOptions": {
+		"composite": true,
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+		"outDir": "./out",
+		"strict": true,
+		"skipLibCheck": true
+	},
+	"include": ["electron.vite.config.ts", "src/main/**/*", "src/preload/**/*"]
 }
 ```
 
@@ -348,21 +343,21 @@ export default function App() {
 
 ```json
 {
-  "compilerOptions": {
-    "composite": true,
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "outDir": "./out",
-    "strict": true,
-    "skipLibCheck": true,
-    "paths": {
-      "@/*": ["./src/renderer/src/*"]
-    }
-  },
-  "include": ["src/renderer/**/*"]
+	"compilerOptions": {
+		"composite": true,
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"jsx": "react-jsx",
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+		"outDir": "./out",
+		"strict": true,
+		"skipLibCheck": true,
+		"paths": {
+			"@/*": ["./src/renderer/src/*"]
+		}
+	},
+	"include": ["src/renderer/**/*"]
 }
 ```
 
@@ -371,7 +366,7 @@ export default function App() {
 ```js
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./src/renderer/**/*.{html,tsx}'],
+	content: ['./src/renderer/**/*.{html,tsx}'],
 }
 ```
 
@@ -379,9 +374,9 @@ export default {
 
 ```js
 export default {
-  plugins: {
-    tailwindcss: {},
-  },
+	plugins: {
+		tailwindcss: {},
+	},
 }
 ```
 

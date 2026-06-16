@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 22 · pnpm 9 · Electron main process · TypeScript strict · vitest · `@puppeteer/browsers@^3.0.4` · `tsx@^4.22.4`
 
-**Spec:** `../specs/2026-06-11-m2-browser-supply-chain-desktop-base.md`
+**Spec:** `../specs/2026-06-11-m2-browser-supply-chain-desktop-base-design.md`
 
 ---
 
@@ -61,6 +61,7 @@ Expected: confirms M2 scope is supply chain + no-spawn desktop base modules only
 ## Task 2: Lock CfT and add desktop script dependencies
 
 **Files:**
+
 - Create: `apps/desktop/browser.lock.json`
 - Modify: `apps/desktop/package.json`
 - Modify: `pnpm-lock.yaml`
@@ -75,9 +76,9 @@ Expected at spec-writing time:
 
 ```json
 {
-  "timestamp": "2026-06-10T21:32:27.128Z",
-  "stable": "149.0.7827.55",
-  "revision": "1625079"
+	"timestamp": "2026-06-10T21:32:27.128Z",
+	"stable": "149.0.7827.55",
+	"revision": "1625079"
 }
 ```
 
@@ -87,31 +88,31 @@ If the value differs and the user wants the newer Stable, update all `149.0.7827
 
 ```json
 {
-  "browser": "chrome",
-  "channel": "stable",
-  "version": "149.0.7827.55",
-  "revision": "1625079",
-  "source": {
-    "lastKnownGoodVersionsWithDownloads": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
-    "timestamp": "2026-06-10T21:32:27.128Z"
-  },
-  "platforms": [
-    {
-      "name": "mac-arm64",
-      "puppeteerPlatform": "mac_arm",
-      "archive": "chrome-mac-arm64.zip"
-    },
-    {
-      "name": "mac-x64",
-      "puppeteerPlatform": "mac",
-      "archive": "chrome-mac-x64.zip"
-    },
-    {
-      "name": "win64",
-      "puppeteerPlatform": "win64",
-      "archive": "chrome-win64.zip"
-    }
-  ]
+	"browser": "chrome",
+	"channel": "stable",
+	"version": "149.0.7827.55",
+	"revision": "1625079",
+	"source": {
+		"lastKnownGoodVersionsWithDownloads": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+		"timestamp": "2026-06-10T21:32:27.128Z"
+	},
+	"platforms": [
+		{
+			"name": "mac-arm64",
+			"puppeteerPlatform": "mac_arm",
+			"archive": "chrome-mac-arm64.zip"
+		},
+		{
+			"name": "mac-x64",
+			"puppeteerPlatform": "mac",
+			"archive": "chrome-mac-x64.zip"
+		},
+		{
+			"name": "win64",
+			"puppeteerPlatform": "win64",
+			"archive": "chrome-win64.zip"
+		}
+	]
 }
 ```
 
@@ -162,6 +163,7 @@ Do not tick ROADMAP M2 yet; the script is not implemented.
 ## Task 3: Implement `fetch-browser`
 
 **Files:**
+
 - Create: `apps/desktop/scripts/fetch-browser.ts`
 - Modify: `.project.agents/docs/context/ROADMAP.md`
 
@@ -181,12 +183,7 @@ Core structure:
 ```ts
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-	Browser,
-	BrowserPlatform,
-	computeExecutablePath,
-	install,
-} from '@puppeteer/browsers'
+import { Browser, BrowserPlatform, computeExecutablePath, install } from '@puppeteer/browsers'
 import lock from '../browser.lock.json'
 
 type TargetPlatform = 'mac-arm64' | 'mac-x64' | 'win64'
@@ -292,6 +289,7 @@ git commit -m "feat(desktop): fetch locked Chrome for Testing builds"
 ## Task 4: Implement `LaunchConfig` with tests
 
 **Files:**
+
 - Create: `apps/desktop/src/main/launchConfig.ts`
 - Create: `apps/desktop/src/main/launchConfig.test.ts`
 
@@ -397,6 +395,7 @@ git commit -m "feat(desktop): add pure Chrome launch argv builder"
 ## Task 5: Implement `AppPaths` and `ProfileStore` with tests
 
 **Files:**
+
 - Create: `apps/desktop/src/main/AppPaths.ts`
 - Create: `apps/desktop/src/main/AppPaths.test.ts`
 - Create: `apps/desktop/src/main/ProfileStore.ts`
@@ -476,6 +475,7 @@ git commit -m "feat(desktop): add app data paths and profile store"
 ## Task 6: Implement `BrowserResources` with tests
 
 **Files:**
+
 - Create: `apps/desktop/src/main/BrowserResources.ts`
 - Create: `apps/desktop/src/main/BrowserResources.test.ts`
 
@@ -497,7 +497,10 @@ Use a small mapping that separates user-facing platform names from Puppeteer enu
 ```ts
 import { Browser, BrowserPlatform, computeExecutablePath } from '@puppeteer/browsers'
 
-export function resolveBrowserPlatform(platform = process.platform, arch = process.arch): BrowserPlatform {
+export function resolveBrowserPlatform(
+	platform = process.platform,
+	arch = process.arch,
+): BrowserPlatform {
 	if (platform === 'darwin' && arch === 'arm64') return BrowserPlatform.MAC_ARM
 	if (platform === 'darwin' && arch === 'x64') return BrowserPlatform.MAC
 	if (platform === 'win32' && arch === 'x64') return BrowserPlatform.WIN64
@@ -554,6 +557,7 @@ git commit -m "feat(desktop): resolve browser and extension resources"
 ## Task 7: Implement `AppLogger` with tests
 
 **Files:**
+
 - Create: `apps/desktop/src/main/AppLogger.ts`
 - Create: `apps/desktop/src/main/AppLogger.test.ts`
 
@@ -610,6 +614,7 @@ git commit -m "feat(desktop): add app and browser log sinks"
 ## Task 8: M2 aggregate verification
 
 **Files:**
+
 - Modify: `.project.agents/docs/context/ROADMAP.md`
 
 - [ ] **Step 1: Run desktop tests**
@@ -648,6 +653,7 @@ git commit -m "docs: ROADMAP M2 desktop base modules complete"
 ## Task 9: Execution log and milestone closeout
 
 **Files:**
+
 - Create: `.project.agents/log/YYYY-MM-DD-m2-browser-supply-chain-desktop-base.md`
 
 - [ ] **Step 1: Write execution log**

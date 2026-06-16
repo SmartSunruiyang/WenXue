@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron main/preload/renderer · React 19 · TypeScript strict · vitest · child_process · Chrome for Testing · WXT MV3 extension
 
-**Spec:** `../specs/2026-06-11-m3-startup-chain.md`
+**Spec:** `../specs/2026-06-11-m3-startup-chain-design.md`
 
 ---
 
@@ -89,6 +89,7 @@ Expected: confirms M3 scope is BrowserSupervisor, DesktopBridge, ConsoleUI, Main
 ## Task 2: BrowserSupervisor state machine
 
 **Files:**
+
 - Create: `apps/desktop/src/main/BrowserSupervisor.ts`
 - Create: `apps/desktop/src/main/BrowserSupervisor.test.ts`
 - Modify: `.project.agents/docs/context/ROADMAP.md`
@@ -213,7 +214,7 @@ export class BrowserSupervisor {
 Default `spawnBrowser`:
 
 ```ts
-(binary, argv) => spawn(binary, argv, { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+;(binary, argv) => spawn(binary, argv, { detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
 ```
 
 - [ ] **Step 4: Implement minimal launch behavior**
@@ -284,6 +285,7 @@ git commit -m "feat(desktop): BrowserSupervisor 启动状态机"
 ## Task 3: DesktopBridge IPC
 
 **Files:**
+
 - Create: `apps/desktop/src/main/DesktopBridge.ts`
 - Create: `apps/desktop/src/main/DesktopBridge.test.ts`
 
@@ -367,6 +369,7 @@ git commit -m "feat(desktop): register typed desktop IPC bridge"
 ## Task 4: Preload bridge surface and renderer types
 
 **Files:**
+
 - Modify: `apps/desktop/src/preload/index.ts`
 - Create: `apps/desktop/src/renderer/src/wenxue.d.ts`
 - Modify: `.project.agents/docs/context/ROADMAP.md`
@@ -453,6 +456,7 @@ git commit -m "feat(desktop): expose minimal preload bridge"
 ## Task 5: ConsoleUI minimum control surface
 
 **Files:**
+
 - Modify: `apps/desktop/src/renderer/src/App.tsx`
 - Create: `apps/desktop/src/renderer/src/strings.ts`
 - Modify: `apps/desktop/src/renderer/src/index.css` only if needed for stable layout.
@@ -527,6 +531,7 @@ git commit -m "feat(desktop): render launch console minimum state"
 ## Task 6: MainBootstrap lifecycle and entrypoint
 
 **Files:**
+
 - Create: `apps/desktop/src/main/MainBootstrap.ts`
 - Create: `apps/desktop/src/main/MainBootstrap.test.ts`
 - Modify: `apps/desktop/src/main/index.ts`
@@ -704,6 +709,7 @@ Expected: all four M3 checkboxes are already `[x]` from Tasks 2, 4, 5, and 6; wo
 ## Task 8: Execution log and closeout
 
 **Files:**
+
 - Create: `.project.agents/log/YYYY-MM-DD-m3-startup-chain.md`
 
 - [ ] **Step 1: Write execution log**

@@ -37,12 +37,12 @@
 
 **两态规则（对应已选「炫酷首屏·克制日常」）**：
 
-| 触发 | 表现 |
-|---|---|
+| 触发                                                           | 表现                                                                       |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | 每次启动浏览器后的第一个新标签（含首次打开；会话标志位未置位） | 完整电影级入场（加载 three/gsap，跑 `GlassPortalScene` + `IntroSequence`） |
-| 同一会话内之后开的新标签 | 克制常态：**不加载 WebGL**，仅 CSS「流体玻璃」包边 + 内容快速淡入 |
-| onboarding 未完成（`newtabOnboardingDone` 未置位） | 清单默认展开；完成后折叠为「新手引导」入口 |
-| `prefers-reduced-motion: reduce` | 跳过 WebGL 与时间线，直接静态合成首屏 |
+| 同一会话内之后开的新标签                                       | 克制常态：**不加载 WebGL**，仅 CSS「流体玻璃」包边 + 内容快速淡入          |
+| onboarding 未完成（`newtabOnboardingDone` 未置位）             | 清单默认展开；完成后折叠为「新手引导」入口                                 |
+| `prefers-reduced-motion: reduce`                               | 跳过 WebGL 与时间线，直接静态合成首屏                                      |
 
 - 入场判定：`sessionStorage.introPlayedThisSession` 未置位 → 播放完整入场（自然覆盖「首次打开」与「每次启动的第一个新标签」），播完置位。该标志只决定**是否播入场**，与 onboarding 展开互相独立。
 - 「重播入场」按钮：手动重新播放完整入场（懒加载 three/gsap），不受上述标志限制。
@@ -103,16 +103,16 @@ apps/extension/src/components/newtab/   # 本页专属组件
 
 ## 5. 组件拆分（小而专）
 
-| 组件 | 职责 |
-|---|---|
-| `App` | 装配；判定两态；按需懒加载入场层 |
-| `IntroSequence` | GSAP 时间线编排（仅入场态挂载） |
-| `GlassPortalScene` | Three.js 折射 canvas（动态 import three，仅入场态） |
-| `BrandHero` | 字标/slogan 排印 |
-| `QuickLinksGrid` | 磁贴网格 + 拖拽排序 + 末位「＋」 |
-| `QuickLinkEditor` | 增/改对话框（标题、URL、可选图标）；删除 |
-| `OnboardingChecklist` | 4 步清单，可折叠/重开，步骤完成态 |
-| `SettingsEntry` | 齿轮按钮 → `chrome.runtime.openOptionsPage()` |
+| 组件                  | 职责                                                |
+| --------------------- | --------------------------------------------------- |
+| `App`                 | 装配；判定两态；按需懒加载入场层                    |
+| `IntroSequence`       | GSAP 时间线编排（仅入场态挂载）                     |
+| `GlassPortalScene`    | Three.js 折射 canvas（动态 import three，仅入场态） |
+| `BrandHero`           | 字标/slogan 排印                                    |
+| `QuickLinksGrid`      | 磁贴网格 + 拖拽排序 + 末位「＋」                    |
+| `QuickLinkEditor`     | 增/改对话框（标题、URL、可选图标）；删除            |
+| `OnboardingChecklist` | 4 步清单，可折叠/重开，步骤完成态                   |
+| `SettingsEntry`       | 齿轮按钮 → `chrome.runtime.openOptionsPage()`       |
 
 ## 6. 数据模型与持久化（`chrome.storage.local`，不出本机 / I2）
 

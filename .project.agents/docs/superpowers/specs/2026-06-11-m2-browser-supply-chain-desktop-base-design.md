@@ -114,22 +114,22 @@ Acceptance:
 
 The spec writing baseline was verified on 2026-06-11 against the Chrome for Testing official last-known-good endpoint and npm registry:
 
-| Item | Value |
-|---|---|
-| CfT endpoint | `https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json` |
-| CfT Stable timestamp | `2026-06-10T21:32:27.128Z` |
-| CfT Stable version | `149.0.7827.55` |
-| CfT revision | `1625079` |
-| `@puppeteer/browsers` | `3.0.4` |
-| `tsx` | `4.22.4` |
+| Item                  | Value                                                                                                |
+| --------------------- | ---------------------------------------------------------------------------------------------------- |
+| CfT endpoint          | `https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json` |
+| CfT Stable timestamp  | `2026-06-10T21:32:27.128Z`                                                                           |
+| CfT Stable version    | `149.0.7827.55`                                                                                      |
+| CfT revision          | `1625079`                                                                                            |
+| `@puppeteer/browsers` | `3.0.4`                                                                                              |
+| `tsx`                 | `4.22.4`                                                                                             |
 
 Lock platforms:
 
-| User-facing platform | Puppeteer `BrowserPlatform` | Cache directory segment | Official archive |
-|---|---|---|---|
-| `mac-arm64` | `mac_arm` | `mac_arm-149.0.7827.55` | `chrome-mac-arm64.zip` |
-| `mac-x64` | `mac` | `mac-149.0.7827.55` | `chrome-mac-x64.zip` |
-| `win64` | `win64` | `win64-149.0.7827.55` | `chrome-win64.zip` |
+| User-facing platform | Puppeteer `BrowserPlatform` | Cache directory segment | Official archive       |
+| -------------------- | --------------------------- | ----------------------- | ---------------------- |
+| `mac-arm64`          | `mac_arm`                   | `mac_arm-149.0.7827.55` | `chrome-mac-arm64.zip` |
+| `mac-x64`            | `mac`                       | `mac-149.0.7827.55`     | `chrome-mac-x64.zip`   |
+| `win64`              | `win64`                     | `win64-149.0.7827.55`   | `chrome-win64.zip`     |
 
 If execution starts much later than this spec date, the implementer may re-check the official endpoint and intentionally update the lock version before Task 2. Do not silently drift the version after `browser.lock.json` is created.
 
@@ -169,13 +169,13 @@ Do not invent a second copy layout in M2. M5 packaging can choose the correct pl
 
 Desktop main modules should be separate files under `apps/desktop/src/main/`:
 
-| File | Responsibility |
-|---|---|
-| `AppPaths.ts` | userData-derived directory layout |
-| `AppLogger.ts` | main log + browser stream log sink |
+| File                  | Responsibility                             |
+| --------------------- | ------------------------------------------ |
+| `AppPaths.ts`         | userData-derived directory layout          |
+| `AppLogger.ts`        | main log + browser stream log sink         |
 | `BrowserResources.ts` | lock reading and resource path computation |
-| `launchConfig.ts` | pure argv builder |
-| `ProfileStore.ts` | profile directory creation/listing |
+| `launchConfig.ts`     | pure argv builder                          |
+| `ProfileStore.ts`     | profile directory creation/listing         |
 
 Tests live beside the unit as `*.test.ts`, per `CONVENTIONS.md §1.3`.
 

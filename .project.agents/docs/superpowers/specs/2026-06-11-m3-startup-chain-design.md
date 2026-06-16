@@ -175,19 +175,19 @@ The control window follows `UIUX.md §6/§7`: compact, utilitarian, status-first
 
 Expected implementation files:
 
-| File | Responsibility |
-|---|---|
-| `apps/desktop/src/main/BrowserSupervisor.ts` | BrowserStatus state machine, spawn, exit/error handling, requestShutdown |
-| `apps/desktop/src/main/BrowserSupervisor.test.ts` | state-machine tests with fake child process |
-| `apps/desktop/src/main/DesktopBridge.ts` | main-process IPC handlers and status forwarding |
-| `apps/desktop/src/main/DesktopBridge.test.ts` | IPC contract tests with fake ipcMain/supervisor/resources |
-| `apps/desktop/src/main/MainBootstrap.ts` | Electron app/window lifecycle and module assembly |
-| `apps/desktop/src/main/MainBootstrap.test.ts` | close-prompt helper/lifecycle tests where practical |
-| `apps/desktop/src/main/index.ts` | thin entrypoint calling MainBootstrap |
-| `apps/desktop/src/preload/index.ts` | contextBridge exposure for `window.wenxue` |
-| `apps/desktop/src/renderer/src/App.tsx` | ConsoleUI state card/button/footer |
-| `apps/desktop/src/renderer/src/strings.ts` | desktop user-visible copy |
-| `apps/desktop/src/renderer/src/wenxue.d.ts` | renderer global bridge types |
+| File                                              | Responsibility                                                           |
+| ------------------------------------------------- | ------------------------------------------------------------------------ |
+| `apps/desktop/src/main/BrowserSupervisor.ts`      | BrowserStatus state machine, spawn, exit/error handling, requestShutdown |
+| `apps/desktop/src/main/BrowserSupervisor.test.ts` | state-machine tests with fake child process                              |
+| `apps/desktop/src/main/DesktopBridge.ts`          | main-process IPC handlers and status forwarding                          |
+| `apps/desktop/src/main/DesktopBridge.test.ts`     | IPC contract tests with fake ipcMain/supervisor/resources                |
+| `apps/desktop/src/main/MainBootstrap.ts`          | Electron app/window lifecycle and module assembly                        |
+| `apps/desktop/src/main/MainBootstrap.test.ts`     | close-prompt helper/lifecycle tests where practical                      |
+| `apps/desktop/src/main/index.ts`                  | thin entrypoint calling MainBootstrap                                    |
+| `apps/desktop/src/preload/index.ts`               | contextBridge exposure for `window.wenxue`                               |
+| `apps/desktop/src/renderer/src/App.tsx`           | ConsoleUI state card/button/footer                                       |
+| `apps/desktop/src/renderer/src/strings.ts`        | desktop user-visible copy                                                |
+| `apps/desktop/src/renderer/src/wenxue.d.ts`       | renderer global bridge types                                             |
 
 Do not add files outside these modules unless an upstream doc is updated first.
 
