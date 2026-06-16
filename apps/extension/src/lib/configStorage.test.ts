@@ -64,7 +64,6 @@ describe('configStorage', () => {
 
 	it('merges language, interface language, and advanced config', async () => {
 		const advancedConfig: AdvancedConfig = {
-			maxSteps: 20,
 			systemInstruction: 'Answer with citations',
 			experimentalLlmsTxt: true,
 		}
@@ -127,7 +126,6 @@ describe('configStorage', () => {
 			model: 'custom-model',
 			apiKey: 'sk-test',
 			uiLanguage: 'en-US',
-			maxSteps: 24,
 			systemInstruction: 'Be direct',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
@@ -147,7 +145,17 @@ describe('configStorage', () => {
 		expect(storage.set).toHaveBeenCalledWith({ customModels: [] })
 		expect(storage.set).toHaveBeenCalledWith({
 			advancedConfig: {
-				maxSteps: 24,
+				systemInstruction: 'Be direct',
+				experimentalLlmsTxt: false,
+				experimentalIncludeAllTabs: true,
+				disableNamedToolChoice: true,
+			},
+		})
+		const advancedConfigPayload = storage.set.mock.calls.find(
+			([payload]) => 'advancedConfig' in payload,
+		)?.[0]
+		expect(advancedConfigPayload).toStrictEqual({
+			advancedConfig: {
 				systemInstruction: 'Be direct',
 				experimentalLlmsTxt: false,
 				experimentalIncludeAllTabs: true,

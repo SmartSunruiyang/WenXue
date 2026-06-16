@@ -60,7 +60,7 @@ export type PageAgentCoreConfig = AgentConfig & { pageController: PageController
  */
 export class PageAgentCore extends EventTarget {
 	readonly id = uid()
-	readonly config: PageAgentCoreConfig & { maxSteps: number }
+	readonly config: PageAgentCoreConfig
 	readonly tools: typeof tools
 	/** PageController for DOM operations */
 	readonly pageController: PageController
@@ -104,7 +104,7 @@ export class PageAgentCore extends EventTarget {
 	constructor(config: PageAgentCoreConfig) {
 		super()
 
-		this.config = { ...config, maxSteps: config.maxSteps ?? 40 }
+		this.config = config
 
 		this.#llm = new LLM(this.config)
 		this.tools = new Map(tools)
@@ -239,7 +239,7 @@ export class PageAgentCore extends EventTarget {
 				console.log(chalk.blue.bold('👀 Observing...'))
 
 				this.#states.browserState = await this.pageController.getBrowserState()
-				await this.#handleObservations(step)
+				await this.#handleObservations()
 
 				// assemble prompts
 
@@ -311,15 +311,6 @@ export class PageAgentCore extends EventTarget {
 			}
 
 			step++
-			if (step > this.config.maxSteps) {
-				taskResult = 'Step count exceeded maximum limit'
-				taskSuccess = false
-				this.#emitActivity({ type: 'error', message: taskResult })
-				this.history.push({ type: 'error', message: taskResult })
-				this.#emitHistoryChange()
-				break
-			}
-
 			await waitFor(this.config.stepDelay ?? 0.4)
 		}
 
@@ -494,7 +485,7 @@ export class PageAgentCore extends EventTarget {
 	 * @todo loop detection
 	 * @todo console error
 	 */
-	async #handleObservations(step: number): Promise<void> {
+	async #handleObservations(): Promise<void> {
 		// Accumulated wait time warning
 		if (this.#states.totalWaitTime >= 3) {
 			this.pushObservation(
@@ -509,19 +500,6 @@ export class PageAgentCore extends EventTarget {
 			this.pushObservation(`Page navigated to → ${currentURL}`)
 			this.#states.lastURL = currentURL
 			await waitFor(0.5) // wait for page to stabilize
-		}
-
-		// Remaining steps warning
-		const remaining = this.config.maxSteps - step
-		if (remaining === 5) {
-			this.pushObservation(
-				`⚠️ Only ${remaining} steps remaining. ` +
-					`Consider wrapping up or calling done with partial results.`
-			)
-		} else if (remaining === 2) {
-			this.pushObservation(
-				`⚠️ Critical: Only ${remaining} steps left! You must finish the task or call done immediately.`
-			)
 		}
 
 		// Push observations to history and emit
@@ -556,7 +534,7 @@ export class PageAgentCore extends EventTarget {
 		prompt += `${this.task}\n`
 		prompt += '</user_request>\n'
 		prompt += '<step_info>\n'
-		prompt += `Step ${stepCount + 1} of ${this.config.maxSteps} max possible steps\n`
+		prompt += `Step ${stepCount + 1}\n`
 		prompt += `Current time: ${new Date().toLocaleString()}\n`
 		prompt += '</step_info>\n'
 		prompt += '</agent_state>\n\n'

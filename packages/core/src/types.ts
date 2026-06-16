@@ -11,12 +11,6 @@ export interface AgentConfig extends LLMConfig {
 	language?: SupportedLanguage
 
 	/**
-	 * Maximum number of steps the agent can take per task.
-	 * @default 40
-	 */
-	maxSteps?: number
-
-	/**
 	 * Custom tools to extend PageAgent capabilities
 	 * @experimental
 	 * @note You can also override or remove internal tools by using the same name.

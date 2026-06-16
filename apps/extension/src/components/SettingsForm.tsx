@@ -132,7 +132,6 @@ export function SettingsForm({
 	const [customModels, setCustomModels] = useState<CustomModelConfig[]>(config?.customModels ?? [])
 	const [language, setLanguage] = useState<LanguagePreference>(config?.language)
 	const [uiLanguage, setUILanguage] = useState<UILanguage>(config?.uiLanguage ?? 'zh-CN')
-	const [maxSteps, setMaxSteps] = useState(config?.maxSteps)
 	const [systemInstruction, setSystemInstruction] = useState(config?.systemInstruction ?? '')
 	const [experimentalLlmsTxt, setExperimentalLlmsTxt] = useState(
 		config?.experimentalLlmsTxt ?? false,
@@ -173,7 +172,6 @@ export function SettingsForm({
 		)
 		const nextLanguage = config.language
 		const nextUILanguage = config.uiLanguage ?? 'zh-CN'
-		const nextMaxSteps = config.maxSteps
 		const nextSystemInstruction = config.systemInstruction ?? ''
 		const nextExperimentalLlmsTxt = config.experimentalLlmsTxt ?? false
 		const nextExperimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? false
@@ -186,7 +184,6 @@ export function SettingsForm({
 				customModels: nextCustomModels,
 				language: nextLanguage,
 				uiLanguage: nextUILanguage,
-				maxSteps: nextMaxSteps,
 				systemInstruction: nextSystemInstruction,
 				experimentalLlmsTxt: nextExperimentalLlmsTxt,
 				experimentalIncludeAllTabs: nextExperimentalIncludeAllTabs,
@@ -198,7 +195,6 @@ export function SettingsForm({
 		setCustomModels(nextCustomModels)
 		setLanguage(nextLanguage)
 		setUILanguage(nextUILanguage)
-		setMaxSteps(nextMaxSteps)
 		setSystemInstruction(nextSystemInstruction)
 		setExperimentalLlmsTxt(nextExperimentalLlmsTxt)
 		setExperimentalIncludeAllTabs(nextExperimentalIncludeAllTabs)
@@ -379,7 +375,6 @@ export function SettingsForm({
 				customModels,
 				language,
 				uiLanguage,
-				maxSteps,
 				systemInstruction,
 				experimentalLlmsTxt,
 				experimentalIncludeAllTabs,
@@ -390,7 +385,6 @@ export function SettingsForm({
 			customModels,
 			language,
 			uiLanguage,
-			maxSteps,
 			systemInstruction,
 			experimentalLlmsTxt,
 			experimentalIncludeAllTabs,
@@ -641,22 +635,6 @@ export function SettingsForm({
 
 				{advancedOpen && (
 					<div className="grid gap-4">
-						<div className="flex flex-col gap-1.5">
-							<label htmlFor="max-steps" className="text-xs text-muted-foreground">
-								{t('maxSteps')}
-							</label>
-							<Input
-								id="max-steps"
-								type="number"
-								placeholder="40"
-								min={1}
-								max={200}
-								value={maxSteps ?? ''}
-								onChange={(e) => setMaxSteps(e.target.value ? Number(e.target.value) : undefined)}
-								className="h-8 text-xs [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-							/>
-						</div>
-
 						<div className="flex flex-col gap-1.5">
 							<label htmlFor="system-instruction" className="text-xs text-muted-foreground">
 								{t('systemInstruction')}
