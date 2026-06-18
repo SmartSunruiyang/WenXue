@@ -231,6 +231,12 @@ export class PageAgentCore extends EventTarget {
 
 	/** Stop the current task. Agent remains reusable. */
 	stop() {
+		const wasPaused = this.#status === 'paused'
+		if (wasPaused) {
+			this.#setStatus('error')
+			this.#recordError('Task aborted')
+		}
+
 		this.pageController.cleanUpHighlights()
 		this.pageController.hideMask()
 		this.#abortController.abort()
@@ -238,7 +244,11 @@ export class PageAgentCore extends EventTarget {
 
 	async execute(task: string): Promise<ExecutionResult> {
 		if (this.disposed) throw new Error('PageAgent has been disposed. Create a new instance.')
-		if (this.#status === 'running' || this.#status === 'waiting_for_user') {
+		if (
+			this.#status === 'running' ||
+			this.#status === 'waiting_for_user' ||
+			this.#status === 'paused'
+		) {
 			throw new Error('A task is already running.')
 		}
 		if (!task) throw new Error('Task is required')
@@ -382,9 +392,7 @@ export class PageAgentCore extends EventTarget {
 				if (!isAbortError) console.error('Task failed', error)
 				taskResult = isAbortError ? 'Task aborted' : String(error)
 				taskSuccess = false
-				this.#emitActivity({ type: 'error', message: taskResult })
-				this.history.push({ type: 'error', message: taskResult, rawResponse: error })
-				this.#emitHistoryChange()
+				this.#recordError(taskResult, error)
 				break
 			}
 
@@ -400,6 +408,12 @@ export class PageAgentCore extends EventTarget {
 		}
 		await onAfterTask?.(this, result)
 		return result
+	}
+
+	#recordError(message: string, rawResponse?: unknown): void {
+		this.#emitActivity({ type: 'error', message })
+		this.history.push({ type: 'error', message, rawResponse })
+		this.#emitHistoryChange()
 	}
 
 	async #awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

@@ -287,6 +287,98 @@ describe('PageAgentCore', () => {
 		expect(onAfterTask).toHaveBeenCalledWith(agent, result)
 	})
 
+	it('rejects a new task while the current task is paused', async () => {
+		let fetchCount = 0
+		let takeoverRequested = false
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () => {
+					fetchCount++
+					return createToolCallResponse(
+						fetchCount === 1
+							? { continue_task: {} }
+							: { done: { text: 'Replacement task ran', success: true } },
+						fetchCount,
+					)
+				},
+				customTools: { continue_task: createContinueTool() },
+				onAfterStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'captcha',
+						title: 'Captcha required',
+						message: 'Complete the captcha in the page.',
+					})
+				},
+			}),
+		)
+		agent.onUserTakeover = async () => 'paused'
+
+		await agent.execute('Original paused task')
+		const task = agent.task
+		const taskId = agent.taskId
+		const history = agent.history
+
+		await expect(agent.execute('Replacement task')).rejects.toThrow('A task is already running.')
+		expect(agent.status).toBe('paused')
+		expect(agent.task).toBe(task)
+		expect(agent.taskId).toBe(taskId)
+		expect(agent.history).toBe(history)
+		expect(fetchCount).toBe(1)
+	})
+
+	it('makes a paused task terminal when stopped', async () => {
+		const pageController = createPageController()
+		const activities: AgentActivity[] = []
+		let takeoverRequested = false
+		let takeoverSignal: AbortSignal | undefined
+		let historyChangeCount = 0
+		const agent = new PageAgentCore(
+			createConfig({
+				pageController,
+				customFetch: async () => createToolCallResponse({ continue_task: {} }, 1),
+				customTools: { continue_task: createContinueTool() },
+				onAfterStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'permission',
+						title: 'Permission required',
+						message: 'Approve the permission dialog.',
+					})
+				},
+			}),
+		)
+		agent.onUserTakeover = async (_request, options) => {
+			takeoverSignal = options?.signal
+			return 'paused'
+		}
+		agent.addEventListener('activity', (event) => {
+			activities.push((event as CustomEvent<AgentActivity>).detail)
+		})
+		agent.addEventListener('historychange', () => historyChangeCount++)
+
+		const pausedResult = await agent.execute('Complete the protected workflow')
+		expect(pausedResult.state).toBe('paused')
+		expect(takeoverSignal?.aborted).toBe(false)
+		const historyChangesBeforeStop = historyChangeCount
+
+		agent.stop()
+
+		const abortErrors = agent.history.filter(
+			(event) => event.type === 'error' && event.message === 'Task aborted',
+		)
+		expect(agent.status).toBe('error')
+		expect(takeoverSignal?.aborted).toBe(true)
+		expect(abortErrors).toHaveLength(1)
+		expect(activities).toContainEqual({ type: 'error', message: 'Task aborted' })
+		expect(historyChangeCount).toBe(historyChangesBeforeStop + 1)
+		expect(pageController.cleanUpHighlights).toHaveBeenCalledOnce()
+		expect(pageController.hideMask).toHaveBeenCalledOnce()
+		await expect(agent.resume()).rejects.toThrow('Only paused tasks can be resumed.')
+	})
+
 	it('resumes only paused tasks and preserves task context with monotonic step numbers', async () => {
 		const idleAgent = new PageAgentCore(createConfig())
 		await expect(idleAgent.resume()).rejects.toThrow('Only paused tasks can be resumed.')
@@ -405,9 +497,9 @@ describe('PageAgentCore', () => {
 		expect(agent.history).toContainEqual(
 			expect.objectContaining({ type: 'user_takeover', status: 'waiting' }),
 		)
-		expect(agent.history).toContainEqual(
-			expect.objectContaining({ type: 'error', message: 'Task aborted' }),
-		)
+		expect(
+			agent.history.filter((event) => event.type === 'error' && event.message === 'Task aborted'),
+		).toHaveLength(1)
 		expect(pageController.cleanUpHighlights).toHaveBeenCalled()
 		expect(pageController.hideMask).toHaveBeenCalled()
 		expect(onAfterTask).toHaveBeenCalledOnce()
