@@ -29,7 +29,7 @@ const translations = {
 		settingsSectionLanguage: '语言',
 		settingsSectionLanguageDesc: '选择插件界面语言与 Agent 回复语言。',
 		settingsSectionAdvanced: '高级',
-		settingsSectionAdvancedDesc: '调整执行步数、系统指令与实验性能力。',
+		settingsSectionAdvancedDesc: '配置系统指令与实验性选项。',
 		settingsSectionAbout: '关于',
 		settingsSectionAboutDesc: '查看版本、源码、主页与隐私链接。',
 		userAuthToken: '用户认证令牌',
@@ -193,8 +193,7 @@ const translations = {
 		settingsSectionLanguageDesc:
 			'Choose the extension interface language and agent response language.',
 		settingsSectionAdvanced: 'Advanced',
-		settingsSectionAdvancedDesc:
-			'Tune execution steps, system instructions, and experimental options.',
+		settingsSectionAdvancedDesc: 'Configure system instructions and experimental options.',
 		settingsSectionAbout: 'About',
 		settingsSectionAboutDesc: 'View version, source, homepage, and privacy links.',
 		userAuthToken: 'User Auth Token',
