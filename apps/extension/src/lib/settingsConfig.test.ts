@@ -22,6 +22,8 @@ describe('settingsConfig', () => {
 			...DEMO_CONFIG,
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels: [],
+			chaoxingTextModelId: undefined,
+			chaoxingVisionModelId: undefined,
 			language: undefined,
 			uiLanguage: 'zh-CN',
 			maxSteps: undefined,
@@ -29,6 +31,44 @@ describe('settingsConfig', () => {
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
 			disableNamedToolChoice: false,
+		})
+	})
+
+	it('passes through chaoxing text/vision model ids when set', () => {
+		const customModels: CustomModelConfig[] = [
+			{
+				id: 'model-deepseek',
+				provider: 'deepseek',
+				baseURL: 'https://api.deepseek.com',
+				apiKey: 'sk-deepseek',
+				model: 'deepseek-chat',
+			},
+			{
+				id: 'model-qwen-vl',
+				provider: 'qwen',
+				baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+				apiKey: 'sk-qwen',
+				model: 'qwen-vl-max',
+			},
+		]
+
+		const config = buildSettingsConfig({
+			selectedModelId: BUILT_IN_MODEL_ID,
+			customModels,
+			chaoxingTextModelId: 'model-deepseek',
+			chaoxingVisionModelId: 'model-qwen-vl',
+			language: undefined,
+			uiLanguage: 'zh-CN',
+			maxSteps: undefined,
+			systemInstruction: '',
+			experimentalLlmsTxt: false,
+			experimentalIncludeAllTabs: false,
+			disableNamedToolChoice: false,
+		})
+
+		expect(config).toMatchObject({
+			chaoxingTextModelId: 'model-deepseek',
+			chaoxingVisionModelId: 'model-qwen-vl',
 		})
 	})
 
@@ -109,6 +149,8 @@ describe('settingsConfig', () => {
 			...customModels[0],
 			selectedModelId: 'model-qwen',
 			customModels,
+			chaoxingTextModelId: 'model-qwen',
+			chaoxingVisionModelId: 'model-qwen',
 			language: 'en-US' as const,
 			uiLanguage: 'en-US' as const,
 			maxSteps: 24,

@@ -79,6 +79,29 @@ export function resolveSelectedLLMConfig(
 	}
 }
 
+/**
+ * 解析「超星学习通」双模型设置(Spec §9.2)。
+ * 每个角色(text / vision)的模型 id 默认跟随当前选中的模型；未设置时回退到
+ * `selectedModelId`，未知 id 经 {@link resolveSelectedLLMConfig} 归一化回内置模型。
+ * 故返回的两个 LLMConfig 必定有效。
+ */
+export function resolveChaoxingModelConfigs(
+	opts: {
+		chaoxingTextModelId?: string
+		chaoxingVisionModelId?: string
+		selectedModelId?: string
+	},
+	customModels: CustomModelConfig[],
+): { text: LLMConfig; vision: LLMConfig } {
+	return {
+		text: resolveSelectedLLMConfig(opts.chaoxingTextModelId ?? opts.selectedModelId, customModels),
+		vision: resolveSelectedLLMConfig(
+			opts.chaoxingVisionModelId ?? opts.selectedModelId,
+			customModels,
+		),
+	}
+}
+
 export function normalizeCustomModels(value: unknown): CustomModelConfig[] {
 	if (!Array.isArray(value)) return []
 

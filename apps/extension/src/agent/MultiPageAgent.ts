@@ -1,4 +1,5 @@
 import { type AgentConfig, PageAgentCore } from '@page-agent/core'
+import type { LLMConfig } from '@page-agent/llms'
 
 import { createChaoxingTools } from './chaoxing/tools'
 import { RemotePageController } from './RemotePageController'
@@ -15,6 +16,11 @@ function detectLanguage(): 'en-US' | 'zh-CN' {
 interface MultiPageAgentConfig extends AgentConfig {
 	includeInitialTab?: boolean
 	experimentalIncludeAllTabs?: boolean
+	/**
+	 * 超星学习通双模型(Task 8)。text 用于纯文本题，vision 用于含图题。
+	 * 不传则回退到 agent 自身的模型作为 text、vision 留空(含图题进入人工)。
+	 */
+	chaoxingModels?: { text: LLMConfig; vision: LLMConfig }
 }
 
 /**
@@ -28,14 +34,17 @@ export class MultiPageAgent extends PageAgentCore {
 		const tabsController = new TabsController()
 		const pageController = new RemotePageController(tabsController)
 
-		// Chaoxing (超星学习通) solve tool. The agent's own LLM config (AgentConfig
-		// extends LLMConfig) is reused as the text model. Vision stays undefined until
-		// Task 8 wires a dedicated vision-model setting — image questions become
-		// needsReview in the pipeline until then.
-		const textModel = { baseURL: config.baseURL, model: config.model, apiKey: config.apiKey }
+		// Chaoxing (超星学习通) solve tool. Prefer the user-configured dual-model
+		// settings (Task 8); fall back to the agent's own LLM config as the text model
+		// with vision undefined (image questions become needsReview) when unset.
+		const fallbackTextModel = {
+			baseURL: config.baseURL,
+			model: config.model,
+			apiKey: config.apiKey,
+		}
 		const chaoxingTools = createChaoxingTools({
 			tabsController,
-			getModels: () => ({ text: textModel, vision: undefined }),
+			getModels: () => config.chaoxingModels ?? { text: fallbackTextModel, vision: undefined },
 		})
 		const customTools = { ...createTabTools(tabsController), ...chaoxingTools }
 

@@ -24,6 +24,8 @@ const CONFIG_STORAGE_KEYS = [
 	'uiLanguage',
 	'selectedModelId',
 	'customModels',
+	'chaoxingTextModelId',
+	'chaoxingVisionModelId',
 ]
 
 export async function loadStoredConfig(
@@ -44,6 +46,10 @@ export async function loadStoredConfig(
 	const language = (result.language as SupportedLanguage | undefined) || undefined
 	const uiLanguage = (result.uiLanguage as UILanguage | undefined) || undefined
 	const advancedConfig = (result.advancedConfig as AdvancedConfig | undefined) ?? {}
+	const chaoxingTextModelId =
+		typeof result.chaoxingTextModelId === 'string' ? result.chaoxingTextModelId : undefined
+	const chaoxingVisionModelId =
+		typeof result.chaoxingVisionModelId === 'string' ? result.chaoxingVisionModelId : undefined
 
 	const migrated = migrateLegacyEndpoint(llmConfig)
 	if (migrated !== llmConfig) {
@@ -53,7 +59,16 @@ export async function loadStoredConfig(
 		await storage.set({ llmConfig })
 	}
 
-	return { ...llmConfig, ...advancedConfig, language, uiLanguage, selectedModelId, customModels }
+	return {
+		...llmConfig,
+		...advancedConfig,
+		language,
+		uiLanguage,
+		selectedModelId,
+		customModels,
+		chaoxingTextModelId,
+		chaoxingVisionModelId,
+	}
 }
 
 export async function saveStoredConfig(
@@ -68,6 +83,8 @@ export async function saveStoredConfig(
 		disableNamedToolChoice,
 		selectedModelId,
 		customModels: rawCustomModels,
+		chaoxingTextModelId,
+		chaoxingVisionModelId,
 		...legacyLLMConfig
 	}: ExtConfig,
 ): Promise<ExtConfig> {
@@ -81,6 +98,16 @@ export async function saveStoredConfig(
 	await storage.set({ llmConfig })
 	await storage.set({ selectedModelId: normalizedSelectedModelId })
 	await storage.set({ customModels })
+	if (chaoxingTextModelId) {
+		await storage.set({ chaoxingTextModelId })
+	} else {
+		await storage.remove('chaoxingTextModelId')
+	}
+	if (chaoxingVisionModelId) {
+		await storage.set({ chaoxingVisionModelId })
+	} else {
+		await storage.remove('chaoxingVisionModelId')
+	}
 	if (language) {
 		await storage.set({ language })
 	} else {
@@ -106,5 +133,7 @@ export async function saveStoredConfig(
 		uiLanguage,
 		selectedModelId: normalizedSelectedModelId,
 		customModels,
+		chaoxingTextModelId: chaoxingTextModelId || undefined,
+		chaoxingVisionModelId: chaoxingVisionModelId || undefined,
 	}
 }
