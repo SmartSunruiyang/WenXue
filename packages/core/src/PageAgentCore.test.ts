@@ -379,6 +379,78 @@ describe('PageAgentCore', () => {
 		await expect(agent.resume()).rejects.toThrow('Only paused tasks can be resumed.')
 	})
 
+	it('does not allow resume until the paused execution loop has settled', async () => {
+		const statuses: AgentStatus[] = []
+		let fetchCount = 0
+		let takeoverRequested = false
+		let resolveTakeover: ((resolution: 'paused') => void) | undefined
+		let immediateResumeAttempt: Promise<{ result?: ExecutionResult; error?: unknown }> | undefined
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () => {
+					fetchCount++
+					return createToolCallResponse(
+						fetchCount === 1
+							? { continue_task: {} }
+							: { done: { text: 'Completed after settled resume', success: true } },
+						fetchCount,
+					)
+				},
+				customTools: { continue_task: createContinueTool() },
+				onAfterStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'captcha',
+						title: 'Captcha required',
+						message: 'Complete the captcha in the page.',
+					})
+				},
+			}),
+		)
+		agent.onUserTakeover = async () => {
+			return new Promise<'paused'>((resolve) => {
+				resolveTakeover = resolve
+			})
+		}
+		agent.addEventListener('statuschange', () => {
+			statuses.push(agent.status)
+			if (agent.status === 'paused') {
+				immediateResumeAttempt = agent.resume().then(
+					(result) => ({ result }),
+					(error) => ({ error }),
+				)
+			}
+		})
+
+		const execution = agent.execute('Pause before continuing')
+		await vi.waitFor(() => expect(agent.status).toBe('waiting_for_user'))
+		resolveTakeover?.('paused')
+		const pausedResult = await execution
+		const immediateResume = await immediateResumeAttempt
+
+		expect(pausedResult.state).toBe('paused')
+		expect(agent.status).toBe('paused')
+		expect(immediateResume?.result).toBeUndefined()
+		expect(immediateResume?.error).toEqual(
+			expect.objectContaining({ message: 'Paused task is still settling.' }),
+		)
+		expect(fetchCount).toBe(1)
+		expect(agent.history.filter((event) => event.type === 'step')).toHaveLength(1)
+		expect(statuses).not.toContain('completed')
+
+		const resumedResult = await agent.resume()
+
+		expect(resumedResult.success).toBe(true)
+		expect(resumedResult.data).toBe('Completed after settled resume')
+		expect(fetchCount).toBe(2)
+		expect(
+			resumedResult.history
+				.filter((event) => event.type === 'step')
+				.map((event) => event.stepIndex),
+		).toEqual([0, 1])
+	})
+
 	it('resumes only paused tasks and preserves task context with monotonic step numbers', async () => {
 		const idleAgent = new PageAgentCore(createConfig())
 		await expect(idleAgent.resume()).rejects.toThrow('Only paused tasks can be resumed.')
@@ -456,6 +528,93 @@ describe('PageAgentCore', () => {
 				.filter((event) => event.type === 'step')
 				.map((event) => event.stepIndex),
 		).toEqual([0, 1, 2])
+	})
+
+	it('preserves accumulated wait and navigation state across resume', async () => {
+		const taskURL = 'https://example.com/protected'
+		const pageController = createPageController()
+		vi.mocked(pageController.getBrowserState).mockResolvedValue({
+			...browserState,
+			url: taskURL,
+		})
+		const userPrompts: string[] = []
+		let fetchCount = 0
+		let takeoverRequested = false
+		const agent = new PageAgentCore(
+			createConfig({
+				pageController,
+				customFetch: async (_input, init) => {
+					userPrompts.push(getUserPrompt(init))
+					fetchCount++
+					return createToolCallResponse(
+						fetchCount === 1
+							? { wait: { seconds: 3 } }
+							: { done: { text: 'Completed with preserved state', success: true } },
+						fetchCount,
+					)
+				},
+				customTools: {
+					wait: tool({
+						description: 'Record wait time without delaying the test',
+						inputSchema: z.object({ seconds: z.number() }),
+						execute: async () => 'Waited',
+					}),
+				},
+				onAfterStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'permission',
+						title: 'Permission required',
+						message: 'Approve the permission dialog.',
+					})
+				},
+			}),
+		)
+		agent.onUserTakeover = async () => 'paused'
+
+		const pausedResult = await agent.execute('Wait, pause, then continue')
+		const resumedResult = await agent.resume()
+		const observations = resumedResult.history.filter((event) => event.type === 'observation')
+
+		expect(pausedResult.state).toBe('paused')
+		expect(resumedResult.success).toBe(true)
+		expect(userPrompts).toHaveLength(2)
+		expect(userPrompts[1]).toContain('You have waited 3 seconds accumulatively.')
+		expect(
+			observations.filter((event) => event.content === `Page navigated to → ${taskURL}`),
+		).toHaveLength(1)
+	})
+
+	it('stops an ordinary running task with exactly one abort error', async () => {
+		const pageController = createPageController()
+		let fetchSignal: AbortSignal | undefined
+		const agent = new PageAgentCore(
+			createConfig({
+				pageController,
+				customFetch: async (_input, init) => {
+					fetchSignal = init?.signal ?? undefined
+					return new Promise((_, reject) => {
+						init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), {
+							once: true,
+						})
+					})
+				},
+			}),
+		)
+
+		const execution = agent.execute('Keep running until stopped')
+		await vi.waitFor(() => expect(fetchSignal).toBeInstanceOf(AbortSignal))
+		agent.stop()
+		const result = await execution
+		const abortErrors = agent.history.filter(
+			(event) => event.type === 'error' && event.message === 'Task aborted',
+		)
+
+		expect(result).toMatchObject({ success: false, data: 'Task aborted' })
+		expect(agent.status).toBe('error')
+		expect(fetchSignal?.aborted).toBe(true)
+		expect(abortErrors).toHaveLength(1)
 	})
 
 	it('stops without hanging while waiting for user takeover', async () => {

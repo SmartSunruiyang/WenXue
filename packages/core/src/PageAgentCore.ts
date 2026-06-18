@@ -101,6 +101,8 @@ export class PageAgentCore extends EventTarget {
 	 */
 	#abortController = new AbortController()
 	#observations: string[] = []
+	#pauseRequested = false
+	#runLoopActive = false
 
 	/** internal states during a single task execution */
 	#states = {
@@ -213,6 +215,7 @@ export class PageAgentCore extends EventTarget {
 		const signal = options?.signal ?? this.#abortController.signal
 		signal.throwIfAborted()
 		const resolution = await this.#awaitWithSignal(this.onUserTakeover(request, { signal }), signal)
+		signal.throwIfAborted()
 
 		event.status = resolution
 		this.#emitHistoryChange()
@@ -223,7 +226,7 @@ export class PageAgentCore extends EventTarget {
 			)
 			this.#setStatus('running')
 		} else {
-			this.#setStatus('paused')
+			this.#pauseRequested = true
 		}
 
 		return resolution
@@ -258,6 +261,7 @@ export class PageAgentCore extends EventTarget {
 
 		this.history = []
 		this.#observations = []
+		this.#pauseRequested = false
 		this.#states = { totalWaitTime: 0, lastURL: '', browserState: null }
 		this.#abortController = new AbortController()
 
@@ -275,9 +279,11 @@ export class PageAgentCore extends EventTarget {
 	async resume(): Promise<ExecutionResult> {
 		if (this.disposed) throw new Error('PageAgent has been disposed. Create a new instance.')
 		if (this.#status !== 'paused') throw new Error('Only paused tasks can be resumed.')
+		if (this.#runLoopActive) throw new Error('Paused task is still settling.')
 		if (!this.task) throw new Error('No paused task to resume.')
 
 		this.#abortController = new AbortController()
+		this.#pauseRequested = false
 		this.pushObservation('User resumed the paused task. Re-observe the page and continue.')
 		this.#setStatus('running')
 		this.#emitHistoryChange()
@@ -286,6 +292,17 @@ export class PageAgentCore extends EventTarget {
 	}
 
 	async #runTaskLoop({ setupTask }: { setupTask: boolean }): Promise<ExecutionResult> {
+		if (this.#runLoopActive) throw new Error('A task is already running.')
+		this.#runLoopActive = true
+
+		try {
+			return await this.#runTaskLoopBody({ setupTask })
+		} finally {
+			this.#runLoopActive = false
+		}
+	}
+
+	async #runTaskLoopBody({ setupTask }: { setupTask: boolean }): Promise<ExecutionResult> {
 		const onBeforeStep = this.config.onBeforeStep
 		const onAfterStep = this.config.onAfterStep
 		const onBeforeTask = this.config.onBeforeTask
@@ -366,10 +383,12 @@ export class PageAgentCore extends EventTarget {
 				this.#emitHistoryChange()
 
 				await onAfterStep?.(this, this.history)
+				this.#abortController.signal.throwIfAborted()
 
 				console.groupEnd()
 
-				if (this.#status === 'paused') {
+				if (this.#pauseRequested) {
+					this.#pauseRequested = false
 					const result: ExecutionResult = {
 						success: false,
 						data: 'Task paused',
@@ -377,6 +396,7 @@ export class PageAgentCore extends EventTarget {
 						state: 'paused',
 					}
 					await onAfterTask?.(this, result)
+					this.#setStatus('paused')
 					return result
 				}
 
