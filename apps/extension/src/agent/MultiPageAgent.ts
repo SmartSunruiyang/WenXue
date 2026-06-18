@@ -1,8 +1,9 @@
 import { type AgentConfig, PageAgentCore } from '@page-agent/core'
 
+import { createChaoxingTools } from './chaoxing/tools'
 import { RemotePageController } from './RemotePageController'
-import { TabsController } from './TabsController'
 import SYSTEM_PROMPT from './system_prompt.md?raw'
+import { TabsController } from './TabsController'
 import { createTabTools } from './tabTools'
 
 /** Detect user language from browser settings */
@@ -26,14 +27,24 @@ export class MultiPageAgent extends PageAgentCore {
 		// multi page controller
 		const tabsController = new TabsController()
 		const pageController = new RemotePageController(tabsController)
-		const customTools = createTabTools(tabsController)
+
+		// Chaoxing (超星学习通) solve tool. The agent's own LLM config (AgentConfig
+		// extends LLMConfig) is reused as the text model. Vision stays undefined until
+		// Task 8 wires a dedicated vision-model setting — image questions become
+		// needsReview in the pipeline until then.
+		const textModel = { baseURL: config.baseURL, model: config.model, apiKey: config.apiKey }
+		const chaoxingTools = createChaoxingTools({
+			tabsController,
+			getModels: () => ({ text: textModel, vision: undefined }),
+		})
+		const customTools = { ...createTabTools(tabsController), ...chaoxingTools }
 
 		// system prompt - auto-detect language if not specified
 		const language = config.language ?? detectLanguage()
 		const targetLanguage = language === 'zh-CN' ? '中文' : 'English'
 		const systemPrompt = SYSTEM_PROMPT.replace(
 			/Default working language: \*\*.*?\*\*/,
-			`Default working language: **${targetLanguage}**`
+			`Default working language: **${targetLanguage}**`,
 		)
 
 		const includeInitialTab = config.includeInitialTab ?? true

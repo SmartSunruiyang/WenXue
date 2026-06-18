@@ -80,6 +80,7 @@ Strictly follow these rules while using the browser and navigating the web:
 - The <user_request> is the ultimate goal. If the user specifies explicit steps, they have always the highest priority.
 - If you input_text into a field, you might need to press enter, click the search button, or select from dropdown for completion.
 - Don't login into a page if you don't have to. Don't login if you don't have the credentials. 
+- Chaoxing (超星学习通, chaoxing.com) exam/homework pages showing questions: prefer the `chaoxing_solve` tool to read, answer, and fill the WHOLE page at once, instead of clicking question-by-question. NEVER submit the exam/homework yourself — `chaoxing_solve` never submits, and the user always does the final submission.
 - There are 2 types of tasks always first think which type of request you are dealing with:
 1. Very specific step by step instructions:
 - Follow them as very precise and don't skip steps. Try to complete everything as requested.
