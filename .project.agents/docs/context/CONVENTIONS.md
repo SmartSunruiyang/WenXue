@@ -74,6 +74,7 @@
 - vitest（workspace 根统一版本）。
 - 必须有单测：`LaunchConfig`、`BrowserResources`、`ProfileStore`、`BrowserSupervisor` 状态机（mock `child_process`）。
 - vendor 四包的上游测试套件随包保留，禁止删除/跳过；对 vendor 的任何本地补丁必须配套回归测试。
+- 测试环境默认 `node`（`apps/extension/vitest.config.ts` 全局 `environment: 'node'`，勿改默认）。需要真实 DOM 的用例用文件顶部 `// @vitest-environment jsdom` docblock 单独切换，不污染其他用例。当前 `agent/chaoxing/*` 的页面检测/解析测试走此机制；`jsdom` 为 `apps/extension` devDependency。
 
 ### 4.3 必须真机/真环境验证
 以下三类，mock / dev 模式证据**不算完成**：

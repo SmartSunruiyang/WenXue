@@ -20,8 +20,10 @@ HTTP 调模型（I4）。
 **Spec:** `../specs/2026-06-17-chaoxing-exam-solver-design.md`
 
 > **构建约束（已知）**：`pnpm -F extension build` 用 esbuild，**不做类型检查**；类型错误须另跑
-> `pnpm -F extension exec tsc --noEmit`。单测用 `pnpm -F extension test <file>`。改扩展源码后需
+> `pnpm -F extension exec tsc --noEmit`。单测用 `pnpm -F extension test <file>`（`<file>` 相对
+> `apps/extension` 写，如 `src/agent/chaoxing/detect.test.ts`）。改扩展源码后需
 > `pnpm -F extension build` 才生效（根 dev 不 watch 扩展）。
+> DOM 测试经文件顶部 `// @vitest-environment jsdom` 切到 jsdom（`jsdom`/`@types/jsdom` 为 `apps/extension` devDependency，全局 vitest env 仍是 `node`）。
 
 ---
 
