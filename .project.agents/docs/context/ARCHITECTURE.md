@@ -291,7 +291,10 @@ graph TD
 //   listProfiles(): string[]
 
 // module: 插件域对 vendor 的消费面（签名以上游 1.9.x 为准，本地变更先登记 UPSTREAM.md，I5）
-//   PageAgentCore.execute(instruction, { onStatusChange?, onActivity? }): Promise<ExecutionResult>
+//   PageAgentCore.status: 'idle' | 'running' | 'waiting_for_user' | 'paused' | 'completed' | 'error'
+//   PageAgentCore.execute(instruction): Promise<ExecutionResult>
+//   PageAgentCore.requestUserTakeover(input, { signal? }): Promise<'completed' | 'paused'>
+//   PageAgentCore.resume(): Promise<ExecutionResult>    // 仅 paused；保留 task/taskId/history/内部状态
 //   new OpenAIClient({ baseURL, apiKey, model })        // I4：插件域唯一 LLM 出口
 ```
 

@@ -103,6 +103,7 @@ export class PageAgentCore extends EventTarget {
 	#observations: string[] = []
 	#pauseRequested = false
 	#runLoopActive = false
+	#takeoverActive = false
 
 	/** internal states during a single task execution */
 	#states = {
@@ -203,33 +204,56 @@ export class PageAgentCore extends EventTarget {
 		if (!this.onUserTakeover) {
 			throw new Error('requestUserTakeover requires onUserTakeover callback')
 		}
-
-		const request: UserTakeoverRequest = { ...input, id: uid() }
-		const event: UserTakeoverEvent = { type: 'user_takeover', request, status: 'waiting' }
-
-		this.history.push(event)
-		this.#setStatus('waiting_for_user')
-		this.#emitActivity({ type: 'waiting_for_user', request })
-		this.#emitHistoryChange()
-
-		const signal = options?.signal ?? this.#abortController.signal
-		signal.throwIfAborted()
-		const resolution = await this.#awaitWithSignal(this.onUserTakeover(request, { signal }), signal)
-		signal.throwIfAborted()
-
-		event.status = resolution
-		this.#emitHistoryChange()
-
-		if (resolution === 'completed') {
-			this.pushObservation(
-				'User completed manual takeover. Re-observe the page and continue from the current task.',
-			)
-			this.#setStatus('running')
-		} else {
-			this.#pauseRequested = true
+		if (this.#takeoverActive) throw new Error('A user takeover request is already active.')
+		if (!this.#runLoopActive || this.#status !== 'running') {
+			throw new Error('User takeover requires an active running task.')
 		}
 
-		return resolution
+		const signal = options?.signal ?? this.#abortController.signal
+		this.#abortController.signal.throwIfAborted()
+		signal.throwIfAborted()
+		this.#takeoverActive = true
+
+		try {
+			await this.pageController.cleanUpHighlights()
+			await this.pageController.hideMask()
+			this.#abortController.signal.throwIfAborted()
+			signal.throwIfAborted()
+
+			const request: UserTakeoverRequest = { ...input, id: uid() }
+			const event: UserTakeoverEvent = { type: 'user_takeover', request, status: 'waiting' }
+
+			this.history.push(event)
+			this.#setStatus('waiting_for_user')
+			this.#emitActivity({ type: 'waiting_for_user', request })
+			this.#emitHistoryChange()
+
+			const resolution = await this.#awaitWithSignal(
+				this.onUserTakeover(request, { signal }),
+				signal,
+			)
+			this.#abortController.signal.throwIfAborted()
+			signal.throwIfAborted()
+
+			event.status = resolution
+			this.#emitHistoryChange()
+
+			if (resolution === 'completed') {
+				await this.pageController.showMask()
+				this.#abortController.signal.throwIfAborted()
+				signal.throwIfAborted()
+				this.pushObservation(
+					'User completed manual takeover. Re-observe the page and continue from the current task.',
+				)
+				this.#setStatus('running')
+			} else {
+				this.#pauseRequested = true
+			}
+
+			return resolution
+		} finally {
+			this.#takeoverActive = false
+		}
 	}
 
 	/** Stop the current task. Agent remains reusable. */
@@ -247,6 +271,7 @@ export class PageAgentCore extends EventTarget {
 
 	async execute(task: string): Promise<ExecutionResult> {
 		if (this.disposed) throw new Error('PageAgent has been disposed. Create a new instance.')
+		if (this.#runLoopActive) throw new Error('A task is already running.')
 		if (
 			this.#status === 'running' ||
 			this.#status === 'waiting_for_user' ||
@@ -308,8 +333,18 @@ export class PageAgentCore extends EventTarget {
 		const onBeforeTask = this.config.onBeforeTask
 		const onAfterTask = this.config.onAfterTask
 
+		if (setupTask) {
+			try {
+				await onBeforeTask?.(this)
+				this.#abortController.signal.throwIfAborted()
+			} catch (error) {
+				this.#setStatus('error')
+				throw error
+			}
+			if (this.#pauseRequested) return this.#settlePausedExecution(onAfterTask)
+		}
+
 		try {
-			if (setupTask) await onBeforeTask?.(this)
 			await this.pageController.showMask()
 		} catch (error) {
 			this.#setStatus('error')
@@ -323,13 +358,28 @@ export class PageAgentCore extends EventTarget {
 		let taskResult: string
 
 		while (true) {
+			console.group(`step: ${step}`)
+
 			try {
-				console.group(`step: ${step}`)
-
 				await onBeforeStep?.(this, step)
+				this.#abortController.signal.throwIfAborted()
+			} catch (error: unknown) {
+				console.groupEnd()
+				taskResult = this.#handleTaskError(error)
+				taskSuccess = false
+				break
+			}
 
+			if (this.#pauseRequested) {
+				console.groupEnd()
+				return this.#settlePausedExecution(onAfterTask)
+			}
+
+			let actionName = ''
+			let action: AgentStepEvent['action']
+
+			try {
 				// observe
-
 				console.log(chalk.blue.bold('👀 Observing...'))
 
 				this.#states.browserState = await this.pageController.getBrowserState()
@@ -364,8 +414,8 @@ export class PageAgentCore extends EventTarget {
 					memory: input.memory,
 					next_goal: input.next_goal,
 				}
-				const actionName = Object.keys(input.action)[0]
-				const action: AgentStepEvent['action'] = {
+				actionName = Object.keys(input.action)[0]
+				action = {
 					name: actionName,
 					input: input.action[actionName],
 					output: output,
@@ -384,35 +434,21 @@ export class PageAgentCore extends EventTarget {
 
 				await onAfterStep?.(this, this.history)
 				this.#abortController.signal.throwIfAborted()
-
-				console.groupEnd()
-
-				if (this.#pauseRequested) {
-					this.#pauseRequested = false
-					const result: ExecutionResult = {
-						success: false,
-						data: 'Task paused',
-						history: this.history,
-						state: 'paused',
-					}
-					await onAfterTask?.(this, result)
-					this.#setStatus('paused')
-					return result
-				}
-
-				if (actionName === 'done') {
-					taskSuccess = action.input?.success ?? false
-					taskResult = action.input?.text || 'no text provided'
-					console.log(chalk.green.bold('Task completed'), taskSuccess, taskResult)
-					break
-				}
 			} catch (error: unknown) {
 				console.groupEnd()
-				const isAbortError = (error as any)?.name === 'AbortError'
-				if (!isAbortError) console.error('Task failed', error)
-				taskResult = isAbortError ? 'Task aborted' : String(error)
+				taskResult = this.#handleTaskError(error)
 				taskSuccess = false
-				this.#recordError(taskResult, error)
+				break
+			}
+
+			console.groupEnd()
+
+			if (this.#pauseRequested) return this.#settlePausedExecution(onAfterTask)
+
+			if (actionName === 'done') {
+				taskSuccess = action.input?.success ?? false
+				taskResult = action.input?.text || 'no text provided'
+				console.log(chalk.green.bold('Task completed'), taskSuccess, taskResult)
 				break
 			}
 
@@ -428,6 +464,36 @@ export class PageAgentCore extends EventTarget {
 		}
 		await onAfterTask?.(this, result)
 		return result
+	}
+
+	async #settlePausedExecution(
+		onAfterTask: PageAgentCoreConfig['onAfterTask'],
+	): Promise<ExecutionResult> {
+		this.#pauseRequested = false
+		const result: ExecutionResult = {
+			success: false,
+			data: 'Task paused',
+			history: this.history,
+			state: 'paused',
+		}
+
+		this.#setStatus('paused')
+		await onAfterTask?.(this, result)
+
+		if (this.#status === 'error') {
+			result.data = 'Task aborted'
+			result.state = 'error'
+		}
+
+		return result
+	}
+
+	#handleTaskError(error: unknown): string {
+		const isAbortError = (error as any)?.name === 'AbortError'
+		if (!isAbortError) console.error('Task failed', error)
+		const taskResult = isAbortError ? 'Task aborted' : String(error)
+		this.#recordError(taskResult, error)
+		return taskResult
 	}
 
 	#recordError(message: string, rawResponse?: unknown): void {

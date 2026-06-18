@@ -16,6 +16,52 @@ interface MultiPageAgentConfig extends AgentConfig {
 	experimentalIncludeAllTabs?: boolean
 }
 
+export function createAgentRuntimeLifecycle({
+	setStorage,
+	setInterval,
+	clearInterval,
+	now,
+	onHeartbeatError = console.error,
+}: {
+	setStorage: (values: Record<string, unknown>) => Promise<void>
+	setInterval: (callback: () => void, delay: number) => number
+	clearInterval: (intervalId: number) => void
+	now: () => number
+	onHeartbeatError?: (error: unknown) => void
+}) {
+	let heartBeatInterval: number | null = null
+	let running = false
+
+	return {
+		async start(): Promise<void> {
+			if (running) return
+			running = true
+			heartBeatInterval = setInterval(() => {
+				setStorage({ agentHeartbeat: now() }).catch(onHeartbeatError)
+			}, 1_000)
+
+			try {
+				await setStorage({ isAgentRunning: true })
+			} catch (error) {
+				clearInterval(heartBeatInterval)
+				heartBeatInterval = null
+				running = false
+				throw error
+			}
+		},
+
+		async stop(): Promise<void> {
+			if (!running) return
+			running = false
+			if (heartBeatInterval !== null) {
+				clearInterval(heartBeatInterval)
+				heartBeatInterval = null
+			}
+			await setStorage({ isAgentRunning: false })
+		},
+	}
+}
+
 /**
  * MultiPageAgent
  * - use with extension
@@ -33,20 +79,19 @@ export class MultiPageAgent extends PageAgentCore {
 		const targetLanguage = language === 'zh-CN' ? '中文' : 'English'
 		const systemPrompt = SYSTEM_PROMPT.replace(
 			/Default working language: \*\*.*?\*\*/,
-			`Default working language: **${targetLanguage}**`
+			`Default working language: **${targetLanguage}**`,
 		)
 
 		const includeInitialTab = config.includeInitialTab ?? true
 		const experimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? false
 
-		/**
-		 * When the agent is in side-panel and user closed the side-panel.
-		 * There is no chance for isAgentRunning to be set false.
-		 * (unload event doesn't work well in side panel.)
-		 * (I'm trying not to use long-lived connection because the lifecycle of a sw is hard to predict.)
-		 * This heartbeat mechanism acts as a backup.
-		 */
-		let heartBeatInterval: null | number = null
+		const runtime = createAgentRuntimeLifecycle({
+			setStorage: (values) => chrome.storage.local.set(values),
+			setInterval: (callback, delay) => window.setInterval(callback, delay),
+			clearInterval: (intervalId) => window.clearInterval(intervalId),
+			now: () => Date.now(),
+			onHeartbeatError: (error) => console.error('[MultiPageAgent] Heartbeat failed', error),
+		})
 
 		super({
 			...config,
@@ -56,43 +101,23 @@ export class MultiPageAgent extends PageAgentCore {
 
 			onBeforeTask: async (agent) => {
 				await tabsController.init(agent.task, { includeInitialTab, experimentalIncludeAllTabs })
-
-				heartBeatInterval = window.setInterval(() => {
-					chrome.storage.local.set({
-						agentHeartbeat: Date.now(),
-					})
-				}, 1_000)
-
-				await chrome.storage.local.set({
-					isAgentRunning: true,
-				})
+				await runtime.start()
 			},
 
 			onAfterTask: async () => {
-				if (heartBeatInterval) {
-					window.clearInterval(heartBeatInterval)
-					heartBeatInterval = null
-				}
-
-				await chrome.storage.local.set({
-					isAgentRunning: false,
-				})
+				await runtime.stop()
 			},
 
 			onBeforeStep: async (agent) => {
+				await runtime.start()
 				if (!tabsController.currentTabId) return
 				// make sure the current tab is loaded before the step starts
 				await tabsController.waitUntilTabLoaded(tabsController.currentTabId!)
 			},
 
 			onDispose: () => {
-				if (heartBeatInterval) {
-					window.clearInterval(heartBeatInterval)
-					heartBeatInterval = null
-				}
-
-				chrome.storage.local.set({
-					isAgentRunning: false,
+				runtime.stop().catch((error) => {
+					console.error('[MultiPageAgent] Runtime cleanup failed', error)
 				})
 
 				tabsController.dispose()

@@ -138,9 +138,13 @@ export class RemotePageController {
 	}
 
 	/** @note Managed by content script via storage polling. */
-	async showMask(): Promise<void> {}
+	async showMask(): Promise<void> {
+		await chrome.storage.local.set({ isAgentInteractionPaused: false })
+	}
 	/** @note Managed by content script via storage polling. */
-	async hideMask(): Promise<void> {}
+	async hideMask(): Promise<void> {
+		await chrome.storage.local.set({ isAgentInteractionPaused: true })
+	}
 	/** @note Managed by content script via storage polling. */
 	dispose(): void {}
 
@@ -169,6 +173,28 @@ export class RemotePageController {
 interface DomActionReturn {
 	success: boolean
 	message: string
+}
+
+export function shouldShowAgentMask({
+	isAgentRunning,
+	agentInTouch,
+	currentTabId,
+	myTabId,
+	isAgentInteractionPaused,
+}: {
+	isAgentRunning: boolean
+	agentInTouch: boolean
+	currentTabId: number | null
+	myTabId: number | null
+	isAgentInteractionPaused: boolean
+}): boolean {
+	return (
+		isAgentRunning &&
+		agentInTouch &&
+		!isAgentInteractionPaused &&
+		myTabId !== null &&
+		currentTabId === myTabId
+	)
 }
 
 /**

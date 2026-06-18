@@ -162,6 +162,7 @@ describe('PageAgentCore', () => {
 	})
 
 	it('continues the same task after completed manual takeover', async () => {
+		const pageController = createPageController()
 		const userPrompts: string[] = []
 		const statuses: AgentStatus[] = []
 		const activities: AgentActivity[] = []
@@ -174,6 +175,7 @@ describe('PageAgentCore', () => {
 
 		const agent = new PageAgentCore(
 			createConfig({
+				pageController,
 				customFetch: async (_input, init) => {
 					userPrompts.push(getUserPrompt(init))
 					fetchCount++
@@ -211,6 +213,9 @@ describe('PageAgentCore', () => {
 		agent.onUserTakeover = async (request, options) => {
 			expect(options?.signal).toBeInstanceOf(AbortSignal)
 			expect(agent.status).toBe('waiting_for_user')
+			expect(pageController.cleanUpHighlights).toHaveBeenCalledOnce()
+			expect(pageController.hideMask).toHaveBeenCalledOnce()
+			expect(pageController.showMask).toHaveBeenCalledOnce()
 			requestSeen = request
 			taskIdDuringTakeover = agent.taskId
 			waitingEvent = agent.history.find(
@@ -236,6 +241,9 @@ describe('PageAgentCore', () => {
 		expect(takeoverStatuses).toContain('waiting')
 		expect(takeoverStatuses).toContain('completed')
 		expect(activities).toContainEqual({ type: 'waiting_for_user', request: requestSeen })
+		expect(pageController.cleanUpHighlights).toHaveBeenCalledTimes(2)
+		expect(pageController.hideMask).toHaveBeenCalledTimes(2)
+		expect(pageController.showMask).toHaveBeenCalledTimes(2)
 		expect(userPrompts).toHaveLength(2)
 		expect(userPrompts[1]).toContain(
 			'User completed manual takeover. Re-observe the page and continue from the current task.',
@@ -281,8 +289,8 @@ describe('PageAgentCore', () => {
 			expect.objectContaining({ type: 'user_takeover', status: 'paused' }),
 		)
 		expect(agent.history.some((event) => event.type === 'error')).toBe(false)
-		expect(pageController.cleanUpHighlights).not.toHaveBeenCalled()
-		expect(pageController.hideMask).not.toHaveBeenCalled()
+		expect(pageController.cleanUpHighlights).toHaveBeenCalledOnce()
+		expect(pageController.hideMask).toHaveBeenCalledOnce()
 		expect(onAfterTask).toHaveBeenCalledOnce()
 		expect(onAfterTask).toHaveBeenCalledWith(agent, result)
 	})
@@ -363,6 +371,8 @@ describe('PageAgentCore', () => {
 		expect(pausedResult.state).toBe('paused')
 		expect(takeoverSignal?.aborted).toBe(false)
 		const historyChangesBeforeStop = historyChangeCount
+		vi.mocked(pageController.cleanUpHighlights).mockClear()
+		vi.mocked(pageController.hideMask).mockClear()
 
 		agent.stop()
 
@@ -377,6 +387,189 @@ describe('PageAgentCore', () => {
 		expect(pageController.cleanUpHighlights).toHaveBeenCalledOnce()
 		expect(pageController.hideMask).toHaveBeenCalledOnce()
 		await expect(agent.resume()).rejects.toThrow('Only paused tasks can be resumed.')
+	})
+
+	it('rejects reentrant execute during terminal status settlement without mutating the task', async () => {
+		let reentrantExecution: Promise<{ result?: ExecutionResult; error?: unknown }> | undefined
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () =>
+					createToolCallResponse({ done: { text: 'Original task completed', success: true } }, 1),
+			}),
+		)
+		agent.addEventListener('statuschange', () => {
+			if (agent.status === 'completed') {
+				reentrantExecution = agent.execute('Phantom replacement task').then(
+					(result) => ({ result }),
+					(error) => ({ error }),
+				)
+			}
+		})
+
+		const result = await agent.execute('Original task')
+		const reentrant = await reentrantExecution
+
+		expect(result.success).toBe(true)
+		expect(result.data).toBe('Original task completed')
+		expect(reentrant?.result).toBeUndefined()
+		expect(reentrant?.error).toEqual(
+			expect.objectContaining({ message: 'A task is already running.' }),
+		)
+		expect(agent.status).toBe('completed')
+		expect(agent.task).toBe('Original task')
+		expect(result.history).toBe(agent.history)
+		expect(agent.history.filter((event) => event.type === 'step')).toHaveLength(1)
+	})
+
+	it('rejects takeover requests outside an active running loop', async () => {
+		const onUserTakeover = vi.fn(async () => 'completed' as const)
+		const agent = new PageAgentCore(createConfig())
+		agent.onUserTakeover = onUserTakeover
+
+		await expect(
+			agent.requestUserTakeover({
+				reason: 'other',
+				title: 'Invalid request',
+				message: 'This request is outside a task.',
+			}),
+		).rejects.toThrow('User takeover requires an active running task.')
+		expect(agent.status).toBe('idle')
+		expect(agent.history).toEqual([])
+		expect(onUserTakeover).not.toHaveBeenCalled()
+	})
+
+	it('allows only one takeover request at a time', async () => {
+		let takeoverRequested = false
+		let resolveTakeover: ((resolution: 'completed') => void) | undefined
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () =>
+					createToolCallResponse({ done: { text: 'Completed after takeover', success: true } }, 1),
+				onBeforeStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'login',
+						title: 'Sign in required',
+						message: 'Complete sign in.',
+					})
+				},
+			}),
+		)
+		agent.onUserTakeover = async () =>
+			new Promise<'completed'>((resolve) => {
+				resolveTakeover = resolve
+			})
+
+		const execution = agent.execute('Continue after sign in')
+		await vi.waitFor(() => expect(agent.status).toBe('waiting_for_user'))
+
+		await expect(
+			agent.requestUserTakeover({
+				reason: 'other',
+				title: 'Duplicate request',
+				message: 'A second request must be rejected.',
+			}),
+		).rejects.toThrow('A user takeover request is already active.')
+		expect(agent.history.filter((event) => event.type === 'user_takeover')).toHaveLength(1)
+
+		resolveTakeover?.('completed')
+		await expect(execution).resolves.toMatchObject({ success: true })
+	})
+
+	it.each(['onBeforeTask', 'onBeforeStep'] as const)(
+		'settles pause from %s before page observation or LLM execution',
+		async (hookName) => {
+			const pageController = createPageController()
+			const customFetch = vi.fn(async () =>
+				createToolCallResponse({ done: { text: 'Should not execute', success: true } }, 1),
+			)
+			const pauseHook = async (currentAgent: PageAgentCore) => {
+				await currentAgent.requestUserTakeover({
+					reason: 'permission',
+					title: 'Permission required',
+					message: 'Approve the permission dialog.',
+				})
+			}
+			const agent = new PageAgentCore(
+				createConfig({
+					pageController,
+					customFetch,
+					[hookName]: pauseHook,
+				}),
+			)
+			agent.onUserTakeover = async () => 'paused'
+
+			const result = await agent.execute(`Pause from ${hookName}`)
+
+			expect(result.state).toBe('paused')
+			expect(agent.status).toBe('paused')
+			expect(customFetch).not.toHaveBeenCalled()
+			expect(pageController.getBrowserState).not.toHaveBeenCalled()
+			expect(agent.history.filter((event) => event.type === 'step')).toHaveLength(0)
+		},
+	)
+
+	it('keeps stop terminal when invoked during paused onAfterTask', async () => {
+		const onAfterTask = vi.fn(async (currentAgent: PageAgentCore) => {
+			currentAgent.stop()
+		})
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () => createToolCallResponse({ continue_task: {} }, 1),
+				customTools: { continue_task: createContinueTool() },
+				onAfterStep: async (currentAgent) => {
+					await currentAgent.requestUserTakeover({
+						reason: 'captcha',
+						title: 'Captcha required',
+						message: 'Complete the captcha.',
+					})
+				},
+				onAfterTask,
+			}),
+		)
+		agent.onUserTakeover = async () => 'paused'
+
+		const result = await agent.execute('Stop while settling pause')
+		const abortErrors = result.history.filter(
+			(event) => event.type === 'error' && event.message === 'Task aborted',
+		)
+
+		expect(result).toMatchObject({
+			success: false,
+			data: 'Task aborted',
+			state: 'error',
+		})
+		expect(agent.status).toBe('error')
+		expect(onAfterTask).toHaveBeenCalledOnce()
+		expect(abortErrors).toHaveLength(1)
+	})
+
+	it('does not reinterpret paused onAfterTask rejection as a step failure', async () => {
+		const onAfterTask = vi.fn(async () => {
+			throw new Error('Paused cleanup failed')
+		})
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () => createToolCallResponse({ continue_task: {} }, 1),
+				customTools: { continue_task: createContinueTool() },
+				onAfterStep: async (currentAgent) => {
+					await currentAgent.requestUserTakeover({
+						reason: 'permission',
+						title: 'Permission required',
+						message: 'Approve the permission dialog.',
+					})
+				},
+				onAfterTask,
+			}),
+		)
+		agent.onUserTakeover = async () => 'paused'
+
+		await expect(agent.execute('Reject paused cleanup')).rejects.toThrow('Paused cleanup failed')
+
+		expect(agent.status).toBe('paused')
+		expect(onAfterTask).toHaveBeenCalledOnce()
+		expect(agent.history.filter((event) => event.type === 'error')).toHaveLength(0)
 	})
 
 	it('does not allow resume until the paused execution loop has settled', async () => {
