@@ -104,7 +104,7 @@ export class PageAgentCore extends EventTarget {
 	constructor(config: PageAgentCoreConfig) {
 		super()
 
-		this.config = config
+		this.config = { ...config }
 
 		this.#llm = new LLM(this.config)
 		this.tools = new Map(tools)

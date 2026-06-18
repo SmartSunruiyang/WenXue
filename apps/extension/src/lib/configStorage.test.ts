@@ -92,6 +92,37 @@ describe('configStorage', () => {
 		})
 	})
 
+	it('ignores legacy maxSteps while preserving supported advanced config', async () => {
+		const storage = createStorage({
+			llmConfig: {
+				baseURL: 'https://api.example.com/v1',
+				model: 'custom-model',
+			},
+			advancedConfig: {
+				maxSteps: 20,
+				systemInstruction: 'Answer with citations',
+				experimentalLlmsTxt: true,
+				experimentalIncludeAllTabs: false,
+				disableNamedToolChoice: true,
+			},
+		})
+
+		const config = await loadStoredConfig(storage)
+
+		expect(config).toStrictEqual({
+			baseURL: 'https://api.example.com/v1',
+			model: 'custom-model',
+			selectedModelId: BUILT_IN_MODEL_ID,
+			customModels: [],
+			language: undefined,
+			uiLanguage: undefined,
+			systemInstruction: 'Answer with citations',
+			experimentalLlmsTxt: true,
+			experimentalIncludeAllTabs: false,
+			disableNamedToolChoice: true,
+		})
+	})
+
 	it('loads a selected custom model as the active LLM config', async () => {
 		const customModels: CustomModelConfig[] = [
 			{
