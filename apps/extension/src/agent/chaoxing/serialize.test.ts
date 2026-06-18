@@ -90,42 +90,44 @@ describe('serializeQuestion', () => {
 		})
 	})
 
-	describe('images', () => {
-		it('reports hasImages true when any stem ContentPart is an image', () => {
+	describe('images (routing flag)', () => {
+		it('reports hasImages true when any stem ContentPart is an image (→ array content)', () => {
 			const q = makeQuestion({
 				type: 'single',
 				stem: [
-					{ type: 'text', text: '看图选择：' },
-					{ type: 'image', label: '[图1]' },
+					{ type: 'text', text: '看图选择： [图1]' },
+					{ type: 'image', label: '图1', dataUrl: 'data:image/jpeg;base64,Z' },
 				],
 				options: [opt('A', 'a'), opt('B', 'b')],
 				hasImages: true,
 			})
 			const { hasImages, messages } = serializeQuestion(q)
 			expect(hasImages).toBe(true)
-			// text branch: must NOT build multimodal content; content stays a string.
-			expect(typeof messages[1].content).toBe('string')
+			// image-bearing question → user content is now the interleaved array (§8.2).
+			expect(Array.isArray(messages[1].content)).toBe(true)
 		})
 
 		it('reports hasImages true when an option ContentPart is an image', () => {
 			const q = makeQuestion({
 				type: 'single',
-				options: [{ key: 'A', content: [{ type: 'image', label: '[选项图]' }] }, opt('B', 'b')],
+				options: [{ key: 'A', content: [{ type: 'image', label: '选项A图' }] }, opt('B', 'b')],
 			})
 			expect(serializeQuestion(q).hasImages).toBe(true)
 		})
 
-		it('may still emit an image part label text in the user content', () => {
+		it('emits the image part label as a placeholder in the leading text block', () => {
 			const q = makeQuestion({
 				type: 'completion',
 				stem: [
-					{ type: 'text', text: '题图：' },
-					{ type: 'image', label: '[配图]' },
+					{ type: 'text', text: '题图： [配图]' },
+					{ type: 'image', label: '配图', dataUrl: 'data:image/jpeg;base64,Z' },
 				],
 				blanksCount: 1,
 				hasImages: true,
 			})
-			expect(serializeQuestion(q).messages[1].content).toContain('[配图]')
+			const blocks = serializeQuestion(q).messages[1].content as { type: string; text?: string }[]
+			const lead = blocks[0].text ?? ''
+			expect(lead).toContain('[配图]')
 		})
 	})
 
@@ -134,5 +136,172 @@ describe('serializeQuestion', () => {
 		for (const m of serializeQuestion(q).messages) {
 			expect(typeof m.content).toBe('string')
 		}
+	})
+
+	describe('multimodal branch (§8.2)', () => {
+		/** Narrow helpers for the array-content shape. */
+		type TextBlock = { type: 'text'; text: string }
+		type ImageBlock = { type: 'image_url'; image_url: { url: string } }
+		type Block = TextBlock | ImageBlock
+		const isText = (b: Block): b is TextBlock => b.type === 'text'
+		const isImage = (b: Block): b is ImageBlock => b.type === 'image_url'
+
+		function imageQuestion(): ChaoxingQuestion {
+			return makeQuestion({
+				id: 'q15',
+				type: 'single',
+				hasImages: true,
+				stem: [
+					{ type: 'text', text: '下列函数的导数是 [题干图1] 的是？' },
+					{
+						type: 'image',
+						label: '题干图1',
+						fallbackUrl: 'https://x/f.png',
+						dataUrl: 'data:image/jpeg;base64,STEM',
+					},
+				],
+				options: [
+					{
+						key: 'A',
+						content: [
+							{ type: 'text', text: '[选项A图]' },
+							{
+								type: 'image',
+								label: '选项A图',
+								fallbackUrl: 'https://x/a.png',
+								dataUrl: 'data:image/jpeg;base64,OPTA',
+							},
+						],
+					},
+					opt('B', '2x'),
+				],
+			})
+		}
+
+		it('builds the user message content as an interleaved array', () => {
+			const { messages } = serializeQuestion(imageQuestion())
+			const user = messages[1]
+			expect(user.role).toBe('user')
+			expect(Array.isArray(user.content)).toBe(true)
+		})
+
+		it('does NOT duplicate the inline placeholder in the leading text block', () => {
+			// regression: the placeholder is inlined by extract; flattenParts must not re-add it.
+			const lead = (
+				serializeQuestion(imageQuestion()).messages[1].content as Block[]
+			)[0] as TextBlock
+			expect(lead.text.match(/\[题干图1\]/g)).toHaveLength(1)
+			expect(lead.text.match(/\[选项A图\]/g)).toHaveLength(1)
+		})
+
+		it('leads with one text block carrying the full question text + label placeholders inline', () => {
+			const blocks = serializeQuestion(imageQuestion()).messages[1].content as Block[]
+			const first = blocks[0]
+			expect(isText(first)).toBe(true)
+			const text = (first as TextBlock).text
+			// placeholders kept inline so the question reads in order
+			expect(text).toContain('[题干图1]')
+			expect(text).toContain('[选项A图]')
+			expect(text).toContain('下列函数的导数是')
+			// the convention sentence that introduces the following images
+			expect(text).toContain('下面按相同标签顺序给出图片')
+		})
+
+		it('emits a [label]: text block immediately before each image_url block, label-matched', () => {
+			const blocks = serializeQuestion(imageQuestion()).messages[1].content as Block[]
+			// find the image_url blocks and check the preceding text block names the same label
+			const stemIdx = blocks.findIndex(
+				(b) => isImage(b) && b.image_url.url === 'data:image/jpeg;base64,STEM',
+			)
+			const optIdx = blocks.findIndex(
+				(b) => isImage(b) && b.image_url.url === 'data:image/jpeg;base64,OPTA',
+			)
+			expect(stemIdx).toBeGreaterThan(0)
+			expect(optIdx).toBeGreaterThan(0)
+			expect((blocks[stemIdx - 1] as TextBlock).text).toBe('[题干图1]:')
+			expect((blocks[optIdx - 1] as TextBlock).text).toBe('[选项A图]:')
+		})
+
+		it('orders the image blocks stem-first then options, matching label order', () => {
+			const blocks = serializeQuestion(imageQuestion()).messages[1].content as Block[]
+			const labelTexts = blocks.filter(isText).map((b) => b.text)
+			const stemPos = labelTexts.indexOf('[题干图1]:')
+			const optPos = labelTexts.indexOf('[选项A图]:')
+			expect(stemPos).toBeGreaterThanOrEqual(0)
+			expect(optPos).toBeGreaterThan(stemPos)
+		})
+
+		it('system message states the placeholder convention', () => {
+			const sys = serializeQuestion(imageQuestion()).messages[0]
+			expect(typeof sys.content).toBe('string')
+			expect(sys.content as string).toContain('占位符')
+			expect(sys.content as string).toContain('相同标签顺序')
+		})
+
+		it('falls back to text for an image that has only fallbackUrl (fetch failed, not needsReview)', () => {
+			const q = makeQuestion({
+				id: 'q9',
+				type: 'single',
+				hasImages: true,
+				stem: [
+					{ type: 'text', text: '看图 [题干图1]' },
+					{ type: 'image', label: '题干图1', fallbackUrl: 'https://x/blocked.png' },
+				],
+				options: [opt('A', 'a'), opt('B', 'b')],
+			})
+			const blocks = serializeQuestion(q).messages[1].content as Block[]
+			// no image_url block at all (no dataUrl); instead a text block with the URL + 无法内联
+			expect(blocks.some(isImage)).toBe(false)
+			const fallbackText = blocks
+				.filter(isText)
+				.map((b) => b.text)
+				.join('\n')
+			expect(fallbackText).toContain('[题干图1]:https://x/blocked.png（无法内联）')
+		})
+
+		it('mixes inlined images and url-fallbacks in the same question', () => {
+			const q = makeQuestion({
+				id: 'q9',
+				type: 'multiple',
+				hasImages: true,
+				stem: [{ type: 'text', text: '看图：' }],
+				options: [
+					{
+						key: 'A',
+						content: [
+							{
+								type: 'image',
+								label: '选项A图',
+								fallbackUrl: 'https://x/a.png',
+								dataUrl: 'data:image/jpeg;base64,OK',
+							},
+						],
+					},
+					{
+						key: 'B',
+						content: [{ type: 'image', label: '选项B图', fallbackUrl: 'https://x/b.png' }],
+					},
+				],
+			})
+			const blocks = serializeQuestion(q).messages[1].content as Block[]
+			// A inlined as image_url; B degraded to text url-fallback
+			expect(
+				blocks.some((b) => isImage(b) && b.image_url.url === 'data:image/jpeg;base64,OK'),
+			).toBe(true)
+			const text = blocks
+				.filter(isText)
+				.map((b) => b.text)
+				.join('\n')
+			expect(text).toContain('[选项B图]:https://x/b.png（无法内联）')
+		})
+
+		it('header (id + type label) and option keys are present in the leading text block', () => {
+			const blocks = serializeQuestion(imageQuestion()).messages[1].content as Block[]
+			const lead = (blocks[0] as TextBlock).text
+			expect(lead).toContain('q15')
+			expect(lead).toContain('单选')
+			// text option B still listed by its key inside the text block
+			expect(lead).toContain('B. 2x')
+		})
 	})
 })

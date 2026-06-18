@@ -24,6 +24,7 @@ import type { ChaoxingAnswer, ChaoxingQuestion } from './types'
 
 import { extractQuestion } from './extract'
 import { fillQuestion, type FillResult } from './fill'
+import { resolveQuestionImages, type ResolveImagesDeps } from './images'
 
 /** `.questionLi` 题目根选择器（与 detect / extract / fill 完全一致）。 */
 const QUESTION_SELECTOR = '.questionLi'
@@ -85,12 +86,21 @@ function enumerateQuestionLis(doc: Document): { li: HTMLElement; ownerDoc: Docum
  * 读题：把当前页（含同源 iframe）的所有 `.questionLi` 解析为 {@link ChaoxingQuestion}[]，
  * id 依枚举序为 `q0, q1, …`。模式按每个题目所属文档单独判定（顶层与 iframe 可不同）。
  *
- * @param doc 目标文档，默认实时 `document`。
+ * 每题先经同步 {@link extractQuestion} 解析（含装饰图过滤 / LaTeX 转文本 / 图片占位部件），
+ * 再 `await` {@link resolveQuestionImages} 在内容脚本里带 cookie 抓图 + canvas 降采样，把
+ * 图片占位部件补成内联 base64（失败兜底见 §8.4，可能置该题 needsReview）。故本函数为 **async**。
+ * 枚举顺序保持确定（与 {@link fillAnswers} 一致），图片解析并发但不改题序。
+ *
+ * @param doc  目标文档，默认实时 `document`。
+ * @param deps 可注入的抓图 / 降采样实现（仅测试用；内容脚本走真实 fetch + canvas 默认实现）。
  */
-export function extractQuestions(doc: Document = document): ChaoxingQuestion[] {
+export async function extractQuestions(
+	doc: Document = document,
+	deps?: ResolveImagesDeps,
+): Promise<ChaoxingQuestion[]> {
 	const entries = enumerateQuestionLis(doc)
 	const modeCache = new Map<Document, 'work' | 'exam'>()
-	return entries.map(({ li, ownerDoc }, index) => {
+	const questions = entries.map(({ li, ownerDoc }, index) => {
 		let mode = modeCache.get(ownerDoc)
 		if (!mode) {
 			mode = detectMode(ownerDoc)
@@ -98,6 +108,8 @@ export function extractQuestions(doc: Document = document): ChaoxingQuestion[] {
 		}
 		return extractQuestion(li, mode, index)
 	})
+	// 解析图片为内联 base64（保持题序）；纯文本题为 no-op。
+	return Promise.all(questions.map((q) => resolveQuestionImages(q, deps)))
 }
 
 /** 解析 `q${i}` 形式的 questionId 为序号 i；不匹配返回 null。 */
@@ -218,10 +230,17 @@ export function initChaoxingAdapter(): void {
 
 			const { action, payload } = message
 
+			const fail = (error: unknown) =>
+				sendResponse({
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				})
+
 			try {
 				switch (action) {
 					case 'extract_questions':
-						sendResponse(extractQuestions())
+						// async（页内抓图 + 降采样）→ 在 Promise 兑现后再回包；监听器返回 true 保通道开放。
+						extractQuestions().then(sendResponse, fail)
 						break
 					case 'fill_answers':
 						sendResponse(fillAnswers((payload as ChaoxingAnswer[]) ?? []))
@@ -239,10 +258,7 @@ export function initChaoxingAdapter(): void {
 						})
 				}
 			} catch (error) {
-				sendResponse({
-					success: false,
-					error: error instanceof Error ? error.message : String(error),
-				})
+				fail(error)
 			}
 
 			return true

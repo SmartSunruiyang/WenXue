@@ -28,6 +28,20 @@ export interface AskStructuredOptions {
 }
 
 /**
+ * 一条聊天消息的 content：纯文本题为 `string`；含图题为 OpenAI 兼容的交错块数组
+ * （文本块 + `image_url` 块，由 {@link serializeQuestion} 产出，§8.2）。两者原样进入请求体。
+ */
+export type LLMMessageContent =
+	| string
+	| Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>
+
+/** 进入 `askStructured` 的一条消息（content 允许多模态数组，透传给 provider）。 */
+export interface LLMMessage {
+	role: string
+	content: LLMMessageContent
+}
+
+/**
  * Thin structured LLM client (own fetch).
  *
  * Sends an OpenAI chat-completions request that FORCES a tool call to
@@ -38,7 +52,9 @@ export interface AskStructuredOptions {
  *
  * We write our own client (instead of using the package's `LLM` class) because
  * that package's `Message.content` is `string | null` and cannot carry the
- * multimodal content this feature will need (Task 9).
+ * interleaved multimodal content this feature needs (Task 9): `messages[].content`
+ * here may be a `string` (text-only question) OR an array of text / `image_url`
+ * blocks (image question), and is forwarded into the request body unchanged.
  *
  * Injectable `fetchImpl` keeps this unit-testable with no real network.
  *
@@ -48,7 +64,7 @@ export interface AskStructuredOptions {
  */
 export async function askStructured(
 	cfg: LLMConfig,
-	messages: { role: string; content: string }[],
+	messages: LLMMessage[],
 	schema: z.ZodType,
 	opts?: AskStructuredOptions,
 ): Promise<unknown> {

@@ -148,7 +148,7 @@ describe('extractQuestion', () => {
 		expect(q.options).toBeUndefined()
 	})
 
-	it('emits a [图] placeholder for an image inside the stem (no fetching this task)', () => {
+	it('emits a stem image part with a 题干图N label + placeholder, sets hasImages', () => {
 		const li = makeLi(`
 			<div class="questionLi">
 				<input type="hidden" name="type" value="0">
@@ -164,13 +164,37 @@ describe('extractQuestion', () => {
 
 		const q = extractQuestion(li, 'exam', 5)
 
-		// [图] left in place where the <img> sat; surrounding text preserved in order.
-		expect(q.stem).toEqual([{ type: 'text', text: '6. 下列函数 [图] 的导数是？' }])
-		// hard-coded false this task even though an <img> is present
-		expect(q.hasImages).toBe(false)
+		// The text part keeps a [题干图1] token where the <img> sat; an image part follows.
+		expect(q.stem).toEqual([
+			{ type: 'text', text: '6. 下列函数 [题干图1] 的导数是？' },
+			{ type: 'image', label: '题干图1', fallbackUrl: 'https://x/formula.png' },
+		])
+		// At least one image part now present → hasImages flips true.
+		expect(q.hasImages).toBe(true)
 	})
 
-	it('emits a [图] placeholder for an image option', () => {
+	it('numbers multiple stem images 题干图1, 题干图2 in document order', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="0">
+				<h3>6. 比较 <img src="https://x/a.png"> 与 <img src="https://x/b.png"> 大小。</h3>
+				<div class="stem_answer">
+					<div class="answerBg"><div class="answer_p">A. x</div></div>
+				</div>
+			</div>
+		`)
+
+		const q = extractQuestion(li, 'exam', 5)
+		const imageParts = q.stem.filter((p) => p.type === 'image')
+		expect(imageParts).toEqual([
+			{ type: 'image', label: '题干图1', fallbackUrl: 'https://x/a.png' },
+			{ type: 'image', label: '题干图2', fallbackUrl: 'https://x/b.png' },
+		])
+		expect(stemText(q.stem)).toContain('[题干图1]')
+		expect(stemText(q.stem)).toContain('[题干图2]')
+	})
+
+	it('emits an image part for an image option labelled 选项<key>图', () => {
 		const li = makeLi(`
 			<div class="questionLi">
 				<input type="hidden" name="type" value="0">
@@ -187,8 +211,66 @@ describe('extractQuestion', () => {
 		const q = extractQuestion(li, 'exam', 6)
 
 		expect(q.options![0].key).toBe('A')
-		expect(q.options![0].content).toEqual([{ type: 'text', text: '[图]' }])
+		expect(q.options![0].content).toEqual([
+			{ type: 'text', text: '[选项A图]' },
+			{ type: 'image', label: '选项A图', fallbackUrl: 'https://x/a.png' },
+		])
 		expect(stemText(q.options![1].content)).toBe('B. 文字选项')
+		expect(q.hasImages).toBe(true)
+	})
+
+	it('renders a LaTeX-source image as $…$ text and drops the image (no fetch)', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="0">
+				<h3>8. 求 <img src="https://x/eq.png" data-latex="x^2 + 1"> 的值。</h3>
+				<div class="stem_answer">
+					<div class="answerBg"><div class="answer_p">A. 1</div></div>
+				</div>
+			</div>
+		`)
+
+		const q = extractQuestion(li, 'exam', 7)
+
+		// LaTeX inlined as text; NO image part, NO placeholder token, hasImages stays false.
+		expect(q.stem).toEqual([{ type: 'text', text: '8. 求 $x^2 + 1$ 的值。' }])
+		expect(q.stem.some((p) => p.type === 'image')).toBe(false)
+		expect(q.hasImages).toBe(false)
+	})
+
+	it('renders a meaningful alt/title image as its alt text and drops the image', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="0">
+				<h3>9. 看图：<img src="https://x/cat.png" alt="一只猫"> 是什么动物？</h3>
+				<div class="stem_answer">
+					<div class="answerBg"><div class="answer_p">A. 猫</div></div>
+				</div>
+			</div>
+		`)
+
+		const q = extractQuestion(li, 'exam', 8)
+
+		expect(q.stem).toEqual([{ type: 'text', text: '9. 看图：一只猫 是什么动物？' }])
+		expect(q.hasImages).toBe(false)
+	})
+
+	it('drops decorative images (tiny size attrs / icon class / data spacer) and keeps hasImages false', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="0">
+				<h3>10. 选择<img src="https://x/star.png" width="16" height="16"><img class="icon" src="https://x/i.png"><img src="data:image/gif;base64,R0lGOD"> 正确项。</h3>
+				<div class="stem_answer">
+					<div class="answerBg"><div class="answer_p">A. x</div></div>
+				</div>
+			</div>
+		`)
+
+		const q = extractQuestion(li, 'exam', 9)
+
+		// All three images are decorative → emit nothing, no placeholder token.
+		expect(q.stem).toEqual([{ type: 'text', text: '10. 选择 正确项。' }])
+		expect(q.hasImages).toBe(false)
 	})
 
 	it('marks an unknown type code as needsReview and leaves options unpopulated', () => {
