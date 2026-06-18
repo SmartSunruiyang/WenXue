@@ -209,15 +209,16 @@ export class PageAgentCore extends EventTarget {
 			throw new Error('User takeover requires an active running task.')
 		}
 
-		const signal = options?.signal ?? this.#abortController.signal
-		this.#abortController.signal.throwIfAborted()
-		signal.throwIfAborted()
+		const { signal, dispose } = this.#combineAbortSignals([
+			this.#abortController.signal,
+			...(options?.signal ? [options.signal] : []),
+		])
 		this.#takeoverActive = true
 
 		try {
+			signal.throwIfAborted()
 			await this.pageController.cleanUpHighlights()
 			await this.pageController.hideMask()
-			this.#abortController.signal.throwIfAborted()
 			signal.throwIfAborted()
 
 			const request: UserTakeoverRequest = { ...input, id: uid() }
@@ -232,7 +233,6 @@ export class PageAgentCore extends EventTarget {
 				this.onUserTakeover(request, { signal }),
 				signal,
 			)
-			this.#abortController.signal.throwIfAborted()
 			signal.throwIfAborted()
 
 			event.status = resolution
@@ -240,7 +240,6 @@ export class PageAgentCore extends EventTarget {
 
 			if (resolution === 'completed') {
 				await this.pageController.showMask()
-				this.#abortController.signal.throwIfAborted()
 				signal.throwIfAborted()
 				this.pushObservation(
 					'User completed manual takeover. Re-observe the page and continue from the current task.',
@@ -253,6 +252,7 @@ export class PageAgentCore extends EventTarget {
 			return resolution
 		} finally {
 			this.#takeoverActive = false
+			dispose()
 		}
 	}
 
@@ -338,6 +338,10 @@ export class PageAgentCore extends EventTarget {
 				await onBeforeTask?.(this)
 				this.#abortController.signal.throwIfAborted()
 			} catch (error) {
+				if (this.#isAbortError(error)) {
+					const taskResult = this.#handleTaskError(error)
+					return this.#finalizeTerminalExecution(false, taskResult, onAfterTask, 'error')
+				}
 				this.#setStatus('error')
 				throw error
 			}
@@ -347,6 +351,10 @@ export class PageAgentCore extends EventTarget {
 		try {
 			await this.pageController.showMask()
 		} catch (error) {
+			if (this.#isAbortError(error)) {
+				const taskResult = this.#handleTaskError(error)
+				return this.#finalizeTerminalExecution(false, taskResult, onAfterTask, 'error')
+			}
 			this.#setStatus('error')
 			throw error
 		}
@@ -456,11 +464,21 @@ export class PageAgentCore extends EventTarget {
 			await waitFor(this.config.stepDelay ?? 0.4)
 		}
 
-		this.#onDone(taskSuccess)
+		return this.#finalizeTerminalExecution(taskSuccess, taskResult, onAfterTask)
+	}
+
+	async #finalizeTerminalExecution(
+		success: boolean,
+		data: string,
+		onAfterTask: PageAgentCoreConfig['onAfterTask'],
+		state?: ExecutionResult['state'],
+	): Promise<ExecutionResult> {
+		this.#onDone(success)
 		const result: ExecutionResult = {
-			success: taskSuccess,
-			data: taskResult,
+			success,
+			data,
 			history: this.history,
+			...(state ? { state } : {}),
 		}
 		await onAfterTask?.(this, result)
 		return result
@@ -489,17 +507,57 @@ export class PageAgentCore extends EventTarget {
 	}
 
 	#handleTaskError(error: unknown): string {
-		const isAbortError = (error as any)?.name === 'AbortError'
+		const isAbortError = this.#isAbortError(error)
 		if (!isAbortError) console.error('Task failed', error)
 		const taskResult = isAbortError ? 'Task aborted' : String(error)
 		this.#recordError(taskResult, error)
 		return taskResult
 	}
 
+	#isAbortError(error: unknown): boolean {
+		return (error as any)?.name === 'AbortError'
+	}
+
 	#recordError(message: string, rawResponse?: unknown): void {
 		this.#emitActivity({ type: 'error', message })
 		this.history.push({ type: 'error', message, rawResponse })
 		this.#emitHistoryChange()
+	}
+
+	#combineAbortSignals(signals: AbortSignal[]): {
+		signal: AbortSignal
+		dispose: () => void
+	} {
+		const uniqueSignals = [...new Set(signals)]
+		if (uniqueSignals.length === 1) {
+			return { signal: uniqueSignals[0], dispose: () => {} }
+		}
+
+		const controller = new AbortController()
+		const listeners = new Map<AbortSignal, () => void>()
+		const abortFrom = (signal: AbortSignal) => {
+			if (!controller.signal.aborted) controller.abort(signal.reason)
+		}
+
+		for (const signal of uniqueSignals) {
+			if (signal.aborted) {
+				abortFrom(signal)
+				break
+			}
+
+			const listener = () => abortFrom(signal)
+			listeners.set(signal, listener)
+			signal.addEventListener('abort', listener, { once: true })
+		}
+
+		return {
+			signal: controller.signal,
+			dispose: () => {
+				for (const [signal, listener] of listeners) {
+					signal.removeEventListener('abort', listener)
+				}
+			},
+		}
 	}
 
 	async #awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

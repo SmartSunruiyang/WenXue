@@ -477,6 +477,49 @@ describe('PageAgentCore', () => {
 		await expect(execution).resolves.toMatchObject({ success: true })
 	})
 
+	it('cancels takeover with task stop even when an external signal is provided', async () => {
+		const externalController = new AbortController()
+		const addAbortListener = vi.spyOn(externalController.signal, 'addEventListener')
+		const removeAbortListener = vi.spyOn(externalController.signal, 'removeEventListener')
+		let takeoverSignal: AbortSignal | undefined
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () =>
+					createToolCallResponse({ done: { text: 'Should not execute', success: true } }, 1),
+				onBeforeStep: async (currentAgent) => {
+					await currentAgent.requestUserTakeover(
+						{
+							reason: 'login',
+							title: 'Sign in required',
+							message: 'Complete sign in.',
+						},
+						{ signal: externalController.signal },
+					)
+				},
+			}),
+		)
+		agent.onUserTakeover = async (_request, options) => {
+			takeoverSignal = options?.signal
+			return new Promise(() => {})
+		}
+
+		const execution = agent.execute('Wait for external takeover')
+		await vi.waitFor(() => expect(agent.status).toBe('waiting_for_user'))
+		agent.stop()
+		const result = await execution
+
+		expect(result).toMatchObject({ success: false, data: 'Task aborted' })
+		expect(agent.status).toBe('error')
+		expect(externalController.signal.aborted).toBe(false)
+		expect(takeoverSignal).not.toBe(externalController.signal)
+		expect(takeoverSignal?.aborted).toBe(true)
+		expect(addAbortListener).toHaveBeenCalledWith('abort', expect.any(Function), { once: true })
+		expect(removeAbortListener).toHaveBeenCalledWith('abort', expect.any(Function))
+		expect(
+			agent.history.filter((event) => event.type === 'error' && event.message === 'Task aborted'),
+		).toHaveLength(1)
+	})
+
 	it.each(['onBeforeTask', 'onBeforeStep'] as const)(
 		'settles pause from %s before page observation or LLM execution',
 		async (hookName) => {
@@ -509,6 +552,59 @@ describe('PageAgentCore', () => {
 			expect(agent.history.filter((event) => event.type === 'step')).toHaveLength(0)
 		},
 	)
+
+	it('finalizes stop during onBeforeTask takeover waiting exactly once', async () => {
+		const activities: AgentActivity[] = []
+		const releaseResources = vi.fn()
+		const onAfterTask = vi.fn(async () => {
+			releaseResources()
+		})
+		let takeoverSignal: AbortSignal | undefined
+		const agent = new PageAgentCore(
+			createConfig({
+				onBeforeTask: async (currentAgent) => {
+					await currentAgent.requestUserTakeover({
+						reason: 'permission',
+						title: 'Permission required',
+						message: 'Approve the permission dialog.',
+					})
+				},
+				onAfterTask,
+			}),
+		)
+		agent.onUserTakeover = async (_request, options) => {
+			takeoverSignal = options?.signal
+			return new Promise(() => {})
+		}
+		agent.addEventListener('activity', (event) => {
+			activities.push((event as CustomEvent<AgentActivity>).detail)
+		})
+
+		const execution = agent.execute('Pause during task setup')
+		await vi.waitFor(() => expect(agent.status).toBe('waiting_for_user'))
+		agent.stop()
+		const result = await execution
+		const abortErrors = result.history.filter(
+			(event) => event.type === 'error' && event.message === 'Task aborted',
+		)
+
+		expect(result).toMatchObject({
+			success: false,
+			data: 'Task aborted',
+			state: 'error',
+		})
+		expect(agent.status).toBe('error')
+		expect(takeoverSignal?.aborted).toBe(true)
+		expect(abortErrors).toHaveLength(1)
+		expect(
+			activities.filter(
+				(activity) => activity.type === 'error' && activity.message === 'Task aborted',
+			),
+		).toHaveLength(1)
+		expect(onAfterTask).toHaveBeenCalledOnce()
+		expect(onAfterTask).toHaveBeenCalledWith(agent, result)
+		expect(releaseResources).toHaveBeenCalledOnce()
+	})
 
 	it('keeps stop terminal when invoked during paused onAfterTask', async () => {
 		const onAfterTask = vi.fn(async (currentAgent: PageAgentCore) => {
