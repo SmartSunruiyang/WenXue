@@ -1,13 +1,26 @@
 import type { LLMConfig } from '@page-agent/llms'
-import type * as z from 'zod/v4'
-
-// The vendored package does not re-export this helper from its index, and its
-// `exports` map only exposes the package root — so we deep-import the source
-// directly (read-only; we do not modify the vendored package). This reuses the
-// exact JSON-schema conversion the upstream OpenAIClient uses for tool calls.
-import { zodToOpenAITool } from '../../../../../packages/llms/src/utils'
+import * as z from 'zod/v4'
 
 const TOOL_NAME = 'submit_answer'
+
+/**
+ * Build an OpenAI-format `function` tool from a Zod schema.
+ *
+ * Self-contained on purpose: this feature has zero coupling to `packages/*`
+ * internals. It mirrors what the vendored `zodToOpenAITool` does (Zod 4 native
+ * `z.toJSONSchema` with the OpenAPI 3.0 target) so the model receives the schema
+ * as the tool's parameters.
+ */
+function toOpenAIFunctionTool(name: string, description: string, schema: z.ZodType) {
+	return {
+		type: 'function' as const,
+		function: {
+			name,
+			description,
+			parameters: z.toJSONSchema(schema, { target: 'openapi-3.0' }),
+		},
+	}
+}
 
 export interface AskStructuredOptions {
 	signal?: AbortSignal
@@ -41,12 +54,11 @@ export async function askStructured(
 ): Promise<unknown> {
 	const fetchImpl = opts?.fetchImpl ?? globalThis.fetch
 
-	const tool = zodToOpenAITool(TOOL_NAME, {
-		inputSchema: schema,
-		description: '提交本题的结构化答案',
-		execute: async () => undefined,
-	})
+	const tool = toOpenAIFunctionTool(TOOL_NAME, '提交本题的结构化答案', schema)
 
+	// NOTE: request uses OpenAI-format forced tool_choice + temperature:0. Some providers
+	// (DeepSeek/Grok strip forced tool_choice; some reject temperature) need adaptation —
+	// deferred to pipeline wiring (Task 7) and validated against real models (Task 11).
 	const body = {
 		model: cfg.model,
 		messages,
