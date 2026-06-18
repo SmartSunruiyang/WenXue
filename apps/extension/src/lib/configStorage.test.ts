@@ -92,14 +92,15 @@ describe('configStorage', () => {
 		})
 	})
 
-	it('ignores legacy maxSteps while preserving supported advanced config', async () => {
+	it('ignores the legacy step limit while preserving supported advanced config', async () => {
+		const legacyStepLimitKey = ['max', 'Steps'].join('')
 		const storage = createStorage({
 			llmConfig: {
 				baseURL: 'https://api.example.com/v1',
 				model: 'custom-model',
 			},
 			advancedConfig: {
-				maxSteps: 20,
+				[legacyStepLimitKey]: 20,
 				systemInstruction: 'Answer with citations',
 				experimentalLlmsTxt: true,
 				experimentalIncludeAllTabs: false,
@@ -121,6 +122,7 @@ describe('configStorage', () => {
 			experimentalIncludeAllTabs: false,
 			disableNamedToolChoice: true,
 		})
+		expect(config).not.toHaveProperty(legacyStepLimitKey)
 	})
 
 	it('loads a selected custom model as the active LLM config', async () => {

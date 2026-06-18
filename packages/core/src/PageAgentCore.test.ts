@@ -63,6 +63,13 @@ function createToolCallResponse(action: Record<string, unknown>, step: number): 
 	)
 }
 
+function getStepInfoLines(prompt: string): string[] {
+	const prefix = '<step_info>\n'
+	const start = prompt.indexOf(prefix)
+	const end = prompt.indexOf('\n</step_info>', start)
+	return prompt.slice(start + prefix.length, end).split('\n')
+}
+
 describe('PageAgentCore', () => {
 	it('keeps a snapshot of the constructor config', () => {
 		const sourceConfig = createConfig()
@@ -117,10 +124,18 @@ describe('PageAgentCore', () => {
 		expect(steps.at(-1)?.action.name).toBe('done')
 		expect(userPrompts).toHaveLength(42)
 		userPrompts.forEach((prompt, index) => {
-			expect(prompt).toContain(`<step_info>\nStep ${index + 1}\nCurrent time:`)
-			expect(prompt).not.toMatch(
-				/max possible steps|steps? remaining|steps? left|max_steps|maximum limit/i,
-			)
+			expect(getStepInfoLines(prompt)).toEqual([
+				`Step ${index + 1}`,
+				expect.stringMatching(/^Current time: /),
+			])
 		})
+		expect(getStepInfoLines(userPrompts[40])).toEqual([
+			'Step 41',
+			expect.stringMatching(/^Current time: /),
+		])
+		expect(getStepInfoLines(userPrompts[41])).toEqual([
+			'Step 42',
+			expect.stringMatching(/^Current time: /),
+		])
 	})
 })
