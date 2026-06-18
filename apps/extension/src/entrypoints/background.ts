@@ -1,3 +1,4 @@
+import { handleChaoxingControlMessage } from '@/agent/chaoxing/bridge.background'
 import { handlePageControlMessage } from '@/agent/RemotePageController.background'
 import { handleTabControlMessage, setupTabEventsPort } from '@/agent/TabsController.background'
 
@@ -24,6 +25,8 @@ export default defineBackground(() => {
 			return handleTabControlMessage(message, sender, sendResponse)
 		} else if (message.type === 'PAGE_CONTROL') {
 			return handlePageControlMessage(message, sender, sendResponse)
+		} else if (message.type === 'CHAOXING_CONTROL') {
+			return handleChaoxingControlMessage(message, sender, sendResponse)
 		} else {
 			sendResponse({ error: 'Unknown message type' })
 			return
