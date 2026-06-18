@@ -3,6 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 import * as z from 'zod/v4'
 
 import { PageAgentCore, type PageAgentCoreConfig, tool } from './PageAgentCore'
+import type {
+	AgentActivity,
+	AgentStatus,
+	ExecutionResult,
+	UserTakeoverEvent,
+	UserTakeoverRequest,
+} from './types'
 
 const browserState: BrowserState = {
 	url: '',
@@ -68,6 +75,21 @@ function getStepInfoLines(prompt: string): string[] {
 	const start = prompt.indexOf(prefix)
 	const end = prompt.indexOf('\n</step_info>', start)
 	return prompt.slice(start + prefix.length, end).split('\n')
+}
+
+function getUserPrompt(init?: RequestInit): string {
+	const requestBody = JSON.parse(String(init?.body)) as {
+		messages: Array<{ role: string; content?: string }>
+	}
+	return requestBody.messages.find((message) => message.role === 'user')?.content ?? ''
+}
+
+function createContinueTool() {
+	return tool({
+		description: 'Continue the test task',
+		inputSchema: z.object({}),
+		execute: async () => 'Continued',
+	})
 }
 
 describe('PageAgentCore', () => {
@@ -137,5 +159,257 @@ describe('PageAgentCore', () => {
 			'Step 42',
 			expect.stringMatching(/^Current time: /),
 		])
+	})
+
+	it('continues the same task after completed manual takeover', async () => {
+		const userPrompts: string[] = []
+		const statuses: AgentStatus[] = []
+		const activities: AgentActivity[] = []
+		const takeoverStatuses: UserTakeoverEvent['status'][] = []
+		let fetchCount = 0
+		let takeoverRequested = false
+		let waitingEvent: UserTakeoverEvent | undefined
+		let requestSeen: UserTakeoverRequest | undefined
+		let taskIdDuringTakeover = ''
+
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async (_input, init) => {
+					userPrompts.push(getUserPrompt(init))
+					fetchCount++
+					return createToolCallResponse(
+						fetchCount === 1
+							? { continue_task: {} }
+							: { done: { text: 'Completed after takeover', success: true } },
+						fetchCount,
+					)
+				},
+				customTools: { continue_task: createContinueTool() },
+				onAfterStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'login',
+						title: 'Sign in required',
+						message: 'Complete sign in in the page.',
+						goal: 'Open the account page',
+					})
+				},
+			}),
+		)
+
+		agent.addEventListener('statuschange', () => statuses.push(agent.status))
+		agent.addEventListener('activity', (event) => {
+			activities.push((event as CustomEvent<AgentActivity>).detail)
+		})
+		agent.addEventListener('historychange', () => {
+			const event = agent.history.find(
+				(item): item is UserTakeoverEvent => item.type === 'user_takeover',
+			)
+			if (event) takeoverStatuses.push(event.status)
+		})
+		agent.onUserTakeover = async (request, options) => {
+			expect(options?.signal).toBeInstanceOf(AbortSignal)
+			expect(agent.status).toBe('waiting_for_user')
+			requestSeen = request
+			taskIdDuringTakeover = agent.taskId
+			waitingEvent = agent.history.find(
+				(item): item is UserTakeoverEvent => item.type === 'user_takeover',
+			)
+			expect(waitingEvent?.status).toBe('waiting')
+			return 'completed'
+		}
+
+		const result = await agent.execute('Open the account page')
+		const completedEvent = result.history.find(
+			(item): item is UserTakeoverEvent => item.type === 'user_takeover',
+		)
+
+		expect(result.success).toBe(true)
+		expect(agent.task).toBe('Open the account page')
+		expect(agent.taskId).toBe(taskIdDuringTakeover)
+		expect(agent.status).toBe('completed')
+		expect(statuses).toEqual(['running', 'waiting_for_user', 'running', 'completed'])
+		expect(requestSeen?.id).toEqual(expect.any(String))
+		expect(completedEvent).toBe(waitingEvent)
+		expect(completedEvent?.status).toBe('completed')
+		expect(takeoverStatuses).toContain('waiting')
+		expect(takeoverStatuses).toContain('completed')
+		expect(activities).toContainEqual({ type: 'waiting_for_user', request: requestSeen })
+		expect(userPrompts).toHaveLength(2)
+		expect(userPrompts[1]).toContain(
+			'User completed manual takeover. Re-observe the page and continue from the current task.',
+		)
+		expect(
+			result.history.filter((event) => event.type === 'step').map((event) => event.stepIndex),
+		).toEqual([0, 1])
+	})
+
+	it('returns a paused result without terminal cleanup', async () => {
+		const pageController = createPageController()
+		const onAfterTask = vi.fn()
+		let takeoverRequested = false
+		const agent = new PageAgentCore(
+			createConfig({
+				pageController,
+				customFetch: async () => createToolCallResponse({ continue_task: {} }, 1),
+				customTools: { continue_task: createContinueTool() },
+				onAfterStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'captcha',
+						title: 'Captcha required',
+						message: 'Complete the captcha in the page.',
+					})
+				},
+				onAfterTask,
+			}),
+		)
+		agent.onUserTakeover = async () => 'paused'
+
+		const result = await agent.execute('Continue after captcha')
+
+		expect(result).toMatchObject({
+			success: false,
+			data: 'Task paused',
+			state: 'paused',
+		})
+		expect(result.history).toBe(agent.history)
+		expect(agent.status).toBe('paused')
+		expect(agent.history).toContainEqual(
+			expect.objectContaining({ type: 'user_takeover', status: 'paused' }),
+		)
+		expect(agent.history.some((event) => event.type === 'error')).toBe(false)
+		expect(pageController.cleanUpHighlights).not.toHaveBeenCalled()
+		expect(pageController.hideMask).not.toHaveBeenCalled()
+		expect(onAfterTask).toHaveBeenCalledOnce()
+		expect(onAfterTask).toHaveBeenCalledWith(agent, result)
+	})
+
+	it('resumes only paused tasks and preserves task context with monotonic step numbers', async () => {
+		const idleAgent = new PageAgentCore(createConfig())
+		await expect(idleAgent.resume()).rejects.toThrow('Only paused tasks can be resumed.')
+		idleAgent.dispose()
+
+		const userPrompts: string[] = []
+		const fetchSignals: AbortSignal[] = []
+		const beforeStepIndexes: number[] = []
+		const onBeforeTask = vi.fn()
+		const onAfterTask = vi.fn()
+		let fetchCount = 0
+		let takeoverRequested = false
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async (_input, init) => {
+					userPrompts.push(getUserPrompt(init))
+					if (init?.signal) fetchSignals.push(init.signal)
+					fetchCount++
+					const action =
+						fetchCount < 3
+							? { continue_task: {} }
+							: { done: { text: 'Completed after resume', success: true } }
+					return createToolCallResponse(action, fetchCount)
+				},
+				customTools: { continue_task: createContinueTool() },
+				onBeforeTask,
+				onBeforeStep: async (_currentAgent, stepIndex) => {
+					beforeStepIndexes.push(stepIndex)
+				},
+				onAfterStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'permission',
+						title: 'Permission required',
+						message: 'Approve the permission dialog.',
+					})
+				},
+				onAfterTask,
+			}),
+		)
+		agent.onUserTakeover = async () => 'paused'
+
+		const pausedResult = await agent.execute('Complete the protected workflow')
+		const task = agent.task
+		const taskId = agent.taskId
+		const history = agent.history
+
+		const resumedResult = await agent.resume()
+
+		expect(pausedResult.state).toBe('paused')
+		expect(resumedResult.success).toBe(true)
+		expect(resumedResult.data).toBe('Completed after resume')
+		expect(agent.status).toBe('completed')
+		expect(agent.task).toBe(task)
+		expect(agent.taskId).toBe(taskId)
+		expect(agent.history).toBe(history)
+		expect(onBeforeTask).toHaveBeenCalledOnce()
+		expect(onAfterTask).toHaveBeenCalledTimes(2)
+		expect(beforeStepIndexes).toEqual([0, 1, 2])
+		expect(fetchSignals).toHaveLength(3)
+		expect(fetchSignals[1]).not.toBe(fetchSignals[0])
+		expect(fetchSignals[2]).toBe(fetchSignals[1])
+		expect(userPrompts).toHaveLength(3)
+		expect(userPrompts.map((prompt) => getStepInfoLines(prompt)[0])).toEqual([
+			'Step 1',
+			'Step 2',
+			'Step 3',
+		])
+		expect(userPrompts[1]).toContain(
+			'User resumed the paused task. Re-observe the page and continue.',
+		)
+		expect(
+			resumedResult.history
+				.filter((event) => event.type === 'step')
+				.map((event) => event.stepIndex),
+		).toEqual([0, 1, 2])
+	})
+
+	it('stops without hanging while waiting for user takeover', async () => {
+		const pageController = createPageController()
+		const onAfterTask = vi.fn()
+		let takeoverRequested = false
+		let takeoverSignal: AbortSignal | undefined
+		const agent = new PageAgentCore(
+			createConfig({
+				pageController,
+				customFetch: async () => createToolCallResponse({ continue_task: {} }, 1),
+				customTools: { continue_task: createContinueTool() },
+				onAfterStep: async (currentAgent) => {
+					if (takeoverRequested) return
+					takeoverRequested = true
+					await currentAgent.requestUserTakeover({
+						reason: 'other',
+						title: 'Manual action required',
+						message: 'Complete the manual action.',
+					})
+				},
+				onAfterTask,
+			}),
+		)
+		agent.onUserTakeover = async (_request, options) => {
+			takeoverSignal = options?.signal
+			return new Promise(() => {})
+		}
+
+		const execution = agent.execute('Wait for manual action')
+		await vi.waitFor(() => expect(agent.status).toBe('waiting_for_user'))
+		agent.stop()
+		const result: ExecutionResult = await execution
+
+		expect(takeoverSignal?.aborted).toBe(true)
+		expect(result).toMatchObject({ success: false, data: 'Task aborted' })
+		expect(result.state).not.toBe('paused')
+		expect(agent.status).toBe('error')
+		expect(agent.history).toContainEqual(
+			expect.objectContaining({ type: 'user_takeover', status: 'waiting' }),
+		)
+		expect(agent.history).toContainEqual(
+			expect.objectContaining({ type: 'error', message: 'Task aborted' }),
+		)
+		expect(pageController.cleanUpHighlights).toHaveBeenCalled()
+		expect(pageController.hideMask).toHaveBeenCalled()
+		expect(onAfterTask).toHaveBeenCalledOnce()
 	})
 })

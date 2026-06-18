@@ -20,6 +20,9 @@ import type {
 	HistoricalEvent,
 	MacroToolInput,
 	MacroToolResult,
+	UserTakeoverEvent,
+	UserTakeoverRequest,
+	UserTakeoverResolution,
 } from './types'
 import { assert, fetchLlmsTxt, normalizeResponse, uid, waitFor } from './utils'
 
@@ -42,7 +45,7 @@ export type PageAgentCoreConfig = AgentConfig & { pageController: PageController
  * - loop
  *
  * ## Event System
- * - `statuschange` - Agent status transitions (idle → running → completed/error)
+ * - `statuschange` - Agent status transitions, including waiting and paused states
  * - `historychange` - History events updated (persistent, part of agent memory)
  * - `activity` - Real-time activity feedback (transient, for UI only)
  * - `dispose` - Agent cleanup triggered
@@ -56,7 +59,7 @@ export type PageAgentCoreConfig = AgentConfig & { pageController: PageController
  * 2. **Activity Events** (via `activity` event)
  *    - Transient UI feedback during task execution
  *    - NOT included in LLM context
- *    - Types: thinking, executing, executed, retrying, error
+ *    - Types: thinking, executing, executed, retrying, waiting for user, error
  */
 export class PageAgentCore extends EventTarget {
 	readonly id = uid()
@@ -80,13 +83,21 @@ export class PageAgentCore extends EventTarget {
 	 */
 	onAskUser?: (question: string, options?: { signal: AbortSignal }) => Promise<string>
 
+	/**
+	 * Called when execution requires the user to take over the page.
+	 * The callback receives the active task signal and may resolve the task as completed or paused.
+	 */
+	onUserTakeover?: (
+		request: UserTakeoverRequest,
+		options?: { signal: AbortSignal },
+	) => Promise<UserTakeoverResolution>
+
 	#status: AgentStatus = 'idle'
 	#llm: LLM
 	/**
 	 * Task cancellation primitive: its signal reaches the LLM fetch, tools
-	 * (via `ctx.signal`) and async callbacks. Aborted only by `stop`/`dispose`
-	 * (during a task) or task setup, always WITHOUT a reason so `signal.reason`
-	 * stays a standard `AbortError`.
+	 * (via `ctx.signal`) and async callbacks. Replaced for new and resumed runs,
+	 * and aborted without a custom reason for terminal cleanup, `stop`, or `dispose`.
 	 */
 	#abortController = new AbortController()
 	#observations: string[] = []
@@ -183,6 +194,41 @@ export class PageAgentCore extends EventTarget {
 		this.#observations.push(content)
 	}
 
+	async requestUserTakeover(
+		input: Omit<UserTakeoverRequest, 'id'>,
+		options?: { signal?: AbortSignal },
+	): Promise<UserTakeoverResolution> {
+		if (!this.onUserTakeover) {
+			throw new Error('requestUserTakeover requires onUserTakeover callback')
+		}
+
+		const request: UserTakeoverRequest = { ...input, id: uid() }
+		const event: UserTakeoverEvent = { type: 'user_takeover', request, status: 'waiting' }
+
+		this.history.push(event)
+		this.#setStatus('waiting_for_user')
+		this.#emitActivity({ type: 'waiting_for_user', request })
+		this.#emitHistoryChange()
+
+		const signal = options?.signal ?? this.#abortController.signal
+		signal.throwIfAborted()
+		const resolution = await this.#awaitWithSignal(this.onUserTakeover(request, { signal }), signal)
+
+		event.status = resolution
+		this.#emitHistoryChange()
+
+		if (resolution === 'completed') {
+			this.pushObservation(
+				'User completed manual takeover. Re-observe the page and continue from the current task.',
+			)
+			this.#setStatus('running')
+		} else {
+			this.#setStatus('paused')
+		}
+
+		return resolution
+	}
+
 	/** Stop the current task. Agent remains reusable. */
 	stop() {
 		this.pageController.cleanUpHighlights()
@@ -192,7 +238,9 @@ export class PageAgentCore extends EventTarget {
 
 	async execute(task: string): Promise<ExecutionResult> {
 		if (this.disposed) throw new Error('PageAgent has been disposed. Create a new instance.')
-		if (this.#status === 'running') throw new Error('A task is already running.')
+		if (this.#status === 'running' || this.#status === 'waiting_for_user') {
+			throw new Error('A task is already running.')
+		}
 		if (!task) throw new Error('Task is required')
 
 		this.task = task
@@ -211,20 +259,39 @@ export class PageAgentCore extends EventTarget {
 			this.tools.delete('ask_user')
 		}
 
+		return this.#runTaskLoop({ setupTask: true })
+	}
+
+	async resume(): Promise<ExecutionResult> {
+		if (this.disposed) throw new Error('PageAgent has been disposed. Create a new instance.')
+		if (this.#status !== 'paused') throw new Error('Only paused tasks can be resumed.')
+		if (!this.task) throw new Error('No paused task to resume.')
+
+		this.#abortController = new AbortController()
+		this.pushObservation('User resumed the paused task. Re-observe the page and continue.')
+		this.#setStatus('running')
+		this.#emitHistoryChange()
+
+		return this.#runTaskLoop({ setupTask: false })
+	}
+
+	async #runTaskLoop({ setupTask }: { setupTask: boolean }): Promise<ExecutionResult> {
 		const onBeforeStep = this.config.onBeforeStep
 		const onAfterStep = this.config.onAfterStep
 		const onBeforeTask = this.config.onBeforeTask
 		const onAfterTask = this.config.onAfterTask
 
 		try {
-			await onBeforeTask?.(this)
+			if (setupTask) await onBeforeTask?.(this)
 			await this.pageController.showMask()
 		} catch (error) {
 			this.#setStatus('error')
 			throw error
 		}
 
-		let step = 0
+		let step = this.history.reduce((nextStep, event) => {
+			return event.type === 'step' ? Math.max(nextStep, event.stepIndex + 1) : nextStep
+		}, 0)
 		let taskSuccess: boolean
 		let taskResult: string
 
@@ -292,6 +359,17 @@ export class PageAgentCore extends EventTarget {
 
 				console.groupEnd()
 
+				if (this.#status === 'paused') {
+					const result: ExecutionResult = {
+						success: false,
+						data: 'Task paused',
+						history: this.history,
+						state: 'paused',
+					}
+					await onAfterTask?.(this, result)
+					return result
+				}
+
 				if (actionName === 'done') {
 					taskSuccess = action.input?.success ?? false
 					taskResult = action.input?.text || 'no text provided'
@@ -322,6 +400,22 @@ export class PageAgentCore extends EventTarget {
 		}
 		await onAfterTask?.(this, result)
 		return result
+	}
+
+	async #awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+		signal.throwIfAborted()
+
+		let handleAbort: (() => void) | undefined
+		const aborted = new Promise<never>((_, reject) => {
+			handleAbort = () => reject(signal.reason)
+			signal.addEventListener('abort', handleAbort, { once: true })
+		})
+
+		try {
+			return await Promise.race([promise, aborted])
+		} finally {
+			if (handleAbort) signal.removeEventListener('abort', handleAbort)
+		}
 	}
 
 	/**
@@ -430,7 +524,7 @@ export class PageAgentCore extends EventTarget {
 		const targetLanguage = this.config.language === 'zh-CN' ? '中文' : 'English'
 		const systemPrompt = SYSTEM_PROMPT.replace(
 			/Default working language: \*\*.*?\*\*/,
-			`Default working language: **${targetLanguage}**`
+			`Default working language: **${targetLanguage}**`,
 		)
 
 		return systemPrompt
@@ -452,7 +546,7 @@ export class PageAgentCore extends EventTarget {
 			} catch (error) {
 				console.error(
 					chalk.red('[PageAgent] Failed to execute getPageInstructions callback:'),
-					error
+					error,
 				)
 			}
 		}
@@ -490,7 +584,7 @@ export class PageAgentCore extends EventTarget {
 		if (this.#states.totalWaitTime >= 3) {
 			this.pushObservation(
 				`You have waited ${this.#states.totalWaitTime} seconds accumulatively. ` +
-					`DO NOT wait any longer unless you have a good reason.`
+					`DO NOT wait any longer unless you have a good reason.`,
 			)
 		}
 
