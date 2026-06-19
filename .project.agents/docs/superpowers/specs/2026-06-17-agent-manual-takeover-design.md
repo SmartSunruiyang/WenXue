@@ -164,6 +164,10 @@ tools.set(
 )
 ```
 
+该工具按宿主能力动态门控：只有宿主配置了 `onUserTakeover` 回调时才加入工具集合并写入
+system prompt；未提供回调的 Hub 等宿主不会向模型暴露一个无法结算的接管能力。问学侧边栏启用该
+能力，其他入口必须显式决定是否提供接管交互。
+
 如果工具返回 `paused`，Core 结束当前 `execute()`，状态置为 `paused`，并返回暂停结果。
 如果工具返回 `completed`，Core 继续下一轮循环。
 
@@ -216,6 +220,10 @@ interface ActionSignature {
 - `UIUX.md`：移除 options 高级区的最大步数描述；细化人工接管卡片。
 - `ARCHITECTURE.md`：更新 `@page-agent/core`、`MultiPageAgent`、`SidepanelApp` 的关键类型与职责。
 - `UPSTREAM.md`：登记 vendor `@page-agent/core` 本地补丁。
+
+外部入口必须把 `ExecutionResult.state` 原样透出：content page API 的 execute/resume 返回
+`completed`、`paused` 或 `error`；Hub execute 响应同样携带 `state`。若某入口没有可用的人工
+接管交互协议，则不启用 `onUserTakeover`，也不额外虚构 resume 消息。
 
 ## 9. 验收标准
 
