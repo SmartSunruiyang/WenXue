@@ -12,7 +12,12 @@
  * 占位部件（仅带 `fallbackUrl`，base64 抓取是异步、由 `images.ts` 之后补 `dataUrl`）。
  * 标签编码回填绑定：题干图为 `题干图N`，选项图为 `选项<key>图`。本文件保持**同步**、
  * 无 `chrome.*` / `fetch` / canvas / 副作用，故可在 jsdom 单测。
- * line / fill / reader 仅定型不展开（属 Task 10）。
+ *
+ * line / fill / reader 用 `subQuestions` 承载结构（每个 subQuestion 仅带 keyed `options`，无独立
+ * 题干）：连线每个 `.line_answer_ct .selectBox` 为一左项小题、其 options 是框内 `li[data]` 右项；
+ * 完形 / 阅读每个 `.filling_answer` / `.reading_answer` 为一小题、其 options 是
+ * `span.saveSingleSelect[data]`（key 均取 `data`，与回填点击的 key 空间一致）。这些子结构由 ocsjs
+ * 的**点击选择器**反推（无抓获的真实页面 DOM），需在 Task 11 用真页校验。
  */
 
 import type { ChaoxingOption, ChaoxingQuestion, ContentPart, QType } from './types'
@@ -22,6 +27,21 @@ const TITLE_SELECTOR = ':scope > h3, :scope > div:not(.stem_answer), :scope > p'
 
 /** 选项 / 填空容器选择器。 */
 const OPTION_SELECTOR = '.answerBg .answer_p, .textDIV, .eidtDiv'
+
+/** 连线题：每个左项一个下拉框（ocsjs `cx.ts:810` `lineSelectBox`）。 */
+const LINE_BOX_SELECTOR = '.line_answer_ct .selectBox'
+
+/** 连线下拉框内的可选右项（ocsjs 回填点击 `li[data=…] a`，`cx.ts:893`）。 */
+const LINE_CHOICE_SELECTOR = ':scope li[data]'
+
+/** 完形填空：每个小题一个容器（ocsjs `cx.ts:814` `filling`）。 */
+const FILL_SUB_SELECTOR = '.filling_answer'
+
+/** 阅读理解：每个小题一个容器（ocsjs `cx.ts:812` `reading`）。 */
+const READER_SUB_SELECTOR = '.reading_answer'
+
+/** 完形 / 阅读小题内的可选项（ocsjs 回填点击 `span.saveSingleSelect[data=…]`，`cx.ts:2194`）。 */
+const SUB_OPTION_SELECTOR = ':scope span.saveSingleSelect[data]'
 
 /** 宽 / 高属性小于此像素值即判为装饰图（图标 / spacer），不路由到视觉模型。 */
 const DECORATIVE_SIZE_PX = 24
@@ -197,6 +217,76 @@ function countBlanks(li: HTMLElement): number {
 	return optionContainers(li).filter((el) => el.querySelector('textarea, iframe')).length
 }
 
+/**
+ * 把一组「键控可选项」容器解析为 {@link ChaoxingOption}[]：key 取自给定属性（连线 / 完形 / 阅读
+ * 的稳定标识是 `data` 值，回填时按它点击），content 为图片感知的交错部件。
+ *
+ * @param choices    可选项元素列表（连线为 `li[data]`，完形/阅读为 `span.saveSingleSelect[data]`）。
+ * @param keyAttr    取 key 的属性名（这里恒为 `data`）。
+ * @param labelOf    给该选项内视觉图分配占位标签（按选项 key 唯一）。
+ */
+function keyedOptions(
+	choices: HTMLElement[],
+	keyAttr: string,
+	labelOf: (key: string) => string,
+): ChaoxingOption[] {
+	return choices.map((el) => {
+		const key = el.getAttribute(keyAttr) ?? ''
+		const allocLabel: LabelAllocator = () => labelOf(key)
+		return { key, content: walkContent(el, allocLabel) }
+	})
+}
+
+/**
+ * 连线题（type 11）小题：每个 `.line_answer_ct .selectBox` 是一个左项（其在 DOM 中的顺序
+ * 即 LLM 要映射的 `leftIndex`），小题 id 编为 `${parentId}-box{i}`；该左项的 `options` 是框内
+ * `li[data]` 可选右项（key = `data` 值，回填点 `li[data=key] a`）。返回的 sub-question 仅承载
+ * options（无嵌套题干），与 fill/reader 共用 {@link resolveQuestionImages} 的递归图片解析。
+ */
+function extractLineSubQuestions(li: HTMLElement, parentId: string): ChaoxingQuestion[] {
+	const boxes = Array.from(li.querySelectorAll<HTMLElement>(LINE_BOX_SELECTOR))
+	return boxes.map((box, i) => {
+		const choices = Array.from(box.querySelectorAll<HTMLElement>(LINE_CHOICE_SELECTOR))
+		const options = keyedOptions(choices, 'data', (key) => `连线${i}选项${key}图`)
+		return makeSubQuestion(`${parentId}-box${i}`, options)
+	})
+}
+
+/**
+ * 完形 / 阅读（type 14 / 15）小题：每个 `.filling_answer` / `.reading_answer` 是一个小题
+ * （文档序即 `subIndex`），小题 id 编为 `${parentId}-sub{i}`；其 `options` 是容器内
+ * `span.saveSingleSelect[data]` 可选项（key = `data` 值，回填点该 span）。
+ */
+function extractSubQuestions(
+	li: HTMLElement,
+	parentId: string,
+	containerSelector: string,
+): ChaoxingQuestion[] {
+	const containers = Array.from(li.querySelectorAll<HTMLElement>(containerSelector))
+	return containers.map((container, i) => {
+		const choices = Array.from(container.querySelectorAll<HTMLElement>(SUB_OPTION_SELECTOR))
+		const options = keyedOptions(choices, 'data', (key) => `小题${i}选项${key}图`)
+		return makeSubQuestion(`${parentId}-sub${i}`, options)
+	})
+}
+
+/**
+ * 构造一个「仅承载 options」的小题对象（连线 / 完形 / 阅读共用）：小题本身不独立路由，故
+ * typeCode 置 `NaN`、type 置 `unknown`、stem 留空。hasImages 反映其任一选项是否含图。
+ */
+function makeSubQuestion(id: string, options: ChaoxingOption[]): ChaoxingQuestion {
+	const hasImages = options.some((o) => partsHaveImage(o.content))
+	return {
+		id,
+		typeCode: NaN,
+		type: 'unknown',
+		stem: [],
+		options,
+		hasImages,
+		needsReview: false,
+	}
+}
+
 /** 拼接所有题干文本，用于「题干是否为空」判定。 */
 function stemTextOf(stem: ContentPart[]): string {
 	return stem
@@ -227,24 +317,35 @@ export function extractQuestion(
 	const type = mapTypeCode(typeCode)
 	const stem = extractStem(li)
 
+	const id = `q${index}`
+
 	let options: ChaoxingOption[] | undefined
 	let blanksCount: number | undefined
+	let subQuestions: ChaoxingQuestion[] | undefined
 	if (type === 'single' || type === 'multiple' || type === 'judgement') {
 		options = extractOptions(li)
 	} else if (type === 'completion') {
 		blanksCount = countBlanks(li)
+	} else if (type === 'line') {
+		// 连线：每个 .selectBox 为一个左项小题，其 options 是框内 li[data] 右项。
+		subQuestions = extractLineSubQuestions(li, id)
+	} else if (type === 'fill') {
+		subQuestions = extractSubQuestions(li, id, FILL_SUB_SELECTOR)
+	} else if (type === 'reader') {
+		subQuestions = extractSubQuestions(li, id, READER_SUB_SELECTOR)
 	}
-	// line / fill / reader：仅定型，options/subQuestions 留待 Task 10。
 
-	// 含图判定：题干或任一选项含 `{type:'image'}` 部件（装饰图已丢、LaTeX/alt 已转文本）。
+	// 含图判定：题干 / 任一选项 / 任一小题选项含 `{type:'image'}` 部件（装饰图已丢、LaTeX/alt 已转文本）。
 	const hasImages =
-		partsHaveImage(stem) || (options?.some((o) => partsHaveImage(o.content)) ?? false)
+		partsHaveImage(stem) ||
+		(options?.some((o) => partsHaveImage(o.content)) ?? false) ||
+		(subQuestions?.some((sub) => sub.hasImages) ?? false)
 
 	// 空题干 → 人工，但「题干仅为图片」不算空（图即题面，交给视觉模型）。
 	const emptyStem = stemTextOf(stem) === '' && !partsHaveImage(stem)
 
 	const question: ChaoxingQuestion = {
-		id: `q${index}`,
+		id,
 		typeCode,
 		type,
 		stem,
@@ -254,6 +355,7 @@ export function extractQuestion(
 
 	if (options) question.options = options
 	if (blanksCount !== undefined) question.blanksCount = blanksCount
+	if (subQuestions) question.subQuestions = subQuestions
 
 	return question
 }

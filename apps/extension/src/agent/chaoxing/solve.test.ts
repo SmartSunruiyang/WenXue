@@ -38,10 +38,16 @@ const VISION_MODEL: LLMConfig = {
  * how many pages exist. `extractPerPage[i]` is the question list for page i;
  * gotoNextPage advances until the lists run out.
  */
-function makeBridge(extractPerPage: ChaoxingQuestion[][]) {
+function makeBridge(
+	extractPerPage: ChaoxingQuestion[][],
+	probe?: () => { faceRecognition: boolean; suspiciousFont: boolean },
+) {
 	let page = 0
 	const filledBatches: ChaoxingAnswer[][] = []
 	const bridge = {
+		probeInterrupts: vi.fn(
+			async () => probe?.() ?? { faceRecognition: false, suspiciousFont: false },
+		),
 		extractQuestions: vi.fn(async () => extractPerPage[page] ?? []),
 		fillAnswers: vi.fn(async (answers: ChaoxingAnswer[]): Promise<FillResult[]> => {
 			filledBatches.push(answers)
@@ -287,5 +293,96 @@ describe('solveChaoxing', () => {
 		expect(summary).toContain('q1')
 		// must never claim auto-submit
 		expect(summary).not.toMatch(/已提交|auto.?submit/i)
+	})
+
+	describe('interrupt guard (face recognition / suspicious font)', () => {
+		it('stops before extracting when probeInterrupts reports faceRecognition; never fills', async () => {
+			const questions = [makeQuestion({ id: 'q0', type: 'single', options: [opt('A', 'a')] })]
+			const { bridge, filledBatches } = makeBridge([questions], () => ({
+				faceRecognition: true,
+				suspiciousFont: false,
+			}))
+			const ask = vi.fn(async (_m: LLMConfig, _x, schema: z.ZodType) =>
+				schema.parse(validPayload(questions[0])),
+			)
+
+			const summary = await solveChaoxing(
+				{ bridge, getModels: () => ({ text: TEXT_MODEL }), ask: ask as never },
+				{ scope: 'all_pages' },
+			)
+
+			// probed first; never extracted, never asked the LLM, never filled.
+			expect(bridge.probeInterrupts).toHaveBeenCalled()
+			expect(bridge.extractQuestions).not.toHaveBeenCalled()
+			expect(ask).not.toHaveBeenCalled()
+			expect(bridge.fillAnswers).not.toHaveBeenCalled()
+			// summary explains the pause and never claims auto-submit / bypass.
+			expect(summary).toMatch(/暂停|人脸/)
+			expect(summary).toContain('未自动提交')
+			expect(summary).not.toMatch(/已提交/)
+		})
+
+		it('stops on suspiciousFont as well', async () => {
+			const questions = [makeQuestion({ id: 'q0', type: 'single', options: [opt('A', 'a')] })]
+			const { bridge } = makeBridge([questions], () => ({
+				faceRecognition: false,
+				suspiciousFont: true,
+			}))
+			const ask = vi.fn(async (_m: LLMConfig, _x, schema: z.ZodType) =>
+				schema.parse(validPayload(questions[0])),
+			)
+
+			const summary = await solveChaoxing(
+				{ bridge, getModels: () => ({ text: TEXT_MODEL }), ask: ask as never },
+				{ scope: 'current_page' },
+			)
+
+			expect(bridge.extractQuestions).not.toHaveBeenCalled()
+			expect(summary).toMatch(/暂停|字体|反爬/)
+		})
+
+		it('mid-run interrupt on page 2 stops the loop, reporting work already done on page 1', async () => {
+			const page0 = [makeQuestion({ id: 'q0', type: 'single', options: [opt('A', 'a')] })]
+			const page1 = [makeQuestion({ id: 'q0', type: 'single', options: [opt('A', 'a')] })]
+			let probeCalls = 0
+			// clean on the first probe (page 1), interrupted on the second (page 2).
+			const { bridge, filledBatches } = makeBridge([page0, page1], () => {
+				probeCalls += 1
+				return { faceRecognition: probeCalls >= 2, suspiciousFont: false }
+			})
+			const ask = vi.fn(async (_m: LLMConfig, _x, schema: z.ZodType) =>
+				schema.parse(validPayload(page0[0])),
+			)
+
+			const summary = await solveChaoxing(
+				{ bridge, getModels: () => ({ text: TEXT_MODEL }), ask: ask as never },
+				{ scope: 'all_pages' },
+			)
+
+			// page 1 fully processed, page 2 never extracted.
+			expect(bridge.extractQuestions).toHaveBeenCalledTimes(1)
+			expect(filledBatches).toHaveLength(1)
+			expect(summary).toMatch(/暂停|人脸/)
+			// reports the one completed question from page 1.
+			expect(summary).toContain('1')
+		})
+
+		it('does not call probeInterrupts via a probe-less bridge gracefully (bridge contract requires it)', async () => {
+			// Sanity: a normal clean run still works and fills.
+			const questions = [makeQuestion({ id: 'q0', type: 'single', options: [opt('A', 'a')] })]
+			const { bridge } = makeBridge([questions])
+			const ask = vi.fn(async (_m: LLMConfig, _x, schema: z.ZodType) =>
+				schema.parse(validPayload(questions[0])),
+			)
+
+			const summary = await solveChaoxing(
+				{ bridge, getModels: () => ({ text: TEXT_MODEL }), ask: ask as never },
+				{ scope: 'current_page' },
+			)
+
+			expect(bridge.probeInterrupts).toHaveBeenCalled()
+			expect(bridge.fillAnswers).toHaveBeenCalledTimes(1)
+			expect(summary).toContain('1/1')
+		})
 	})
 })

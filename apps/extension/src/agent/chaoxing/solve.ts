@@ -12,7 +12,11 @@
  * 全程**不自动提交**：本文件里没有、也永远不会有任何 submit 调用，最终提交由用户完成。
  *
  * 纯编排，无 `chrome.*` / DOM。LLM 客户端通过 `deps.ask` 注入(默认 askStructured)，
- * 故可在 node 环境单测，无需真实网络。中断探测(人脸 / 字体反爬)属 Task 10，不在此处。
+ * 故可在 node 环境单测，无需真实网络。
+ *
+ * 中断守卫(Spec §12)：每页读题**之前**先 `bridge.probeInterrupts()`，命中人脸识别 / 疑似
+ * 字体反爬即**立刻停**——不读题、不调 LLM、不回填、绝不绕过任何验证，返回一句中文暂停说明
+ * （含已完成题数）。与 agent 的 request_user_takeover 全量集成属后续细化，此处明确停 + 报告已足够。
  */
 
 import type { LLMConfig } from '@page-agent/llms'
@@ -23,8 +27,15 @@ import { schemaForQuestion } from './schema'
 import { serializeQuestion } from './serialize'
 import type { ChaoxingAnswer, ChaoxingQuestion } from './types'
 
-/** bridge 子集：流水线只需读题 / 回填 / 翻页三件事(中断探测属 Task 10)。 */
+/** 中断探测结果：两类会打断流水线的反爬 / 验证（人脸识别 / 疑似自定义字体）。 */
+export interface InterruptStatus {
+	faceRecognition: boolean
+	suspiciousFont: boolean
+}
+
+/** bridge 子集：流水线需读题 / 回填 / 翻页 + 每页前的中断探测。 */
 export interface SolveBridge {
+	probeInterrupts(): Promise<InterruptStatus>
 	extractQuestions(): Promise<ChaoxingQuestion[]>
 	fillAnswers(answers: ChaoxingAnswer[]): Promise<FillResult[]>
 	gotoNextPage(): Promise<boolean>
@@ -181,6 +192,12 @@ export async function solveChaoxing(deps: SolveDeps, input: SolveInput): Promise
 	for (;;) {
 		deps.signal?.throwIfAborted()
 
+		// 每页读题前先探中断：命中人脸 / 字体反爬 → 立刻停，绝不读题 / 调 LLM / 回填 / 绕过。
+		const interrupt = await deps.bridge.probeInterrupts()
+		if (interrupt.faceRecognition || interrupt.suspiciousFont) {
+			return buildInterruptSummary(interrupt, filled)
+		}
+
 		const stats = await solvePage(deps, concurrency)
 		total += stats.total
 		filled += stats.filled
@@ -198,6 +215,21 @@ export async function solveChaoxing(deps: SolveDeps, input: SolveInput): Promise
 	}
 
 	return buildSummary({ total, filled, needsHuman, pages, hitPageCap })
+}
+
+/**
+ * 渲染「中断暂停」汇总串：明确暂停原因(人脸识别 / 疑似字体反爬)、已完成题数，并强调
+ * **未自动提交、未绕过任何验证**——请用户人工处理后重新运行。
+ */
+function buildInterruptSummary(interrupt: InterruptStatus, filledSoFar: number): string {
+	const reasons: string[] = []
+	if (interrupt.faceRecognition) reasons.push('人脸识别')
+	if (interrupt.suspiciousFont) reasons.push('疑似字体反爬')
+	const reasonText = reasons.join(' / ')
+	return (
+		`⚠️ 检测到${reasonText}，已暂停（已完成 ${filledSoFar} 题）。` +
+		'请人工处理后重新运行；未自动提交、未绕过任何验证。'
+	)
 }
 
 /** 渲染汇总串：完成 N/M、需人工 K 题(列出 id 与原因)、明确未自动提交。 */

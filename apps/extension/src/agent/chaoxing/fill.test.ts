@@ -299,33 +299,187 @@ describe('fillQuestion', () => {
 		expect(opts.map((o) => o.clicks)).toEqual([0, 0])
 	})
 
-	it('returns unsupported (no throw) for a line answer', () => {
-		const { li } = makeLi(`<div class="questionLi"></div>`)
-		const answer: ChaoxingAnswer = {
-			questionId: 'q10',
-			type: 'line',
-			needsReview: false,
+	describe('line (type 11)', () => {
+		/** Build a line question with N boxes, each offering the given li[data] keys. */
+		function lineLi(boxes: string[][]): HTMLElement {
+			const boxHtml = boxes
+				.map(
+					(keys) => `
+					<div class="selectBox"><ul>
+						${keys.map((k) => `<li data="${k}"><a>${k}项</a></li>`).join('')}
+					</ul></div>`,
+				)
+				.join('')
+			return makeLi(`
+				<div class="questionLi">
+					<div class="line_answer_ct">${boxHtml}</div>
+				</div>
+			`).li
 		}
 
-		const result = fillQuestion(li, answer)
+		/** Spy clicks on every `li[data] a` inside each selectBox, grouped by box index. */
+		function spyLineChoices(li: HTMLElement): { box: number; key: string; clicks: number }[] {
+			const recs: { box: number; key: string; clicks: number }[] = []
+			Array.from(li.querySelectorAll<HTMLElement>('.line_answer_ct .selectBox')).forEach(
+				(box, b) => {
+					Array.from(box.querySelectorAll<HTMLElement>('li[data]')).forEach((liEl) => {
+						const anchor = liEl.querySelector<HTMLElement>('a')!
+						const rec = { box: b, key: liEl.getAttribute('data') ?? '', clicks: 0 }
+						anchor.addEventListener('click', () => {
+							rec.clicks += 1
+						})
+						recs.push(rec)
+					})
+				},
+			)
+			return recs
+		}
 
-		expect(result.filled).toBe(false)
-		expect(result.questionId).toBe('q10')
-		expect(result.reason).toContain('line')
-		expect(result.reason).toContain('Task 10')
+		it('clicks li[data=rightKey] a inside the box at leftIndex', () => {
+			const li = lineLi([
+				['a', 'b'],
+				['a', 'b'],
+			])
+			const recs = spyLineChoices(li)
+			const answer: ChaoxingAnswer = {
+				questionId: 'q10',
+				type: 'line',
+				linePairs: [
+					{ leftIndex: 0, rightKey: 'b' },
+					{ leftIndex: 1, rightKey: 'a' },
+				],
+				needsReview: false,
+			}
+
+			const result = fillQuestion(li, answer)
+
+			expect(result.filled).toBe(true)
+			// box0 → key b clicked; box1 → key a clicked; the others untouched.
+			expect(recs.find((r) => r.box === 0 && r.key === 'b')!.clicks).toBe(1)
+			expect(recs.find((r) => r.box === 0 && r.key === 'a')!.clicks).toBe(0)
+			expect(recs.find((r) => r.box === 1 && r.key === 'a')!.clicks).toBe(1)
+			expect(recs.find((r) => r.box === 1 && r.key === 'b')!.clicks).toBe(0)
+		})
+
+		it('notes out-of-range leftIndex and unknown rightKey in reason, fills the valid pair', () => {
+			const li = lineLi([['a', 'b']])
+			const recs = spyLineChoices(li)
+			const answer: ChaoxingAnswer = {
+				questionId: 'q10',
+				type: 'line',
+				linePairs: [
+					{ leftIndex: 0, rightKey: 'a' }, // valid
+					{ leftIndex: 5, rightKey: 'a' }, // box out of range
+					{ leftIndex: 0, rightKey: 'zzz' }, // key not in box
+				],
+				needsReview: false,
+			}
+
+			const result = fillQuestion(li, answer)
+
+			expect(result.filled).toBe(true)
+			expect(recs.find((r) => r.box === 0 && r.key === 'a')!.clicks).toBe(1)
+			expect(result.reason).toBeDefined()
+			expect(result.reason).toContain('5')
+			expect(result.reason).toContain('zzz')
+		})
 	})
 
-	it('returns unsupported (no throw) for a reader answer', () => {
-		const { li } = makeLi(`<div class="questionLi"></div>`)
-		const answer: ChaoxingAnswer = {
-			questionId: 'q11',
-			type: 'reader',
-			needsReview: false,
+	describe('fill / reader (type 14 / 15)', () => {
+		/** Build a fill/reader question; each sub container offers the given span[data] keys. */
+		function subLi(containerClass: string, subs: string[][]): HTMLElement {
+			const html = subs
+				.map(
+					(keys) => `
+					<div class="${containerClass}">
+						${keys.map((k) => `<span class="saveSingleSelect" data="${k}">${k}选</span>`).join('')}
+					</div>`,
+				)
+				.join('')
+			return makeLi(`<div class="questionLi">${html}</div>`).li
 		}
 
-		const result = fillQuestion(li, answer)
+		/** Spy clicks on every saveSingleSelect span, grouped by sub index. */
+		function spySubSpans(
+			li: HTMLElement,
+			containerClass: string,
+		): { sub: number; key: string; clicks: number }[] {
+			const recs: { sub: number; key: string; clicks: number }[] = []
+			Array.from(li.querySelectorAll<HTMLElement>(`.${containerClass}`)).forEach((item, s) => {
+				Array.from(item.querySelectorAll<HTMLElement>('span.saveSingleSelect[data]')).forEach(
+					(span) => {
+						const rec = { sub: s, key: span.getAttribute('data') ?? '', clicks: 0 }
+						span.addEventListener('click', () => {
+							rec.clicks += 1
+						})
+						recs.push(rec)
+					},
+				)
+			})
+			return recs
+		}
 
-		expect(result.filled).toBe(false)
-		expect(result.reason).toContain('reader')
+		it('fill: clicks span.saveSingleSelect[data=optionKey] in the sub-item at subIndex', () => {
+			const li = subLi('filling_answer', [
+				['A', 'B'],
+				['A', 'B'],
+			])
+			const recs = spySubSpans(li, 'filling_answer')
+			const answer: ChaoxingAnswer = {
+				questionId: 'q12',
+				type: 'fill',
+				subAnswers: [
+					{ subIndex: 0, optionKey: 'B' },
+					{ subIndex: 1, optionKey: 'A' },
+				],
+				needsReview: false,
+			}
+
+			const result = fillQuestion(li, answer)
+
+			expect(result.filled).toBe(true)
+			expect(recs.find((r) => r.sub === 0 && r.key === 'B')!.clicks).toBe(1)
+			expect(recs.find((r) => r.sub === 0 && r.key === 'A')!.clicks).toBe(0)
+			expect(recs.find((r) => r.sub === 1 && r.key === 'A')!.clicks).toBe(1)
+		})
+
+		it('reader: clicks span.saveSingleSelect[data=optionKey] in the .reading_answer sub-item', () => {
+			const li = subLi('reading_answer', [['A', 'B']])
+			const recs = spySubSpans(li, 'reading_answer')
+			const answer: ChaoxingAnswer = {
+				questionId: 'q13',
+				type: 'reader',
+				subAnswers: [{ subIndex: 0, optionKey: 'A' }],
+				needsReview: false,
+			}
+
+			const result = fillQuestion(li, answer)
+
+			expect(result.filled).toBe(true)
+			expect(recs.find((r) => r.sub === 0 && r.key === 'A')!.clicks).toBe(1)
+			expect(recs.find((r) => r.sub === 0 && r.key === 'B')!.clicks).toBe(0)
+		})
+
+		it('notes out-of-range subIndex and unknown optionKey in reason', () => {
+			const li = subLi('filling_answer', [['A', 'B']])
+			const recs = spySubSpans(li, 'filling_answer')
+			const answer: ChaoxingAnswer = {
+				questionId: 'q12',
+				type: 'fill',
+				subAnswers: [
+					{ subIndex: 0, optionKey: 'A' }, // valid
+					{ subIndex: 9, optionKey: 'A' }, // sub out of range
+					{ subIndex: 0, optionKey: 'Z' }, // key not present
+				],
+				needsReview: false,
+			}
+
+			const result = fillQuestion(li, answer)
+
+			expect(result.filled).toBe(true)
+			expect(recs.find((r) => r.sub === 0 && r.key === 'A')!.clicks).toBe(1)
+			expect(result.reason).toContain('9')
+			expect(result.reason).toContain('Z')
+		})
 	})
 })

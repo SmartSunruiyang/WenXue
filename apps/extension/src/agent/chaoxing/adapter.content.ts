@@ -145,18 +145,61 @@ export function fillAnswers(answers: ChaoxingAnswer[], doc: Document = document)
 	})
 }
 
+/** 翻页就绪等待的轮询间隔与超时上限（ms）。 */
+const READINESS_POLL_INTERVAL_MS = 50
+const READINESS_TIMEOUT_MS = 3000
+
+export interface GotoNextPageDeps {
+	/**
+	 * 点击「下一题」后的就绪等待实现（仅测试注入；内容脚本走默认 {@link defaultWaitForReady}）。
+	 * 默认轮询 `.questionLi` 出现、超时即返回（尽力而为、有时限）。
+	 */
+	waitForReady?: (doc: Document) => Promise<void>
+}
+
 /**
- * 翻到下一题：点击「下一题」按钮（ocsjs `cx.ts:952`）。点到返回 true，无按钮返回 false。
+ * 翻到下一题：点击「下一题」按钮（ocsjs `cx.ts:952`），随后做一次**有界就绪等待**（轮询
+ * `.questionLi` 出现 / DOM 安定，超时约 {@link READINESS_TIMEOUT_MS}）再返回 true，让随后的
+ * `extractQuestions` 能看到新页（懒加载 / 异步渲染时序，Spec §12）。无按钮直接返回 false、不等待。
  *
- * @param doc 目标文档，默认实时 `document`。
+ * 就绪等待是**尽力而为**：超时也只是返回（不抛），最坏情况下层 extract 仍会按当时 DOM 读题。
+ *
+ * @param doc  目标文档，默认实时 `document`。
+ * @param deps 可注入的就绪等待实现（仅测试用）。
  */
-export function gotoNextPage(doc: Document = document): boolean {
+export async function gotoNextPage(
+	doc: Document = document,
+	deps: GotoNextPageDeps = {},
+): Promise<boolean> {
 	const btn = doc.querySelector<HTMLElement>(NEXT_BUTTON_SELECTOR)
-	if (btn) {
-		btn.click()
-		return true
-	}
-	return false
+	if (!btn) return false
+	btn.click()
+	const waitForReady = deps.waitForReady ?? defaultWaitForReady
+	await waitForReady(doc)
+	return true
+}
+
+/**
+ * 默认就绪等待：每 {@link READINESS_POLL_INTERVAL_MS} 轮询一次，直到出现 `.questionLi`，或达
+ * {@link READINESS_TIMEOUT_MS} 超时为止（无论命中与否都 resolve，绝不抛）。仅在内容脚本里走，
+ * 单测注入 stub 绕开真实计时器。
+ */
+function defaultWaitForReady(doc: Document): Promise<void> {
+	return new Promise((resolve) => {
+		const deadline = Date.now() + READINESS_TIMEOUT_MS
+		const check = () => {
+			if (doc.querySelector(QUESTION_SELECTOR)) {
+				resolve()
+				return
+			}
+			if (Date.now() >= deadline) {
+				resolve()
+				return
+			}
+			setTimeout(check, READINESS_POLL_INTERVAL_MS)
+		}
+		check()
+	})
 }
 
 /** 当前文档是否存在「活动中」的人脸识别（ocsjs `hasFaceRecognition` + `hasNewFaceRecognition`）。 */
@@ -246,7 +289,8 @@ export function initChaoxingAdapter(): void {
 						sendResponse(fillAnswers((payload as ChaoxingAnswer[]) ?? []))
 						break
 					case 'goto_next_page':
-						sendResponse(gotoNextPage())
+						// async（点击后有界就绪等待）→ 在 Promise 兑现后回包；监听器返回 true 保通道开放。
+						gotoNextPage().then(sendResponse, fail)
 						break
 					case 'probe_interrupts':
 						sendResponse(probeInterrupts())

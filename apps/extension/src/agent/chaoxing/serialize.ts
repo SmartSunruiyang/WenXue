@@ -15,7 +15,8 @@ export interface SerializedQuestion {
 
 const SYSTEM_PROMPT =
 	'你是学习通答题助手。请依据题目作答，只输出结构化答案：' +
-	'选择题给选项字母 key；判断题给对应选项 key；填空题按空序给文本。不要解释。'
+	'选择题给选项字母 key；判断题给对应选项 key；填空题按空序给文本；' +
+	'连线题为每个左项给 {leftIndex, rightKey}；完形/阅读为每个小题给 {subIndex, optionKey}。不要解释。'
 
 /** 含图题追加的占位符约定说明（§8.2）。 */
 const IMAGE_CONVENTION =
@@ -105,7 +106,46 @@ function buildQuestionText(q: ChaoxingQuestion): string {
 		}
 	}
 
+	if (q.type === 'line') appendLineBlock(lines, q)
+	if (q.type === 'fill' || q.type === 'reader') appendSubBlock(lines, q)
+
 	return lines.join('\n')
+}
+
+/**
+ * 连线题：逐「左项」列出其框内可选右项（key 取自 `li[data]`），并交代答案形状
+ * `linePairs:[{leftIndex, rightKey}]`——leftIndex 即左项序号、rightKey 取自该框某右项的 key。
+ */
+function appendLineBlock(lines: string[], q: ChaoxingQuestion): void {
+	const subs = q.subQuestions ?? []
+	lines.push('连线（为每个左项选择一个右项 key）：')
+	for (let i = 0; i < subs.length; i++) {
+		lines.push(`左项 ${i} 可选：`)
+		for (const option of subs[i].options ?? []) {
+			lines.push(`  ${option.key}. ${flattenParts(option.content)}`)
+		}
+	}
+	lines.push(
+		'作答用 linePairs:[{leftIndex, rightKey}]，leftIndex 为左项序号，rightKey 取该左项某右项的 key。',
+	)
+}
+
+/**
+ * 完形 / 阅读：逐小题列出其可选项（key 取自 `span.saveSingleSelect[data]`），并交代答案形状
+ * `subAnswers:[{subIndex, optionKey}]`——subIndex 即小题序号、optionKey 取该小题某选项的 key。
+ */
+function appendSubBlock(lines: string[], q: ChaoxingQuestion): void {
+	const subs = q.subQuestions ?? []
+	lines.push('小题（为每个小题选择一个选项 key）：')
+	for (let i = 0; i < subs.length; i++) {
+		lines.push(`小题 ${i}：`)
+		for (const option of subs[i].options ?? []) {
+			lines.push(`  ${option.key}. ${flattenParts(option.content)}`)
+		}
+	}
+	lines.push(
+		'作答用 subAnswers:[{subIndex, optionKey}]，subIndex 为小题序号，optionKey 取该小题某选项的 key。',
+	)
 }
 
 function headerLine(q: ChaoxingQuestion): string {
@@ -133,8 +173,9 @@ function flattenParts(parts: ContentPart[]): string {
 }
 
 /**
- * 按序收集题面里全部图片部件：先题干图（文档序），再各选项图（按选项序）。
- * 该序与文本里占位符的出现顺序一致，故图像块与占位符按标签一一对应。
+ * 按序收集题面里全部图片部件：先题干图（文档序），再各选项图（按选项序），最后各小题选项图
+ * （连线 / 完形 / 阅读，按小题序 → 选项序）。该序与文本里占位符的出现顺序一致，故图像块与占位符
+ * 按标签一一对应。
  */
 function orderedImageParts(q: ChaoxingQuestion): Extract<ContentPart, { type: 'image' }>[] {
 	const parts: Extract<ContentPart, { type: 'image' }>[] = []
@@ -144,6 +185,13 @@ function orderedImageParts(q: ChaoxingQuestion): Extract<ContentPart, { type: 'i
 	for (const option of q.options ?? []) {
 		for (const part of option.content) {
 			if (part.type === 'image') parts.push(part)
+		}
+	}
+	for (const sub of q.subQuestions ?? []) {
+		for (const option of sub.options ?? []) {
+			for (const part of option.content) {
+				if (part.type === 'image') parts.push(part)
+			}
 		}
 	}
 	return parts
@@ -157,6 +205,11 @@ function questionHasImages(q: ChaoxingQuestion): boolean {
 	if (partsHaveImage(q.stem)) return true
 	for (const option of q.options ?? []) {
 		if (partsHaveImage(option.content)) return true
+	}
+	for (const sub of q.subQuestions ?? []) {
+		for (const option of sub.options ?? []) {
+			if (partsHaveImage(option.content)) return true
+		}
 	}
 	return false
 }

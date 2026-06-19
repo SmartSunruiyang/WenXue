@@ -88,7 +88,12 @@ export async function resolveQuestionImages(
 	return q
 }
 
-/** 收集题干 + 选项里的全部图片部件，标注其是否为选项图。 */
+/**
+ * 收集题干 + 选项 + 小题选项里的全部图片部件，标注其是否为「图即答案」（失败置 needsReview）。
+ *
+ * 小题（连线 / 完形 / 阅读的 subQuestions）的 options 同样是「图即答案」语义：选错框 / 错小题
+ * 无法可靠作答，故其图失败也按选项图处理（§8.4）。小题自身无独立题干图，仅遍历其 options。
+ */
 function collectImageTasks(q: ChaoxingQuestion): ImageTask[] {
 	const tasks: ImageTask[] = []
 	for (const part of q.stem) {
@@ -97,6 +102,13 @@ function collectImageTasks(q: ChaoxingQuestion): ImageTask[] {
 	for (const option of q.options ?? []) {
 		for (const part of option.content) {
 			if (part.type === 'image') tasks.push({ part, isOption: true })
+		}
+	}
+	for (const sub of q.subQuestions ?? []) {
+		for (const option of sub.options ?? []) {
+			for (const part of option.content) {
+				if (part.type === 'image') tasks.push({ part, isOption: true })
+			}
 		}
 	}
 	return tasks

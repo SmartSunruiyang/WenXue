@@ -131,6 +131,154 @@ describe('serializeQuestion', () => {
 		})
 	})
 
+	describe('line (text)', () => {
+		/** A line sub-question (one left box) carrying keyed right-choices. */
+		function box(id: string, options: ChaoxingOption[]): ChaoxingQuestion {
+			return {
+				id,
+				typeCode: NaN,
+				type: 'unknown',
+				stem: [],
+				options,
+				hasImages: false,
+				needsReview: false,
+			}
+		}
+
+		const q = makeQuestion({
+			id: 'q10',
+			type: 'line',
+			stem: [{ type: 'text', text: '把左侧与右侧连线。' }],
+			subQuestions: [
+				box('q10-box0', [opt('a', '苹果'), opt('b', '香蕉')]),
+				box('q10-box1', [opt('a', '苹果'), opt('b', '香蕉')]),
+			],
+		})
+		const content = serializeQuestion(q).messages[1].content as string
+
+		it('labels the question 连线 and shows the stem', () => {
+			expect(content).toContain('连线')
+			expect(content).toContain('把左侧与右侧连线。')
+		})
+
+		it('presents each left item by its index', () => {
+			expect(content).toContain('左项 0')
+			expect(content).toContain('左项 1')
+		})
+
+		it('presents each box right-choices keyed by their data value', () => {
+			expect(content).toContain('a. 苹果')
+			expect(content).toContain('b. 香蕉')
+		})
+
+		it('explains the linePairs answer shape (leftIndex + rightKey)', () => {
+			expect(content).toMatch(/leftIndex/)
+			expect(content).toMatch(/rightKey/)
+		})
+	})
+
+	describe('fill / reader (text)', () => {
+		function sub(id: string, options: ChaoxingOption[]): ChaoxingQuestion {
+			return {
+				id,
+				typeCode: NaN,
+				type: 'unknown',
+				stem: [],
+				options,
+				hasImages: false,
+				needsReview: false,
+			}
+		}
+
+		it('fill presents each sub-question by index with keyed options', () => {
+			const q = makeQuestion({
+				id: 'q12',
+				type: 'fill',
+				stem: [{ type: 'text', text: '完形材料……' }],
+				subQuestions: [
+					sub('q12-sub0', [opt('A', 'apple'), opt('B', 'banana')]),
+					sub('q12-sub1', [opt('A', 'red'), opt('B', 'blue')]),
+				],
+			})
+			const content = serializeQuestion(q).messages[1].content as string
+			expect(content).toContain('完形填空')
+			expect(content).toContain('完形材料……')
+			expect(content).toContain('小题 0')
+			expect(content).toContain('小题 1')
+			expect(content).toContain('A. apple')
+			expect(content).toContain('B. blue')
+			expect(content).toMatch(/subIndex/)
+			expect(content).toMatch(/optionKey/)
+		})
+
+		it('reader presents its sub-questions and keyed options', () => {
+			const q = makeQuestion({
+				id: 'q13',
+				type: 'reader',
+				stem: [{ type: 'text', text: '阅读材料……' }],
+				subQuestions: [sub('q13-sub0', [opt('A', '正确'), opt('B', '错误')])],
+			})
+			const content = serializeQuestion(q).messages[1].content as string
+			expect(content).toContain('阅读理解')
+			expect(content).toContain('小题 0')
+			expect(content).toContain('A. 正确')
+			expect(content).toContain('B. 错误')
+		})
+	})
+
+	describe('multimodal sub-options (§8.2)', () => {
+		type TextBlock = { type: 'text'; text: string }
+		type ImageBlock = { type: 'image_url'; image_url: { url: string } }
+		type Block = TextBlock | ImageBlock
+		const isText = (b: Block): b is TextBlock => b.type === 'text'
+		const isImage = (b: Block): b is ImageBlock => b.type === 'image_url'
+
+		it('emits image_url blocks for images inside fill sub-options', () => {
+			const q = makeQuestion({
+				id: 'q12',
+				type: 'fill',
+				hasImages: true,
+				stem: [{ type: 'text', text: '图片完形：' }],
+				subQuestions: [
+					{
+						id: 'q12-sub0',
+						typeCode: NaN,
+						type: 'unknown',
+						stem: [],
+						hasImages: true,
+						needsReview: false,
+						options: [
+							{
+								key: 'A',
+								content: [
+									{ type: 'text', text: '[小题0选项A图]' },
+									{
+										type: 'image',
+										label: '小题0选项A图',
+										dataUrl: 'data:image/jpeg;base64,SUB',
+									},
+								],
+							},
+							opt('B', '文字项'),
+						],
+					},
+				],
+			})
+			const blocks = serializeQuestion(q).messages[1].content as Block[]
+			expect(Array.isArray(blocks)).toBe(true)
+			// the sub-option image is given after the lead text, label-matched.
+			const idx = blocks.findIndex(
+				(b) => isImage(b) && b.image_url.url === 'data:image/jpeg;base64,SUB',
+			)
+			expect(idx).toBeGreaterThan(0)
+			expect((blocks[idx - 1] as TextBlock).text).toBe('[小题0选项A图]:')
+			// lead text still presents the sub item + its keyed options.
+			const lead = blocks.filter(isText)[0].text
+			expect(lead).toContain('小题 0')
+			expect(lead).toContain('A.')
+		})
+	})
+
 	it('content is always a plain string in the text branch', () => {
 		const q = makeQuestion({ type: 'single', options: [opt('A', 'a')] })
 		for (const m of serializeQuestion(q).messages) {

@@ -8,6 +8,19 @@ function opt(key: string, text: string): ChaoxingOption {
 	return { key, content: [{ type: 'text', text }] }
 }
 
+/** A line/fill/reader sub-question carrying only keyed options. */
+function subQ(id: string, options: ChaoxingOption[]): ChaoxingQuestion {
+	return {
+		id,
+		typeCode: NaN,
+		type: 'unknown',
+		stem: [],
+		options,
+		hasImages: false,
+		needsReview: false,
+	}
+}
+
 function makeQuestion(partial: Partial<ChaoxingQuestion> & { type: QType }): ChaoxingQuestion {
 	return {
 		id: 'q1',
@@ -115,6 +128,43 @@ describe('schemaForQuestion', () => {
 				false,
 			)
 		})
+
+		describe('with subQuestions present (keys derivable)', () => {
+			const boxed = makeQuestion({
+				type: 'line',
+				subQuestions: [
+					subQ('q1-box0', [opt('a', '苹果'), opt('b', '香蕉')]),
+					subQ('q1-box1', [opt('a', '苹果'), opt('b', '香蕉')]),
+				],
+			})
+			const boxedSchema = schemaForQuestion(boxed)
+
+			it('accepts in-range leftIndex and in-key rightKey', () => {
+				expect(
+					boxedSchema.safeParse({
+						linePairs: [
+							{ leftIndex: 0, rightKey: 'a' },
+							{ leftIndex: 1, rightKey: 'b' },
+						],
+					}).success,
+				).toBe(true)
+			})
+
+			it('rejects a rightKey not among any box data key', () => {
+				expect(
+					boxedSchema.safeParse({ linePairs: [{ leftIndex: 0, rightKey: 'zzz' }] }).success,
+				).toBe(false)
+			})
+
+			it('rejects a leftIndex outside the box range', () => {
+				expect(
+					boxedSchema.safeParse({ linePairs: [{ leftIndex: 2, rightKey: 'a' }] }).success,
+				).toBe(false)
+				expect(
+					boxedSchema.safeParse({ linePairs: [{ leftIndex: -1, rightKey: 'a' }] }).success,
+				).toBe(false)
+			})
+		})
 	})
 
 	describe('fill / reader', () => {
@@ -142,6 +192,40 @@ describe('schemaForQuestion', () => {
 			expect(schema.safeParse({ subAnswers: [{ subIndex: 0.5, optionKey: 'A' }] }).success).toBe(
 				false,
 			)
+		})
+
+		describe('with subQuestions present (keys derivable)', () => {
+			const filled = makeQuestion({
+				type: 'fill',
+				subQuestions: [
+					subQ('q1-sub0', [opt('A', 'apple'), opt('B', 'banana')]),
+					subQ('q1-sub1', [opt('A', 'red'), opt('B', 'blue')]),
+				],
+			})
+			const filledSchema = schemaForQuestion(filled)
+
+			it('accepts in-range subIndex and in-key optionKey', () => {
+				expect(
+					filledSchema.safeParse({
+						subAnswers: [
+							{ subIndex: 0, optionKey: 'A' },
+							{ subIndex: 1, optionKey: 'B' },
+						],
+					}).success,
+				).toBe(true)
+			})
+
+			it('rejects an optionKey not among any sub-option data key', () => {
+				expect(
+					filledSchema.safeParse({ subAnswers: [{ subIndex: 0, optionKey: 'Z' }] }).success,
+				).toBe(false)
+			})
+
+			it('rejects a subIndex outside the sub-question range', () => {
+				expect(
+					filledSchema.safeParse({ subAnswers: [{ subIndex: 2, optionKey: 'A' }] }).success,
+				).toBe(false)
+			})
 		})
 	})
 

@@ -150,6 +150,67 @@ describe('resolveQuestionImages', () => {
 		expect(out.needsReview).toBe(true)
 	})
 
+	it('resolves images nested inside subQuestion options (line/fill/reader)', async () => {
+		const fetchImpl = okFetch()
+		const q = makeQuestion({
+			type: 'fill',
+			stem: [{ type: 'text', text: '完形材料' }],
+			subQuestions: [
+				{
+					id: 'q1-sub0',
+					typeCode: NaN,
+					type: 'unknown',
+					stem: [],
+					hasImages: true,
+					needsReview: false,
+					options: [
+						{ key: 'A', content: [imagePart('小题0选项A图', 'https://x/sub.png')] },
+						{ key: 'B', content: [{ type: 'text', text: 'B. 文字' }] },
+					],
+				},
+			],
+		})
+
+		const out = await resolveQuestionImages(q, { fetchImpl, downscale: cannedDownscale })
+
+		const img = out.subQuestions![0].options![0].content[0] as Extract<
+			ContentPart,
+			{ type: 'image' }
+		>
+		expect(img.dataUrl).toBe('data:image/jpeg;base64,CANNED')
+		expect(fetchImpl).toHaveBeenCalledWith('https://x/sub.png', { credentials: 'include' })
+	})
+
+	it('on a failed subQuestion option image: sets needsReview (image-as-answer)', async () => {
+		const fetchImpl = vi.fn(
+			async () => new Response('forbidden', { status: 403 }),
+		) as unknown as typeof fetch
+		const q = makeQuestion({
+			type: 'line',
+			stem: [{ type: 'text', text: '连线' }],
+			subQuestions: [
+				{
+					id: 'q1-box0',
+					typeCode: NaN,
+					type: 'unknown',
+					stem: [],
+					hasImages: true,
+					needsReview: false,
+					options: [{ key: 'x', content: [imagePart('连线0选项x图', 'https://x/blocked.png')] }],
+				},
+			],
+		})
+
+		const out = await resolveQuestionImages(q, { fetchImpl, downscale: cannedDownscale })
+
+		const img = out.subQuestions![0].options![0].content[0] as Extract<
+			ContentPart,
+			{ type: 'image' }
+		>
+		expect(img.dataUrl).toBeUndefined()
+		expect(out.needsReview).toBe(true)
+	})
+
 	it('is a no-op for a question with no image parts', async () => {
 		const fetchImpl = okFetch()
 		const q = makeQuestion({ stem: [{ type: 'text', text: '纯文本题' }], hasImages: false })

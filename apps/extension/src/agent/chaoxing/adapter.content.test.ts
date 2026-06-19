@@ -160,18 +160,47 @@ describe('fillAnswers', () => {
 })
 
 describe('gotoNextPage', () => {
-	it('clicks the next-question button and returns true', () => {
-		const doc = makeDoc(`<a onclick="getTheNextQuestion(1)">下一题</a>`)
+	it('clicks the next-question button and returns true', async () => {
+		const doc = makeDoc(
+			`<a onclick="getTheNextQuestion(1)">下一题</a>` + examChoiceLi(0, '1. 甲', ['A. a', 'B. b']),
+		)
 		const btn = doc.querySelector<HTMLElement>('[onclick="getTheNextQuestion(1)"]')!
 		let clicked = 0
 		btn.addEventListener('click', () => (clicked += 1))
 
-		expect(gotoNextPage(doc)).toBe(true)
+		expect(await gotoNextPage(doc)).toBe(true)
 		expect(clicked).toBe(1)
 	})
 
-	it('returns false when no next-question button is present', () => {
-		expect(gotoNextPage(makeDoc('<div></div>'))).toBe(false)
+	it('returns false when no next-question button is present (no readiness wait)', async () => {
+		const waitForReady = vi.fn(async () => {})
+		expect(await gotoNextPage(makeDoc('<div></div>'), { waitForReady })).toBe(false)
+		// no click happened → must not have waited for readiness.
+		expect(waitForReady).not.toHaveBeenCalled()
+	})
+
+	it('waits for page readiness after clicking before returning true', async () => {
+		const order: string[] = []
+		const doc = makeDoc(`<a onclick="getTheNextQuestion(1)">下一题</a>`)
+		const btn = doc.querySelector<HTMLElement>('[onclick="getTheNextQuestion(1)"]')!
+		btn.addEventListener('click', () => order.push('click'))
+		const waitForReady = vi.fn(async () => {
+			order.push('wait')
+		})
+
+		const result = await gotoNextPage(doc, { waitForReady })
+
+		expect(result).toBe(true)
+		expect(waitForReady).toHaveBeenCalledTimes(1)
+		// click happens first, readiness wait second.
+		expect(order).toEqual(['click', 'wait'])
+	})
+
+	it('still returns true even if the readiness wait times out (best-effort)', async () => {
+		const doc = makeDoc(`<a onclick="getTheNextQuestion(1)">下一题</a>`)
+		// a waiter that resolves (simulating timeout fallback, not throwing)
+		const waitForReady = vi.fn(async () => {})
+		expect(await gotoNextPage(doc, { waitForReady })).toBe(true)
 	})
 })
 

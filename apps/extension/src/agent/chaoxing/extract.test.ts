@@ -306,7 +306,7 @@ describe('extractQuestion', () => {
 		expect(q.needsReview).toBe(true)
 	})
 
-	it('maps the line type code (11) without throwing and leaves options unpopulated', () => {
+	it('maps the line type code (11) without throwing; with no boxes leaves subQuestions empty', () => {
 		const li = makeLi(`
 			<div class="questionLi">
 				<input type="hidden" name="type" value="11">
@@ -318,34 +318,136 @@ describe('extractQuestion', () => {
 
 		expect(q.typeCode).toBe(11)
 		expect(q.type).toBe('line')
+		// line uses subQuestions (one per left box); choice-style options stay unset.
 		expect(q.options).toBeUndefined()
+		expect(q.subQuestions).toEqual([])
 		expect(q.needsReview).toBe(false)
 	})
 
-	it('maps fill (14) and reader (15) type codes', () => {
-		const fill = extractQuestion(
-			makeLi(`
-				<div class="questionLi">
-					<input type="hidden" name="type" value="14">
-					<h3>完形填空材料。</h3>
+	it('populates line subQuestions: one per .selectBox, each option keyed by li[data]', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="11">
+				<h3>10. 将左侧与右侧连线。</h3>
+				<div class="line_answer_ct">
+					<div class="selectBox">
+						<ul>
+							<li data="a"><a>苹果</a></li>
+							<li data="b"><a>香蕉</a></li>
+						</ul>
+					</div>
+					<div class="selectBox">
+						<ul>
+							<li data="a"><a>苹果</a></li>
+							<li data="b"><a>香蕉</a></li>
+						</ul>
+					</div>
 				</div>
-			`),
-			'exam',
-			10,
-		)
-		const reader = extractQuestion(
-			makeLi(`
-				<div class="questionLi">
-					<input type="hidden" name="type" value="15">
-					<h3>阅读理解材料。</h3>
-				</div>
-			`),
-			'exam',
-			11,
-		)
+			</div>
+		`)
 
-		expect(fill.type).toBe('fill')
-		expect(reader.type).toBe('reader')
+		const q = extractQuestion(li, 'exam', 10)
+
+		expect(q.type).toBe('line')
+		expect(q.subQuestions).toHaveLength(2)
+		// each box is a left item; its id encodes the box index (the leftIndex the LLM maps).
+		expect(q.subQuestions![0].id).toBe('q10-box0')
+		expect(q.subQuestions![1].id).toBe('q10-box1')
+		// the box's selectable right-choices are its li[data] entries.
+		expect(q.subQuestions![0].options?.map((o) => o.key)).toEqual(['a', 'b'])
+		expect(stemText(q.subQuestions![0].options![0].content)).toBe('苹果')
+		expect(stemText(q.subQuestions![0].options![1].content)).toBe('香蕉')
+		expect(q.hasImages).toBe(false)
+		expect(q.needsReview).toBe(false)
+	})
+
+	it('captures images inside line right-choices and sets hasImages', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="11">
+				<h3>11. 图文连线。</h3>
+				<div class="line_answer_ct">
+					<div class="selectBox">
+						<ul>
+							<li data="x"><a><img src="https://x/p.png"></a></li>
+						</ul>
+					</div>
+				</div>
+			</div>
+		`)
+
+		const q = extractQuestion(li, 'exam', 11)
+
+		const choice = q.subQuestions![0].options![0]
+		expect(choice.key).toBe('x')
+		expect(choice.content.some((p) => p.type === 'image')).toBe(true)
+		expect(q.hasImages).toBe(true)
+	})
+
+	it('populates fill (14) subQuestions: one per .filling_answer, options keyed by span data', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="14">
+				<h3>12. 完形填空材料。</h3>
+				<div class="filling_answer">
+					<span class="saveSingleSelect" data="A">apple</span>
+					<span class="saveSingleSelect" data="B">banana</span>
+				</div>
+				<div class="filling_answer">
+					<span class="saveSingleSelect" data="A">red</span>
+					<span class="saveSingleSelect" data="B">blue</span>
+				</div>
+			</div>
+		`)
+
+		const q = extractQuestion(li, 'exam', 12)
+
+		expect(q.type).toBe('fill')
+		expect(q.options).toBeUndefined()
+		expect(q.subQuestions).toHaveLength(2)
+		expect(q.subQuestions![0].id).toBe('q12-sub0')
+		expect(q.subQuestions![1].id).toBe('q12-sub1')
+		expect(q.subQuestions![0].options?.map((o) => o.key)).toEqual(['A', 'B'])
+		expect(stemText(q.subQuestions![0].options![0].content)).toBe('apple')
+		expect(stemText(q.subQuestions![1].options![1].content)).toBe('blue')
+		expect(q.needsReview).toBe(false)
+	})
+
+	it('populates reader (15) subQuestions from .reading_answer with span data keys', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="15">
+				<h3>13. 阅读理解材料。</h3>
+				<div class="reading_answer">
+					<span class="saveSingleSelect" data="A">正确</span>
+					<span class="saveSingleSelect" data="B">错误</span>
+				</div>
+			</div>
+		`)
+
+		const q = extractQuestion(li, 'exam', 13)
+
+		expect(q.type).toBe('reader')
+		expect(q.subQuestions).toHaveLength(1)
+		expect(q.subQuestions![0].options?.map((o) => o.key)).toEqual(['A', 'B'])
+		expect(stemText(q.subQuestions![0].options![0].content)).toBe('正确')
+	})
+
+	it('sets hasImages when a fill sub-option carries an image', () => {
+		const li = makeLi(`
+			<div class="questionLi">
+				<input type="hidden" name="type" value="14">
+				<h3>14. 图片完形。</h3>
+				<div class="filling_answer">
+					<span class="saveSingleSelect" data="A"><img src="https://x/o.png"></span>
+				</div>
+			</div>
+		`)
+
+		const q = extractQuestion(li, 'exam', 14)
+
+		expect(q.hasImages).toBe(true)
+		expect(q.subQuestions![0].options![0].content.some((p) => p.type === 'image')).toBe(true)
 	})
 
 	it('reads the type code only from the mode-appropriate input', () => {
