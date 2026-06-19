@@ -9,8 +9,11 @@ import { Switch } from '@/components/ui/switch'
 
 import { useHubWs } from './hub-ws'
 
+export const HUB_AGENT_OPTIONS = { enableUserTakeover: false } as const
+
 export default function App() {
-	const { status, history, activity, currentTask, config, execute, stop, configure } = useAgent()
+	const { status, history, activity, currentTask, config, execute, stop, configure } =
+		useAgent(HUB_AGENT_OPTIONS)
 	const { wsState } = useHubWs(execute, stop, configure, config)
 
 	const historyRef = useRef<HTMLDivElement>(null)

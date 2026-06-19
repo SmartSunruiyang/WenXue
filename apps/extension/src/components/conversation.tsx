@@ -14,7 +14,7 @@ import { useState } from 'react'
 
 import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
-import { useI18n } from '@/lib/i18n'
+import { type TranslationKey, useI18n } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
 // Stable message PageAgentCore uses when a task is aborted via stop()
@@ -356,6 +356,44 @@ function findLatestPausedTakeover(events: readonly HistoricalEvent[]): UserTakeo
 	return null
 }
 
+interface TakeoverAction {
+	label: TranslationKey
+	onSelect: () => void
+	disabled: boolean
+}
+
+export function createTakeoverActionModel(
+	request: UserTakeoverRequest,
+	{
+		onComplete,
+		onPause,
+	}: {
+		onComplete?: () => void
+		onPause?: () => void
+	},
+): { primary: TakeoverAction; secondary: TakeoverAction } {
+	return {
+		primary: {
+			label: request.reason === 'stuck' ? 'takeoverContinueAfterManual' : 'takeoverCompleted',
+			onSelect: onComplete ?? (() => undefined),
+			disabled: !onComplete,
+		},
+		secondary: {
+			label: 'pauseTask',
+			onSelect: onPause ?? (() => undefined),
+			disabled: !onPause,
+		},
+	}
+}
+
+export function createPausedTakeoverActionModel(onResume?: () => void): TakeoverAction {
+	return {
+		label: 'resumeTask',
+		onSelect: onResume ?? (() => undefined),
+		disabled: !onResume,
+	}
+}
+
 function TakeoverPrompt({
 	request,
 	onComplete,
@@ -366,6 +404,7 @@ function TakeoverPrompt({
 	onPause?: () => void
 }) {
 	const { t } = useI18n()
+	const actions = createTakeoverActionModel(request, { onComplete, onPause })
 	const title =
 		request.title ||
 		(request.reason === 'stuck' ? t('takeoverStuckTitle') : t('takeoverNeededTitle'))
@@ -380,23 +419,23 @@ function TakeoverPrompt({
 					<Button
 						type="button"
 						size="sm"
-						onClick={onComplete}
-						disabled={!onComplete}
+						onClick={actions.primary.onSelect}
+						disabled={actions.primary.disabled}
 						className="min-w-0 flex-1 whitespace-normal"
 					>
 						<Check className="size-3.5" />
-						{request.reason === 'stuck' ? t('takeoverContinueAfterManual') : t('takeoverCompleted')}
+						{t(actions.primary.label)}
 					</Button>
 					<Button
 						type="button"
 						size="sm"
 						variant="outline"
-						onClick={onPause}
-						disabled={!onPause}
+						onClick={actions.secondary.onSelect}
+						disabled={actions.secondary.disabled}
 						className="min-w-0 whitespace-normal"
 					>
 						<CirclePause className="size-3.5" />
-						{t('pauseTask')}
+						{t(actions.secondary.label)}
 					</Button>
 				</>
 			}
@@ -412,6 +451,7 @@ function PausedTakeoverPrompt({
 	onResume?: () => void
 }) {
 	const { t } = useI18n()
+	const action = createPausedTakeoverActionModel(onResume)
 
 	return (
 		<TakeoverCallout
@@ -422,12 +462,12 @@ function PausedTakeoverPrompt({
 				<Button
 					type="button"
 					size="sm"
-					onClick={onResume}
-					disabled={!onResume}
+					onClick={action.onSelect}
+					disabled={action.disabled}
 					className="min-w-0 whitespace-normal"
 				>
 					<Play className="size-3.5" />
-					{t('resumeTask')}
+					{t(action.label)}
 				</Button>
 			}
 		/>

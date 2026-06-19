@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+
+import { SidepanelHistoryButton } from './App'
 
 const APP_SOURCE = fileURLToPath(new URL('./App.tsx', import.meta.url))
 
@@ -16,18 +20,16 @@ describe('Sidepanel new conversation transition', () => {
 	})
 })
 
-describe('Sidepanel active-task locking', () => {
-	it('uses the shared active-status helper for task controls and takeover wiring', () => {
-		const source = readFileSync(APP_SOURCE, 'utf8')
+describe('SidepanelHistoryButton', () => {
+	it('is visibly disabled while a task is active', () => {
+		const html = renderToStaticMarkup(
+			createElement(SidepanelHistoryButton, {
+				disabled: true,
+				collecting: false,
+				onOpen: () => {},
+			}),
+		)
 
-		expect(source).toContain('isAgentTaskActive(status)')
-		expect(source).toContain('canGoToSession={!isTaskLocked}')
-		expect(source).toContain('disabled={isTaskLocked || clearingConversation}')
-		expect(source).toContain('disabled={isTaskLocked}')
-		expect(source).toContain('takeoverRequest={takeoverRequest}')
-		expect(source).toContain('onCompleteTakeover={completeUserTakeover}')
-		expect(source).toContain('onPauseTakeover={pauseUserTakeover}')
-		expect(source).toContain('onResumePausedTask={handleResume}')
-		expect(source).toContain("status === 'waiting_for_user' || status === 'paused'")
+		expect(html).toMatch(/<button[^>]*\sdisabled(?:=""|>)/)
 	})
 })

@@ -1,9 +1,13 @@
 import type { AgentActivity, UserTakeoverEvent, UserTakeoverRequest } from '@page-agent/core'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { Conversation } from './conversation'
+import {
+	Conversation,
+	createPausedTakeoverActionModel,
+	createTakeoverActionModel,
+} from './conversation'
 
 const LOGIN_REQUEST: UserTakeoverRequest = {
 	id: 'takeover-login',
@@ -33,6 +37,33 @@ function renderConversation(
 }
 
 describe('Conversation takeover UI', () => {
+	it('connects complete and pause actions to the supplied callbacks', () => {
+		const complete = vi.fn()
+		const pause = vi.fn()
+		const actions = createTakeoverActionModel(LOGIN_REQUEST, {
+			onComplete: complete,
+			onPause: pause,
+		})
+
+		actions.primary.onSelect()
+		actions.secondary.onSelect()
+
+		expect(complete).toHaveBeenCalledTimes(1)
+		expect(pause).toHaveBeenCalledTimes(1)
+		expect(actions.primary.label).toBe('takeoverCompleted')
+		expect(actions.secondary.label).toBe('pauseTask')
+	})
+
+	it('connects the paused resume action to the supplied callback', () => {
+		const resume = vi.fn()
+		const action = createPausedTakeoverActionModel(resume)
+
+		action.onSelect()
+
+		expect(resume).toHaveBeenCalledTimes(1)
+		expect(action.label).toBe('resumeTask')
+	})
+
 	it('renders one active waiting card with request details and actions', () => {
 		const waitingEvent: UserTakeoverEvent = {
 			type: 'user_takeover',

@@ -70,6 +70,34 @@ export interface RestorableAgentConversation {
 	status: Extract<AgentStatus, 'completed' | 'error'>
 }
 
+export interface UseAgentOptions {
+	enableUserTakeover?: boolean
+}
+
+export interface AgentSessionAgent {
+	status: AgentStatus
+	task: string
+	history: HistoricalEvent[]
+	onUserTakeover?: (
+		request: UserTakeoverRequest,
+		options?: { signal: AbortSignal },
+	) => Promise<UserTakeoverResolution>
+	execute: (task: string) => Promise<ExecutionResult>
+	resume: () => Promise<ExecutionResult>
+	stop: () => void
+	dispose: () => void
+	addEventListener: EventTarget['addEventListener']
+	removeEventListener: EventTarget['removeEventListener']
+}
+
+export interface AgentSessionStateSinks {
+	setStatus: (status: AgentStatus) => void
+	setHistory: (history: HistoricalEvent[]) => void
+	setActivity: (activity: AgentActivity | null) => void
+	setCurrentTask: (task: string) => void
+	setTakeoverRequest: (request: UserTakeoverRequest | null) => void
+}
+
 interface PendingTakeoverRequest {
 	signal?: AbortSignal
 	abortListener?: () => void
@@ -162,6 +190,143 @@ export function isAgentTaskActive(status: AgentStatus): boolean {
 	return status === 'running' || status === 'waiting_for_user' || status === 'paused'
 }
 
+export interface AgentSessionController {
+	bind: (agent: AgentSessionAgent, options: UseAgentOptions) => void
+	unbind: (agent: AgentSessionAgent) => void
+	execute: (task: string) => Promise<ExecutionResult>
+	stop: () => void
+	resume: () => Promise<ExecutionResult>
+	completeUserTakeover: () => void
+	pauseUserTakeover: () => void
+	cancelUserTakeover: () => void
+	isTaskActive: () => boolean
+	configure: <T>(
+		nextConfig: T,
+		save: (config: T) => Promise<T>,
+		apply: (config: T) => void,
+	) => Promise<void>
+}
+
+interface AgentSessionBinding {
+	agent: AgentSessionAgent
+	takeoverController: TakeoverRequestController | null
+	handleStatusChange: () => void
+	handleHistoryChange: () => void
+	handleActivity: (event: Event) => void
+}
+
+function assertAgentInactive(agent: AgentSessionAgent): void {
+	if (isAgentTaskActive(agent.status)) throw new Error('Agent task is active.')
+}
+
+export function createAgentSessionController(
+	sinks: AgentSessionStateSinks,
+): AgentSessionController {
+	let binding: AgentSessionBinding | null = null
+
+	const getAgent = (): AgentSessionAgent => {
+		if (!binding) throw new Error('Agent not initialized')
+		return binding.agent
+	}
+
+	const release = (expectedAgent?: AgentSessionAgent) => {
+		const current = binding
+		if (!current || (expectedAgent && current.agent !== expectedAgent)) return
+
+		binding = null
+		current.agent.removeEventListener('statuschange', current.handleStatusChange)
+		current.agent.removeEventListener('historychange', current.handleHistoryChange)
+		current.agent.removeEventListener('activity', current.handleActivity)
+		current.agent.onUserTakeover = undefined
+		current.takeoverController?.dispose()
+		current.agent.dispose()
+	}
+
+	return {
+		bind(agent, options) {
+			if (binding?.agent === agent) return
+			release()
+
+			const takeoverController = options.enableUserTakeover
+				? createTakeoverRequestController(sinks.setTakeoverRequest)
+				: null
+			agent.onUserTakeover = takeoverController?.request
+
+			const handleStatusChange = () => {
+				sinks.setStatus(agent.status)
+				if (
+					agent.status === 'idle' ||
+					agent.status === 'paused' ||
+					agent.status === 'completed' ||
+					agent.status === 'error'
+				) {
+					sinks.setActivity(null)
+				}
+			}
+			const handleHistoryChange = () => {
+				sinks.setHistory([...agent.history])
+			}
+			const handleActivity = (event: Event) => {
+				sinks.setActivity((event as CustomEvent<AgentActivity>).detail)
+			}
+
+			binding = {
+				agent,
+				takeoverController,
+				handleStatusChange,
+				handleHistoryChange,
+				handleActivity,
+			}
+			agent.addEventListener('statuschange', handleStatusChange)
+			agent.addEventListener('historychange', handleHistoryChange)
+			agent.addEventListener('activity', handleActivity)
+
+			sinks.setStatus(agent.status)
+			sinks.setHistory([...agent.history])
+			sinks.setActivity(null)
+			sinks.setCurrentTask(agent.task)
+			sinks.setTakeoverRequest(null)
+		},
+		unbind: release,
+		async execute(task) {
+			const agent = getAgent()
+			assertAgentInactive(agent)
+
+			binding?.takeoverController?.cancel(
+				createTakeoverAbortError('User takeover was cancelled by a new task.'),
+			)
+			sinks.setTakeoverRequest(null)
+			sinks.setCurrentTask(task)
+			sinks.setHistory([])
+			sinks.setActivity(null)
+			return agent.execute(task)
+		},
+		stop() {
+			binding?.agent.stop()
+		},
+		resume() {
+			return getAgent().resume()
+		},
+		completeUserTakeover() {
+			binding?.takeoverController?.resolve('completed')
+		},
+		pauseUserTakeover() {
+			binding?.takeoverController?.resolve('paused')
+		},
+		cancelUserTakeover() {
+			binding?.takeoverController?.cancel()
+			sinks.setTakeoverRequest(null)
+		},
+		isTaskActive() {
+			return binding ? isAgentTaskActive(binding.agent.status) : false
+		},
+		async configure(nextConfig, save, apply) {
+			if (binding) assertAgentInactive(binding.agent)
+			apply(await save(nextConfig))
+		},
+	}
+}
+
 export function hasAgentConversationContent({
 	currentTask,
 	history,
@@ -192,15 +357,24 @@ export function createRestoredAgentConversationState({
 	}
 }
 
-export function useAgent(): UseAgentResult {
-	const agentRef = useRef<MultiPageAgent | null>(null)
-	const takeoverControllerRef = useRef<TakeoverRequestController | null>(null)
+export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): UseAgentResult {
 	const [status, setStatus] = useState<AgentStatus>('idle')
 	const [history, setHistory] = useState<HistoricalEvent[]>([])
 	const [activity, setActivity] = useState<AgentActivity | null>(null)
 	const [currentTask, setCurrentTask] = useState('')
 	const [takeoverRequest, setTakeoverRequest] = useState<UserTakeoverRequest | null>(null)
 	const [config, setConfig] = useState<ExtConfig | null>(null)
+	const sessionControllerRef = useRef<AgentSessionController | null>(null)
+	if (!sessionControllerRef.current) {
+		sessionControllerRef.current = createAgentSessionController({
+			setStatus,
+			setHistory,
+			setActivity,
+			setCurrentTask,
+			setTakeoverRequest,
+		})
+	}
+	const sessionController = sessionControllerRef.current
 
 	useEffect(() => {
 		loadStoredConfig().then(setConfig)
@@ -222,111 +396,65 @@ export function useAgent(): UseAgentResult {
 			...agentConfig,
 			instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
 		})
-		const takeoverController = createTakeoverRequestController(setTakeoverRequest)
-		agent.onUserTakeover = takeoverController.request
-		agentRef.current = agent
-		takeoverControllerRef.current = takeoverController
-
-		const handleStatusChange = (e: Event) => {
-			const newStatus = agent.status as AgentStatus
-			setStatus(newStatus)
-			if (
-				newStatus === 'idle' ||
-				newStatus === 'paused' ||
-				newStatus === 'completed' ||
-				newStatus === 'error'
-			) {
-				setActivity(null)
-			}
-		}
-
-		const handleHistoryChange = (e: Event) => {
-			setHistory([...agent.history])
-		}
-
-		const handleActivity = (e: Event) => {
-			const newActivity = (e as CustomEvent).detail as AgentActivity
-			setActivity(newActivity)
-		}
-
-		agent.addEventListener('statuschange', handleStatusChange)
-		agent.addEventListener('historychange', handleHistoryChange)
-		agent.addEventListener('activity', handleActivity)
+		sessionController.bind(agent, { enableUserTakeover })
 
 		return () => {
-			agent.removeEventListener('statuschange', handleStatusChange)
-			agent.removeEventListener('historychange', handleHistoryChange)
-			agent.removeEventListener('activity', handleActivity)
-			if (agentRef.current === agent) agentRef.current = null
-			if (takeoverControllerRef.current === takeoverController) {
-				takeoverControllerRef.current = null
-			}
-			agent.onUserTakeover = undefined
-			takeoverController.dispose()
-			agent.dispose()
+			sessionController.unbind(agent)
 		}
-	}, [config])
+	}, [config, enableUserTakeover, sessionController])
 
-	const execute = useCallback(async (task: string) => {
-		const agent = agentRef.current
-		if (!agent) throw new Error('Agent not initialized')
-
-		takeoverControllerRef.current?.cancel(
-			createTakeoverAbortError('User takeover was cancelled by a new task.'),
-		)
-		setTakeoverRequest(null)
-		setCurrentTask(task)
-		setHistory([])
-		setActivity(null)
-		return agent.execute(task)
-	}, [])
-
-	const stop = useCallback(() => {
-		agentRef.current?.stop()
-	}, [])
-
-	const resolveTakeover = useCallback((resolution: UserTakeoverResolution) => {
-		takeoverControllerRef.current?.resolve(resolution)
-	}, [])
-
-	const completeUserTakeover = useCallback(() => resolveTakeover('completed'), [resolveTakeover])
-	const pauseUserTakeover = useCallback(() => resolveTakeover('paused'), [resolveTakeover])
-
-	const resume = useCallback(async () => {
-		const agent = agentRef.current
-		if (!agent) throw new Error('Agent not initialized')
-		return agent.resume()
-	}, [])
+	const execute = useCallback(
+		(task: string) => sessionController.execute(task),
+		[sessionController],
+	)
+	const stop = useCallback(() => sessionController.stop(), [sessionController])
+	const completeUserTakeover = useCallback(
+		() => sessionController.completeUserTakeover(),
+		[sessionController],
+	)
+	const pauseUserTakeover = useCallback(
+		() => sessionController.pauseUserTakeover(),
+		[sessionController],
+	)
+	const resume = useCallback(() => sessionController.resume(), [sessionController])
 
 	const resetConversation = useCallback(() => {
-		if (agentRef.current && isAgentTaskActive(agentRef.current.status as AgentStatus)) return false
+		if (sessionController.isTaskActive()) return false
 
-		takeoverControllerRef.current?.cancel()
-		setTakeoverRequest(null)
+		sessionController.cancelUserTakeover()
 		const nextState = createClearedAgentConversationState()
 		setStatus(nextState.status)
 		setHistory(nextState.history)
 		setActivity(nextState.activity)
 		setCurrentTask(nextState.currentTask)
 		return true
-	}, [])
+	}, [sessionController])
 
-	const restoreConversation = useCallback((session: RestorableAgentConversation) => {
-		if (agentRef.current && isAgentTaskActive(agentRef.current.status as AgentStatus)) return false
+	const restoreConversation = useCallback(
+		(session: RestorableAgentConversation) => {
+			if (sessionController.isTaskActive()) return false
 
-		takeoverControllerRef.current?.cancel()
-		setTakeoverRequest(null)
-		const nextState = createRestoredAgentConversationState(session)
-		setStatus(nextState.status)
-		setHistory(nextState.history)
-		setActivity(nextState.activity)
-		setCurrentTask(nextState.currentTask)
-		return true
-	}, [])
+			sessionController.cancelUserTakeover()
+			const nextState = createRestoredAgentConversationState(session)
+			setStatus(nextState.status)
+			setHistory(nextState.history)
+			setActivity(nextState.activity)
+			setCurrentTask(nextState.currentTask)
+			return true
+		},
+		[sessionController],
+	)
 
-	const configure = useCallback(async (nextConfig: ExtConfig) => {
-		setConfig(await saveStoredConfig(chrome.storage.local, nextConfig))
-	}, [])
+	const configure = useCallback(
+		async (nextConfig: ExtConfig) => {
+			await sessionController.configure(
+				nextConfig,
+				(value) => saveStoredConfig(chrome.storage.local, value),
+				setConfig,
+			)
+		},
+		[sessionController],
+	)
 
 	return {
 		status,

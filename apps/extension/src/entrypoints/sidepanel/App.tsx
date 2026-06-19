@@ -46,6 +46,7 @@ import {
 type View = { name: 'chat' } | { name: 'history' } | { name: 'history-detail'; sessionId: string }
 
 const NEW_CONVERSATION_COLLECT_ANIMATION_MS = 520
+const SIDEPANEL_AGENT_OPTIONS = { enableUserTakeover: true } as const
 
 export default function App() {
 	const [view, setView] = useState<View>({ name: 'chat' })
@@ -71,7 +72,7 @@ export default function App() {
 		resetConversation,
 		restoreConversation,
 		configure,
-	} = useAgent()
+	} = useAgent(SIDEPANEL_AGENT_OPTIONS)
 	const isRunning = status === 'running'
 	const isTaskLocked = isAgentTaskActive(status)
 	const isAwaitingTakeover = status === 'waiting_for_user' || status === 'paused'
@@ -120,15 +121,19 @@ export default function App() {
 		[execute, isTaskLocked],
 	)
 
-	const handleOpenHistory = useCallback((button: HTMLButtonElement) => {
-		const rect = button.getBoundingClientRect()
+	const handleOpenHistory = useCallback(
+		(button: HTMLButtonElement) => {
+			if (isTaskLocked) return
+			const rect = button.getBoundingClientRect()
 
-		setHistoryEnterOrigin({
-			x: rect.left + rect.width / 2,
-			y: rect.top + rect.height / 2,
-		})
-		setView({ name: 'history' })
-	}, [])
+			setHistoryEnterOrigin({
+				x: rect.left + rect.width / 2,
+				y: rect.top + rect.height / 2,
+			})
+			setView({ name: 'history' })
+		},
+		[isTaskLocked],
+	)
 
 	const handleGoToSession = useCallback(
 		(session: SessionRecord) => {
@@ -187,6 +192,7 @@ export default function App() {
 				onBack={() => setView({ name: 'chat' })}
 				onRerun={runTask}
 				onGoToSession={handleGoToSession}
+				canRerun={!isTaskLocked}
 				canGoToSession={!isTaskLocked}
 				enterOrigin={historyEnterOrigin}
 			/>
@@ -200,6 +206,7 @@ export default function App() {
 				onBack={() => setView({ name: 'history' })}
 				onRerun={runTask}
 				onGoToSession={handleGoToSession}
+				canRerun={!isTaskLocked}
 				canGoToSession={!isTaskLocked}
 			/>
 		)
@@ -257,17 +264,12 @@ export default function App() {
 							)}
 						/>
 					</Button>
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						onClick={(event) => handleOpenHistory(event.currentTarget)}
-						className={cn('cursor-pointer', clearingConversation && 'wx-history-collect-target')}
-						aria-label={t('history')}
-						title={t('history')}
-					>
-						<History className="size-3.5" />
-					</Button>
-					<MoreMenu config={config} onConfigure={configure} />
+					<SidepanelHistoryButton
+						disabled={isTaskLocked}
+						collecting={clearingConversation}
+						onOpen={handleOpenHistory}
+					/>
+					<MoreMenu config={config} onConfigure={configure} configurationLocked={isTaskLocked} />
 				</div>
 			</header>
 
@@ -347,6 +349,32 @@ export default function App() {
 				</p>
 			</footer>
 		</div>
+	)
+}
+
+export function SidepanelHistoryButton({
+	disabled,
+	collecting,
+	onOpen,
+}: {
+	disabled: boolean
+	collecting: boolean
+	onOpen: (button: HTMLButtonElement) => void
+}) {
+	const { t } = useI18n()
+
+	return (
+		<Button
+			variant="ghost"
+			size="icon-sm"
+			onClick={(event) => onOpen(event.currentTarget)}
+			disabled={disabled}
+			className={cn('cursor-pointer', collecting && 'wx-history-collect-target')}
+			aria-label={t('history')}
+			title={t('history')}
+		>
+			<History className="size-3.5" />
+		</Button>
 	)
 }
 
@@ -448,6 +476,10 @@ function ModelMenu({
 	const menuRef = useRef<HTMLDivElement>(null)
 
 	useEffect(() => {
+		if (disabled) setOpen(false)
+	}, [disabled])
+
+	useEffect(() => {
 		if (!open) return
 
 		const closeOnPointerDown = (event: PointerEvent) => {
@@ -508,7 +540,7 @@ function ModelMenu({
 					<MenuRadioItem
 						label={BUILT_IN_MODEL_LABEL}
 						active={selectedId === BUILT_IN_MODEL_ID}
-						disabled={!config}
+						disabled={disabled || !config}
 						onClick={() => selectModel(BUILT_IN_MODEL_ID)}
 					/>
 					{customModels.map((model) => (
@@ -516,7 +548,7 @@ function ModelMenu({
 							key={model.id}
 							label={getCustomModelLabel(model)}
 							active={model.id === selectedId}
-							disabled={!config}
+							disabled={disabled || !config}
 							onClick={() => selectModel(model.id)}
 						/>
 					))}
@@ -541,9 +573,11 @@ function ModelMenu({
 function MoreMenu({
 	config,
 	onConfigure,
+	configurationLocked,
 }: {
 	config: ExtConfig | null
 	onConfigure: (config: ExtConfig) => Promise<void>
+	configurationLocked: boolean
 }) {
 	const { t, lang, setLang } = useI18n()
 	const [open, setOpen] = useState(false)
@@ -551,6 +585,10 @@ function MoreMenu({
 	const menuRef = useRef<HTMLDivElement>(null)
 	const uiLanguage = config?.uiLanguage ?? lang
 	const responseLanguage = config?.language
+
+	useEffect(() => {
+		if (configurationLocked) setLanguageOpen(false)
+	}, [configurationLocked])
 
 	useEffect(() => {
 		if (!open) return
@@ -585,7 +623,7 @@ function MoreMenu({
 	}
 
 	const updateUiLanguage = (next: UILanguage) => {
-		if (!config) return
+		if (configurationLocked || !config) return
 		setLang(next)
 		onConfigure({ ...config, uiLanguage: next }).catch((error) => {
 			console.error('[SidePanel] Failed to update UI language:', error)
@@ -595,7 +633,7 @@ function MoreMenu({
 	}
 
 	const updateResponseLanguage = (next: LanguagePreference) => {
-		if (!config) return
+		if (configurationLocked || !config) return
 		onConfigure({ ...config, language: next }).catch((error) => {
 			console.error('[SidePanel] Failed to update response language:', error)
 		})
@@ -640,7 +678,8 @@ function MoreMenu({
 						type="button"
 						role="menuitem"
 						onClick={() => setLanguageOpen((next) => !next)}
-						className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2 text-left text-xs hover:bg-accent hover:text-accent-foreground"
+						disabled={configurationLocked}
+						className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-2 text-left text-xs hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
 						aria-expanded={languageOpen}
 					>
 						<Languages className="size-3.5" />
@@ -658,13 +697,13 @@ function MoreMenu({
 							<MenuRadioItem
 								label="中文"
 								active={uiLanguage === 'zh-CN'}
-								disabled={!config}
+								disabled={configurationLocked || !config}
 								onClick={() => updateUiLanguage('zh-CN')}
 							/>
 							<MenuRadioItem
 								label="English"
 								active={uiLanguage === 'en-US'}
-								disabled={!config}
+								disabled={configurationLocked || !config}
 								onClick={() => updateUiLanguage('en-US')}
 							/>
 
@@ -674,19 +713,19 @@ function MoreMenu({
 							<MenuRadioItem
 								label={t('langSystem')}
 								active={!responseLanguage}
-								disabled={!config}
+								disabled={configurationLocked || !config}
 								onClick={() => updateResponseLanguage(undefined)}
 							/>
 							<MenuRadioItem
 								label={t('langChinese')}
 								active={responseLanguage === 'zh-CN'}
-								disabled={!config}
+								disabled={configurationLocked || !config}
 								onClick={() => updateResponseLanguage('zh-CN')}
 							/>
 							<MenuRadioItem
 								label={t('langEnglish')}
 								active={responseLanguage === 'en-US'}
-								disabled={!config}
+								disabled={configurationLocked || !config}
 								onClick={() => updateResponseLanguage('en-US')}
 							/>
 						</div>
