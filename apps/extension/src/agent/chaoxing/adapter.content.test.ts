@@ -89,9 +89,15 @@ describe('extractQuestions', () => {
 					<div class="answer_p">A. a</div><div class="answer_p">B. b</div>
 				</div></div>
 			</div>`)
-		const fetchImpl = vi.fn(
-			async () => new Response(new Blob(['x'], { type: 'image/png' }), { status: 200 }),
-		) as unknown as typeof fetch
+		// jsdom env: global `Blob` is jsdom's, but `Response` is undici's, and undici's
+		// `Response.blob()` cannot read a jsdom Blob under current node → it throws before
+		// downscale. Fake the Response shape directly so the path stays env-robust (downscale
+		// is injected and ignores the blob, so any Blob suffices).
+		const fetchImpl = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			blob: async () => new Blob(['x'], { type: 'image/png' }),
+		})) as unknown as typeof fetch
 		const downscale = vi.fn(async () => 'data:image/jpeg;base64,RESOLVED')
 
 		const qs = await extractQuestions(doc, { fetchImpl, downscale })
