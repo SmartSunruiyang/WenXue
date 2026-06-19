@@ -11,6 +11,15 @@ export const DEMO_CONFIG: LLMConfig = {
 	apiKey: DEMO_API_KEY,
 }
 
+// Default vision / multimodal model — same DashScope endpoint + demo key
+export const DEMO_VISION_MODEL = 'qwen3.7-plus'
+
+export const DEMO_VISION_CONFIG: LLMConfig = {
+	baseURL: DEMO_BASE_URL,
+	model: DEMO_VISION_MODEL,
+	apiKey: DEMO_API_KEY,
+}
+
 /** Legacy testing endpoints that should be auto-migrated to DEMO_BASE_URL */
 export const LEGACY_TESTING_ENDPOINTS = [
 	'https://hwcxiuzfylggtcktqgij.supabase.co/functions/v1/llm-testing-proxy',

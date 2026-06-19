@@ -21,8 +21,7 @@ describe('settingsConfig', () => {
 			...DEMO_CONFIG,
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels: [],
-			chaoxingTextModelId: undefined,
-			chaoxingVisionModelId: undefined,
+			visionModelId: undefined,
 			language: undefined,
 			uiLanguage: 'zh-CN',
 			systemInstruction: undefined,
@@ -32,15 +31,8 @@ describe('settingsConfig', () => {
 		})
 	})
 
-	it('passes through chaoxing text/vision model ids when set', () => {
+	it('passes through the system vision model id when set', () => {
 		const customModels: CustomModelConfig[] = [
-			{
-				id: 'model-deepseek',
-				provider: 'deepseek',
-				baseURL: 'https://api.deepseek.com',
-				apiKey: 'sk-deepseek',
-				model: 'deepseek-chat',
-			},
 			{
 				id: 'model-qwen-vl',
 				provider: 'qwen',
@@ -53,11 +45,9 @@ describe('settingsConfig', () => {
 		const config = buildSettingsConfig({
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels,
-			chaoxingTextModelId: 'model-deepseek',
-			chaoxingVisionModelId: 'model-qwen-vl',
+			visionModelId: 'model-qwen-vl',
 			language: undefined,
 			uiLanguage: 'zh-CN',
-			maxSteps: undefined,
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
@@ -65,9 +55,24 @@ describe('settingsConfig', () => {
 		})
 
 		expect(config).toMatchObject({
-			chaoxingTextModelId: 'model-deepseek',
-			chaoxingVisionModelId: 'model-qwen-vl',
+			visionModelId: 'model-qwen-vl',
 		})
+	})
+
+	it('clears the system vision model id when it points at a removed model', () => {
+		const config = buildSettingsConfig({
+			selectedModelId: BUILT_IN_MODEL_ID,
+			customModels: [],
+			visionModelId: 'model-does-not-exist',
+			language: undefined,
+			uiLanguage: 'zh-CN',
+			systemInstruction: '',
+			experimentalLlmsTxt: false,
+			experimentalIncludeAllTabs: false,
+			disableNamedToolChoice: false,
+		})
+
+		expect(config.visionModelId).toBeUndefined()
 	})
 
 	it('uses the selected custom model as the active LLM config', () => {
@@ -145,8 +150,7 @@ describe('settingsConfig', () => {
 			...customModels[0],
 			selectedModelId: 'model-qwen',
 			customModels,
-			chaoxingTextModelId: 'model-qwen',
-			chaoxingVisionModelId: 'model-qwen',
+			visionModelId: 'model-qwen',
 			language: 'en-US' as const,
 			uiLanguage: 'en-US' as const,
 			systemInstruction: 'Be concise',

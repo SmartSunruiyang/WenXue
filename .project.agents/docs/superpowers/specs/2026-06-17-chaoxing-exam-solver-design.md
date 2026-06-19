@@ -94,24 +94,24 @@ ocsjs 不做「通用找输入框」，而是对每种题型写死 DOM 契约并
 
 题型码映射 `getQuestionType(parseInt(typeInput.value))`（`cx.ts:2160-2178`）：
 
-| 码 | 题型 | 码 | 题型 |
-| --- | --- | --- | --- |
-| 0 | single 单选 | 11 | line 连线 |
-| 1 | multiple 多选 | 14 | fill 完形填空 |
-| 3 | judgement 判断 | 15 | reader 阅读理解 |
-| 2,4,5,6,7,8,9,10 | completion 填空/简答 | — | — |
+| 码               | 题型                 | 码  | 题型            |
+| ---------------- | -------------------- | --- | --------------- |
+| 0                | single 单选          | 11  | line 连线       |
+| 1                | multiple 多选        | 14  | fill 完形填空   |
+| 3                | judgement 判断       | 15  | reader 阅读理解 |
+| 2,4,5,6,7,8,9,10 | completion 填空/简答 | —   | —               |
 
 定位选择器（`cx.ts:801-815`）：根 `.questionLi`；题干 `:scope > h3, :scope > div:not(.stem_answer),
 :scope > p`（取非空）；选项 `.answerBg .answer_p, .textDIV, .eidtDiv`；连线 `lineSelectBox =
 .line_answer_ct .selectBox`；完形 `.filling_answer`；阅读 `.reading_answer`。
 
-| 题型 | LLM 结构化返回 | 回填 DOM 操作（照搬 ocsjs） |
-| --- | --- | --- |
-| single / judgement | `selectedOptions: [key]`（长度 1） | `option.click()`，跳过已选 `[class*=check_answer]`（`cx.ts:857-861`） |
-| multiple | `selectedOptions: [key, …]` | 逐个 `option.click()`（`cx.ts:857-861`） |
-| completion | `blanks: [text, …]` 按空序 | `textarea.value=ans` **且** `iframe.contentDocument.body.innerHTML=ans` → 点 `[onclick*=saveQuestion]`（`cx.ts:862-875`） |
-| line | `linePairs: [{leftIndex, rightKey}]` | 每 box `li[data=rightKey] a`.click()（`cx.ts:889-894`） |
-| fill / reader | `subAnswers: [{subIndex, optionKey}]` | `span.saveSingleSelect[data=optionKey]`.click()（`cx.ts:2194`） |
+| 题型               | LLM 结构化返回                        | 回填 DOM 操作（照搬 ocsjs）                                                                                               |
+| ------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| single / judgement | `selectedOptions: [key]`（长度 1）    | `option.click()`，跳过已选 `[class*=check_answer]`（`cx.ts:857-861`）                                                     |
+| multiple           | `selectedOptions: [key, …]`           | 逐个 `option.click()`（`cx.ts:857-861`）                                                                                  |
+| completion         | `blanks: [text, …]` 按空序            | `textarea.value=ans` **且** `iframe.contentDocument.body.innerHTML=ans` → 点 `[onclick*=saveQuestion]`（`cx.ts:862-875`） |
+| line               | `linePairs: [{leftIndex, rightKey}]`  | 每 box `li[data=rightKey] a`.click()（`cx.ts:889-894`）                                                                   |
+| fill / reader      | `subAnswers: [{subIndex, optionKey}]` | `span.saveSingleSelect[data=optionKey]`.click()（`cx.ts:2194`）                                                           |
 
 `key` 为选项在 DOM 中的稳定标识（选择题用字母 A/B/C…；连线 / 完形 / 阅读用 `data` 属性值），
 读题与回填共用同一 key 空间，使「LLM 返回 → DOM 动作」闭环里无任何字符串匹配。
@@ -122,8 +122,14 @@ ocsjs 不做「通用找输入框」，而是对每种题型写死 DOM 契约并
 
 ```ts
 export type QType =
-	| 'single' | 'multiple' | 'judgement' | 'completion'
-	| 'line' | 'fill' | 'reader' | 'unknown'
+	| 'single'
+	| 'multiple'
+	| 'judgement'
+	| 'completion'
+	| 'line'
+	| 'fill'
+	| 'reader'
+	| 'unknown'
 
 export type ContentPart =
 	| { type: 'text'; text: string }
@@ -200,10 +206,16 @@ ocsjs **不给模型发图**（全仓库无 `image_url`/vision）；其 `optimiz
 
 ```jsonc
 [
-  { "type": "text", "text": "【q15·单选】题干：下列函数的导数是 [题干图1] 的是？\nA = [选项A图]\nB = [选项B图]\nC = x²\nD = 2x\n下面按相同标签顺序给出图片：" },
-  { "type": "text", "text": "[题干图1]:" }, { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,…" } },
-  { "type": "text", "text": "[选项A图]:" }, { "type": "image_url", "image_url": { "url": "data:…" } },
-  { "type": "text", "text": "[选项B图]:" }, { "type": "image_url", "image_url": { "url": "data:…" } }
+	{
+		"type": "text",
+		"text": "【q15·单选】题干：下列函数的导数是 [题干图1] 的是？\nA = [选项A图]\nB = [选项B图]\nC = x²\nD = 2x\n下面按相同标签顺序给出图片：",
+	},
+	{ "type": "text", "text": "[题干图1]:" },
+	{ "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,…" } },
+	{ "type": "text", "text": "[选项A图]:" },
+	{ "type": "image_url", "image_url": { "url": "data:…" } },
+	{ "type": "text", "text": "[选项B图]:" },
+	{ "type": "image_url", "image_url": { "url": "data:…" } },
 ]
 ```
 
@@ -232,18 +244,22 @@ ocsjs **不给模型发图**（全仓库无 `image_url`/vision）；其 `optimiz
 题块 `content` 含 ≥1 图像块（且抓取成功）→ 视觉模型；否则（含已转 LaTeX）→ 文本模型。
 所选角色模型缺失时该题 `needsReview = true`，不强行用不匹配的模型。
 
-### 9.2 设置（`apps/extension/src/lib/*`，复用现有模型列表）
+### 9.2 设置（`apps/extension/src/lib/*`，系统级文本 + 视觉模型）
 
-现有 `modelConfig.ts` 已支持 `customModels[]` + 单一 `selectedModelId`。新增两个**角色指针**，
-取值为既有模型 id（`BUILT_IN_MODEL_ID` 或 `customModels[].id`），默认都指向当前 `selectedModelId`：
+> 现状（2026-06-20 重构）：学习通不再有专属模型选择，**跟随系统两个模型**。
 
-```ts
-chaoxingTextModelId?: string // 纯文本题用
-chaoxingVisionModelId?: string // 含图题用
-```
+系统级有两个模型设置：
 
-新增解析 `resolveChaoxingModelConfigs(settings, customModels): { text: LLMConfig; vision?: LLMConfig }`，
-复用 `resolveSelectedLLMConfig` 逻辑。设置页提供两个下拉，引用同一份模型列表。
+- **文本模型 / 主模型** — 既有的 `selectedModelId`（`BUILT_IN_MODEL_ID` 或 `customModels[].id`），
+  内置默认 `qwen3.7-max`。agent 自身与学习通纯文本题用它。
+- **视觉模型（多模态）** — 新增系统级 `visionModelId?: string`，与 `selectedModelId` 平级持久化；
+  未设置时解析回退到新内置视觉模型 `BUILT_IN_VISION_MODEL_ID = 'builtin:qwen3.7-plus'`（同 DashScope 端点）。
+  学习通含图题用它。
+
+`modelConfig.ts` 提供 `resolveSelectedLLMConfig`（文本，默认文本内置）与 `resolveVisionLLMConfig`（视觉，
+默认视觉内置）；两者共享内部解析器，两个内置模型互相可解析。学习通路由处由 `useAgent` 把
+`{ text: resolveSelectedLLMConfig(...), vision: resolveVisionLLMConfig(...) }` 传入 `MultiPageAgent`。
+设置页提供两个下拉（主模型 + 视觉模型），引用**同一份**模型列表（两个内置 + 自定义）。
 
 ## 10. 工具与代码落位（全部在 `apps/extension`，零改 vendor `packages/*`）
 

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { DEMO_CONFIG } from '@/agent/constants'
+import { DEMO_CONFIG, DEMO_VISION_CONFIG } from '@/agent/constants'
 import {
 	BUILT_IN_MODEL_ID,
+	BUILT_IN_VISION_MODEL_ID,
 	type CustomModelConfig,
-	resolveChaoxingModelConfigs,
+	normalizeVisionModelId,
 	resolveSelectedLLMConfig,
+	resolveVisionLLMConfig,
 } from './modelConfig'
 
 const customModels: CustomModelConfig[] = [
@@ -25,62 +27,70 @@ const customModels: CustomModelConfig[] = [
 	},
 ]
 
-describe('resolveChaoxingModelConfigs', () => {
-	it('defaults both roles to the selected model when role ids are unset', () => {
-		const result = resolveChaoxingModelConfigs({ selectedModelId: 'model-deepseek' }, customModels)
-
-		const expected = resolveSelectedLLMConfig('model-deepseek', customModels)
-		expect(result.text).toEqual(expected)
-		expect(result.vision).toEqual(expected)
+describe('normalizeVisionModelId', () => {
+	it('defaults to the built-in vision model when unset', () => {
+		expect(normalizeVisionModelId(undefined, customModels)).toBe(BUILT_IN_VISION_MODEL_ID)
 	})
 
-	it('falls back to the built-in model when nothing is selected', () => {
-		const result = resolveChaoxingModelConfigs({}, [])
-
-		expect(result.text).toEqual({ ...DEMO_CONFIG })
-		expect(result.vision).toEqual({ ...DEMO_CONFIG })
-	})
-
-	it('resolves each role to its own configured model when ids are set', () => {
-		const result = resolveChaoxingModelConfigs(
-			{
-				chaoxingTextModelId: 'model-deepseek',
-				chaoxingVisionModelId: 'model-qwen-vl',
-				selectedModelId: BUILT_IN_MODEL_ID,
-			},
-			customModels,
+	it('defaults to the built-in vision model for unknown ids', () => {
+		expect(normalizeVisionModelId('model-does-not-exist', customModels)).toBe(
+			BUILT_IN_VISION_MODEL_ID,
 		)
-
-		expect(result.text).toEqual(resolveSelectedLLMConfig('model-deepseek', customModels))
-		expect(result.vision).toEqual(resolveSelectedLLMConfig('model-qwen-vl', customModels))
 	})
 
-	it('lets each role independently fall back to the selected model', () => {
-		const result = resolveChaoxingModelConfigs(
-			{
-				chaoxingVisionModelId: 'model-qwen-vl',
-				selectedModelId: 'model-deepseek',
-			},
-			customModels,
-		)
-
-		// text role unset → follows selected model
-		expect(result.text).toEqual(resolveSelectedLLMConfig('model-deepseek', customModels))
-		// vision role set → its own model
-		expect(result.vision).toEqual(resolveSelectedLLMConfig('model-qwen-vl', customModels))
+	it('keeps the built-in text model id when explicitly chosen', () => {
+		expect(normalizeVisionModelId(BUILT_IN_MODEL_ID, customModels)).toBe(BUILT_IN_MODEL_ID)
 	})
 
-	it('normalizes unknown role ids back to the built-in model', () => {
-		const result = resolveChaoxingModelConfigs(
-			{
-				chaoxingTextModelId: 'model-does-not-exist',
-				chaoxingVisionModelId: 'another-missing-id',
-				selectedModelId: 'model-deepseek',
-			},
-			customModels,
-		)
+	it('keeps a matching custom model id', () => {
+		expect(normalizeVisionModelId('model-qwen-vl', customModels)).toBe('model-qwen-vl')
+	})
+})
 
-		expect(result.text).toEqual({ ...DEMO_CONFIG })
-		expect(result.vision).toEqual({ ...DEMO_CONFIG })
+describe('resolveVisionLLMConfig', () => {
+	it('defaults to the built-in vision config when unset', () => {
+		expect(resolveVisionLLMConfig(undefined, customModels)).toEqual({ ...DEMO_VISION_CONFIG })
+	})
+
+	it('defaults to the built-in vision config for unknown ids', () => {
+		expect(resolveVisionLLMConfig('nope', customModels)).toEqual({ ...DEMO_VISION_CONFIG })
+	})
+
+	it('resolves the built-in vision id to the vision demo config', () => {
+		expect(resolveVisionLLMConfig(BUILT_IN_VISION_MODEL_ID, customModels)).toEqual({
+			...DEMO_VISION_CONFIG,
+		})
+	})
+
+	it('resolves the built-in text id to the text demo config', () => {
+		expect(resolveVisionLLMConfig(BUILT_IN_MODEL_ID, customModels)).toEqual({ ...DEMO_CONFIG })
+	})
+
+	it('resolves a matching custom model id to that model', () => {
+		expect(resolveVisionLLMConfig('model-qwen-vl', customModels)).toEqual({
+			baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+			model: 'qwen-vl-max',
+			apiKey: 'sk-qwen',
+		})
+	})
+})
+
+describe('resolveSelectedLLMConfig', () => {
+	it('resolves the built-in vision id when chosen as the text model', () => {
+		expect(resolveSelectedLLMConfig(BUILT_IN_VISION_MODEL_ID, customModels)).toEqual({
+			...DEMO_VISION_CONFIG,
+		})
+	})
+
+	it('defaults to the built-in text config when unset', () => {
+		expect(resolveSelectedLLMConfig(undefined, customModels)).toEqual({ ...DEMO_CONFIG })
+	})
+
+	it('resolves a matching custom model id to that model', () => {
+		expect(resolveSelectedLLMConfig('model-deepseek', customModels)).toEqual({
+			baseURL: 'https://api.deepseek.com',
+			model: 'deepseek-chat',
+			apiKey: 'sk-deepseek',
+		})
 	})
 })

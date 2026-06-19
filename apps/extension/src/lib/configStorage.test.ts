@@ -41,8 +41,7 @@ describe('configStorage', () => {
 			...DEMO_CONFIG,
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels: [],
-			chaoxingTextModelId: undefined,
-			chaoxingVisionModelId: undefined,
+			visionModelId: undefined,
 		})
 		expect(storage.set).toHaveBeenCalledWith({ llmConfig: DEMO_CONFIG })
 	})
@@ -88,23 +87,15 @@ describe('configStorage', () => {
 			apiKey: 'sk-test',
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels: [],
-			chaoxingTextModelId: undefined,
-			chaoxingVisionModelId: undefined,
+			visionModelId: undefined,
 			language: 'en-US',
 			uiLanguage: 'zh-CN',
 			...advancedConfig,
 		})
 	})
 
-	it('loads stored chaoxing text/vision model ids', async () => {
+	it('loads the stored system vision model id', async () => {
 		const customModels: CustomModelConfig[] = [
-			{
-				id: 'model-deepseek',
-				provider: 'deepseek',
-				baseURL: 'https://api.deepseek.com',
-				apiKey: 'sk-deepseek',
-				model: 'deepseek-chat',
-			},
 			{
 				id: 'model-qwen-vl',
 				provider: 'qwen',
@@ -117,14 +108,12 @@ describe('configStorage', () => {
 			llmConfig: DEMO_CONFIG,
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels,
-			chaoxingTextModelId: 'model-deepseek',
-			chaoxingVisionModelId: 'model-qwen-vl',
+			visionModelId: 'model-qwen-vl',
 		})
 
 		const config = await loadStoredConfig(storage)
 
-		expect(config.chaoxingTextModelId).toBe('model-deepseek')
-		expect(config.chaoxingVisionModelId).toBe('model-qwen-vl')
+		expect(config.visionModelId).toBe('model-qwen-vl')
 	})
 
 	it('ignores the legacy step limit while preserving supported advanced config', async () => {
@@ -156,8 +145,7 @@ describe('configStorage', () => {
 			experimentalLlmsTxt: true,
 			experimentalIncludeAllTabs: false,
 			disableNamedToolChoice: true,
-			chaoxingTextModelId: undefined,
-			chaoxingVisionModelId: undefined,
+			visionModelId: undefined,
 		})
 		expect(config).not.toHaveProperty(legacyStepLimitKey)
 	})
@@ -274,33 +262,30 @@ describe('configStorage', () => {
 		expect(storage.set).toHaveBeenCalledWith({ customModels })
 	})
 
-	it('persists chaoxing text/vision model ids when set and clears them when unset', async () => {
+	it('persists the system vision model id when set and clears it when unset', async () => {
 		const customModels: CustomModelConfig[] = [
 			{
-				id: 'model-deepseek',
-				provider: 'deepseek',
-				baseURL: 'https://api.deepseek.com',
-				apiKey: 'sk-deepseek',
-				model: 'deepseek-chat',
+				id: 'model-qwen-vl',
+				provider: 'qwen',
+				baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+				apiKey: 'sk-qwen',
+				model: 'qwen-vl-max',
 			},
 		]
 
-		const storageWithIds = createStorage()
-		await saveStoredConfig(storageWithIds, {
+		const storageWithId = createStorage()
+		await saveStoredConfig(storageWithId, {
 			baseURL: DEMO_CONFIG.baseURL,
 			model: DEMO_CONFIG.model,
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels,
-			chaoxingTextModelId: 'model-deepseek',
-			chaoxingVisionModelId: 'model-deepseek',
+			visionModelId: 'model-qwen-vl',
 		})
 
-		expect(storageWithIds.set).toHaveBeenCalledWith({ chaoxingTextModelId: 'model-deepseek' })
-		expect(storageWithIds.set).toHaveBeenCalledWith({ chaoxingVisionModelId: 'model-deepseek' })
+		expect(storageWithId.set).toHaveBeenCalledWith({ visionModelId: 'model-qwen-vl' })
 
 		const storageUnset = createStorage({
-			chaoxingTextModelId: 'model-deepseek',
-			chaoxingVisionModelId: 'model-deepseek',
+			visionModelId: 'model-qwen-vl',
 		})
 		const saved = await saveStoredConfig(storageUnset, {
 			baseURL: DEMO_CONFIG.baseURL,
@@ -309,9 +294,7 @@ describe('configStorage', () => {
 			customModels,
 		})
 
-		expect(storageUnset.remove).toHaveBeenCalledWith('chaoxingTextModelId')
-		expect(storageUnset.remove).toHaveBeenCalledWith('chaoxingVisionModelId')
-		expect(saved.chaoxingTextModelId).toBeUndefined()
-		expect(saved.chaoxingVisionModelId).toBeUndefined()
+		expect(storageUnset.remove).toHaveBeenCalledWith('visionModelId')
+		expect(saved.visionModelId).toBeUndefined()
 	})
 })

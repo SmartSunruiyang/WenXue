@@ -24,8 +24,7 @@ const CONFIG_STORAGE_KEYS = [
 	'uiLanguage',
 	'selectedModelId',
 	'customModels',
-	'chaoxingTextModelId',
-	'chaoxingVisionModelId',
+	'visionModelId',
 ]
 
 export async function loadStoredConfig(
@@ -52,10 +51,7 @@ export async function loadStoredConfig(
 		experimentalIncludeAllTabs: storedAdvancedConfig.experimentalIncludeAllTabs,
 		disableNamedToolChoice: storedAdvancedConfig.disableNamedToolChoice,
 	}
-	const chaoxingTextModelId =
-		typeof result.chaoxingTextModelId === 'string' ? result.chaoxingTextModelId : undefined
-	const chaoxingVisionModelId =
-		typeof result.chaoxingVisionModelId === 'string' ? result.chaoxingVisionModelId : undefined
+	const visionModelId = typeof result.visionModelId === 'string' ? result.visionModelId : undefined
 
 	const migrated = migrateLegacyEndpoint(llmConfig)
 	if (migrated !== llmConfig) {
@@ -72,8 +68,7 @@ export async function loadStoredConfig(
 		uiLanguage,
 		selectedModelId,
 		customModels,
-		chaoxingTextModelId,
-		chaoxingVisionModelId,
+		visionModelId,
 	}
 }
 
@@ -88,8 +83,7 @@ export async function saveStoredConfig(
 		disableNamedToolChoice,
 		selectedModelId,
 		customModels: rawCustomModels,
-		chaoxingTextModelId,
-		chaoxingVisionModelId,
+		visionModelId,
 		...legacyLLMConfig
 	}: ExtConfig,
 ): Promise<ExtConfig> {
@@ -103,15 +97,10 @@ export async function saveStoredConfig(
 	await storage.set({ llmConfig })
 	await storage.set({ selectedModelId: normalizedSelectedModelId })
 	await storage.set({ customModels })
-	if (chaoxingTextModelId) {
-		await storage.set({ chaoxingTextModelId })
+	if (visionModelId) {
+		await storage.set({ visionModelId })
 	} else {
-		await storage.remove('chaoxingTextModelId')
-	}
-	if (chaoxingVisionModelId) {
-		await storage.set({ chaoxingVisionModelId })
-	} else {
-		await storage.remove('chaoxingVisionModelId')
+		await storage.remove('visionModelId')
 	}
 	if (language) {
 		await storage.set({ language })
@@ -137,7 +126,6 @@ export async function saveStoredConfig(
 		uiLanguage,
 		selectedModelId: normalizedSelectedModelId,
 		customModels,
-		chaoxingTextModelId: chaoxingTextModelId || undefined,
-		chaoxingVisionModelId: chaoxingVisionModelId || undefined,
+		visionModelId: visionModelId || undefined,
 	}
 }

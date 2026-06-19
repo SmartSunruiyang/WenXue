@@ -25,7 +25,8 @@ import type { TranslationKey, UILanguage } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n'
 import {
 	BUILT_IN_MODEL_ID,
-	BUILT_IN_MODEL_LABEL,
+	BUILT_IN_MODEL_OPTIONS,
+	BUILT_IN_VISION_MODEL_ID,
 	type CustomModelConfig,
 	MODEL_PROVIDER_PRESETS,
 	type ModelProvider,
@@ -33,6 +34,7 @@ import {
 	getCustomModelProviderLabel,
 	getModelProviderPreset,
 	normalizeSelectedModelId,
+	normalizeVisionModelId,
 } from '@/lib/modelConfig'
 import { buildSettingsConfig, settingsConfigKey } from '@/lib/settingsConfig'
 import { cn } from '@/lib/utils'
@@ -86,19 +88,6 @@ function createCustomModelId(): string {
 	return `custom:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-/**
- * 学习通角色模型下拉的选中值：空串代表「跟随当前模型」。未设置、或指向已删除的
- * 自定义模型都归一化为空串;内置或仍存在的自定义模型保留原 id。
- */
-function normalizeChaoxingRoleSelection(
-	modelId: string | undefined,
-	customModels: CustomModelConfig[],
-): string {
-	if (!modelId) return ''
-	if (modelId === BUILT_IN_MODEL_ID) return BUILT_IN_MODEL_ID
-	return customModels.some((model) => model.id === modelId) ? modelId : ''
-}
-
 function ProviderLogo({
 	provider,
 	providerName,
@@ -143,9 +132,8 @@ export function SettingsForm({
 		config?.selectedModelId ?? BUILT_IN_MODEL_ID,
 	)
 	const [customModels, setCustomModels] = useState<CustomModelConfig[]>(config?.customModels ?? [])
-	const [chaoxingTextModelId, setChaoxingTextModelId] = useState(config?.chaoxingTextModelId ?? '')
-	const [chaoxingVisionModelId, setChaoxingVisionModelId] = useState(
-		config?.chaoxingVisionModelId ?? '',
+	const [visionModelId, setVisionModelId] = useState(() =>
+		normalizeVisionModelId(config?.visionModelId, config?.customModels ?? []),
 	)
 	const [language, setLanguage] = useState<LanguagePreference>(config?.language)
 	const [uiLanguage, setUILanguage] = useState<UILanguage>(config?.uiLanguage ?? 'zh-CN')
@@ -187,14 +175,7 @@ export function SettingsForm({
 			config.selectedModelId ?? BUILT_IN_MODEL_ID,
 			nextCustomModels,
 		)
-		const nextChaoxingTextModelId = normalizeChaoxingRoleSelection(
-			config.chaoxingTextModelId,
-			nextCustomModels,
-		)
-		const nextChaoxingVisionModelId = normalizeChaoxingRoleSelection(
-			config.chaoxingVisionModelId,
-			nextCustomModels,
-		)
+		const nextVisionModelId = normalizeVisionModelId(config.visionModelId, nextCustomModels)
 		const nextLanguage = config.language
 		const nextUILanguage = config.uiLanguage ?? 'zh-CN'
 		const nextSystemInstruction = config.systemInstruction ?? ''
@@ -207,8 +188,7 @@ export function SettingsForm({
 			buildSettingsConfig({
 				selectedModelId: nextSelectedModelId,
 				customModels: nextCustomModels,
-				chaoxingTextModelId: nextChaoxingTextModelId,
-				chaoxingVisionModelId: nextChaoxingVisionModelId,
+				visionModelId: nextVisionModelId,
 				language: nextLanguage,
 				uiLanguage: nextUILanguage,
 				systemInstruction: nextSystemInstruction,
@@ -220,8 +200,7 @@ export function SettingsForm({
 
 		setSelectedModelId(nextSelectedModelId)
 		setCustomModels(nextCustomModels)
-		setChaoxingTextModelId(nextChaoxingTextModelId)
-		setChaoxingVisionModelId(nextChaoxingVisionModelId)
+		setVisionModelId(nextVisionModelId)
 		setLanguage(nextLanguage)
 		setUILanguage(nextUILanguage)
 		setSystemInstruction(nextSystemInstruction)
@@ -342,9 +321,8 @@ export function SettingsForm({
 	const handleRemoveCustomModel = (modelId: string) => {
 		setCustomModels((models) => models.filter((model) => model.id !== modelId))
 		setSelectedModelId((current) => (current === modelId ? BUILT_IN_MODEL_ID : current))
-		// roles pointing at the removed model fall back to "follow current model"
-		setChaoxingTextModelId((current) => (current === modelId ? '' : current))
-		setChaoxingVisionModelId((current) => (current === modelId ? '' : current))
+		// vision selector pointing at the removed model falls back to the vision built-in
+		setVisionModelId((current) => (current === modelId ? BUILT_IN_VISION_MODEL_ID : current))
 	}
 
 	const canAddCustomModel =
@@ -355,7 +333,7 @@ export function SettingsForm({
 
 	const modelOptions = useMemo<Array<MagicSelectOption<string>>>(
 		() => [
-			{ value: BUILT_IN_MODEL_ID, label: BUILT_IN_MODEL_LABEL },
+			...BUILT_IN_MODEL_OPTIONS.map((option) => ({ value: option.id, label: option.label })),
 			...customModels.map((customModel) => ({
 				value: customModel.id,
 				label: getCustomModelLabel(customModel),
@@ -366,10 +344,6 @@ export function SettingsForm({
 			})),
 		],
 		[customModels],
-	)
-	const chaoxingModelOptions = useMemo<Array<MagicSelectOption<string>>>(
-		() => [{ value: '', label: t('chaoxingModelFollowDefault') }, ...modelOptions],
-		[modelOptions, t],
 	)
 	const providerOptions = useMemo<Array<MagicSelectOption<ModelProvider>>>(
 		() => [
@@ -409,8 +383,7 @@ export function SettingsForm({
 			buildSettingsConfig({
 				selectedModelId,
 				customModels,
-				chaoxingTextModelId,
-				chaoxingVisionModelId,
+				visionModelId,
 				language,
 				uiLanguage,
 				systemInstruction,
@@ -421,8 +394,7 @@ export function SettingsForm({
 		[
 			selectedModelId,
 			customModels,
-			chaoxingTextModelId,
-			chaoxingVisionModelId,
+			visionModelId,
 			language,
 			uiLanguage,
 			systemInstruction,
@@ -530,40 +502,28 @@ export function SettingsForm({
 				mode={mode}
 			>
 				<div className="grid gap-4">
-					<div className="flex flex-col gap-1.5">
-						<label htmlFor="default-model" className="text-xs text-muted-foreground">
-							{t('defaultModel')}
-						</label>
-						<MagicSelect
-							id="default-model"
-							value={selectedModelId}
-							options={modelOptions}
-							onChange={setSelectedModelId}
-						/>
-					</div>
-
 					<div className="grid gap-4 md:grid-cols-2">
 						<div className="flex flex-col gap-1.5">
-							<label htmlFor="chaoxing-text-model" className="text-xs text-muted-foreground">
-								{t('chaoxingTextModel')}
+							<label htmlFor="default-model" className="text-xs text-muted-foreground">
+								{t('defaultModel')}
 							</label>
 							<MagicSelect
-								id="chaoxing-text-model"
-								value={chaoxingTextModelId}
-								options={chaoxingModelOptions}
-								onChange={setChaoxingTextModelId}
+								id="default-model"
+								value={selectedModelId}
+								options={modelOptions}
+								onChange={setSelectedModelId}
 							/>
 						</div>
 
 						<div className="flex flex-col gap-1.5">
-							<label htmlFor="chaoxing-vision-model" className="text-xs text-muted-foreground">
-								{t('chaoxingVisionModel')}
+							<label htmlFor="vision-model" className="text-xs text-muted-foreground">
+								{t('visionModel')}
 							</label>
 							<MagicSelect
-								id="chaoxing-vision-model"
-								value={chaoxingVisionModelId}
-								options={chaoxingModelOptions}
-								onChange={setChaoxingVisionModelId}
+								id="vision-model"
+								value={visionModelId}
+								options={modelOptions}
+								onChange={setVisionModelId}
 							/>
 						</div>
 					</div>

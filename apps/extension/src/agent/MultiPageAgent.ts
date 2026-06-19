@@ -18,7 +18,7 @@ interface MultiPageAgentConfig extends AgentConfig {
 	includeInitialTab?: boolean
 	experimentalIncludeAllTabs?: boolean
 	/**
-	 * 超星学习通双模型(Task 8)。text 用于纯文本题，vision 用于含图题。
+	 * 系统级文本 + 视觉模型；学习通流水线据此路由(text 用于纯文本题，vision 用于含图题)。
 	 * 不传则回退到 agent 自身的模型作为 text、vision 留空(含图题进入人工)。
 	 */
 	chaoxingModels?: { text: LLMConfig; vision: LLMConfig }
@@ -81,8 +81,8 @@ export class MultiPageAgent extends PageAgentCore {
 		const tabsController = new TabsController()
 		const pageController = new RemotePageController(tabsController)
 
-		// Chaoxing (超星学习通) solve tool. Prefer the user-configured dual-model
-		// settings (Task 8); fall back to the agent's own LLM config as the text model
+		// Chaoxing (超星学习通) solve tool. Prefer the system-level text + vision
+		// models; fall back to the agent's own LLM config as the text model
 		// with vision undefined (image questions become needsReview) when unset.
 		const fallbackTextModel = {
 			baseURL: config.baseURL,

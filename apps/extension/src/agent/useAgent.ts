@@ -13,7 +13,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { loadStoredConfig, saveStoredConfig } from '@/lib/configStorage'
 import type { UILanguage } from '@/lib/i18n'
-import { type CustomModelConfig, resolveChaoxingModelConfigs } from '@/lib/modelConfig'
+import {
+	type CustomModelConfig,
+	resolveSelectedLLMConfig,
+	resolveVisionLLMConfig,
+} from '@/lib/modelConfig'
 import { MultiPageAgent } from './MultiPageAgent'
 
 /** Language preference: undefined means follow system */
@@ -31,10 +35,8 @@ export interface ExtConfig extends LLMConfig, AdvancedConfig {
 	uiLanguage?: UILanguage
 	selectedModelId?: string
 	customModels?: CustomModelConfig[]
-	/** 超星学习通「文本题」模型 id；未设置 → 跟随 selectedModelId。 */
-	chaoxingTextModelId?: string
-	/** 超星学习通「含图题」模型 id；未设置 → 跟随 selectedModelId。 */
-	chaoxingVisionModelId?: string
+	/** 系统级「视觉/多模态」模型 id；未设置 → 解析时回退到视觉内置模型(qwen3.7-plus)。 */
+	visionModelId?: string
 }
 
 export interface UseAgentResult {
@@ -122,14 +124,12 @@ export function useAgent(): UseAgentResult {
 			experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
 			disableNamedToolChoice: config.disableNamedToolChoice,
 		}
-		const chaoxingModels = resolveChaoxingModelConfigs(
-			{
-				chaoxingTextModelId: config.chaoxingTextModelId,
-				chaoxingVisionModelId: config.chaoxingVisionModelId,
-				selectedModelId: config.selectedModelId,
-			},
-			config.customModels ?? [],
-		)
+		const customModels = config.customModels ?? []
+		// 系统级文本 + 视觉模型；学习通流水线跟随这两个系统模型。
+		const chaoxingModels = {
+			text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
+			vision: resolveVisionLLMConfig(config.visionModelId, customModels),
+		}
 		const agent = new MultiPageAgent({
 			...agentConfig,
 			chaoxingModels,
