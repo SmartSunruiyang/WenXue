@@ -142,4 +142,69 @@ describe('askStructured', () => {
 			spy.mockRestore()
 		}
 	})
+
+	const qwenCfg: LLMConfig = {
+		baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+		model: 'qwen3.7-max',
+		apiKey: 'sk-q',
+	}
+
+	it('disables thinking for Qwen/DashScope so the forced tool_choice is honored', async () => {
+		const schema = z.object({ selectedOptions: z.array(z.string()) })
+		const fetchImpl = vi.fn().mockResolvedValue(cannedResponse({ selectedOptions: ['A'] }))
+
+		await askStructured(qwenCfg, messages, schema, { fetchImpl })
+
+		const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+		expect(body.enable_thinking).toBe(false)
+		expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'submit_answer' } })
+	})
+
+	it('does NOT add enable_thinking for non-Qwen providers', async () => {
+		const schema = z.object({ selectedOptions: z.array(z.string()) })
+		const fetchImpl = vi.fn().mockResolvedValue(cannedResponse({ selectedOptions: ['A'] }))
+
+		await askStructured(cfg, messages, schema, { fetchImpl })
+
+		const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+		expect(body.enable_thinking).toBeUndefined()
+	})
+
+	it('retries with relaxed tool_choice when forced tool_choice is rejected in thinking mode', async () => {
+		const schema = z.object({ selectedOptions: z.array(z.string()) })
+		const thinkingErr = new Response(
+			JSON.stringify({
+				error: {
+					message:
+						'The tool_choice parameter does not support being set to required or object in thinking mode',
+				},
+			}),
+			{ status: 400, headers: { 'Content-Type': 'application/json' } },
+		)
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValueOnce(thinkingErr)
+			.mockResolvedValueOnce(cannedResponse({ selectedOptions: ['A'] }))
+
+		const result = await askStructured(qwenCfg, messages, schema, { fetchImpl })
+
+		expect(result).toEqual({ selectedOptions: ['A'] })
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+		const retryBody = JSON.parse(fetchImpl.mock.calls[1][1].body)
+		expect(retryBody.tool_choice).toBe('auto')
+		expect(retryBody.enable_thinking).toBe(false)
+	})
+
+	it('still throws on a 400 that is not the thinking-mode tool_choice case', async () => {
+		const schema = z.object({ selectedOptions: z.array(z.string()) })
+		const fetchImpl = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ error: { message: 'bad request: missing model' } }), {
+				status: 400,
+				headers: { 'Content-Type': 'application/json' },
+			}),
+		)
+
+		await expect(askStructured(qwenCfg, messages, schema, { fetchImpl })).rejects.toThrow()
+		expect(fetchImpl).toHaveBeenCalledTimes(1)
+	})
 })

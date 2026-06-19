@@ -22,6 +22,11 @@ function toOpenAIFunctionTool(name: string, description: string, schema: z.ZodTy
 	}
 }
 
+/** Qwen / 阿里云 DashScope 识别（用于「思考模式」下强制 tool_choice 的适配）。 */
+function isQwenLike(cfg: LLMConfig): boolean {
+	return /dashscope|aliyuncs/i.test(cfg.baseURL) || /^qwen/i.test(cfg.model)
+}
+
 export interface AskStructuredOptions {
 	signal?: AbortSignal
 	fetchImpl?: typeof fetch
@@ -72,26 +77,44 @@ export async function askStructured(
 
 	const tool = toOpenAIFunctionTool(TOOL_NAME, '提交本题的结构化答案', schema)
 
-	// NOTE: request uses OpenAI-format forced tool_choice + temperature:0. Some providers
-	// (DeepSeek/Grok strip forced tool_choice; some reject temperature) need adaptation —
-	// deferred to pipeline wiring (Task 7) and validated against real models (Task 11).
-	const body = {
+	// 请求用 OpenAI 格式的强制 tool_choice + temperature:0 保证结构化输出。
+	const body: Record<string, unknown> = {
 		model: cfg.model,
 		messages,
 		temperature: 0,
 		tools: [tool],
 		tool_choice: { type: 'function', function: { name: TOOL_NAME } },
 	}
+	// Qwen3「思考模式」会拒绝被强制(required/object)的 tool_choice（DashScope 400：
+	// "tool_choice ... not support ... required or object in thinking mode"）。对 Qwen/DashScope
+	// 关闭思考，让强制 tool_choice 生效以保证结构化输出；非思考模型会忽略此参数。
+	if (isQwenLike(cfg)) {
+		body.enable_thinking = false
+	}
 
-	const response = await fetchImpl(`${cfg.baseURL}/chat/completions`, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
-		},
-		body: JSON.stringify(body),
-		signal: opts?.signal,
-	})
+	const post = (requestBody: Record<string, unknown>) =>
+		fetchImpl(`${cfg.baseURL}/chat/completions`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+			},
+			body: JSON.stringify(requestBody),
+			signal: opts?.signal,
+		})
+
+	let response = await post(body)
+
+	// 兜底：若强制 tool_choice 仍因「思考模式」被拒，重试一次——关思考 + 放宽 tool_choice 为 'auto'。
+	// 系统提示仍要求调用 submit_answer；万一模型不调用工具，上游退化为 needsReview，绝不错答。
+	if (response.status === 400) {
+		const message = await readErrorMessage(response)
+		if (/tool_choice/i.test(message) && /think/i.test(message)) {
+			response = await post({ ...body, enable_thinking: false, tool_choice: 'auto' })
+		} else {
+			throw new Error(`LLM request failed (HTTP 400): ${message}`)
+		}
+	}
 
 	if (!response.ok) {
 		const message = await readErrorMessage(response)
