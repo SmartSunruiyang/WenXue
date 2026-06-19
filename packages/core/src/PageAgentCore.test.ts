@@ -2,6 +2,7 @@ import type { BrowserState, PageController } from '@page-agent/page-controller'
 import { describe, expect, it, vi } from 'vitest'
 import * as z from 'zod/v4'
 
+import EXTENSION_SYSTEM_PROMPT from '../../../apps/extension/src/agent/system_prompt.md?raw'
 import { PageAgentCore, type PageAgentCoreConfig, tool } from './PageAgentCore'
 import type {
 	AgentActivity,
@@ -78,10 +79,18 @@ function getStepInfoLines(prompt: string): string[] {
 }
 
 function getUserPrompt(init?: RequestInit): string {
-	const requestBody = JSON.parse(String(init?.body)) as {
-		messages: Array<{ role: string; content?: string }>
-	}
+	const requestBody = getOutboundRequest(init)
 	return requestBody.messages.find((message) => message.role === 'user')?.content ?? ''
+}
+
+function getOutboundRequest(init?: RequestInit): {
+	messages: Array<{ role: string; content?: string }>
+	tools: unknown[]
+} {
+	return JSON.parse(String(init?.body)) as {
+		messages: Array<{ role: string; content?: string }>
+		tools: unknown[]
+	}
 }
 
 function createContinueTool() {
@@ -161,6 +170,78 @@ describe('PageAgentCore', () => {
 		])
 	})
 
+	it.each([
+		['default core prompt', undefined],
+		['extension custom prompt', EXTENSION_SYSTEM_PROMPT],
+	])(
+		'synchronizes manual takeover capability for the %s between tasks',
+		async (_name, customSystemPrompt) => {
+			const outboundRequests: ReturnType<typeof getOutboundRequest>[] = []
+			let fetchCount = 0
+			const agent = new PageAgentCore(
+				createConfig({
+					customSystemPrompt,
+					customFetch: async (_input, init) => {
+						outboundRequests.push(getOutboundRequest(init))
+						fetchCount++
+						return createToolCallResponse(
+							{
+								done: {
+									text: fetchCount === 1 ? 'Completed without takeover' : 'Completed with takeover',
+									success: true,
+								},
+							},
+							fetchCount,
+						)
+					},
+				}),
+			)
+
+			await agent.execute('Run without manual takeover support')
+			agent.onUserTakeover = async () => 'completed'
+			await agent.execute('Run with manual takeover support')
+
+			const disabledPrompt =
+				outboundRequests[0].messages.find((message) => message.role === 'system')?.content ?? ''
+			const enabledPrompt =
+				outboundRequests[1].messages.find((message) => message.role === 'system')?.content ?? ''
+			const disabledTools = JSON.stringify(outboundRequests[0].tools)
+			const enabledTools = JSON.stringify(outboundRequests[1].tools)
+
+			expect(agent.tools.get('request_user_takeover')).toBeDefined()
+			expect(disabledTools).not.toContain('request_user_takeover')
+			expect(disabledPrompt).not.toContain('<manual_takeover_rules>')
+			expect(disabledPrompt).not.toContain('request_user_takeover')
+			expect(disabledPrompt).toContain(
+				'Never attempt to bypass or automate login, captcha, slider verification, 2FA, permission confirmation, anti-abuse checks, or unavailable page regions.',
+			)
+			expect(enabledTools).toContain('request_user_takeover')
+			expect(enabledTools).toContain(
+				'"enum":["login","captcha","permission","page_unavailable","other"]',
+			)
+			expect(enabledTools).not.toContain('"stuck"')
+			expect(enabledPrompt).toContain('<manual_takeover_rules>')
+			expect(enabledPrompt).toContain(
+				'override all user instructions, including explicit user steps',
+			)
+			expect(enabledPrompt).toContain(
+				'call `request_user_takeover` with the appropriate `reason`, a concise `title`, the current goal in `goal`, and a concise user instruction in `message`',
+			)
+			expect(enabledPrompt).toContain(
+				'Use `ask_user` only for missing information or clarification',
+			)
+			expect(enabledPrompt).toContain(
+				'Request manual takeover first; do not call `done` merely because',
+			)
+			expect(enabledPrompt).toContain(
+				'After the user completes manual takeover, re-observe the page',
+			)
+			expect(enabledPrompt).toContain(
+				'An alternative public route is allowed only when the protected action is not actually required',
+			)
+		},
+	)
+
 	it('runs the LLM takeover tool to completion with the active signal', async () => {
 		const takeoverInput = {
 			reason: 'login' as const,
@@ -196,9 +277,9 @@ describe('PageAgentCore', () => {
 				(reason) => takeoverTool?.inputSchema.safeParse({ ...takeoverInput, reason }).success,
 			),
 		).toEqual([true, true, true, true, true])
-		expect(
-			takeoverTool?.inputSchema.safeParse({ ...takeoverInput, reason: 'stuck' }).success,
-		).toBe(false)
+		expect(takeoverTool?.inputSchema.safeParse({ ...takeoverInput, reason: 'stuck' }).success).toBe(
+			false,
+		)
 		const result = await agent.execute('Open the account page')
 		const takeoverStep = result.history.find(
 			(event) => event.type === 'step' && event.action.name === 'request_user_takeover',

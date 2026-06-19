@@ -31,6 +31,8 @@ export type * from './types'
 
 export type PageAgentCoreConfig = AgentConfig & { pageController: PageController }
 
+const MANUAL_TAKEOVER_RULES_PATTERN = /<manual_takeover_rules>[\s\S]*?<\/manual_takeover_rules>\s*/g
+
 /**
  * AI agent for browser automation.
  *
@@ -395,12 +397,17 @@ export class PageAgentCore extends EventTarget {
 
 				// assemble prompts
 
+				const availableTools = this.#getAvailableTools()
+				const manualTakeoverEnabled = availableTools.has('request_user_takeover')
 				const messages = [
-					{ role: 'system' as const, content: this.#getSystemPrompt() },
+					{
+						role: 'system' as const,
+						content: this.#getSystemPrompt(manualTakeoverEnabled),
+					},
 					{ role: 'user' as const, content: await this.#assembleUserPrompt() },
 				]
 
-				const macroTool = { AgentOutput: this.#packMacroTool() }
+				const macroTool = { AgentOutput: this.#packMacroTool(availableTools) }
 
 				// invoke LLM
 
@@ -409,7 +416,7 @@ export class PageAgentCore extends EventTarget {
 
 				const result = await this.#llm.invoke(messages, macroTool, this.#abortController.signal, {
 					toolChoiceName: 'AgentOutput',
-					normalizeResponse: (res) => normalizeResponse(res, this.tools),
+					normalizeResponse: (res) => normalizeResponse(res, availableTools),
 				})
 
 				// assemble history
@@ -583,11 +590,9 @@ export class PageAgentCore extends EventTarget {
 	 * - memory: string
 	 * - next_goal: string
 	 * - action: { toolName: toolInput }
-	 * where action must be selected from tools defined in this.tools
+	 * where action must be selected from the tools enabled for the current request
 	 */
-	#packMacroTool(): Tool<MacroToolInput, MacroToolResult> {
-		const tools = this.tools
-
+	#packMacroTool(tools: typeof this.tools): Tool<MacroToolInput, MacroToolResult> {
 		const actionSchemas = Array.from(tools.entries()).map(([toolName, tool]) => {
 			return z.object({ [toolName]: tool.inputSchema }).describe(tool.description)
 		})
@@ -674,18 +679,23 @@ export class PageAgentCore extends EventTarget {
 	/**
 	 * Get system prompt, dynamically replace language settings based on configured language
 	 */
-	#getSystemPrompt(): string {
-		if (this.config.customSystemPrompt) {
-			return this.config.customSystemPrompt
-		}
+	#getSystemPrompt(manualTakeoverEnabled: boolean): string {
+		const basePrompt = this.config.customSystemPrompt
+			? this.config.customSystemPrompt
+			: SYSTEM_PROMPT.replace(
+					/Default working language: \*\*.*?\*\*/,
+					`Default working language: **${this.config.language === 'zh-CN' ? '中文' : 'English'}**`,
+				)
 
-		const targetLanguage = this.config.language === 'zh-CN' ? '中文' : 'English'
-		const systemPrompt = SYSTEM_PROMPT.replace(
-			/Default working language: \*\*.*?\*\*/,
-			`Default working language: **${targetLanguage}**`,
-		)
+		return manualTakeoverEnabled
+			? basePrompt
+			: basePrompt.replace(MANUAL_TAKEOVER_RULES_PATTERN, '')
+	}
 
-		return systemPrompt
+	#getAvailableTools(): typeof this.tools {
+		const availableTools = new Map(this.tools)
+		if (!this.onUserTakeover) availableTools.delete('request_user_takeover')
+		return availableTools
 	}
 
 	/**

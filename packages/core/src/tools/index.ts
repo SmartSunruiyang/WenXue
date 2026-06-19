@@ -5,6 +5,7 @@
 import * as z from 'zod/v4'
 
 import type { PageAgentCore } from '../PageAgentCore'
+import type { UserTakeoverReason } from '../types'
 import { waitFor } from '../utils'
 
 /**
@@ -29,6 +30,16 @@ export function tool<TParams>(options: PageAgentTool<TParams>): PageAgentTool<TP
 	return options
 }
 
+type LlmUserTakeoverReason = Exclude<UserTakeoverReason, 'stuck'>
+
+const LLM_USER_TAKEOVER_REASONS = [
+	'login',
+	'captcha',
+	'permission',
+	'page_unavailable',
+	'other',
+] as const satisfies readonly LlmUserTakeoverReason[]
+
 /**
  * Internal tools for PageAgent.
  * Note: Using any to allow different parameter types for each tool
@@ -48,7 +59,7 @@ tools.set(
 			// @note main loop will handle this one
 			return Promise.resolve('Task completed')
 		},
-	})
+	}),
 )
 
 tools.set(
@@ -67,7 +78,7 @@ tools.set(
 
 			return `✅ Waited for ${input.seconds} seconds.`
 		},
-	})
+	}),
 )
 
 tools.set(
@@ -85,7 +96,7 @@ tools.set(
 			const answer = await this.onAskUser(input.question, { signal })
 			return `User answered: ${answer}`
 		},
-	})
+	}),
 )
 
 tools.set(
@@ -94,7 +105,7 @@ tools.set(
 		description:
 			'Ask the user to manually handle login, captcha, permission dialogs, unavailable page areas, or other browser actions that must not be automated.',
 		inputSchema: z.object({
-			reason: z.enum(['login', 'captcha', 'permission', 'page_unavailable', 'other']),
+			reason: z.enum(LLM_USER_TAKEOVER_REASONS),
 			title: z.string(),
 			message: z.string(),
 			goal: z.string().optional(),
@@ -106,7 +117,7 @@ tools.set(
 			}
 			return 'User completed manual takeover. Continue by re-observing the page.'
 		},
-	})
+	}),
 )
 
 tools.set(
@@ -120,7 +131,7 @@ tools.set(
 			const result = await this.pageController.clickElement(input.index)
 			return result.message
 		},
-	})
+	}),
 )
 
 tools.set(
@@ -135,7 +146,7 @@ tools.set(
 			const result = await this.pageController.inputText(input.index, input.text)
 			return result.message
 		},
-	})
+	}),
 )
 
 tools.set(
@@ -151,7 +162,7 @@ tools.set(
 			const result = await this.pageController.selectOption(input.index, input.text)
 			return result.message
 		},
-	})
+	}),
 )
 
 /**
@@ -175,7 +186,7 @@ tools.set(
 			})
 			return result.message
 		},
-	})
+	}),
 )
 
 /**
@@ -195,7 +206,7 @@ tools.set(
 			const result = await this.pageController.scrollHorizontally(input)
 			return result.message
 		},
-	})
+	}),
 )
 
 tools.set(
@@ -210,7 +221,7 @@ tools.set(
 			const result = await this.pageController.executeJavascript(input.script)
 			return result.message
 		},
-	})
+	}),
 )
 
 // @todo send_keys
