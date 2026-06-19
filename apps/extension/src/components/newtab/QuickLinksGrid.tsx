@@ -37,7 +37,7 @@ export function QuickLinksGrid({ links, onChange }: Props) {
 
 	return (
 		<div className="flex w-full flex-col items-center">
-			<p className="mb-2 px-1 text-center text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+			<p className="mb-2 w-full max-w-[38rem] px-1 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
 				{t('ntQuickLinks')}
 			</p>
 			<div className="flex w-full max-w-[38rem] flex-wrap justify-center gap-2">

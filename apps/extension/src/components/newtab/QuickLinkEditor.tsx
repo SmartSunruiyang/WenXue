@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 import { useI18n } from '@/lib/i18n'
 import type { QuickLink } from '@/lib/quickLinks'
@@ -14,27 +15,41 @@ export function QuickLinkEditor({ initial, onSubmit, onClose }: Props) {
 	const [title, setTitle] = useState(initial?.title ?? '')
 	const [url, setUrl] = useState(initial?.url ?? '')
 	const [icon, setIcon] = useState(initial?.icon ?? '')
+	const [closing, setClosing] = useState(false)
+	const closeTimer = useRef<number | null>(null)
 
 	const submit = () => {
 		if (!title.trim() || !url.trim()) return
 		onSubmit({ title, url, icon })
 	}
 
+	const requestClose = () => {
+		if (closing) return
+		setClosing(true)
+		closeTimer.current = window.setTimeout(() => onClose(), 280)
+	}
+
+	useEffect(() => {
+		return () => {
+			if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+		}
+	}, [])
+
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') onClose()
+			if (e.key === 'Escape') requestClose()
 		}
 		window.addEventListener('keydown', onKey)
 		return () => window.removeEventListener('keydown', onKey)
 	}, [onClose])
 
-	return (
+	return createPortal(
 		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-			onClick={onClose}
+			className={`wx-editor-overlay fixed inset-0 z-50 flex items-center justify-center ${closing ? 'wx-editor-overlay--closing' : ''}`}
+			onClick={requestClose}
 		>
 			<div
-				className="w-80 max-w-[90vw] rounded-xl border bg-card p-4 shadow-2xl"
+				className={`wx-editor-panel w-80 max-w-[90vw] rounded-xl border bg-card p-4 shadow-2xl ${closing ? 'wx-editor-panel--closing' : ''}`}
 				onClick={(e) => e.stopPropagation()}
 				role="dialog"
 				aria-modal="true"
@@ -78,7 +93,7 @@ export function QuickLinkEditor({ initial, onSubmit, onClose }: Props) {
 					<div className="mt-4 flex justify-end gap-2">
 						<button
 							type="button"
-							onClick={onClose}
+							onClick={requestClose}
 							className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent cursor-pointer"
 						>
 							{t('ntCancel')}
@@ -92,6 +107,7 @@ export function QuickLinkEditor({ initial, onSubmit, onClose }: Props) {
 					</div>
 				</form>
 			</div>
-		</div>
+		</div>,
+		document.body,
 	)
 }

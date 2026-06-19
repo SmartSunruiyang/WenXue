@@ -121,16 +121,6 @@ export class SimulatorMask extends EventTarget {
 		rippleContainer.className = cursorStyles.cursorRipple
 		this.#cursor.appendChild(rippleContainer)
 
-		// Create filling layer
-		const fillingLayer = document.createElement('div')
-		fillingLayer.className = cursorStyles.cursorFilling
-		this.#cursor.appendChild(fillingLayer)
-
-		// Create border layer
-		const borderLayer = document.createElement('div')
-		borderLayer.className = cursorStyles.cursorBorder
-		this.#cursor.appendChild(borderLayer)
-
 		this.wrapper.appendChild(this.#cursor)
 	}
 
