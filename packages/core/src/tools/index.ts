@@ -89,6 +89,27 @@ tools.set(
 )
 
 tools.set(
+	'request_user_takeover',
+	tool({
+		description:
+			'Ask the user to manually handle login, captcha, permission dialogs, unavailable page areas, or other browser actions that must not be automated.',
+		inputSchema: z.object({
+			reason: z.enum(['login', 'captcha', 'permission', 'page_unavailable', 'other']),
+			title: z.string(),
+			message: z.string(),
+			goal: z.string().optional(),
+		}),
+		execute: async function (this: PageAgentCore, input, { signal }) {
+			const resolution = await this.requestUserTakeover(input, { signal })
+			if (resolution === 'paused') {
+				return 'User paused the task. Stop execution and keep context for resume.'
+			}
+			return 'User completed manual takeover. Continue by re-observing the page.'
+		},
+	})
+)
+
+tools.set(
 	'click_element_by_index',
 	tool({
 		description: 'Click element by index',

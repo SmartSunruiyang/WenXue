@@ -161,6 +161,104 @@ describe('PageAgentCore', () => {
 		])
 	})
 
+	it('runs the LLM takeover tool to completion with the active signal', async () => {
+		const takeoverInput = {
+			reason: 'login' as const,
+			title: 'Sign in required',
+			message: 'Complete sign in in the page.',
+			goal: 'Open the account page',
+		}
+		let fetchCount = 0
+		let callbackSignal: AbortSignal | undefined
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () => {
+					fetchCount++
+					return createToolCallResponse(
+						fetchCount === 1
+							? { request_user_takeover: takeoverInput }
+							: { done: { text: 'Completed after sign in', success: true } },
+						fetchCount,
+					)
+				},
+			}),
+		)
+		const requestUserTakeover = vi.spyOn(agent, 'requestUserTakeover')
+		agent.onUserTakeover = async (_request, options) => {
+			callbackSignal = options?.signal
+			return 'completed'
+		}
+
+		const takeoverTool = agent.tools.get('request_user_takeover')
+		expect(takeoverTool).toBeDefined()
+		expect(
+			['login', 'captcha', 'permission', 'page_unavailable', 'other'].map(
+				(reason) => takeoverTool?.inputSchema.safeParse({ ...takeoverInput, reason }).success,
+			),
+		).toEqual([true, true, true, true, true])
+		expect(
+			takeoverTool?.inputSchema.safeParse({ ...takeoverInput, reason: 'stuck' }).success,
+		).toBe(false)
+		const result = await agent.execute('Open the account page')
+		const takeoverStep = result.history.find(
+			(event) => event.type === 'step' && event.action.name === 'request_user_takeover',
+		)
+		const toolSignal = requestUserTakeover.mock.calls[0]?.[1]?.signal
+
+		expect(result).toMatchObject({
+			success: true,
+			data: 'Completed after sign in',
+		})
+		expect(requestUserTakeover).toHaveBeenCalledOnce()
+		expect(requestUserTakeover).toHaveBeenCalledWith(takeoverInput, {
+			signal: expect.any(AbortSignal),
+		})
+		expect(callbackSignal).toBe(toolSignal)
+		expect(takeoverStep?.action.output).toBe(
+			'User completed manual takeover. Continue by re-observing the page.',
+		)
+	})
+
+	it('returns the paused output from the LLM takeover tool', async () => {
+		const takeoverInput = {
+			reason: 'captcha' as const,
+			title: 'Captcha required',
+			message: 'Complete the captcha in the page.',
+		}
+		let callbackSignal: AbortSignal | undefined
+		const customFetch = vi.fn(async () =>
+			createToolCallResponse({ request_user_takeover: takeoverInput }, 1),
+		)
+		const agent = new PageAgentCore(createConfig({ customFetch }))
+		const requestUserTakeover = vi.spyOn(agent, 'requestUserTakeover')
+		agent.onUserTakeover = async (_request, options) => {
+			callbackSignal = options?.signal
+			return 'paused'
+		}
+
+		expect(agent.tools.get('request_user_takeover')).toBeDefined()
+		const result = await agent.execute('Continue after captcha')
+		const takeoverStep = result.history.find(
+			(event) => event.type === 'step' && event.action.name === 'request_user_takeover',
+		)
+		const toolSignal = requestUserTakeover.mock.calls[0]?.[1]?.signal
+
+		expect(result).toMatchObject({
+			success: false,
+			data: 'Task paused',
+			state: 'paused',
+		})
+		expect(customFetch).toHaveBeenCalledOnce()
+		expect(requestUserTakeover).toHaveBeenCalledOnce()
+		expect(requestUserTakeover).toHaveBeenCalledWith(takeoverInput, {
+			signal: expect.any(AbortSignal),
+		})
+		expect(callbackSignal).toBe(toolSignal)
+		expect(takeoverStep?.action.output).toBe(
+			'User paused the task. Stop execution and keep context for resume.',
+		)
+	})
+
 	it('continues the same task after completed manual takeover', async () => {
 		const pageController = createPageController()
 		const userPrompts: string[] = []
