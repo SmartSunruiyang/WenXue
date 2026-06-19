@@ -47,6 +47,7 @@
 
 ## Local patch: resumable manual takeover
 
-- Scope: `packages/core`
+- Scope: `packages/core`, `packages/ui`
 - Reason: WenXue removes user-facing step limits and adds recoverable human takeover for login, captcha, permission, unavailable pages, and stuck repeated actions.
 - Upstream sync note: keep the patch isolated to public types, PageAgentCore loop control, tools, and prompts so future alibaba/page-agent syncs can diff it cleanly.
+- UI adapter note: `packages/ui` now recognizes waiting/paused statuses and supplies the legacy Panel takeover/resume controls.

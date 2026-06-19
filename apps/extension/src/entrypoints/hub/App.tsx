@@ -236,7 +236,7 @@ function ProtocolDocsCollapsible() {
 						<h4 className="text-[11px] font-medium text-foreground/60 mb-1.5">Hub → Caller</h4>
 						<pre className="bg-muted/50 rounded-md p-3 font-mono text-[10px] leading-relaxed whitespace-pre-wrap">
 							{`{ type: "ready" }
-{ type: "result", success: boolean, data: string }
+{ type: "result", success: boolean, data: string, state?: "completed" | "error" | "paused" }
 { type: "error", message: string }`}
 						</pre>
 					</section>

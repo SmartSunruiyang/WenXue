@@ -10,7 +10,7 @@
  *
  * Outbound (Hub → Caller):
  *   { type: "ready" }
- *   { type: "result", success: boolean, data: string }
+ *   { type: "result", success: boolean, data: string, state?: "completed" | "error" | "paused" }
  *   { type: "error", message: string }
  */
 import type { ExecutionResult } from '@page-agent/core'
@@ -40,6 +40,7 @@ interface ResultMessage {
 	type: 'result'
 	success: boolean
 	data: string
+	state?: ExecutionResult['state']
 }
 
 interface ErrorMessage {
@@ -56,8 +57,8 @@ export type HubWsState = 'connecting' | 'connected' | 'disconnected'
 export interface HubWsHandlers {
 	onExecute: (
 		task: string,
-		config?: Record<string, unknown>
-	) => Promise<{ success: boolean; data: string }>
+		config?: Record<string, unknown>,
+	) => Promise<Pick<ExecutionResult, 'success' | 'data' | 'state'>>
 	onStop: () => void
 }
 
@@ -166,7 +167,7 @@ export class HubWs {
 		}
 
 		const ok = window.confirm(
-			'An external application is requesting to control your browser via 问学.\nAllow this session?'
+			'An external application is requesting to control your browser via 问学.\nAllow this session?',
 		)
 		if (ok) this.#approved = true
 		return ok
@@ -181,7 +182,12 @@ export class HubWs {
 		this.#busy = true
 		try {
 			const result = await this.#handlers.onExecute(msg.task, msg.config)
-			this.#send({ type: 'result', success: result.success, data: result.data })
+			this.#send({
+				type: 'result',
+				success: result.success,
+				data: result.data,
+				state: result.state,
+			})
 		} catch (err) {
 			this.#send({ type: 'error', message: err instanceof Error ? err.message : String(err) })
 		} finally {
@@ -200,7 +206,7 @@ export function useHubWs(
 	execute: (task: string) => Promise<ExecutionResult>,
 	stop: () => void,
 	configure: (config: ExtConfig) => Promise<void>,
-	config: ExtConfig | null
+	config: ExtConfig | null,
 ): { wsState: HubWsState } {
 	const wsPort = new URLSearchParams(location.search).get('ws')
 	const [wsState, setWsState] = useState<HubWsState>(() => (wsPort ? 'connecting' : 'disconnected'))
@@ -223,11 +229,11 @@ export function useHubWs(
 						await configure({ ...config, ...incomingConfig } as ExtConfig)
 					}
 					const result = await execute(task)
-					return { success: result.success, data: result.data }
+					return { success: result.success, data: result.data, state: result.state }
 				},
 				onStop: () => latestRef.current.stop(),
 			},
-			setWsState
+			setWsState,
 		)
 
 		hubWs.connect()

@@ -1,7 +1,12 @@
 import { I18n, type SupportedLanguage } from '../i18n'
 import { truncate } from '../utils'
 import { createCard, createReflectionLines } from './cards'
-import type { AgentActivity, PanelAgentAdapter } from './types'
+import type {
+	AgentActivity,
+	PanelAgentAdapter,
+	UserTakeoverRequest,
+	UserTakeoverResolution,
+} from './types'
 
 import styles from './Panel.module.css'
 
@@ -43,6 +48,7 @@ export class Panel {
 	#i18n: I18n
 	#userAnswerResolver: ((input: string) => void) | null = null
 	#isWaitingForUserAnswer: boolean = false
+	#takeoverResolver: ((resolution: UserTakeoverResolution) => void) | null = null
 	#headerUpdateTimer: ReturnType<typeof setInterval> | null = null
 	#pendingHeaderText: string | null = null
 	#isAnimating = false
@@ -69,6 +75,8 @@ export class Panel {
 
 		// Set up askUser callback on agent
 		this.#agent.onAskUser = (question, options) => this.#askUser(question, options?.signal)
+		this.#agent.onUserTakeover = (request, options) =>
+			this.#requestUserTakeover(request, options?.signal)
 
 		// Create UI elements
 		this.#wrapper = this.#createWrapper()
@@ -102,22 +110,34 @@ export class Panel {
 
 		// Map agent status to UI indicator type
 		const indicatorType =
-			status === 'running' ? 'thinking' : status === 'idle' ? 'thinking' : status
+			status === 'running' || status === 'idle'
+				? 'thinking'
+				: status === 'waiting_for_user' || status === 'paused'
+					? 'executed'
+					: status
 		this.#updateStatusIndicator(indicatorType)
 
-		// Morph action button: running = stop (■), not running = close (X)
-		if (status === 'running') {
+		if (status === 'running' || status === 'waiting_for_user') {
 			this.#actionButton.textContent = '■'
 			this.#actionButton.title = this.#i18n.t('ui.panel.stop')
+		} else if (status === 'paused' && this.#agent.resume) {
+			this.#actionButton.textContent = '▶'
+			this.#actionButton.title = this.#i18n.t('ui.panel.resume')
 		} else {
 			this.#actionButton.textContent = 'X'
 			this.#actionButton.title = this.#i18n.t('ui.panel.close')
 		}
 
 		// Show/hide based on status
-		if (status === 'running') {
+		if (status === 'running' || status === 'waiting_for_user' || status === 'paused') {
 			this.show()
 			this.#hideInputArea() // Hide input while running
+		}
+
+		if (status === 'waiting_for_user') {
+			this.#pendingHeaderText = this.#i18n.t('ui.panel.waitingForUser')
+		} else if (status === 'paused') {
+			this.#pendingHeaderText = this.#i18n.t('ui.panel.paused')
 		}
 
 		// Handle completion
@@ -159,6 +179,11 @@ export class Panel {
 			case 'retrying':
 				this.#pendingHeaderText = `Retrying (${activity.attempt}/${activity.maxAttempts})`
 				this.#updateStatusIndicator('retrying')
+				break
+
+			case 'waiting_for_user':
+				this.#pendingHeaderText = activity.request.title
+				this.#updateStatusIndicator('executed')
 				break
 
 			case 'error':
@@ -207,7 +232,67 @@ export class Panel {
 					// reason is a DOMException AbortError (abort() takes no args).
 					reject(signal.reason as DOMException)
 				},
-				{ once: true }
+				{ once: true },
+			)
+		})
+	}
+
+	#requestUserTakeover(
+		request: UserTakeoverRequest,
+		signal?: AbortSignal,
+	): Promise<UserTakeoverResolution> {
+		return new Promise((resolve, reject) => {
+			this.#takeoverResolver = resolve
+			if (!this.#isExpanded) this.#expand()
+
+			const details = [
+				request.title,
+				request.message,
+				request.goal ? `Goal: ${request.goal}` : '',
+				request.lastAction ? `Action: ${request.lastAction.name}` : '',
+				request.lastAction?.output ? `Output: ${request.lastAction.output}` : '',
+			].filter(Boolean)
+			const tempCard = document.createElement('div')
+			tempCard.innerHTML = createCard({
+				icon: '✋',
+				content: details,
+				type: 'question',
+			})
+			const cardElement = tempCard.firstElementChild as HTMLElement
+			cardElement.setAttribute('data-temp-card', 'true')
+
+			const actions = document.createElement('div')
+			actions.className = styles.takeoverActions
+			const completeButton = document.createElement('button')
+			completeButton.type = 'button'
+			completeButton.className = `${styles.takeoverButton} ${styles.takeoverPrimary}`
+			completeButton.textContent = this.#i18n.t('ui.panel.takeoverComplete')
+			const pauseButton = document.createElement('button')
+			pauseButton.type = 'button'
+			pauseButton.className = styles.takeoverButton
+			pauseButton.textContent = this.#i18n.t('ui.panel.takeoverPause')
+			actions.append(completeButton, pauseButton)
+
+			const settle = (resolution: UserTakeoverResolution) => {
+				this.#removeTempCards()
+				this.#takeoverResolver = null
+				resolve(resolution)
+			}
+			completeButton.addEventListener('click', () => settle('completed'), { once: true })
+			pauseButton.addEventListener('click', () => settle('paused'), { once: true })
+
+			this.#historySection.append(cardElement, actions)
+			actions.setAttribute('data-temp-card', 'true')
+			this.#scrollToBottom()
+
+			signal?.addEventListener(
+				'abort',
+				() => {
+					this.#removeTempCards()
+					this.#takeoverResolver = null
+					reject(signal.reason as DOMException)
+				},
+				{ once: true },
 			)
 		})
 	}
@@ -244,6 +329,7 @@ export class Panel {
 		// Reset user input state
 		this.#isWaitingForUserAnswer = false
 		this.#userAnswerResolver = null
+		this.#takeoverResolver = null
 		// Show input area
 		this.#showInputArea()
 	}
@@ -268,6 +354,7 @@ export class Panel {
 
 		// Clean up UI
 		this.#isWaitingForUserAnswer = false
+		this.#takeoverResolver = null
 		this.#stopHeaderUpdateLoop()
 		this.wrapper.remove()
 	}
@@ -300,8 +387,10 @@ export class Panel {
 	 * Action button handler: stop when running, close (dispose) when idle
 	 */
 	#handleActionButton(): void {
-		if (this.#agent.status === 'running') {
+		if (this.#agent.status === 'running' || this.#agent.status === 'waiting_for_user') {
 			this.#agent.stop()
+		} else if (this.#agent.status === 'paused' && this.#agent.resume) {
+			void this.#agent.resume()
 		} else {
 			this.#agent.dispose()
 		}
@@ -559,7 +648,7 @@ export class Panel {
 	}
 
 	#updateStatusIndicator(
-		type: 'thinking' | 'executing' | 'executed' | 'retrying' | 'completed' | 'error'
+		type: 'thinking' | 'executing' | 'executed' | 'retrying' | 'completed' | 'error',
 	): void {
 		// Clear all status classes
 		this.#indicator.className = styles.indicator
@@ -633,16 +722,25 @@ export class Panel {
 			}
 		} else if (event.type === 'observation') {
 			cards.push(
-				createCard({ icon: '👁️', content: event.content || '', meta, type: 'observation' })
+				createCard({ icon: '👁️', content: event.content || '', meta, type: 'observation' }),
 			)
 		} else if (event.type === 'user_takeover') {
-			cards.push(createCard({ icon: '👤', content: 'User takeover', meta, type: 'input' }))
+			const request = event.request
+			const content = request
+				? [
+						request.title,
+						request.message,
+						request.goal ? `Goal: ${request.goal}` : '',
+						request.lastAction ? `Action: ${request.lastAction.name}` : '',
+					].filter(Boolean)
+				: ['User takeover']
+			cards.push(createCard({ icon: '👤', content, meta, type: 'input' }))
 		} else if (event.type === 'retry') {
 			const retryInfo = `${event.message || 'Retrying'} (${event.attempt}/${event.maxAttempts})`
 			cards.push(createCard({ icon: '🔄', content: retryInfo, meta, type: 'observation' }))
 		} else if (event.type === 'error') {
 			cards.push(
-				createCard({ icon: '❌', content: event.message || 'Error', meta, type: 'observation' })
+				createCard({ icon: '❌', content: event.message || 'Error', meta, type: 'observation' }),
 			)
 		}
 
@@ -652,7 +750,7 @@ export class Panel {
 	/** Create cards for an action */
 	#createActionCards(
 		action: { name: string; input: unknown; output: string },
-		meta?: string
+		meta?: string,
 	): string[] {
 		const cards: string[] = []
 
@@ -671,7 +769,7 @@ export class Panel {
 					content: `Question: ${input.question || ''}`,
 					meta,
 					type: 'question',
-				})
+				}),
 			)
 			cards.push(createCard({ icon: '💬', content: `Answer: ${answer}`, meta, type: 'input' }))
 		} else {

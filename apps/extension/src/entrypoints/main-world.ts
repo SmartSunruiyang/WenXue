@@ -1,6 +1,7 @@
 import type { AgentActivity, AgentStatus, ExecutionResult, HistoricalEvent } from '@page-agent/core'
 
 export type Execute = (task: string, config: ExecuteConfig) => Promise<ExecutionResult>
+export type Resume = () => Promise<ExecutionResult>
 
 export interface ExecuteConfig {
 	baseURL: string
@@ -103,7 +104,66 @@ export default defineUnlistedScript(() => {
 					},
 				},
 			},
-			'*'
+			'*',
+		)
+
+		return promise
+	}
+
+	let activeConfig: ExecuteConfig | null = null
+
+	const executeWithConfig: Execute = async (task, config) => {
+		activeConfig = config
+		return execute(task, config)
+	}
+
+	const resume: Resume = async () => {
+		if (!activeConfig) throw new Error('No task is available to resume')
+
+		const id = getId()
+		const config = activeConfig
+
+		const promise = new Promise<ExecutionResult>((resolve, reject) => {
+			function handleMessage(e: MessageEvent) {
+				if (e.source !== window) return
+
+				const data = e.data
+				if (typeof data !== 'object' || data === null) return
+				if (data.channel !== 'PAGE_AGENT_EXT_RESPONSE') return
+				if (data.id !== id) return
+
+				if (data.action === 'status_change_event' && config.onStatusChange) {
+					config.onStatusChange(data.payload)
+					return
+				}
+				if (data.action === 'activity_event' && config.onActivity) {
+					config.onActivity(data.payload)
+					return
+				}
+				if (data.action === 'history_change_event' && config.onHistoryUpdate) {
+					config.onHistoryUpdate(data.payload)
+					return
+				}
+				if (data.action !== 'resume_result') return
+
+				window.removeEventListener('message', handleMessage)
+				if (data.error) {
+					reject(new Error(data.error))
+				} else {
+					resolve(data.payload)
+				}
+			}
+
+			window.addEventListener('message', handleMessage)
+		})
+
+		window.postMessage(
+			{
+				channel: 'PAGE_AGENT_EXT_REQUEST',
+				id,
+				action: 'resume',
+			},
+			'*',
 		)
 
 		return promise
@@ -118,14 +178,15 @@ export default defineUnlistedScript(() => {
 				id,
 				action: 'stop',
 			},
-			'*'
+			'*',
 		)
 	}
 
 	;(window as any).PAGE_AGENT_EXT_VERSION = __VERSION__
 	;(window as any).PAGE_AGENT_EXT = {
 		version: __VERSION__,
-		execute,
+		execute: executeWithConfig,
+		resume,
 		stop,
 	}
 })
