@@ -113,6 +113,25 @@ describe('PageAgentCore', () => {
 		agent.dispose()
 	})
 
+	it('exposes the latest observed page URL', async () => {
+		const pageController = createPageController()
+		vi.mocked(pageController.getBrowserState).mockResolvedValue({
+			...browserState,
+			url: 'https://example.com/current#section',
+		})
+		const agent = new PageAgentCore(
+			createConfig({
+				pageController,
+				customFetch: async () =>
+					createToolCallResponse({ done: { text: 'done', success: true } }, 1),
+			}),
+		)
+
+		expect(agent.currentURL).toBe('')
+		await agent.execute('Observe the page and finish')
+		expect(agent.currentURL).toBe('https://example.com/current#section')
+	})
+
 	it('runs beyond 40 steps and reports unbounded step numbers until done', async () => {
 		const userPrompts: string[] = []
 		let step = 0

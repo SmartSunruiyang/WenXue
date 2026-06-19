@@ -1,8 +1,9 @@
-import { type AgentConfig, PageAgentCore } from '@page-agent/core'
+import { type AgentConfig, type AgentStepEvent, PageAgentCore } from '@page-agent/core'
 
+import { createActionSignature, StuckActionGuard } from './actionSignature'
 import { RemotePageController } from './RemotePageController'
-import { TabsController } from './TabsController'
 import SYSTEM_PROMPT from './system_prompt.md?raw'
+import { TabsController } from './TabsController'
 import { createTabTools } from './tabTools'
 
 /** Detect user language from browser settings */
@@ -84,6 +85,8 @@ export class MultiPageAgent extends PageAgentCore {
 
 		const includeInitialTab = config.includeInitialTab ?? true
 		const experimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? false
+		const stuckGuard = new StuckActionGuard(3)
+		const { onBeforeTask, onAfterTask, onBeforeStep, onAfterStep, onDispose } = config
 
 		const runtime = createAgentRuntimeLifecycle({
 			setStorage: (values) => chrome.storage.local.set(values),
@@ -100,27 +103,79 @@ export class MultiPageAgent extends PageAgentCore {
 			customSystemPrompt: systemPrompt,
 
 			onBeforeTask: async (agent) => {
-				await tabsController.init(agent.task, { includeInitialTab, experimentalIncludeAllTabs })
+				stuckGuard.reset()
+				try {
+					await tabsController.init(agent.task, {
+						includeInitialTab,
+						experimentalIncludeAllTabs,
+					})
+					await runtime.start()
+					await onBeforeTask?.(agent)
+				} catch (error) {
+					await runtime.stop()
+					throw error
+				}
+			},
+
+			onAfterTask: async (agent, result) => {
+				try {
+					await runtime.stop()
+				} finally {
+					await onAfterTask?.(agent, result)
+				}
+			},
+
+			onBeforeStep: async (agent, stepCount) => {
 				await runtime.start()
+				if (tabsController.currentTabId) {
+					// make sure the current tab is loaded before the step starts
+					await tabsController.waitUntilTabLoaded(tabsController.currentTabId)
+				}
+				await onBeforeStep?.(agent, stepCount)
 			},
 
-			onAfterTask: async () => {
-				await runtime.stop()
+			onAfterStep: async (agent, history) => {
+				let lastStep: AgentStepEvent | undefined
+				for (let index = history.length - 1; index >= 0; index--) {
+					const event = history[index]
+					if (event.type === 'step') {
+						lastStep = event
+						break
+					}
+				}
+				if (!lastStep) {
+					await onAfterStep?.(agent, history)
+					return
+				}
+
+				const signature = createActionSignature({
+					url: agent.currentURL,
+					action: lastStep.action,
+				})
+				const shouldRequestTakeover = stuckGuard.record(signature)
+
+				await onAfterStep?.(agent, history)
+				if (!shouldRequestTakeover) return
+
+				stuckGuard.reset()
+				if (agent.status !== 'running') return
+
+				await agent.requestUserTakeover({
+					reason: 'stuck',
+					title: '模型可能遇到无法解决的问题',
+					message: '它连续尝试了 3 次相同操作，可能需要你暂时接管页面。',
+					goal: lastStep.reflection.next_goal,
+					lastAction: lastStep.action,
+				})
 			},
 
-			onBeforeStep: async (agent) => {
-				await runtime.start()
-				if (!tabsController.currentTabId) return
-				// make sure the current tab is loaded before the step starts
-				await tabsController.waitUntilTabLoaded(tabsController.currentTabId!)
-			},
-
-			onDispose: () => {
+			onDispose: (agent, reason) => {
 				runtime.stop().catch((error) => {
 					console.error('[MultiPageAgent] Runtime cleanup failed', error)
 				})
 
 				tabsController.dispose()
+				onDispose?.(agent, reason)
 			},
 		})
 	}

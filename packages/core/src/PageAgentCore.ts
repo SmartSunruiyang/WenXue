@@ -164,6 +164,11 @@ export class PageAgentCore extends EventTarget {
 		return this.#status
 	}
 
+	/** Get the URL from the latest observed browser state. */
+	get currentURL(): string {
+		return this.#states.browserState?.url || ''
+	}
+
 	/** Emit statuschange event */
 	#emitStatusChange(): void {
 		this.dispatchEvent(new Event('statuschange'))
