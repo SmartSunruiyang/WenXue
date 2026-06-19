@@ -24,11 +24,18 @@
     `onUserTakeover`，core 会继续动态移除 takeover 工具与卡住守卫。
   - 用真实 EventTarget fake agent 测试状态/历史/活动事件、execute/configure guard、resume、
     reconfiguration cleanup 与 Hub capability；接管按钮测试直接调用生产 action model。
+  - 修复 configure/execute 时序：`configure()` 现在把保存、构造 replacement、绑定与可见状态同步视为
+    一个 awaited transaction；transaction 期间 `execute()` 明确拒绝，不会落到旧 agent。
+  - 抽取 `createAgentForConfig()`，移除依赖 `[config]` 的延迟替换 effect；初始配置加载改为可 abort
+    的单次初始化，卸载或被 configure 抢先时不会绑定过期 agent。
+  - Hub 的 `await configure(); await execute()` 回归测试确认旧 agent 不执行、replacement 执行，
+    且旧 agent 只 dispose 一次。
 
 ## 提交
 
 - `c78abef feat(ext): add manual takeover controls`
-- 本次规格审查修正：`fix(ext): harden manual takeover session guards`
+- `2cafea9 fix(ext): harden manual takeover session guards`
+- 本次 configure race 修正：`fix(ext): await agent replacement during configure`
 
 ## 状态变更
 
@@ -36,8 +43,9 @@
 - 测试：
   - Task 6 focused tests：6 files、39 tests 通过，覆盖 controller、Conversation actions、
     HistoryList/HistoryDetail、Sidepanel history button 与 Hub capability。
-  - `pnpm -F extension test`：19 files、108 tests 通过。
-  - `pnpm -r test`：desktop 34、core 25、llms 58、extension 108 tests，共 225 tests 通过。
+  - configure race focused tests：2 files、31 tests 通过。
+  - `pnpm -F extension test`：19 files、112 tests 通过。
+  - `pnpm -r test`：desktop 34、core 25、llms 58、extension 112 tests，共 229 tests 通过。
   - `pnpm -F extension build`：通过。
   - 目标文件 Prettier check 与 `git diff --check`：通过。
 - 已知非失败项：

@@ -14,6 +14,7 @@ import {
 	createRestoredAgentConversationState,
 	createTakeoverRequestController,
 	hasAgentConversationContent,
+	initializeAgentSession,
 	isAgentTaskActive,
 } from './useAgent'
 
@@ -88,6 +89,16 @@ function createSessionHarness() {
 	return { controller, state }
 }
 
+function createDeferred<T>() {
+	let resolve!: (value: T | PromiseLike<T>) => void
+	let reject!: (reason?: unknown) => void
+	const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+		resolve = resolvePromise
+		reject = rejectPromise
+	})
+	return { promise, resolve, reject }
+}
+
 describe('agent conversation state helpers', () => {
 	it('detects whether the current conversation has visible content', () => {
 		const event = { type: 'observation', content: 'Read page' } as HistoricalEvent
@@ -160,6 +171,53 @@ describe('agent conversation state helpers', () => {
 		['error', false],
 	] as const)('reports whether %s locks the active task', (status, expected) => {
 		expect(isAgentTaskActive(status)).toBe(expected)
+	})
+})
+
+describe('agent session initialization', () => {
+	it('does not create or bind an agent when the initial load is aborted', async () => {
+		const load = createDeferred<string>()
+		const abortController = new AbortController()
+		const createAgent = vi.fn(() => new FakeAgent())
+		const bindAgent = vi.fn()
+		const setConfig = vi.fn()
+
+		const initialization = initializeAgentSession({
+			signal: abortController.signal,
+			loadConfig: () => load.promise,
+			createAgent,
+			bindAgent,
+			setConfig,
+		})
+		abortController.abort()
+		load.resolve('loaded')
+		await initialization
+
+		expect(createAgent).not.toHaveBeenCalled()
+		expect(bindAgent).not.toHaveBeenCalled()
+		expect(setConfig).not.toHaveBeenCalled()
+	})
+
+	it('disposes an agent if initialization is aborted during construction', async () => {
+		const abortController = new AbortController()
+		const agent = new FakeAgent()
+		const bindAgent = vi.fn()
+		const setConfig = vi.fn()
+
+		await initializeAgentSession({
+			signal: abortController.signal,
+			loadConfig: async () => 'loaded',
+			createAgent: () => {
+				abortController.abort()
+				return agent
+			},
+			bindAgent,
+			setConfig,
+		})
+
+		expect(agent.dispose).toHaveBeenCalledTimes(1)
+		expect(bindAgent).not.toHaveBeenCalled()
+		expect(setConfig).not.toHaveBeenCalled()
 	})
 })
 
@@ -360,6 +418,66 @@ describe('agent session controller', () => {
 
 		expect(save).toHaveBeenCalledWith('next')
 		expect(apply).toHaveBeenCalledWith('next-saved')
+	})
+
+	it('keeps configure pending through async replacement and rejects execute during the transaction', async () => {
+		const oldAgent = new FakeAgent()
+		oldAgent.status = 'completed'
+		const { controller } = createSessionHarness()
+		controller.bind(oldAgent, { enableUserTakeover: true })
+		const replacement = createDeferred<void>()
+		const apply = vi.fn(async () => replacement.promise)
+		let configured = false
+
+		const configurePromise = controller
+			.configure('next', async (value) => value, apply)
+			.then(() => {
+				configured = true
+			})
+		await vi.waitFor(() => expect(apply).toHaveBeenCalledTimes(1))
+
+		expect(configured).toBe(false)
+		await expect(controller.execute('Must wait')).rejects.toThrow('Agent is being configured.')
+		expect(oldAgent.execute).not.toHaveBeenCalled()
+
+		replacement.resolve()
+		await configurePromise
+		expect(configured).toBe(true)
+	})
+
+	it('runs the Hub configure-then-execute sequence on the replacement agent', async () => {
+		const oldAgent = new FakeAgent()
+		oldAgent.status = 'completed'
+		oldAgent.task = 'Old task'
+		const replacement = new FakeAgent()
+		replacement.execute.mockResolvedValue({
+			...COMPLETED_RESULT,
+			data: 'replacement result',
+		})
+		const { controller, state } = createSessionHarness()
+		controller.bind(oldAgent, { enableUserTakeover: false })
+
+		await controller.configure(
+			'next',
+			async (value) => value,
+			async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0))
+				controller.bind(replacement, { enableUserTakeover: false })
+			},
+		)
+		const result = await controller.execute('Hub task')
+
+		expect(result.data).toBe('replacement result')
+		expect(oldAgent.execute).not.toHaveBeenCalled()
+		expect(replacement.execute).toHaveBeenCalledWith('Hub task')
+		expect(oldAgent.dispose).toHaveBeenCalledTimes(1)
+		expect(state).toEqual({
+			status: 'idle',
+			history: [],
+			activity: null,
+			currentTask: 'Hub task',
+			takeoverRequest: null,
+		})
 	})
 
 	it('cleans the old resolver once and resets stale UI during allowed reconfiguration', async () => {

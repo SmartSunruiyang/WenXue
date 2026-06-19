@@ -193,6 +193,7 @@ export function isAgentTaskActive(status: AgentStatus): boolean {
 export interface AgentSessionController {
 	bind: (agent: AgentSessionAgent, options: UseAgentOptions) => void
 	unbind: (agent: AgentSessionAgent) => void
+	dispose: () => void
 	execute: (task: string) => Promise<ExecutionResult>
 	stop: () => void
 	resume: () => Promise<ExecutionResult>
@@ -203,7 +204,7 @@ export interface AgentSessionController {
 	configure: <T>(
 		nextConfig: T,
 		save: (config: T) => Promise<T>,
-		apply: (config: T) => void,
+		apply: (config: T) => void | Promise<void>,
 	) => Promise<void>
 }
 
@@ -223,6 +224,7 @@ export function createAgentSessionController(
 	sinks: AgentSessionStateSinks,
 ): AgentSessionController {
 	let binding: AgentSessionBinding | null = null
+	let configuring = false
 
 	const getAgent = (): AgentSessionAgent => {
 		if (!binding) throw new Error('Agent not initialized')
@@ -288,7 +290,11 @@ export function createAgentSessionController(
 			sinks.setTakeoverRequest(null)
 		},
 		unbind: release,
+		dispose() {
+			release()
+		},
 		async execute(task) {
+			if (configuring) throw new Error('Agent is being configured.')
 			const agent = getAgent()
 			assertAgentInactive(agent)
 
@@ -321,8 +327,14 @@ export function createAgentSessionController(
 			return binding ? isAgentTaskActive(binding.agent.status) : false
 		},
 		async configure(nextConfig, save, apply) {
+			if (configuring) throw new Error('Agent is being configured.')
 			if (binding) assertAgentInactive(binding.agent)
-			apply(await save(nextConfig))
+			configuring = true
+			try {
+				await apply(await save(nextConfig))
+			} finally {
+				configuring = false
+			}
 		},
 	}
 }
@@ -357,6 +369,45 @@ export function createRestoredAgentConversationState({
 	}
 }
 
+export function createAgentForConfig(config: ExtConfig): MultiPageAgent {
+	return new MultiPageAgent({
+		baseURL: config.baseURL,
+		model: config.model,
+		apiKey: config.apiKey,
+		language: config.language,
+		experimentalLlmsTxt: config.experimentalLlmsTxt,
+		experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
+		disableNamedToolChoice: config.disableNamedToolChoice,
+		instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
+	})
+}
+
+export async function initializeAgentSession<TConfig>({
+	signal,
+	loadConfig,
+	createAgent,
+	bindAgent,
+	setConfig,
+}: {
+	signal: AbortSignal
+	loadConfig: () => Promise<TConfig>
+	createAgent: (config: TConfig) => AgentSessionAgent
+	bindAgent: (agent: AgentSessionAgent) => void
+	setConfig: (config: TConfig) => void
+}): Promise<void> {
+	const loadedConfig = await loadConfig()
+	if (signal.aborted) return
+
+	const agent = createAgent(loadedConfig)
+	if (signal.aborted) {
+		agent.dispose()
+		return
+	}
+
+	bindAgent(agent)
+	setConfig(loadedConfig)
+}
+
 export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): UseAgentResult {
 	const [status, setStatus] = useState<AgentStatus>('idle')
 	const [history, setHistory] = useState<HistoricalEvent[]>([])
@@ -365,6 +416,8 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 	const [takeoverRequest, setTakeoverRequest] = useState<UserTakeoverRequest | null>(null)
 	const [config, setConfig] = useState<ExtConfig | null>(null)
 	const sessionControllerRef = useRef<AgentSessionController | null>(null)
+	const mountedRef = useRef(false)
+	const initialLoadAbortRef = useRef<AbortController | null>(null)
 	if (!sessionControllerRef.current) {
 		sessionControllerRef.current = createAgentSessionController({
 			setStatus,
@@ -377,31 +430,30 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 	const sessionController = sessionControllerRef.current
 
 	useEffect(() => {
-		loadStoredConfig().then(setConfig)
-	}, [])
-
-	useEffect(() => {
-		if (!config) return
-
-		const agentConfig = {
-			baseURL: config.baseURL,
-			model: config.model,
-			apiKey: config.apiKey,
-			language: config.language,
-			experimentalLlmsTxt: config.experimentalLlmsTxt,
-			experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
-			disableNamedToolChoice: config.disableNamedToolChoice,
-		}
-		const agent = new MultiPageAgent({
-			...agentConfig,
-			instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
+		mountedRef.current = true
+		const abortController = new AbortController()
+		initialLoadAbortRef.current = abortController
+		initializeAgentSession({
+			signal: abortController.signal,
+			loadConfig: () => loadStoredConfig(),
+			createAgent: createAgentForConfig,
+			bindAgent: (agent) => sessionController.bind(agent, { enableUserTakeover }),
+			setConfig,
+		}).catch((error) => {
+			if (!abortController.signal.aborted) {
+				console.error('[useAgent] Failed to initialize agent:', error)
+			}
 		})
-		sessionController.bind(agent, { enableUserTakeover })
 
 		return () => {
-			sessionController.unbind(agent)
+			mountedRef.current = false
+			abortController.abort()
+			if (initialLoadAbortRef.current === abortController) {
+				initialLoadAbortRef.current = null
+			}
+			sessionController.dispose()
 		}
-	}, [config, enableUserTakeover, sessionController])
+	}, [enableUserTakeover, sessionController])
 
 	const execute = useCallback(
 		(task: string) => sessionController.execute(task),
@@ -447,13 +499,28 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 
 	const configure = useCallback(
 		async (nextConfig: ExtConfig) => {
+			initialLoadAbortRef.current?.abort()
+			initialLoadAbortRef.current = null
 			await sessionController.configure(
 				nextConfig,
 				(value) => saveStoredConfig(chrome.storage.local, value),
-				setConfig,
+				async (savedConfig) => {
+					if (!mountedRef.current) {
+						throw createTakeoverAbortError('Agent session has been disposed.')
+					}
+
+					const replacement = createAgentForConfig(savedConfig)
+					if (!mountedRef.current) {
+						replacement.dispose()
+						throw createTakeoverAbortError('Agent session has been disposed.')
+					}
+
+					sessionController.bind(replacement, { enableUserTakeover })
+					setConfig(savedConfig)
+				},
 			)
 		},
-		[sessionController],
+		[enableUserTakeover, sessionController],
 	)
 
 	return {
