@@ -39,6 +39,7 @@ import {
 	type ExtConfig,
 	type LanguagePreference,
 	hasAgentConversationContent,
+	isAgentTaskActive,
 	useAgent,
 } from '../../agent/useAgent'
 
@@ -60,14 +61,20 @@ export default function App() {
 		history,
 		activity,
 		currentTask,
+		takeoverRequest,
 		config,
 		execute,
 		stop,
+		completeUserTakeover,
+		pauseUserTakeover,
+		resume,
 		resetConversation,
 		restoreConversation,
 		configure,
 	} = useAgent()
 	const isRunning = status === 'running'
+	const isTaskLocked = isAgentTaskActive(status)
+	const isAwaitingTakeover = status === 'waiting_for_user' || status === 'paused'
 	const hasVisibleConversation = hasAgentConversationContent({ currentTask, history, activity })
 	const [historyEnterOrigin, setHistoryEnterOrigin] = useState<{ x: number; y: number } | null>(
 		null,
@@ -80,7 +87,7 @@ export default function App() {
 		prevStatusRef.current = status
 
 		if (
-			prev === 'running' &&
+			isAgentTaskActive(prev) &&
 			(status === 'completed' || status === 'error') &&
 			history.length > 0 &&
 			currentTask
@@ -96,12 +103,12 @@ export default function App() {
 		if (historyRef.current) {
 			historyRef.current.scrollTop = historyRef.current.scrollHeight
 		}
-	}, [history, activity])
+	}, [history, activity, takeoverRequest, status])
 
 	const runTask = useCallback(
 		(task: string) => {
 			const normalizedTask = task.trim()
-			if (!normalizedTask || status === 'running') return
+			if (!normalizedTask || isTaskLocked) return
 
 			setInputValue('')
 			setView({ name: 'chat' })
@@ -110,7 +117,7 @@ export default function App() {
 				console.error('[SidePanel] Failed to execute task:', error)
 			})
 		},
-		[execute, status],
+		[execute, isTaskLocked],
 	)
 
 	const handleOpenHistory = useCallback((button: HTMLButtonElement) => {
@@ -150,6 +157,12 @@ export default function App() {
 		stop()
 	}, [stop])
 
+	const handleResume = useCallback(() => {
+		resume().catch((error) => {
+			console.error('[SidePanel] Failed to resume task:', error)
+		})
+	}, [resume])
+
 	useEffect(() => {
 		return () => {
 			if (clearConversationTimeoutRef.current) {
@@ -174,7 +187,7 @@ export default function App() {
 				onBack={() => setView({ name: 'chat' })}
 				onRerun={runTask}
 				onGoToSession={handleGoToSession}
-				canGoToSession={!isRunning}
+				canGoToSession={!isTaskLocked}
 				enterOrigin={historyEnterOrigin}
 			/>
 		)
@@ -187,16 +200,16 @@ export default function App() {
 				onBack={() => setView({ name: 'history' })}
 				onRerun={runTask}
 				onGoToSession={handleGoToSession}
-				canGoToSession={!isRunning}
+				canGoToSession={!isTaskLocked}
 			/>
 		)
 	}
 
 	// --- Chat view ---
 
-	const showEmptyState = !hasVisibleConversation && !isRunning
+	const showEmptyState = !hasVisibleConversation && !isTaskLocked
 	const handleNewConversation = () => {
-		if (isRunning || clearingConversation) return
+		if (isTaskLocked || clearingConversation) return
 
 		setView({ name: 'chat' })
 		if (!hasVisibleConversation) {
@@ -232,7 +245,7 @@ export default function App() {
 						variant="ghost"
 						size="icon-sm"
 						onClick={handleNewConversation}
-						disabled={isRunning || clearingConversation}
+						disabled={isTaskLocked || clearingConversation}
 						className="cursor-pointer"
 						aria-label={t('newConversation')}
 						title={t('newConversation')}
@@ -276,6 +289,11 @@ export default function App() {
 							events={history}
 							activity={activity}
 							running={isRunning}
+							takeoverRequest={takeoverRequest}
+							onCompleteTakeover={completeUserTakeover}
+							onPauseTakeover={pauseUserTakeover}
+							onResumePausedTask={handleResume}
+							status={status}
 						/>
 					)}
 				</div>
@@ -289,12 +307,12 @@ export default function App() {
 						value={inputValue}
 						onChange={(e) => setInputValue(e.target.value)}
 						onKeyDown={handleKeyDown}
-						disabled={isRunning}
+						disabled={isTaskLocked}
 						aria-label={t('describeTask')}
 						className="max-h-36 min-h-11 px-3.5 pb-2 pt-3 text-[14px] leading-relaxed"
 					/>
 					<InputGroupAddon align="block-end" className="justify-between gap-2 px-2.5 pb-2">
-						<ModelMenu config={config} onConfigure={configure} disabled={isRunning} />
+						<ModelMenu config={config} onConfigure={configure} disabled={isTaskLocked} />
 						<div className="flex items-center">
 							<StatusDot status={status} />
 							{isRunning ? (
@@ -308,7 +326,7 @@ export default function App() {
 								>
 									<Square className="size-3" />
 								</InputGroupButton>
-							) : (
+							) : !isAwaitingTakeover ? (
 								<InputGroupButton
 									size="icon-sm"
 									variant="default"
@@ -320,7 +338,7 @@ export default function App() {
 								>
 									<Send className="size-3" />
 								</InputGroupButton>
-							)}
+							) : null}
 						</div>
 					</InputGroupAddon>
 				</InputGroup>

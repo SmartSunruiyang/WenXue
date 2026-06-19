@@ -15,3 +15,19 @@ describe('Sidepanel new conversation transition', () => {
 		expect(source).not.toContain('zoom-out-95')
 	})
 })
+
+describe('Sidepanel active-task locking', () => {
+	it('uses the shared active-status helper for task controls and takeover wiring', () => {
+		const source = readFileSync(APP_SOURCE, 'utf8')
+
+		expect(source).toContain('isAgentTaskActive(status)')
+		expect(source).toContain('canGoToSession={!isTaskLocked}')
+		expect(source).toContain('disabled={isTaskLocked || clearingConversation}')
+		expect(source).toContain('disabled={isTaskLocked}')
+		expect(source).toContain('takeoverRequest={takeoverRequest}')
+		expect(source).toContain('onCompleteTakeover={completeUserTakeover}')
+		expect(source).toContain('onPauseTakeover={pauseUserTakeover}')
+		expect(source).toContain('onResumePausedTask={handleResume}')
+		expect(source).toContain("status === 'waiting_for_user' || status === 'paused'")
+	})
+})

@@ -12,6 +12,8 @@ export function StatusDot({ status }: { status: AgentStatus }) {
 	const colorClass = {
 		idle: 'bg-muted-foreground',
 		running: 'bg-blue-500',
+		waiting_for_user: 'bg-amber-500',
+		paused: 'bg-amber-500/70',
 		completed: 'bg-green-500',
 		error: 'bg-destructive',
 	}[status]
@@ -19,6 +21,8 @@ export function StatusDot({ status }: { status: AgentStatus }) {
 	const label = {
 		idle: t('statusReady'),
 		running: t('statusRunning'),
+		waiting_for_user: t('statusWaitingForUser'),
+		paused: t('statusPaused'),
 		completed: t('statusDone'),
 		error: t('statusError'),
 	}[status]
@@ -26,7 +30,11 @@ export function StatusDot({ status }: { status: AgentStatus }) {
 	return (
 		<div className="flex items-center gap-1.5 mr-2">
 			<span
-				className={cn('size-2 rounded-full', colorClass, status === 'running' && 'animate-pulse')}
+				className={cn(
+					'size-2 rounded-full',
+					colorClass,
+					(status === 'running' || status === 'waiting_for_user') && 'animate-pulse',
+				)}
 			/>
 			<span className="text-xs text-muted-foreground">{label}</span>
 		</div>
