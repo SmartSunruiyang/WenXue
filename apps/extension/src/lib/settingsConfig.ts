@@ -14,7 +14,6 @@ export interface SettingsFormValues {
 	chaoxingVisionModelId?: string
 	language?: LanguagePreference
 	uiLanguage: UILanguage
-	maxSteps?: number
 	systemInstruction: string
 	experimentalLlmsTxt: boolean
 	experimentalIncludeAllTabs: boolean
@@ -56,7 +55,6 @@ export function buildSettingsConfig(values: SettingsFormValues): ExtConfig {
 		),
 		language: values.language,
 		uiLanguage: values.uiLanguage,
-		maxSteps: values.maxSteps || undefined,
 		systemInstruction: values.systemInstruction || undefined,
 		experimentalLlmsTxt: values.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: values.experimentalIncludeAllTabs,
@@ -75,7 +73,6 @@ export function settingsConfigKey(config: ExtConfig): string {
 		chaoxingVisionModelId: config.chaoxingVisionModelId,
 		language: config.language,
 		uiLanguage: config.uiLanguage,
-		maxSteps: config.maxSteps,
 		systemInstruction: config.systemInstruction,
 		experimentalLlmsTxt: config.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,

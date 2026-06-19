@@ -20,7 +20,6 @@ import { MultiPageAgent } from './MultiPageAgent'
 export type LanguagePreference = SupportedLanguage | undefined
 
 export interface AdvancedConfig {
-	maxSteps?: number
 	systemInstruction?: string
 	experimentalLlmsTxt?: boolean
 	experimentalIncludeAllTabs?: boolean
@@ -119,7 +118,6 @@ export function useAgent(): UseAgentResult {
 			model: config.model,
 			apiKey: config.apiKey,
 			language: config.language,
-			maxSteps: config.maxSteps,
 			experimentalLlmsTxt: config.experimentalLlmsTxt,
 			experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
 			disableNamedToolChoice: config.disableNamedToolChoice,

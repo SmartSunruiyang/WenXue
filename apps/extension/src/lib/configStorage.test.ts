@@ -66,7 +66,6 @@ describe('configStorage', () => {
 
 	it('merges language, interface language, and advanced config', async () => {
 		const advancedConfig: AdvancedConfig = {
-			maxSteps: 20,
 			systemInstruction: 'Answer with citations',
 			experimentalLlmsTxt: true,
 		}
@@ -128,6 +127,41 @@ describe('configStorage', () => {
 		expect(config.chaoxingVisionModelId).toBe('model-qwen-vl')
 	})
 
+	it('ignores the legacy step limit while preserving supported advanced config', async () => {
+		const legacyStepLimitKey = ['max', 'Steps'].join('')
+		const storage = createStorage({
+			llmConfig: {
+				baseURL: 'https://api.example.com/v1',
+				model: 'custom-model',
+			},
+			advancedConfig: {
+				[legacyStepLimitKey]: 20,
+				systemInstruction: 'Answer with citations',
+				experimentalLlmsTxt: true,
+				experimentalIncludeAllTabs: false,
+				disableNamedToolChoice: true,
+			},
+		})
+
+		const config = await loadStoredConfig(storage)
+
+		expect(config).toStrictEqual({
+			baseURL: 'https://api.example.com/v1',
+			model: 'custom-model',
+			selectedModelId: BUILT_IN_MODEL_ID,
+			customModels: [],
+			language: undefined,
+			uiLanguage: undefined,
+			systemInstruction: 'Answer with citations',
+			experimentalLlmsTxt: true,
+			experimentalIncludeAllTabs: false,
+			disableNamedToolChoice: true,
+			chaoxingTextModelId: undefined,
+			chaoxingVisionModelId: undefined,
+		})
+		expect(config).not.toHaveProperty(legacyStepLimitKey)
+	})
+
 	it('loads a selected custom model as the active LLM config', async () => {
 		const customModels: CustomModelConfig[] = [
 			{
@@ -162,7 +196,6 @@ describe('configStorage', () => {
 			model: 'custom-model',
 			apiKey: 'sk-test',
 			uiLanguage: 'en-US',
-			maxSteps: 24,
 			systemInstruction: 'Be direct',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
@@ -182,7 +215,17 @@ describe('configStorage', () => {
 		expect(storage.set).toHaveBeenCalledWith({ customModels: [] })
 		expect(storage.set).toHaveBeenCalledWith({
 			advancedConfig: {
-				maxSteps: 24,
+				systemInstruction: 'Be direct',
+				experimentalLlmsTxt: false,
+				experimentalIncludeAllTabs: true,
+				disableNamedToolChoice: true,
+			},
+		})
+		const advancedConfigPayload = storage.set.mock.calls.find(
+			([payload]) => 'advancedConfig' in payload,
+		)?.[0]
+		expect(advancedConfigPayload).toStrictEqual({
+			advancedConfig: {
 				systemInstruction: 'Be direct',
 				experimentalLlmsTxt: false,
 				experimentalIncludeAllTabs: true,

@@ -45,7 +45,13 @@ export async function loadStoredConfig(
 		: ((result.llmConfig as LLMConfig | undefined) ?? DEMO_CONFIG)
 	const language = (result.language as SupportedLanguage | undefined) || undefined
 	const uiLanguage = (result.uiLanguage as UILanguage | undefined) || undefined
-	const advancedConfig = (result.advancedConfig as AdvancedConfig | undefined) ?? {}
+	const storedAdvancedConfig = (result.advancedConfig as AdvancedConfig | undefined) ?? {}
+	const advancedConfig: AdvancedConfig = {
+		systemInstruction: storedAdvancedConfig.systemInstruction,
+		experimentalLlmsTxt: storedAdvancedConfig.experimentalLlmsTxt,
+		experimentalIncludeAllTabs: storedAdvancedConfig.experimentalIncludeAllTabs,
+		disableNamedToolChoice: storedAdvancedConfig.disableNamedToolChoice,
+	}
 	const chaoxingTextModelId =
 		typeof result.chaoxingTextModelId === 'string' ? result.chaoxingTextModelId : undefined
 	const chaoxingVisionModelId =
@@ -76,7 +82,6 @@ export async function saveStoredConfig(
 	{
 		language,
 		uiLanguage,
-		maxSteps,
 		systemInstruction,
 		experimentalLlmsTxt,
 		experimentalIncludeAllTabs,
@@ -118,7 +123,6 @@ export async function saveStoredConfig(
 	}
 
 	const advancedConfig: AdvancedConfig = {
-		maxSteps,
 		systemInstruction,
 		experimentalLlmsTxt,
 		experimentalIncludeAllTabs,

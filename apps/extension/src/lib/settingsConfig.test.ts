@@ -11,14 +11,13 @@ describe('settingsConfig', () => {
 			customModels: [],
 			language: undefined,
 			uiLanguage: 'zh-CN',
-			maxSteps: 0,
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
 			disableNamedToolChoice: false,
 		})
 
-		expect(config).toEqual({
+		expect(config).toStrictEqual({
 			...DEMO_CONFIG,
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels: [],
@@ -26,7 +25,6 @@ describe('settingsConfig', () => {
 			chaoxingVisionModelId: undefined,
 			language: undefined,
 			uiLanguage: 'zh-CN',
-			maxSteps: undefined,
 			systemInstruction: undefined,
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
@@ -88,7 +86,6 @@ describe('settingsConfig', () => {
 			customModels,
 			language: undefined,
 			uiLanguage: 'zh-CN',
-			maxSteps: undefined,
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
@@ -119,7 +116,6 @@ describe('settingsConfig', () => {
 			customModels: [customModel],
 			language: undefined,
 			uiLanguage: 'zh-CN',
-			maxSteps: undefined,
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
@@ -153,7 +149,6 @@ describe('settingsConfig', () => {
 			chaoxingVisionModelId: 'model-qwen',
 			language: 'en-US' as const,
 			uiLanguage: 'en-US' as const,
-			maxSteps: 24,
 			systemInstruction: 'Be concise',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,

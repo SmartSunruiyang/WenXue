@@ -1,6 +1,7 @@
-import { type AgentConfig, PageAgentCore } from '@page-agent/core'
+import { type AgentConfig, type AgentStepEvent, PageAgentCore } from '@page-agent/core'
 import type { LLMConfig } from '@page-agent/llms'
 
+import { createActionSignature, StuckActionGuard } from './actionSignature'
 import { createChaoxingTools } from './chaoxing/tools'
 import { RemotePageController } from './RemotePageController'
 import SYSTEM_PROMPT from './system_prompt.md?raw'
@@ -21,6 +22,52 @@ interface MultiPageAgentConfig extends AgentConfig {
 	 * 不传则回退到 agent 自身的模型作为 text、vision 留空(含图题进入人工)。
 	 */
 	chaoxingModels?: { text: LLMConfig; vision: LLMConfig }
+}
+
+export function createAgentRuntimeLifecycle({
+	setStorage,
+	setInterval,
+	clearInterval,
+	now,
+	onHeartbeatError = console.error,
+}: {
+	setStorage: (values: Record<string, unknown>) => Promise<void>
+	setInterval: (callback: () => void, delay: number) => number
+	clearInterval: (intervalId: number) => void
+	now: () => number
+	onHeartbeatError?: (error: unknown) => void
+}) {
+	let heartBeatInterval: number | null = null
+	let running = false
+
+	return {
+		async start(): Promise<void> {
+			if (running) return
+			running = true
+			heartBeatInterval = setInterval(() => {
+				setStorage({ agentHeartbeat: now() }).catch(onHeartbeatError)
+			}, 1_000)
+
+			try {
+				await setStorage({ isAgentRunning: true })
+			} catch (error) {
+				clearInterval(heartBeatInterval)
+				heartBeatInterval = null
+				running = false
+				throw error
+			}
+		},
+
+		async stop(): Promise<void> {
+			if (!running) return
+			running = false
+			if (heartBeatInterval !== null) {
+				clearInterval(heartBeatInterval)
+				heartBeatInterval = null
+			}
+			await setStorage({ isAgentRunning: false })
+		},
+	}
 }
 
 /**
@@ -58,15 +105,16 @@ export class MultiPageAgent extends PageAgentCore {
 
 		const includeInitialTab = config.includeInitialTab ?? true
 		const experimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? false
+		const stuckGuard = new StuckActionGuard(3)
+		const { onBeforeTask, onAfterTask, onBeforeStep, onAfterStep, onDispose } = config
 
-		/**
-		 * When the agent is in side-panel and user closed the side-panel.
-		 * There is no chance for isAgentRunning to be set false.
-		 * (unload event doesn't work well in side panel.)
-		 * (I'm trying not to use long-lived connection because the lifecycle of a sw is hard to predict.)
-		 * This heartbeat mechanism acts as a backup.
-		 */
-		let heartBeatInterval: null | number = null
+		const runtime = createAgentRuntimeLifecycle({
+			setStorage: (values) => chrome.storage.local.set(values),
+			setInterval: (callback, delay) => window.setInterval(callback, delay),
+			clearInterval: (intervalId) => window.clearInterval(intervalId),
+			now: () => Date.now(),
+			onHeartbeatError: (error) => console.error('[MultiPageAgent] Heartbeat failed', error),
+		})
 
 		super({
 			...config,
@@ -75,47 +123,79 @@ export class MultiPageAgent extends PageAgentCore {
 			customSystemPrompt: systemPrompt,
 
 			onBeforeTask: async (agent) => {
-				await tabsController.init(agent.task, { includeInitialTab, experimentalIncludeAllTabs })
-
-				heartBeatInterval = window.setInterval(() => {
-					chrome.storage.local.set({
-						agentHeartbeat: Date.now(),
+				stuckGuard.reset()
+				try {
+					await tabsController.init(agent.task, {
+						includeInitialTab,
+						experimentalIncludeAllTabs,
 					})
-				}, 1_000)
+					await runtime.start()
+					await onBeforeTask?.(agent)
+				} catch (error) {
+					await runtime.stop()
+					throw error
+				}
+			},
 
-				await chrome.storage.local.set({
-					isAgentRunning: true,
+			onAfterTask: async (agent, result) => {
+				try {
+					await runtime.stop()
+				} finally {
+					await onAfterTask?.(agent, result)
+				}
+			},
+
+			onBeforeStep: async (agent, stepCount) => {
+				await runtime.start()
+				if (tabsController.currentTabId) {
+					// make sure the current tab is loaded before the step starts
+					await tabsController.waitUntilTabLoaded(tabsController.currentTabId)
+				}
+				await onBeforeStep?.(agent, stepCount)
+			},
+
+			onAfterStep: async (agent, history) => {
+				let lastStep: AgentStepEvent | undefined
+				for (let index = history.length - 1; index >= 0; index--) {
+					const event = history[index]
+					if (event.type === 'step') {
+						lastStep = event
+						break
+					}
+				}
+				if (!lastStep) {
+					await onAfterStep?.(agent, history)
+					return
+				}
+
+				const signature = createActionSignature({
+					url: agent.currentURL,
+					action: lastStep.action,
+				})
+				const shouldRequestTakeover = stuckGuard.record(signature)
+
+				await onAfterStep?.(agent, history)
+				if (!shouldRequestTakeover) return
+
+				stuckGuard.reset()
+				if (agent.status !== 'running') return
+
+				await agent.requestUserTakeover({
+					reason: 'stuck',
+					title: '模型可能遇到无法解决的问题',
+					message: '它连续尝试了 3 次相同操作，可能需要你暂时接管页面。',
+					goal: lastStep.reflection.next_goal,
+					lastAction: lastStep.action,
 				})
 			},
 
-			onAfterTask: async () => {
-				if (heartBeatInterval) {
-					window.clearInterval(heartBeatInterval)
-					heartBeatInterval = null
-				}
-
-				await chrome.storage.local.set({
-					isAgentRunning: false,
-				})
-			},
-
-			onBeforeStep: async (agent) => {
-				if (!tabsController.currentTabId) return
-				// make sure the current tab is loaded before the step starts
-				await tabsController.waitUntilTabLoaded(tabsController.currentTabId!)
-			},
-
-			onDispose: () => {
-				if (heartBeatInterval) {
-					window.clearInterval(heartBeatInterval)
-					heartBeatInterval = null
-				}
-
-				chrome.storage.local.set({
-					isAgentRunning: false,
+			onDispose: (agent, reason) => {
+				runtime.stop().catch((error) => {
+					console.error('[MultiPageAgent] Runtime cleanup failed', error)
 				})
 
 				tabsController.dispose()
+				onDispose?.(agent, reason)
 			},
 		})
 	}

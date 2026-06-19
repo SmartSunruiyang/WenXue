@@ -11,12 +11,6 @@ export interface AgentConfig extends LLMConfig {
 	language?: SupportedLanguage
 
 	/**
-	 * Maximum number of steps the agent can take per task.
-	 * @default 40
-	 */
-	maxSteps?: number
-
-	/**
 	 * Custom tools to extend PageAgent capabilities
 	 * @experimental
 	 * @note You can also override or remove internal tools by using the same name.
@@ -225,11 +219,36 @@ export interface ObservationEvent {
 	content: string
 }
 
+export type UserTakeoverReason =
+	| 'login'
+	| 'captcha'
+	| 'permission'
+	| 'page_unavailable'
+	| 'stuck'
+	| 'other'
+
+export interface UserTakeoverRequest {
+	id: string
+	reason: UserTakeoverReason
+	title: string
+	message: string
+	goal?: string
+	lastAction?: {
+		name: string
+		input: unknown
+		output: string
+	}
+}
+
+export type UserTakeoverResolution = 'completed' | 'paused'
+
 /**
  * User takeover event
  */
 export interface UserTakeoverEvent {
 	type: 'user_takeover'
+	request: UserTakeoverRequest
+	status: 'waiting' | 'completed' | 'paused'
 }
 
 /**
@@ -264,7 +283,7 @@ export type HistoricalEvent =
 /**
  * Agent execution status
  */
-export type AgentStatus = 'idle' | 'running' | 'completed' | 'error'
+export type AgentStatus = 'idle' | 'running' | 'waiting_for_user' | 'paused' | 'completed' | 'error'
 
 /**
  * Agent activity - transient state for immediate UI feedback.
@@ -280,10 +299,12 @@ export type AgentActivity =
 	| { type: 'executing'; tool: string; input: unknown }
 	| { type: 'executed'; tool: string; input: unknown; output: string; duration: number }
 	| { type: 'retrying'; attempt: number; maxAttempts: number }
+	| { type: 'waiting_for_user'; request: UserTakeoverRequest }
 	| { type: 'error'; message: string }
 
 export interface ExecutionResult {
 	success: boolean
 	data: string
 	history: HistoricalEvent[]
+	state?: 'completed' | 'error' | 'paused'
 }

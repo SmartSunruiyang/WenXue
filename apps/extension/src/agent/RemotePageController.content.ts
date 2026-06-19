@@ -3,6 +3,8 @@
  */
 import { PageController } from '@page-agent/page-controller'
 
+import { shouldShowAgentMask } from './RemotePageController'
+
 export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
@@ -28,14 +30,26 @@ export function initPageController() {
 	}
 
 	intervalID = window.setInterval(async () => {
-		const agentHeartbeat = (await chrome.storage.local.get('agentHeartbeat')).agentHeartbeat
+		const {
+			agentHeartbeat,
+			isAgentRunning,
+			currentTabId,
+			isAgentInteractionPaused = false,
+		} = await chrome.storage.local.get([
+			'agentHeartbeat',
+			'isAgentRunning',
+			'currentTabId',
+			'isAgentInteractionPaused',
+		])
 		const now = Date.now()
 		const agentInTouch = typeof agentHeartbeat === 'number' && now - agentHeartbeat < 2_000
-
-		const isAgentRunning = (await chrome.storage.local.get('isAgentRunning')).isAgentRunning
-		const currentTabId = (await chrome.storage.local.get('currentTabId')).currentTabId
-
-		const shouldShowMask = isAgentRunning && agentInTouch && currentTabId === (await myTabIdPromise)
+		const shouldShowMask = shouldShowAgentMask({
+			isAgentRunning: Boolean(isAgentRunning),
+			agentInTouch,
+			currentTabId: typeof currentTabId === 'number' ? currentTabId : null,
+			myTabId: await myTabIdPromise,
+			isAgentInteractionPaused: Boolean(isAgentInteractionPaused),
+		})
 
 		if (shouldShowMask) {
 			const pc = getPC()
@@ -88,7 +102,7 @@ export function initPageController() {
 						sendResponse({
 							success: false,
 							error: error instanceof Error ? error.message : String(error),
-						})
+						}),
 					)
 				break
 
