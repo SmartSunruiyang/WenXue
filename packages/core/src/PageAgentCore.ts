@@ -32,6 +32,7 @@ export type * from './types'
 export type PageAgentCoreConfig = AgentConfig & { pageController: PageController }
 
 const MANUAL_TAKEOVER_RULES_PATTERN = /<manual_takeover_rules>[\s\S]*?<\/manual_takeover_rules>\s*/g
+const ASK_USER_RULES_PATTERN = /<ask_user_rules>[\s\S]*?<\/ask_user_rules>\s*/g
 
 /**
  * AI agent for browser automation.
@@ -295,11 +296,6 @@ export class PageAgentCore extends EventTarget {
 		this.#setStatus('running')
 		this.#emitHistoryChange()
 
-		// Disable ask_user tool if onAskUser is not set
-		if (!this.onAskUser) {
-			this.tools.delete('ask_user')
-		}
-
 		return this.#runTaskLoop({ setupTask: true })
 	}
 
@@ -398,11 +394,10 @@ export class PageAgentCore extends EventTarget {
 				// assemble prompts
 
 				const availableTools = this.#getAvailableTools()
-				const manualTakeoverEnabled = availableTools.has('request_user_takeover')
 				const messages = [
 					{
 						role: 'system' as const,
-						content: this.#getSystemPrompt(manualTakeoverEnabled),
+						content: this.#getSystemPrompt(availableTools),
 					},
 					{ role: 'user' as const, content: await this.#assembleUserPrompt() },
 				]
@@ -679,7 +674,7 @@ export class PageAgentCore extends EventTarget {
 	/**
 	 * Get system prompt, dynamically replace language settings based on configured language
 	 */
-	#getSystemPrompt(manualTakeoverEnabled: boolean): string {
+	#getSystemPrompt(availableTools: typeof this.tools): string {
 		const basePrompt = this.config.customSystemPrompt
 			? this.config.customSystemPrompt
 			: SYSTEM_PROMPT.replace(
@@ -687,14 +682,20 @@ export class PageAgentCore extends EventTarget {
 					`Default working language: **${this.config.language === 'zh-CN' ? '中文' : 'English'}**`,
 				)
 
-		return manualTakeoverEnabled
-			? basePrompt
-			: basePrompt.replace(MANUAL_TAKEOVER_RULES_PATTERN, '')
+		let prompt = basePrompt
+		if (!availableTools.has('request_user_takeover')) {
+			prompt = prompt.replace(MANUAL_TAKEOVER_RULES_PATTERN, '')
+		}
+		if (!availableTools.has('ask_user')) {
+			prompt = prompt.replace(ASK_USER_RULES_PATTERN, '')
+		}
+		return prompt
 	}
 
 	#getAvailableTools(): typeof this.tools {
 		const availableTools = new Map(this.tools)
 		if (!this.onUserTakeover) availableTools.delete('request_user_takeover')
+		if (!this.onAskUser) availableTools.delete('ask_user')
 		return availableTools
 	}
 

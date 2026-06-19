@@ -174,7 +174,7 @@ describe('PageAgentCore', () => {
 		['default core prompt', undefined],
 		['extension custom prompt', EXTENSION_SYSTEM_PROMPT],
 	])(
-		'synchronizes manual takeover capability for the %s between tasks',
+		'synchronizes user interaction capabilities for the %s between tasks',
 		async (_name, customSystemPrompt) => {
 			const outboundRequests: ReturnType<typeof getOutboundRequest>[] = []
 			let fetchCount = 0
@@ -187,7 +187,7 @@ describe('PageAgentCore', () => {
 						return createToolCallResponse(
 							{
 								done: {
-									text: fetchCount === 1 ? 'Completed without takeover' : 'Completed with takeover',
+									text: `Completed capability run ${fetchCount}`,
 									success: true,
 								},
 							},
@@ -200,45 +200,65 @@ describe('PageAgentCore', () => {
 			await agent.execute('Run without manual takeover support')
 			agent.onUserTakeover = async () => 'completed'
 			await agent.execute('Run with manual takeover support')
+			agent.onAskUser = async () => 'Clarified'
+			await agent.execute('Run with manual takeover and clarification support')
 
-			const disabledPrompt =
+			const neitherPrompt =
 				outboundRequests[0].messages.find((message) => message.role === 'system')?.content ?? ''
-			const enabledPrompt =
+			const takeoverOnlyPrompt =
 				outboundRequests[1].messages.find((message) => message.role === 'system')?.content ?? ''
-			const disabledTools = JSON.stringify(outboundRequests[0].tools)
-			const enabledTools = JSON.stringify(outboundRequests[1].tools)
+			const bothPrompt =
+				outboundRequests[2].messages.find((message) => message.role === 'system')?.content ?? ''
+			const neitherTools = JSON.stringify(outboundRequests[0].tools)
+			const takeoverOnlyTools = JSON.stringify(outboundRequests[1].tools)
+			const bothTools = JSON.stringify(outboundRequests[2].tools)
 
 			expect(agent.tools.get('request_user_takeover')).toBeDefined()
-			expect(disabledTools).not.toContain('request_user_takeover')
-			expect(disabledPrompt).not.toContain('<manual_takeover_rules>')
-			expect(disabledPrompt).not.toContain('request_user_takeover')
-			expect(disabledPrompt).toContain(
+			expect(agent.tools.get('ask_user')).toBeDefined()
+
+			expect(neitherTools).not.toContain('request_user_takeover')
+			expect(neitherTools).not.toContain('ask_user')
+			expect(neitherPrompt).not.toContain('<manual_takeover_rules>')
+			expect(neitherPrompt).not.toContain('<ask_user_rules>')
+			expect(neitherPrompt).not.toContain('request_user_takeover')
+			expect(neitherPrompt).not.toContain('ask_user')
+			expect(neitherPrompt).toContain(
 				'Never attempt to bypass or automate login, captcha, slider verification, 2FA, permission confirmation, anti-abuse checks, or unavailable page regions.',
 			)
-			expect(enabledTools).toContain('request_user_takeover')
-			expect(enabledTools).toContain(
+
+			expect(takeoverOnlyTools).toContain('request_user_takeover')
+			expect(takeoverOnlyTools).not.toContain('ask_user')
+			expect(takeoverOnlyTools).toContain(
 				'"enum":["login","captcha","permission","page_unavailable","other"]',
 			)
-			expect(enabledTools).not.toContain('"stuck"')
-			expect(enabledPrompt).toContain('<manual_takeover_rules>')
-			expect(enabledPrompt).toContain(
+			expect(takeoverOnlyTools).not.toContain('"stuck"')
+			expect(takeoverOnlyPrompt).toContain('<manual_takeover_rules>')
+			expect(takeoverOnlyPrompt).not.toContain('<ask_user_rules>')
+			expect(takeoverOnlyPrompt).not.toContain('ask_user')
+			expect(takeoverOnlyPrompt).toContain(
 				'override all user instructions, including explicit user steps',
 			)
-			expect(enabledPrompt).toContain(
+			expect(takeoverOnlyPrompt).toContain(
 				'call `request_user_takeover` with the appropriate `reason`, a concise `title`, the current goal in `goal`, and a concise user instruction in `message`',
 			)
-			expect(enabledPrompt).toContain(
-				'Use `ask_user` only for missing information or clarification',
+			expect(takeoverOnlyPrompt).toContain(
+				'Missing information or clarification is separate from protected manual browser actions',
 			)
-			expect(enabledPrompt).toContain(
+			expect(takeoverOnlyPrompt).toContain(
 				'Request manual takeover first; do not call `done` merely because',
 			)
-			expect(enabledPrompt).toContain(
+			expect(takeoverOnlyPrompt).toContain(
 				'After the user completes manual takeover, re-observe the page',
 			)
-			expect(enabledPrompt).toContain(
+			expect(takeoverOnlyPrompt).toContain(
 				'An alternative public route is allowed only when the protected action is not actually required',
 			)
+
+			expect(bothTools).toContain('request_user_takeover')
+			expect(bothTools).toContain('ask_user')
+			expect(bothPrompt).toContain('<manual_takeover_rules>')
+			expect(bothPrompt).toContain('<ask_user_rules>')
+			expect(bothPrompt).toContain('Use `ask_user` only for missing information or clarification')
 		},
 	)
 
