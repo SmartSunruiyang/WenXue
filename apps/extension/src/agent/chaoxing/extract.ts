@@ -8,7 +8,7 @@
  *   - 完形/填空的 textarea/iframe 容器 `cx.ts:862-875`
  *
  * 图片处理（Task 9，Spec §8.1）在 DOM 阶段同步完成「分类与占位」——装饰图丢弃、
- * 有文本源（LaTeX / alt / title）的图转成文本就地内联、其余图发成 `{type:'image'}`
+ * 带 `data-latex` 的公式图转成 `$…$` 文本就地内联、其余图发成 `{type:'image'}`
  * 占位部件（仅带 `fallbackUrl`，base64 抓取是异步、由 `images.ts` 之后补 `dataUrl`）。
  * 标签编码回填绑定：题干图为 `题干图N`，选项图为 `选项<key>图`。本文件保持**同步**、
  * 无 `chrome.*` / `fetch` / canvas / 副作用，故可在 jsdom 单测。
@@ -71,9 +71,9 @@ export function mapTypeCode(code: number): QType {
  * - `decorative`：丢弃（不入内容流）。判据为**测试可见**的属性：宽/高属性 <24px、
  *   已知图标 / spacer 类名、或 `data:` 内联占位 src。jsdom 无布局故 `naturalWidth` 恒 0，
  *   仅作真实浏览器下的额外佐证（属性已判装饰时不再二次确认）。
- * - `text`：有可用文本源（`data-latex` → `$…$`；否则有意义的 `alt` / `title`）。原位输出
- *   文本、丢弃图片（更省更准，无需抓取）。
- * - `visual`：以上皆否，需作为图片部件发给视觉模型。
+ * - `text`：仅 `data-latex` → `$…$`（公式用 LaTeX 表达比抓图更省更准）。
+ * - `visual`：其余非装饰图一律作为图片部件发给视觉模型。**不**因 `alt` / `title` 把图转文本——
+ *   那会把真实示意图（受力图 / 电路图 / 图象）误当文本丢掉，使视觉模型看不到图而盲答。
  */
 type ImageClass = { kind: 'decorative' } | { kind: 'text'; text: string } | { kind: 'visual' }
 
@@ -82,11 +82,6 @@ function classifyImage(img: HTMLImageElement): ImageClass {
 
 	const latex = img.getAttribute('data-latex')?.trim()
 	if (latex) return { kind: 'text', text: `$${latex}$` }
-
-	const alt = img.getAttribute('alt')?.trim()
-	if (alt) return { kind: 'text', text: alt }
-	const title = img.getAttribute('title')?.trim()
-	if (title) return { kind: 'text', text: title }
 
 	return { kind: 'visual' }
 }

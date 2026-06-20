@@ -83,7 +83,7 @@ describe('resolveQuestionImages', () => {
 		expect(optImg.dataUrl).toBe('data:image/jpeg;base64,DEDUP')
 	})
 
-	it('on a failed STEM image: keeps fallbackUrl, leaves dataUrl unset, does NOT set needsReview', async () => {
+	it('on a failed STEM image: keeps fallbackUrl, leaves dataUrl unset, AND sets needsReview', async () => {
 		const fetchImpl = vi.fn(
 			async () => new Response('forbidden', { status: 403 }),
 		) as unknown as typeof fetch
@@ -96,8 +96,8 @@ describe('resolveQuestionImages', () => {
 		const img = out.stem[1] as Extract<ContentPart, { type: 'image' }>
 		expect(img.dataUrl).toBeUndefined()
 		expect(img.fallbackUrl).toBe('https://x/blocked.png')
-		// stem image failure is recoverable (URL fallback in serialize) → not unanswerable.
-		expect(out.needsReview).toBe(false)
+		// 题干图抓取失败 = 模型看不到题面的图 → 宁可标记人工，绝不对图盲答。
+		expect(out.needsReview).toBe(true)
 	})
 
 	it('on a failed OPTION image: keeps fallbackUrl AND sets needsReview (image-as-answer, §8.4)', async () => {

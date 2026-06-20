@@ -21,6 +21,8 @@
 
 import type { LLMConfig } from '@page-agent/llms'
 
+import { logger } from '@/lib/logger'
+
 import type { FillResult } from './fill'
 import { askStructured } from './llm'
 import { schemaForQuestion } from './schema'
@@ -73,19 +75,27 @@ interface QuestionOutcome {
  */
 async function answerQuestion(q: ChaoxingQuestion, deps: SolveDeps): Promise<QuestionOutcome> {
 	// 1) 上游已判定需人工 / 未知题型 → 不调 LLM。
-	if (q.needsReview) return review(q, 'needsReview')
-	if (q.type === 'unknown') return review(q, 'unknown type')
+	if (q.needsReview) {
+		logger.info('chaoxing', `question ${q.id} → needsReview (upstream)`, { questionId: q.id, type: q.type })
+		return review(q, 'needsReview')
+	}
+	if (q.type === 'unknown') {
+		logger.info('chaoxing', `question ${q.id} → needsReview (unknown type)`, { questionId: q.id })
+		return review(q, 'unknown type')
+	}
 
 	// 2) 选模型：含图走 vision，否则 text。缺模型 → 人工。
 	const models = deps.getModels()
 	const model = q.hasImages ? models.vision : models.text
+	const route = q.hasImages ? 'vision' : 'text'
 	if (!model) {
-		const which = q.hasImages ? 'vision' : 'text'
-		return review(q, `no ${which} model configured`)
+		logger.warn('chaoxing', `question ${q.id} → needsReview (no ${route} model)`, { questionId: q.id, hasImages: q.hasImages })
+		return review(q, `no ${route} model configured`)
 	}
 
 	// 3) 调 LLM 拿结构化 payload；抛错 → 人工(原因带错误信息)，绝不猜答案。
 	try {
+		logger.info('chaoxing', `question ${q.id} → ${route} LLM`, { questionId: q.id, type: q.type, route })
 		const ask = deps.ask ?? askStructured
 		const { messages } = serializeQuestion(q)
 		const payload = (await ask(model, messages, schemaForQuestion(q), {
@@ -97,9 +107,11 @@ async function answerQuestion(q: ChaoxingQuestion, deps: SolveDeps): Promise<Que
 			...payload,
 			needsReview: false,
 		}
+		logger.info('chaoxing', `question ${q.id} ✓ answered`, { questionId: q.id, type: q.type, route })
 		return { answer }
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
+		logger.error('chaoxing', `question ${q.id} → needsReview (llm_error)`, { questionId: q.id, error: message })
 		return review(q, `llm_error: ${message}`)
 	}
 }
@@ -182,6 +194,7 @@ async function solvePage(deps: SolveDeps, concurrency: number): Promise<PageStat
  */
 export async function solveChaoxing(deps: SolveDeps, input: SolveInput): Promise<string> {
 	const concurrency = deps.concurrency ?? 4
+	logger.info('chaoxing', `solve started: scope=${input.scope}`)
 
 	let total = 0
 	let filled = 0
@@ -195,6 +208,7 @@ export async function solveChaoxing(deps: SolveDeps, input: SolveInput): Promise
 		// 每页读题前先探中断：命中人脸 / 字体反爬 → 立刻停，绝不读题 / 调 LLM / 回填 / 绕过。
 		const interrupt = await deps.bridge.probeInterrupts()
 		if (interrupt.faceRecognition || interrupt.suspiciousFont) {
+			logger.warn('chaoxing', `interrupted: face=${interrupt.faceRecognition} font=${interrupt.suspiciousFont}`)
 			return buildInterruptSummary(interrupt, filled)
 		}
 
@@ -203,6 +217,13 @@ export async function solveChaoxing(deps: SolveDeps, input: SolveInput): Promise
 		filled += stats.filled
 		needsHuman.push(...stats.needsHuman)
 		pages++
+
+		logger.info('chaoxing', `page ${pages} done: ${stats.filled}/${stats.total} filled`, {
+			page: pages,
+			total: stats.total,
+			filled: stats.filled,
+			needsHuman: stats.needsHuman.length,
+		})
 
 		if (input.scope !== 'all_pages') break
 		if (pages >= MAX_PAGES) {
@@ -214,6 +235,12 @@ export async function solveChaoxing(deps: SolveDeps, input: SolveInput): Promise
 		if (!hasNext) break
 	}
 
+	logger.info('chaoxing', `solve finished: ${filled}/${total} filled across ${pages} pages`, {
+		total,
+		filled,
+		needsHuman: needsHuman.length,
+		pages,
+	})
 	return buildSummary({ total, filled, needsHuman, pages, hitPageCap })
 }
 

@@ -1,6 +1,8 @@
 import { type AgentConfig, type AgentStepEvent, PageAgentCore } from '@page-agent/core'
 import type { LLMConfig } from '@page-agent/llms'
 
+import { logger } from '@/lib/logger'
+
 import { createActionSignature, StuckActionGuard } from './actionSignature'
 import { createChaoxingTools } from './chaoxing/tools'
 import { RemotePageController } from './RemotePageController'
@@ -123,6 +125,7 @@ export class MultiPageAgent extends PageAgentCore {
 			customSystemPrompt: systemPrompt,
 
 			onBeforeTask: async (agent) => {
+				logger.info('agent', `task started: ${agent.task}`, { task: agent.task })
 				stuckGuard.reset()
 				try {
 					await tabsController.init(agent.task, {
@@ -138,6 +141,7 @@ export class MultiPageAgent extends PageAgentCore {
 			},
 
 			onAfterTask: async (agent, result) => {
+				logger.info('agent', `task finished: ${result}`, { task: agent.task, result })
 				try {
 					await runtime.stop()
 				} finally {
@@ -167,6 +171,11 @@ export class MultiPageAgent extends PageAgentCore {
 					await onAfterStep?.(agent, history)
 					return
 				}
+
+				logger.info('agent', `step: ${lastStep.action}`, {
+					action: lastStep.action,
+					reflection: lastStep.reflection.next_goal,
+				})
 
 				const signature = createActionSignature({
 					url: agent.currentURL,
@@ -208,6 +217,7 @@ export class MultiPageAgent extends PageAgentCore {
 			},
 
 			onDispose: (agent, reason) => {
+				logger.info('agent', `agent disposed: ${reason}`, { reason })
 				runtime.stop().catch((error) => {
 					console.error('[MultiPageAgent] Runtime cleanup failed', error)
 				})

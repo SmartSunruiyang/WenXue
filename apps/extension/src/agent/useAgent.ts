@@ -30,6 +30,8 @@ export interface AdvancedConfig {
 	experimentalLlmsTxt?: boolean
 	experimentalIncludeAllTabs?: boolean
 	disableNamedToolChoice?: boolean
+	logRetentionDays?: number
+	logMaxEntries?: number
 }
 
 export interface ExtConfig extends LLMConfig, AdvancedConfig {

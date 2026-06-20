@@ -1,8 +1,10 @@
 import type { HistoricalEvent } from '@page-agent/core'
 import { type DBSchema, type IDBPDatabase, openDB } from 'idb'
 
+import type { LogEntry } from './logTypes'
+
 const DB_NAME = 'page-agent-ext'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 export interface SessionRecord {
 	id: string
@@ -18,16 +20,30 @@ interface PageAgentDB extends DBSchema {
 		value: SessionRecord
 		indexes: { 'by-created': number }
 	}
+	logs: {
+		key: number
+		value: LogEntry
+		indexes: { 'by-ts': number }
+	}
 }
 
 let dbPromise: Promise<IDBPDatabase<PageAgentDB>> | null = null
 
-function getDB() {
+export function getDB() {
 	if (!dbPromise) {
 		dbPromise = openDB<PageAgentDB>(DB_NAME, DB_VERSION, {
-			upgrade(db) {
-				const store = db.createObjectStore('sessions', { keyPath: 'id' })
-				store.createIndex('by-created', 'createdAt')
+			upgrade(db, oldVersion) {
+				if (oldVersion < 1) {
+					const store = db.createObjectStore('sessions', { keyPath: 'id' })
+					store.createIndex('by-created', 'createdAt')
+				}
+				if (oldVersion < 2) {
+					const store = db.createObjectStore('logs', {
+						keyPath: 'id',
+						autoIncrement: true,
+					})
+					store.createIndex('by-ts', 'ts')
+				}
 			},
 		})
 	}

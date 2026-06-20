@@ -15,6 +15,8 @@ describe('settingsConfig', () => {
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
 			disableNamedToolChoice: false,
+			logRetentionDays: 3,
+			logMaxEntries: 5000,
 		})
 
 		expect(config).toStrictEqual({
@@ -28,6 +30,8 @@ describe('settingsConfig', () => {
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
 			disableNamedToolChoice: false,
+			logRetentionDays: 3,
+			logMaxEntries: 5000,
 		})
 	})
 
@@ -52,6 +56,8 @@ describe('settingsConfig', () => {
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
 			disableNamedToolChoice: false,
+			logRetentionDays: 3,
+			logMaxEntries: 5000,
 		})
 
 		expect(config).toMatchObject({
@@ -70,6 +76,8 @@ describe('settingsConfig', () => {
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
 			disableNamedToolChoice: false,
+			logRetentionDays: 3,
+			logMaxEntries: 5000,
 		})
 
 		expect(config.visionModelId).toBeUndefined()
@@ -95,6 +103,8 @@ describe('settingsConfig', () => {
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
 			disableNamedToolChoice: false,
+			logRetentionDays: 3,
+			logMaxEntries: 5000,
 		})
 
 		expect(config).toMatchObject({
@@ -125,6 +135,8 @@ describe('settingsConfig', () => {
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
 			disableNamedToolChoice: false,
+			logRetentionDays: 3,
+			logMaxEntries: 5000,
 		})
 
 		expect(getCustomModelLabel(customModel)).toBe('Moonshot · moonshot-v1')

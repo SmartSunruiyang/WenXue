@@ -1,9 +1,28 @@
 import { handleChaoxingControlMessage } from '@/agent/chaoxing/bridge.background'
 import { handlePageControlMessage } from '@/agent/RemotePageController.background'
 import { handleTabControlMessage, setupTabEventsPort } from '@/agent/TabsController.background'
+import { handleLogControlMessage } from '@/lib/log.background'
+import { configureLogger } from '@/lib/logger'
+import { purge } from '@/lib/logStore'
+
+const LOG_PURGE_ALARM = 'log-purge'
+const DEFAULT_RETENTION_DAYS = 3
+const DEFAULT_MAX_ENTRIES = 5000
 
 export default defineBackground(() => {
 	console.log('[Background] Service Worker started')
+
+	// configure logger for background context (direct sink → writes to idb directly)
+	configureLogger({ context: 'background', sink: 'direct' })
+
+	// startup log purge
+	runPurge()
+
+	// scheduled log purge every 30 minutes
+	chrome.alarms.create(LOG_PURGE_ALARM, { periodInMinutes: 30 })
+	chrome.alarms.onAlarm.addListener((alarm) => {
+		if (alarm.name === LOG_PURGE_ALARM) runPurge()
+	})
 
 	// tab change events
 
@@ -27,6 +46,8 @@ export default defineBackground(() => {
 			return handlePageControlMessage(message, sender, sendResponse)
 		} else if (message.type === 'CHAOXING_CONTROL') {
 			return handleChaoxingControlMessage(message, sender, sendResponse)
+		} else if (message.type?.startsWith('LOG_')) {
+			return handleLogControlMessage(message, sender, sendResponse)
 		} else {
 			sendResponse({ error: 'Unknown message type' })
 			return
@@ -63,4 +84,15 @@ async function openOrFocusHubTab(wsPort: number) {
 	}
 
 	await chrome.tabs.create({ url: `${hubUrl}?ws=${wsPort}`, pinned: true, active: true })
+}
+
+async function runPurge(): Promise<void> {
+	try {
+		const stored = await chrome.storage.local.get(['logRetentionDays', 'logMaxEntries'])
+		const retentionDays = (stored.logRetentionDays as number | undefined) ?? DEFAULT_RETENTION_DAYS
+		const maxEntries = (stored.logMaxEntries as number | undefined) ?? DEFAULT_MAX_ENTRIES
+		await purge({ retentionDays, maxEntries, now: Date.now() })
+	} catch {
+		// Purge is best-effort; never crash the SW
+	}
 }

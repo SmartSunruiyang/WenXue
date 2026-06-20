@@ -238,11 +238,11 @@ describe('extractQuestion', () => {
 		expect(q.hasImages).toBe(false)
 	})
 
-	it('renders a meaningful alt/title image as its alt text and drops the image', () => {
+	it('keeps an image that carries alt/title as a visual part (never drops the diagram)', () => {
 		const li = makeLi(`
 			<div class="questionLi">
 				<input type="hidden" name="type" value="0">
-				<h3>9. 看图：<img src="https://x/cat.png" alt="一只猫"> 是什么动物？</h3>
+				<h3>9. 看图：<img src="https://x/diagram.png" alt="电路图示例" title="附图说明"> 求受力。</h3>
 				<div class="stem_answer">
 					<div class="answerBg"><div class="answer_p">A. 猫</div></div>
 				</div>
@@ -251,8 +251,14 @@ describe('extractQuestion', () => {
 
 		const q = extractQuestion(li, 'exam', 8)
 
-		expect(q.stem).toEqual([{ type: 'text', text: '9. 看图：一只猫 是什么动物？' }])
-		expect(q.hasImages).toBe(false)
+		// alt/title must NOT drop the real image — the diagram is sent to the vision model.
+		expect(q.hasImages).toBe(true)
+		expect(
+			q.stem.some((p) => p.type === 'image' && p.fallbackUrl === 'https://x/diagram.png'),
+		).toBe(true)
+		expect(stemText(q.stem)).toContain('[题干图1]')
+		expect(stemText(q.stem)).not.toContain('电路图示例')
+		expect(stemText(q.stem)).not.toContain('附图说明')
 	})
 
 	it('drops decorative images (tiny size attrs / icon class / data spacer) and keeps hasImages false', () => {

@@ -15,10 +15,11 @@
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------- |
 | BrowserProfile           | id（目录名，demo 固定 `default`）、dirPath、createdAt                                                                                                    | 1:N → 运行中的浏览器实例（瞬态） | 是：磁盘目录 `<userData>/profiles/<id>`，首次启动创建，删除即重置 |
 | BrowserRuntimeDescriptor | version、platform、binaryPath                                                                                                                            | 被 LaunchConfig / 版本查询消费   | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更  |
-| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage | 被 Agent 循环与插件 UI 消费      | 是：`chrome.storage.local`（仅本机，I2）                          |
+| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage、logRetentionDays、logMaxEntries | 被 Agent 循环、插件 UI 与 Logging 消费 | 是：`chrome.storage.local`（仅本机，I2）                          |
 | AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                           | 1:N → AgentActivity              | 是：插件 IndexedDB，用户可删                                      |
 | AgentActivity            | taskId、type、payload、ts                                                                                                                                | 属于 AgentTask                   | 是：插件 IndexedDB，随任务删除                                    |
 | QuickLink                | id、title、url、icon?                                                                                                                                    | 属于 NewTabHome 仪表盘           | 是：chrome.storage.local（newtabQuickLinks，仅本机，I2）          |
+| LogEntry                 | id、ts、level、source、context、message、data?                                                                                                           | 由插件各运行时产生，由 Logging 管理 | 是：插件 IndexedDB `page-agent-ext` v2 的 `logs`；按保留天数与条数上限自动清理，用户可导出/清空 |
 
 ### 1.2 派生概念（非持久化）
 
@@ -29,7 +30,7 @@
 ### 1.3 不变量（任何模块都必须维护）
 
 - **I1.** 同一画像目录同一时刻至多一个浏览器实例（BrowserSupervisor 状态机为主，CfT ProcessSingleton 兜底）。
-- **I2.** API Key 与对话内容永不离开本机、永不经过桌面端进程：不得出现在 IPC 通道、主进程日志或除 `chrome.storage.local`/IndexedDB 之外的磁盘位置。
+- **I2.** API Key 与对话内容永不离开本机、永不经过桌面端进程。插件日志允许在本机 IndexedDB 保存已脱敏的对话与 LLM 请求/响应正文；API Key、`Authorization` 头与 `Bearer` 凭据绝不持久化。插件日志和正文不得进入桌面 IPC、桌面进程、桌面文件日志或任何远程上报通道。
 - **I3.** Demo 阶段桌面域与插件域零运行时通信；引入任何通道前必须先修改本文 §2/§3 并经评审。
 - **I4.** 插件域只经 OpenAI-compatible HTTP 接口调用 LLM；更换供应商/接入网关只允许改配置（baseURL/key/model），不允许改 Agent 核心代码。
 - **I5.** vendor 的 `@page-agent/*` 四包保持上游包名、目录结构与版权头；任何本地改动必须登记 `UPSTREAM.md`（ROADMAP M1 建立）。
@@ -178,12 +179,22 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：ExtensionSettingsConfig（L4/纯配置）
-- 职责：定义内置模型 ID、厂商预设、自定义厂商与自定义模型结构；归一化 selectedModelId/customModels；将设置页源数据解析为 Agent 可用的 llmConfig
+- 职责：定义内置模型 ID、厂商预设、自定义厂商与自定义模型结构；归一化 selectedModelId/customModels；将设置页源数据解析为 Agent 可用的 llmConfig；定义并归一化插件日志保留配置
 - 不负责：不读写 chrome.storage；不渲染 UI；不发 LLM 请求
 - 输入：设置页表单值与 chrome.storage 中的 ModelConfig
 - 输出：ExtConfig / LLMConfig
-- 关键类型/接口：CustomModelConfig · ModelProviderPreset · resolveSelectedLLMConfig · normalizeCustomModels · buildSettingsConfig
+- 关键类型/接口：CustomModelConfig · ModelProviderPreset · resolveSelectedLLMConfig · normalizeCustomModels · buildSettingsConfig · logRetentionDays · logMaxEntries
 - 持有状态：无（纯函数）
+```
+
+```
+## 模块名：Logging（L4）
+- 职责：定义日志类型与脱敏规则；为所有插件运行时提供统一 logger；由 background 作为 IndexedDB 单写入者完成追加、查询、导出、清空与自动清理；限定并记录 LLM fetch 请求/响应正文
+- 不负责：不渲染日志 UI；不写桌面日志；不远程上报；不持久化 API Key、Authorization 或 Bearer；不修改 packages/*（I2/I3/I5）
+- 输入：background / sidepanel / hub / newtab / content 的日志事件；ExtensionSettingsConfig 的 logRetentionDays/logMaxEntries；命中 LLM 端点的 fetch 请求与响应
+- 输出：已脱敏 LogEntry；LOG_APPEND/LOG_QUERY/LOG_EXPORT/LOG_CLEAR 响应；LogViewer 查询与导出结果
+- 关键类型/接口：LogEntry · LogFilter · logger.debug/info/warn/error · appendBatch · query · exportAll · clear · purge · handleLogControlMessage · installLlmFetchLogging（详见 §3.2）
+- 持有状态：background 独占的 IndexedDB `page-agent-ext` v2 `logs` 对象库；非 background 上下文的瞬态发送批次
 ```
 
 ```
@@ -193,6 +204,16 @@ fork 应用层（apps/extension）：
 - 输入：MultiPageAgent、ExtensionSettingsConfig、@page-agent/ui
 - 输出：用户
 - 持有状态：UI 态；读写 ModelConfig（chrome.storage.local）与历史（IndexedDB）
+```
+
+```
+## 模块名：LogViewer（L5）
+- 职责：在插件设置中呈现本地日志；按级别/来源/时间/关键词筛选，展示列表与单条详情，按当前筛选导出并经二次确认清空
+- 不负责：不直接访问 IndexedDB；不执行脱敏或保留策略；不向桌面域或远程发送日志
+- 输入：Logging 的 LOG_QUERY/LOG_EXPORT/LOG_CLEAR 通道；用户筛选与操作意图
+- 输出：日志列表、详情、导出文件与清空反馈
+- 关键类型/接口：LogViewer · LogFilter
+- 持有状态：筛选条件、分页游标、当前详情与加载/错误 UI 态
 ```
 
 ```
@@ -254,16 +275,25 @@ graph TD
     subgraph 插件域
         ExtensionEntrypoints --> SidepanelApp
         ExtensionEntrypoints --> NewTabHome
+        ExtensionEntrypoints --> Logging
         NewTabHome --> PA_UI["@page-agent/ui"]
+        NewTabHome --> Logging
         ExtensionEntrypoints --> MultiPageAgent
         ExtensionEntrypoints --> Chaoxing["chaoxing/*"]
         SidepanelApp --> MultiPageAgent
         SidepanelApp --> ExtensionSettingsConfig
+        SidepanelApp --> LogViewer
+        SidepanelApp --> Logging
         SidepanelApp --> PA_UI["@page-agent/ui"]
+        LogViewer --> Logging
+        LogViewer --> PA_UI
+        Logging --> ExtensionSettingsConfig
         MultiPageAgent --> PA_CORE["@page-agent/core"]
         MultiPageAgent --> PA_PC["@page-agent/page-controller"]
+        MultiPageAgent --> Logging
         Chaoxing --> PA_LLMS["@page-agent/llms"]
         Chaoxing --> PA_PC["@page-agent/page-controller"]
+        Chaoxing --> Logging
         PA_CORE --> PA_LLMS["@page-agent/llms"]
     end
 ```
@@ -305,6 +335,33 @@ graph TD
 //   ensureProfile(id = 'default'): Promise<string>      // 返回 userDataDir 绝对路径
 //   listProfiles(): string[]
 
+// module: Logging —— background 是 page-agent-ext/logs 的唯一写入者
+//   type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+//   type LogContext = 'background' | 'sidepanel' | 'hub' | 'newtab' | 'content'
+//   interface LogEntry {
+//     id?: number; ts: number; level: LogLevel; source: string;
+//     context: LogContext; message: string; data?: unknown
+//   }
+//   interface LogFilter {
+//     levels?: LogLevel[]; sources?: string[]; sinceTs?: number; untilTs?: number;
+//     text?: string; limit?: number; beforeId?: number
+//   }
+//   logger.debug/info/warn/error(source, message, data?): void
+//     // background 上下文 direct → logStore；其余上下文 message → LOG_APPEND
+//   appendBatch(entries: LogEntry[]): Promise<void>
+//   query(filter: LogFilter): Promise<LogEntry[]>
+//   exportAll(filter?: LogFilter): Promise<LogEntry[]>
+//   clear(): Promise<void>
+//   purge(config: { retentionDays: number; maxEntries: number }): Promise<void>
+//   installLlmFetchLogging(): () => void                // 返回卸载函数；仅拦截 LLM 端点
+//
+//   chrome.runtime 消息契约（仅插件域，禁止桥接桌面域，I3）：
+//   LOG_APPEND  request { entries: LogEntry[] }        response { ok: boolean }
+//   LOG_QUERY   request { filter: LogFilter }           response { ok: boolean; entries?: LogEntry[]; error?: string }
+//   LOG_EXPORT  request { filter?: LogFilter }          response { ok: boolean; entries?: LogEntry[]; error?: string }
+//   LOG_CLEAR   request {}                              response { ok: boolean; error?: string }
+//   // 四类消息均由 background 的 log.background 分派；只有 LOG_APPEND 可写入 logs。
+
 // module: 插件域对 vendor 的消费面（签名以上游 1.9.x 为准，本地变更先登记 UPSTREAM.md，I5）
 //   PageAgentCore.status: 'idle' | 'running' | 'waiting_for_user' | 'paused' | 'completed' | 'error'
 //   PageAgentCore.execute(instruction): Promise<ExecutionResult>
@@ -321,6 +378,7 @@ graph TD
 | 运行日志                                      | `<userData>/logs/`          | AppLogger                                 | 不含 Key/对话内容（I2）                                                                                  |
 | ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`      | SidepanelApp options 设置页与语言快捷入口 | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置 |
 | 任务历史                                      | 插件 IndexedDB              | MultiPageAgent / SidepanelApp             | 不出本机；用户可清空                                                                                     |
+| 插件日志                                      | IndexedDB `page-agent-ext` v2：`logs`（`id` 自增，`by-ts` 索引）；原 `sessions` 保持不变 | 仅 background Logging 写；LogViewer 经消息读/导出/清空 | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；不进桌面域、不远程上报 |
 | 快捷入口与 onboarding 标志                    | chrome.storage.local        | NewTabHome                                | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                        |
 | browser.lock.json                             | 仓库 `apps/desktop/`        | 开发者（升级 CfT 时）                     | 构建期消费，运行期只读                                                                                   |
 
@@ -330,6 +388,8 @@ graph TD
 
 - **必有单测（vitest）**：LaunchConfig（argv 组装全分支）、BrowserResources（路径解析，mock resourcesPath）、ProfileStore、BrowserSupervisor 状态机（mock child_process）。
 - **vendor 四包**：上游测试套件随包保留，`pnpm -r test` 必绿；对 vendor 的本地补丁必须配套回归测试。
+- **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1→v2 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
+- **LogViewer**：组件测试覆盖筛选、分页/详情、导出与清空确认；UI 仅消费 Logging 契约，不直接访问 IndexedDB。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。
 - **仅手动**：ConsoleUI、SidepanelApp 的视觉与交互（按 `UIUX.md` 与 PRD 验收标准）。
 
@@ -346,9 +406,19 @@ WenXue/
 │   │   ├── scripts/                 # fetch-browser.ts / smoke-launch.ts（构建工具，非运行时模块）
 │   │   ├── browser.lock.json        # BrowserRuntimeDescriptor 版本来源
 │   │   └── electron-builder.yml
-│   └── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · chaoxing/* · ExtensionEntrypoints
-│       ├── src/entrypoints/         # background / content / main-world / sidepanel
-│       └── src/agent/chaoxing/      # chaoxing/*：solve.ts · adapter.content.ts · tools.ts（学习通求解器）
+│   └── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · Logging · LogViewer · chaoxing/* · ExtensionEntrypoints
+│       ├── src/entrypoints/         # background / content / main-world / sidepanel / hub / newtab
+│       ├── src/agent/chaoxing/      # chaoxing/*：solve.ts · adapter.content.ts · tools.ts（学习通求解器）
+│       ├── src/components/
+│       │   └── LogViewer.tsx        # 设置内日志筛选、详情、导出与清空 UI
+│       └── src/lib/
+│           ├── logTypes.ts          # LogEntry / LogFilter / LOG_* 消息类型
+│           ├── logRedaction.ts      # Key/Authorization/Bearer 脱敏与正文截断
+│           ├── logger.ts            # 统一 logger、批量与 direct/message 路由
+│           ├── logStore.ts          # background IndexedDB 读写与 retention
+│           ├── log.background.ts    # LOG_APPEND/QUERY/EXPORT/CLEAR 分派
+│           ├── loggingFetch.ts      # LLM fetch 请求/响应正文捕获
+│           └── db.ts                # page-agent-ext v2：sessions + logs/by-ts
 ├── packages/                        # vendor：@page-agent/{ui, llms, page-controller, core}（I5）
 ├── third_party/page-agent/LICENSE   # 上游 MIT 协议与版权声明
 ├── .project.agents/                 # 治理（CLAUDE/AGENTS/约束/指南/log）

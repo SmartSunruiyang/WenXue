@@ -50,6 +50,8 @@ export async function loadStoredConfig(
 		experimentalLlmsTxt: storedAdvancedConfig.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: storedAdvancedConfig.experimentalIncludeAllTabs,
 		disableNamedToolChoice: storedAdvancedConfig.disableNamedToolChoice,
+		logRetentionDays: storedAdvancedConfig.logRetentionDays,
+		logMaxEntries: storedAdvancedConfig.logMaxEntries,
 	}
 	const visionModelId = typeof result.visionModelId === 'string' ? result.visionModelId : undefined
 
@@ -81,6 +83,8 @@ export async function saveStoredConfig(
 		experimentalLlmsTxt,
 		experimentalIncludeAllTabs,
 		disableNamedToolChoice,
+		logRetentionDays,
+		logMaxEntries,
 		selectedModelId,
 		customModels: rawCustomModels,
 		visionModelId,
@@ -116,6 +120,8 @@ export async function saveStoredConfig(
 		experimentalLlmsTxt,
 		experimentalIncludeAllTabs,
 		disableNamedToolChoice,
+		logRetentionDays,
+		logMaxEntries,
 	}
 	await storage.set({ advancedConfig })
 

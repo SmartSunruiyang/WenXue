@@ -10,10 +10,12 @@
  * dataUrl、失败保 fallbackUrl、选项图失败置 needsReview、按 URL 去重），无需真实网络 / canvas。
  * 默认实现 {@link defaultDownscale} 只在内容脚本里走，不在测试里被触发。
  *
- * 失败兜底（§8.4）：抓图 / 编码失败时保留 `fallbackUrl`、不写 `dataUrl`（序列化阶段退化为
- * URL 文本）；若失败的是**选项图**（图即答案，无法可靠作答）→ 置该题 `needsReview = true`，
- * 宁缺勿猜。题干图失败不置 needsReview（题面退化为 URL 文本仍可尝试作答）。
+ * 失败兜底（§8.4）：抓图 / 编码失败时保留 `fallbackUrl`、不写 `dataUrl`，并置该题
+ * `needsReview = true`——**任何**图（题干图 / 选项图）抓不到都意味着视觉模型看不到它、无法
+ * 可靠作答，宁可标记人工也绝不对图盲答（选项图更是「图即答案」）。
  */
+
+import { logger } from '@/lib/logger'
 
 import type { ChaoxingQuestion, ContentPart } from './types'
 
@@ -30,13 +32,6 @@ export interface ResolveImagesDeps {
 	downscale?: (blob: Blob) => Promise<string>
 }
 
-/** 标注一个待解析图片部件的来源（用于失败时决定是否置 needsReview）。 */
-interface ImageTask {
-	part: Extract<ContentPart, { type: 'image' }>
-	/** 该图是否为选项图（图即答案）：失败时置 needsReview。 */
-	isOption: boolean
-}
-
 /**
  * 把一道题里所有 `{type:'image'}` 占位部件解析为内联 base64（就地写 `part.dataUrl`），
  * 返回**同一个**被改写后的题对象。
@@ -51,8 +46,8 @@ export async function resolveQuestionImages(
 	const fetchImpl = deps.fetchImpl ?? globalThis.fetch
 	const downscale = deps.downscale ?? defaultDownscale
 
-	const tasks = collectImageTasks(q)
-	if (tasks.length === 0) return q
+	const parts = collectImageParts(q)
+	if (parts.length === 0) return q
 
 	// 按 URL 去重：同一 URL 只抓 + 降采样一次，结果缓存为 Promise 供并发任务共享。
 	const cache = new Map<string, Promise<string>>()
@@ -66,52 +61,65 @@ export async function resolveQuestionImages(
 	}
 
 	let needsReview = false
+	let resolved = 0
+	let failed = 0
 	await Promise.all(
-		tasks.map(async ({ part, isOption }) => {
+		parts.map(async (part) => {
 			// 已有 dataUrl（极少见：上游已解析）→ 跳过。
-			if (part.dataUrl) return
+			if (part.dataUrl) { resolved++; return }
 			const url = part.fallbackUrl
 			if (!url) {
-				if (isOption) needsReview = true
+				failed++
+				needsReview = true
 				return
 			}
 			try {
 				part.dataUrl = await resolveOne(url)
+				resolved++
 			} catch {
-				// 失败：保留 fallbackUrl，不写 dataUrl。选项图（图即答案）→ 置 needsReview（§8.4）。
-				if (isOption) needsReview = true
+				// 失败：保留 fallbackUrl、不写 dataUrl。模型看不到这张图 → 置 needsReview，绝不盲答（§8.4）。
+				failed++
+				needsReview = true
 			}
 		}),
 	)
+
+	if (failed > 0) {
+		logger.warn('chaoxing', `image resolution: ${resolved} resolved, ${failed} failed`, {
+			questionId: q.id,
+			total: parts.length,
+			resolved,
+			failed,
+		})
+	}
 
 	if (needsReview) q.needsReview = true
 	return q
 }
 
 /**
- * 收集题干 + 选项 + 小题选项里的全部图片部件，标注其是否为「图即答案」（失败置 needsReview）。
- *
- * 小题（连线 / 完形 / 阅读的 subQuestions）的 options 同样是「图即答案」语义：选错框 / 错小题
- * 无法可靠作答，故其图失败也按选项图处理（§8.4）。小题自身无独立题干图，仅遍历其 options。
+ * 收集题干 + 选项 + 小题选项里的全部图片部件（待异步解析为内联 base64）。
+ * 任一图抓取失败都置 needsReview（见 {@link resolveQuestionImages}），故此处不再区分图片来源。
+ * 小题（连线 / 完形 / 阅读的 subQuestions）自身无独立题干图，仅遍历其 options。
  */
-function collectImageTasks(q: ChaoxingQuestion): ImageTask[] {
-	const tasks: ImageTask[] = []
+function collectImageParts(q: ChaoxingQuestion): Extract<ContentPart, { type: 'image' }>[] {
+	const parts: Extract<ContentPart, { type: 'image' }>[] = []
 	for (const part of q.stem) {
-		if (part.type === 'image') tasks.push({ part, isOption: false })
+		if (part.type === 'image') parts.push(part)
 	}
 	for (const option of q.options ?? []) {
 		for (const part of option.content) {
-			if (part.type === 'image') tasks.push({ part, isOption: true })
+			if (part.type === 'image') parts.push(part)
 		}
 	}
 	for (const sub of q.subQuestions ?? []) {
 		for (const option of sub.options ?? []) {
 			for (const part of option.content) {
-				if (part.type === 'image') tasks.push({ part, isOption: true })
+				if (part.type === 'image') parts.push(part)
 			}
 		}
 	}
-	return tasks
+	return parts
 }
 
 /** 抓图（带 cookie）→ blob → 降采样为 data URL。任一步失败即抛出（由调用方兜底）。 */

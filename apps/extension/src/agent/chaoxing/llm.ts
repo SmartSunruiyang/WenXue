@@ -46,6 +46,11 @@ export interface LLMMessage {
 	content: LLMMessageContent
 }
 
+/** 含图题：serialize 的多模态分支把 user content 产成交错块数组；纯文本题 content 为 string。 */
+function hasImageContent(messages: LLMMessage[]): boolean {
+	return messages.some((message) => Array.isArray(message.content))
+}
+
 /**
  * Thin structured LLM client (own fetch).
  *
@@ -85,11 +90,16 @@ export async function askStructured(
 		tools: [tool],
 		tool_choice: { type: 'function', function: { name: TOOL_NAME } },
 	}
-	// Qwen3「思考模式」会拒绝被强制(required/object)的 tool_choice（DashScope 400：
-	// "tool_choice ... not support ... required or object in thinking mode"）。对 Qwen/DashScope
-	// 关闭思考，让强制 tool_choice 生效以保证结构化输出；非思考模型会忽略此参数。
+	// 搜题要正确率 → 全开思考（含图题的多步读图推理离不开它）。但 Qwen3「思考模式」会拒绝被
+	// 强制(required/object)的 tool_choice（DashScope 400："tool_choice ... not support ... required
+	// or object in thinking mode"）：仅纯文本题（走文本模型）会撞，故放宽为 'auto'（模型若不调
+	// submit_answer，上游退化为 needsReview，绝不瞎答）；含图题（走视觉模型）实测强制 tool_choice +
+	// 思考不 400，保留强制以硬保证结构化输出。非思考模型会忽略 enable_thinking。
 	if (isQwenLike(cfg)) {
-		body.enable_thinking = false
+		body.enable_thinking = true
+		if (!hasImageContent(messages)) {
+			body.tool_choice = 'auto'
+		}
 	}
 
 	const post = (requestBody: Record<string, unknown>) =>
@@ -105,12 +115,12 @@ export async function askStructured(
 
 	let response = await post(body)
 
-	// 兜底：若强制 tool_choice 仍因「思考模式」被拒，重试一次——关思考 + 放宽 tool_choice 为 'auto'。
-	// 系统提示仍要求调用 submit_answer；万一模型不调用工具，上游退化为 needsReview，绝不错答。
+	// 兜底：若强制 tool_choice 仍因「思考模式」被拒（含图题极端情形），重试一次——保持思考、放宽
+	// tool_choice 为 'auto'。系统提示仍要求调用 submit_answer；万一模型不调用工具，上游退化为 needsReview，绝不错答。
 	if (response.status === 400) {
 		const message = await readErrorMessage(response)
 		if (/tool_choice/i.test(message) && /think/i.test(message)) {
-			response = await post({ ...body, enable_thinking: false, tool_choice: 'auto' })
+			response = await post({ ...body, tool_choice: 'auto' })
 		} else {
 			throw new Error(`LLM request failed (HTTP 400): ${message}`)
 		}

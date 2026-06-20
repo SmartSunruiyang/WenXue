@@ -146,6 +146,8 @@ describe('configStorage', () => {
 			experimentalIncludeAllTabs: false,
 			disableNamedToolChoice: true,
 			visionModelId: undefined,
+			logRetentionDays: undefined,
+			logMaxEntries: undefined,
 		})
 		expect(config).not.toHaveProperty(legacyStepLimitKey)
 	})
@@ -207,6 +209,8 @@ describe('configStorage', () => {
 				experimentalLlmsTxt: false,
 				experimentalIncludeAllTabs: true,
 				disableNamedToolChoice: true,
+				logRetentionDays: undefined,
+				logMaxEntries: undefined,
 			},
 		})
 		const advancedConfigPayload = storage.set.mock.calls.find(
@@ -218,6 +222,8 @@ describe('configStorage', () => {
 				experimentalLlmsTxt: false,
 				experimentalIncludeAllTabs: true,
 				disableNamedToolChoice: true,
+				logRetentionDays: undefined,
+				logMaxEntries: undefined,
 			},
 		})
 	})

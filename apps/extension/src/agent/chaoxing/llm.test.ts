@@ -2,7 +2,7 @@ import type { LLMConfig } from '@page-agent/llms'
 import { describe, expect, it, vi } from 'vitest'
 import * as z from 'zod/v4'
 
-import { askStructured } from './llm'
+import { askStructured, type LLMMessage } from './llm'
 
 const cfg: LLMConfig = {
 	baseURL: 'https://api.example.com/v1',
@@ -149,14 +149,37 @@ describe('askStructured', () => {
 		apiKey: 'sk-q',
 	}
 
-	it('disables thinking for Qwen/DashScope so the forced tool_choice is honored', async () => {
+	/** 含图题：serialize 的多模态分支把 user content 产成交错块数组（文本块 + image_url 块）。 */
+	const imageMessages: LLMMessage[] = [
+		{ role: 'system', content: 'sys' },
+		{
+			role: 'user',
+			content: [
+				{ type: 'text', text: 'q' },
+				{ type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+			],
+		},
+	]
+
+	it('enables thinking and relaxes tool_choice to auto for text-only Qwen questions', async () => {
 		const schema = z.object({ selectedOptions: z.array(z.string()) })
 		const fetchImpl = vi.fn().mockResolvedValue(cannedResponse({ selectedOptions: ['A'] }))
 
 		await askStructured(qwenCfg, messages, schema, { fetchImpl })
 
 		const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
-		expect(body.enable_thinking).toBe(false)
+		expect(body.enable_thinking).toBe(true)
+		expect(body.tool_choice).toBe('auto')
+	})
+
+	it('enables thinking but keeps forced tool_choice for Qwen image questions', async () => {
+		const schema = z.object({ selectedOptions: z.array(z.string()) })
+		const fetchImpl = vi.fn().mockResolvedValue(cannedResponse({ selectedOptions: ['A'] }))
+
+		await askStructured(qwenCfg, imageMessages, schema, { fetchImpl })
+
+		const body = JSON.parse(fetchImpl.mock.calls[0][1].body)
+		expect(body.enable_thinking).toBe(true)
 		expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'submit_answer' } })
 	})
 
@@ -170,7 +193,7 @@ describe('askStructured', () => {
 		expect(body.enable_thinking).toBeUndefined()
 	})
 
-	it('retries with relaxed tool_choice when forced tool_choice is rejected in thinking mode', async () => {
+	it('retries image questions with relaxed tool_choice while keeping thinking when forced tool_choice is rejected', async () => {
 		const schema = z.object({ selectedOptions: z.array(z.string()) })
 		const thinkingErr = new Response(
 			JSON.stringify({
@@ -186,13 +209,13 @@ describe('askStructured', () => {
 			.mockResolvedValueOnce(thinkingErr)
 			.mockResolvedValueOnce(cannedResponse({ selectedOptions: ['A'] }))
 
-		const result = await askStructured(qwenCfg, messages, schema, { fetchImpl })
+		const result = await askStructured(qwenCfg, imageMessages, schema, { fetchImpl })
 
 		expect(result).toEqual({ selectedOptions: ['A'] })
 		expect(fetchImpl).toHaveBeenCalledTimes(2)
 		const retryBody = JSON.parse(fetchImpl.mock.calls[1][1].body)
 		expect(retryBody.tool_choice).toBe('auto')
-		expect(retryBody.enable_thinking).toBe(false)
+		expect(retryBody.enable_thinking).toBe(true)
 	})
 
 	it('still throws on a 400 that is not the thinking-mode tool_choice case', async () => {

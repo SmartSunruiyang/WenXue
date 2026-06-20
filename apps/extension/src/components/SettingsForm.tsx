@@ -39,6 +39,8 @@ import {
 import { buildSettingsConfig, settingsConfigKey } from '@/lib/settingsConfig'
 import { cn } from '@/lib/utils'
 
+import { LogViewer } from './LogViewer'
+
 export const SETTINGS_SECTIONS = [
 	{
 		id: 'account',
@@ -64,6 +66,11 @@ export const SETTINGS_SECTIONS = [
 		id: 'about',
 		labelKey: 'settingsSectionAbout',
 		descriptionKey: 'settingsSectionAboutDesc',
+	},
+	{
+		id: 'logs',
+		labelKey: 'settingsSectionLogs',
+		descriptionKey: 'settingsSectionLogsDesc',
 	},
 ] as const satisfies ReadonlyArray<{
 	id: string
@@ -147,6 +154,8 @@ export function SettingsForm({
 	const [disableNamedToolChoice, setDisableNamedToolChoice] = useState(
 		config?.disableNamedToolChoice ?? false,
 	)
+	const [logRetentionDays, setLogRetentionDays] = useState(config?.logRetentionDays ?? 3)
+	const [logMaxEntries, setLogMaxEntries] = useState(config?.logMaxEntries ?? 5000)
 	const [advancedOpen, setAdvancedOpen] = useState(mode === 'page')
 	const [userAuthToken, setUserAuthToken] = useState('')
 	const [copied, setCopied] = useState(false)
@@ -195,6 +204,8 @@ export function SettingsForm({
 				experimentalLlmsTxt: nextExperimentalLlmsTxt,
 				experimentalIncludeAllTabs: nextExperimentalIncludeAllTabs,
 				disableNamedToolChoice: nextDisableNamedToolChoice,
+				logRetentionDays,
+				logMaxEntries,
 			}),
 		)
 
@@ -390,6 +401,8 @@ export function SettingsForm({
 				experimentalLlmsTxt,
 				experimentalIncludeAllTabs,
 				disableNamedToolChoice,
+				logRetentionDays,
+				logMaxEntries,
 			}),
 		[
 			selectedModelId,
@@ -401,6 +414,8 @@ export function SettingsForm({
 			experimentalLlmsTxt,
 			experimentalIncludeAllTabs,
 			disableNamedToolChoice,
+			logRetentionDays,
+			logMaxEntries,
 		],
 	)
 	const currentConfigKey = useMemo(() => settingsConfigKey(currentConfig), [currentConfig])
@@ -756,6 +771,39 @@ export function SettingsForm({
 						@Simon
 					</a>
 				</div>
+			</SettingsSection>
+
+			<SettingsSection
+				id="logs"
+				title={t('settingsSectionLogs')}
+				description={t('settingsSectionLogsDesc')}
+				mode={mode}
+			>
+				<div className="grid gap-3 sm:grid-cols-2">
+					<div className="flex flex-col gap-1">
+						<label className="text-xs text-muted-foreground">{t('logRetentionDays')}</label>
+						<Input
+							type="number"
+							min={1}
+							max={365}
+							value={logRetentionDays}
+							onChange={(e) => setLogRetentionDays(Number(e.target.value) || 3)}
+							className="h-8 text-sm"
+						/>
+					</div>
+					<div className="flex flex-col gap-1">
+						<label className="text-xs text-muted-foreground">{t('logMaxEntries')}</label>
+						<Input
+							type="number"
+							min={100}
+							max={100000}
+							value={logMaxEntries}
+							onChange={(e) => setLogMaxEntries(Number(e.target.value) || 5000)}
+							className="h-8 text-sm"
+						/>
+					</div>
+				</div>
+				<LogViewer />
 			</SettingsSection>
 
 			{modelDialogOpen && (
