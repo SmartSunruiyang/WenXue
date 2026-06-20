@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button'
 import { type SessionRecord, clearSessions, deleteSession, listSessions } from '@/lib/db'
 import { downloadHistoryExport } from '@/lib/history-export'
 import { type TranslationKey, useI18n } from '@/lib/i18n'
+import { cn } from '@/lib/utils'
 
 function timeAgo(ts: number, t: (key: TranslationKey) => string): string {
 	const seconds = Math.floor((Date.now() - ts) / 1000)
@@ -31,6 +32,7 @@ export function HistoryList({
 	onBack,
 	onRerun,
 	onGoToSession,
+	canRerun = true,
 	canGoToSession = true,
 	enterOrigin,
 }: {
@@ -38,6 +40,7 @@ export function HistoryList({
 	onBack: () => void
 	onRerun: (task: string) => void
 	onGoToSession: (session: SessionRecord) => void
+	canRerun?: boolean
 	canGoToSession?: boolean
 	enterOrigin?: { x: number; y: number } | null
 }) {
@@ -74,11 +77,6 @@ export function HistoryList({
 	const handleExport = (e: React.MouseEvent, session: SessionRecord) => {
 		e.stopPropagation()
 		downloadHistoryExport(session.task, session.createdAt, session.history)
-	}
-
-	const handleRerun = (e: React.MouseEvent, task: string) => {
-		e.stopPropagation()
-		onRerun(task)
 	}
 
 	const handleGoToSession = (e: React.MouseEvent, session: SessionRecord) => {
@@ -191,15 +189,7 @@ export function HistoryList({
 									{t('goToSession')}
 								</Button>
 								<div className="ml-auto flex items-center gap-0.5">
-									<button
-										type="button"
-										onClick={(e) => handleRerun(e, session.task)}
-										className="p-0.5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-										title={t('runAgain')}
-										aria-label={`Run history task again: ${session.task}`}
-									>
-										<RotateCcw className="size-3" />
-									</button>
+									<HistoryRerunControl task={session.task} onRerun={onRerun} canRerun={canRerun} />
 									<button
 										type="button"
 										onClick={(e) => handleExport(e, session)}
@@ -225,5 +215,40 @@ export function HistoryList({
 				))}
 			</div>
 		</div>
+	)
+}
+
+export function HistoryRerunControl({
+	task,
+	onRerun,
+	canRerun = true,
+	showLabel = false,
+}: {
+	task: string
+	onRerun: (task: string) => void
+	canRerun?: boolean
+	showLabel?: boolean
+}) {
+	const { t } = useI18n()
+
+	return (
+		<button
+			type="button"
+			onClick={(event) => {
+				event.stopPropagation()
+				if (!canRerun) return
+				onRerun(task)
+			}}
+			disabled={!canRerun}
+			className={cn(
+				'flex items-center gap-1 p-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
+				canRerun && 'cursor-pointer',
+			)}
+			title={t('runAgain')}
+			aria-label={`${t('runAgain')}: ${task}`}
+		>
+			<RotateCcw className="size-3" />
+			{showLabel && t('runAgain')}
+		</button>
 	)
 }

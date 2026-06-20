@@ -90,7 +90,7 @@ core callback.
 - Modify: `.project.agents/docs/context/ARCHITECTURE.md`
 - Modify: `.project.agents/docs/context/UPSTREAM.md`
 
-- [ ] **Step 1: Update PRD F3**
+- [x] **Step 1: Update PRD F3**
 
   In `PRD.md` §5 F3, replace the existing “用户可随时停止任务” bullet with:
 
@@ -98,7 +98,7 @@ core callback.
   - 用户可随时停止任务；遇到登录、验证码、权限确认、不可操作区域或模型连续重复同一动作时，插件展示人工接管提示，用户完成后可继续原任务，也可暂停并保留上下文。
   ```
 
-- [ ] **Step 2: Update UIUX sidepanel rules**
+- [x] **Step 2: Update UIUX sidepanel rules**
 
   In `UIUX.md` §6, replace the manual takeover bullet with:
 
@@ -108,7 +108,7 @@ core callback.
 
   In `UIUX.md` §7 options settings paragraph, remove `最大步数、` from the advanced area list.
 
-- [ ] **Step 3: Update architecture module cards**
+- [x] **Step 3: Update architecture module cards**
 
   In `ARCHITECTURE.md`, update `@page-agent/core`:
 
@@ -129,7 +129,7 @@ core callback.
   - 职责：侧边栏对话流、人工接管/暂停/继续 UI、右上角更多菜单、语言快捷入口、任务历史 UI、options 设置页 UI、自定义模型列表与默认模型选择
   ```
 
-- [ ] **Step 4: Record upstream patch**
+- [x] **Step 4: Record upstream patch**
 
   Append this entry to `UPSTREAM.md`:
 
@@ -141,7 +141,7 @@ core callback.
   - Upstream sync note: keep the patch isolated to public types, PageAgentCore loop control, tools, and prompts so future alibaba/page-agent syncs can diff it cleanly.
   ```
 
-- [ ] **Step 5: Verify docs formatting**
+- [x] **Step 5: Verify docs formatting**
 
   Run:
 
@@ -166,7 +166,7 @@ core callback.
 - Modify: `apps/extension/src/components/SettingsForm.tsx`
 - Modify: `apps/extension/src/lib/i18n.tsx`
 
-- [ ] **Step 1: Remove settings tests for maxSteps**
+- [x] **Step 1: Remove settings tests for maxSteps**
 
   Edit `apps/extension/src/lib/settingsConfig.test.ts` and `apps/extension/src/lib/configStorage.test.ts` so no assertion contains `maxSteps`.
 
@@ -178,7 +178,7 @@ core callback.
 
   Expected: FAIL while implementation still returns or stores `maxSteps`.
 
-- [ ] **Step 2: Remove maxSteps from public config types**
+- [x] **Step 2: Remove maxSteps from public config types**
 
   In `packages/core/src/types.ts`, delete this block:
 
@@ -192,7 +192,7 @@ core callback.
 
   In `apps/extension/src/agent/useAgent.ts`, remove `maxSteps?: number` from `AdvancedConfig`.
 
-- [ ] **Step 3: Remove maxSteps from PageAgentCore constructor and loop**
+- [x] **Step 3: Remove maxSteps from PageAgentCore constructor and loop**
 
   In `packages/core/src/PageAgentCore.ts`, change:
 
@@ -227,7 +227,7 @@ core callback.
 
   In `#handleObservations`, delete the remaining-step warning block.
 
-- [ ] **Step 4: Replace prompt step info**
+- [x] **Step 4: Replace prompt step info**
 
   In `#assembleUserPrompt`, replace:
 
@@ -243,7 +243,7 @@ core callback.
 
   In both prompt markdown files, remove the rule about reaching final allowed `max_steps`.
 
-- [ ] **Step 5: Remove settings UI**
+- [x] **Step 5: Remove settings UI**
 
   In `SettingsForm.tsx`, delete the `maxSteps` state, its synchronization from config, the number input block with `id="max-steps"`, and `maxSteps` from submit dependencies.
 
@@ -251,7 +251,7 @@ core callback.
 
   In `i18n.tsx`, remove `maxSteps` labels.
 
-- [ ] **Step 6: Verify removal**
+- [x] **Step 6: Verify removal**
 
   Run:
 
@@ -277,7 +277,7 @@ core callback.
 - Modify: `packages/core/src/types.ts`
 - Modify: `packages/core/src/PageAgentCore.ts`
 
-- [ ] **Step 1: Add type definitions**
+- [x] **Step 1: Add type definitions**
 
   Add to `packages/core/src/types.ts`:
 
@@ -345,7 +345,7 @@ core callback.
   }
   ```
 
-- [ ] **Step 2: Add PageAgentCore takeover callback**
+- [x] **Step 2: Add PageAgentCore takeover callback**
 
   In `PageAgentCore`, add:
 
@@ -358,7 +358,7 @@ core callback.
 
   Import the new types from `./types`.
 
-- [ ] **Step 3: Add requestUserTakeover method**
+- [x] **Step 3: Add requestUserTakeover method**
 
   Add this public method to `PageAgentCore`:
 
@@ -395,7 +395,7 @@ core callback.
   }
   ```
 
-- [ ] **Step 4: Split execute into init plus run loop**
+- [x] **Step 4: Split execute into init plus run loop**
 
   Keep `execute(task)` responsible for initialization:
 
@@ -430,7 +430,7 @@ core callback.
 
   Preserve `onBeforeTask` only when `setupTask` is true.
 
-- [ ] **Step 5: Add pause result handling inside loop**
+- [x] **Step 5: Add pause result handling inside loop**
 
   After each non-`done` action, if the action result came from `request_user_takeover` and resolution is
   `paused`, return:
@@ -449,7 +449,7 @@ core callback.
 
   Use the same return shape if `requestUserTakeover()` is called by stuck guard and returns `paused`.
 
-- [ ] **Step 6: Add resume**
+- [x] **Step 6: Add resume**
 
   Add:
 
@@ -467,7 +467,7 @@ core callback.
   }
   ```
 
-- [ ] **Step 7: Verify core build**
+- [x] **Step 7: Verify core build**
 
   Run:
 
@@ -485,7 +485,7 @@ core callback.
 - Modify: `packages/core/src/prompts/system_prompt.md`
 - Modify: `apps/extension/src/agent/system_prompt.md`
 
-- [ ] **Step 1: Add failing build expectation**
+- [x] **Step 1: Add failing build expectation**
 
   Add an import in `tools/index.ts` for the new types used by the tool. Before implementation,
   run:
@@ -496,7 +496,7 @@ core callback.
 
   Expected: FAIL because `request_user_takeover` is not yet defined.
 
-- [ ] **Step 2: Add `request_user_takeover` tool**
+- [x] **Step 2: Add `request_user_takeover` tool**
 
   Insert after `ask_user`:
 
@@ -523,7 +523,7 @@ core callback.
   )
   ```
 
-- [ ] **Step 3: Update prompt rules**
+- [x] **Step 3: Update prompt rules**
 
   In both prompt markdown files, under browser/capability/task completion rules, add:
 
@@ -533,7 +533,7 @@ core callback.
   - After the user completes manual takeover, re-observe the page before choosing the next action.
   ```
 
-- [ ] **Step 4: Verify prompts and build**
+- [x] **Step 4: Verify prompts and build**
 
   Run:
 
@@ -552,7 +552,7 @@ core callback.
 - Create: `apps/extension/src/agent/actionSignature.test.ts`
 - Modify: `apps/extension/src/agent/MultiPageAgent.ts`
 
-- [ ] **Step 1: Write failing action signature tests**
+- [x] **Step 1: Write failing action signature tests**
 
   Create `apps/extension/src/agent/actionSignature.test.ts`:
 
@@ -617,7 +617,7 @@ core callback.
 
   Expected: FAIL because the module does not exist.
 
-- [ ] **Step 2: Implement action signature helper**
+- [x] **Step 2: Implement action signature helper**
 
   Create `apps/extension/src/agent/actionSignature.ts`:
 
@@ -704,7 +704,7 @@ core callback.
   }
   ```
 
-- [ ] **Step 3: Wire guard into MultiPageAgent**
+- [x] **Step 3: Wire guard into MultiPageAgent**
 
   In `MultiPageAgent.ts`, create guard before `super()`:
 
@@ -755,7 +755,7 @@ core callback.
   }
   ```
 
-- [ ] **Step 4: Verify stuck guard**
+- [x] **Step 4: Verify stuck guard**
 
   Run:
 
@@ -776,7 +776,7 @@ core callback.
 - Modify: `apps/extension/src/entrypoints/sidepanel/App.tsx`
 - Modify: `apps/extension/src/lib/i18n.tsx`
 
-- [ ] **Step 1: Extend hook result shape**
+- [x] **Step 1: Extend hook result shape**
 
   In `UseAgentResult`, add:
 
@@ -787,7 +787,7 @@ core callback.
   resume: () => Promise<ExecutionResult>
   ```
 
-- [ ] **Step 2: Implement takeover callback in useAgent**
+- [x] **Step 2: Implement takeover callback in useAgent**
 
   Import the new types and add state:
 
@@ -837,7 +837,7 @@ core callback.
   }, [])
   ```
 
-- [ ] **Step 3: Render takeover card**
+- [x] **Step 3: Render takeover card**
 
   In `Conversation` props, add:
 
@@ -864,7 +864,7 @@ core callback.
   </button>
   ```
 
-- [ ] **Step 4: Wire sidepanel App**
+- [x] **Step 4: Wire sidepanel App**
 
   Destructure hook values in `App.tsx`:
 
@@ -889,7 +889,7 @@ core callback.
 
   Pass the takeover props into `Conversation`.
 
-- [ ] **Step 5: Add i18n labels**
+- [x] **Step 5: Add i18n labels**
 
   Add Chinese and English labels:
 
@@ -902,7 +902,7 @@ core callback.
   takeoverNeededTitle: '需要你完成一步'
   ```
 
-- [ ] **Step 6: Test hook behavior**
+- [x] **Step 6: Test hook behavior**
 
   Add tests to `useAgent.test.ts` that verify:
 
@@ -934,12 +934,13 @@ core callback.
 **Files:**
 
 - Modify: `apps/extension/src/entrypoints/content.ts`
+- Modify: `apps/extension/src/entrypoints/main-world.ts`
 - Modify: `apps/extension/src/entrypoints/hub/hub-ws.ts`
 - Modify: `packages/ui/src/panel/types.ts`
 - Modify: `packages/ui/src/panel/Panel.ts`
 - Modify: `apps/extension/docs/extension_api.md`
 
-- [ ] **Step 1: Content API result handling**
+- [x] **Step 1: Content API result handling**
 
   In `content.ts`, when `execute()` resolves with `state: 'paused'`, post:
 
@@ -973,7 +974,7 @@ core callback.
   }
   ```
 
-- [ ] **Step 2: Hub paused response**
+- [x] **Step 2: Hub paused response**
 
   In `hub-ws.ts`, return paused state:
 
@@ -986,7 +987,7 @@ core callback.
   execute/stop, document paused responses in `extension_api.md` and keep resume sidepanel-only for this
   milestone.
 
-- [ ] **Step 3: Update package UI adapter types**
+- [x] **Step 3: Update package UI adapter types**
 
   In `packages/ui/src/panel/types.ts`, add `waiting_for_user` and `paused` to the status union and
   add optional `onUserTakeover`.
@@ -994,7 +995,7 @@ core callback.
   In `Panel.ts`, map `waiting_for_user` to the existing question-style UI and map `paused` to a
   neutral paused status text. Keep `stop()` as terminal stop.
 
-- [ ] **Step 4: Verify builds**
+- [x] **Step 4: Verify builds**
 
   Run:
 
@@ -1011,7 +1012,7 @@ core callback.
 
 - Create: `.project.agents/log/YYYY-MM-DD-agent-manual-takeover.md`
 
-- [ ] **Step 1: Run focused tests**
+- [x] **Step 1: Run focused tests**
 
   Run:
 
@@ -1021,7 +1022,7 @@ core callback.
 
   Expected: PASS.
 
-- [ ] **Step 2: Run package builds**
+- [x] **Step 2: Run package builds**
 
   Run:
 
@@ -1033,7 +1034,7 @@ core callback.
 
   Expected: PASS.
 
-- [ ] **Step 3: Run repository tests**
+- [x] **Step 3: Run repository tests**
 
   Run:
 
@@ -1043,7 +1044,11 @@ core callback.
 
   Expected: PASS for packages with test scripts.
 
-- [ ] **Step 4: Manual verification**
+  Verification note: the standard command reached `fetch failed` under the current Node 26 runtime.
+  The same four workspace test scripts were then run through their installed local Vitest binaries:
+  desktop 34, extension 113, core 25, llms 58; total 230 passing tests.
+
+- [x] **Step 4: Manual verification and document environment gaps**
 
   Build and load the extension, then verify:
 
@@ -1054,7 +1059,12 @@ core callback.
   - `继续` resumes from paused state.
   - Three identical repeated actions show stuck takeover with goal and last action.
 
-- [ ] **Step 5: Write execution log**
+  Verified with the real `Conversation` component at a 420 × 720 sidepanel viewport: waiting card,
+  goal/action detail, pause with preserved context, resume with preserved history, and completed
+  takeover. Real LLM selection on third-party login/captcha pages remains an environment acceptance
+  item because it requires a configured model key and target site.
+
+- [x] **Step 5: Write execution log**
 
   Create `.project.agents/log/YYYY-MM-DD-agent-manual-takeover.md` with:
 
@@ -1086,7 +1096,7 @@ core callback.
   - 进行真实网页登录 / 验证码人工接管走查。
   ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit final docs and log**
 
   Stage only files changed for this feature:
 

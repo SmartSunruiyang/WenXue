@@ -32,7 +32,7 @@ export default defineContentScript({
 			// add isolated world script
 			exposeAgentToPage().then(
 				// add main-world script
-				() => injectScript('/main-world.js')
+				() => injectScript('/main-world.js'),
 			)
 		})
 	},
@@ -46,6 +46,20 @@ async function exposeAgentToPage() {
 	 * singleton MultiPageAgent to handle requests from the page
 	 */
 	let multiPageAgent: InstanceType<typeof MultiPageAgent> | null = null
+	let activeRequestId: unknown = null
+
+	const postResponse = (action: string, payload?: unknown, error?: string) => {
+		window.postMessage(
+			{
+				channel: 'PAGE_AGENT_EXT_RESPONSE',
+				id: activeRequestId,
+				action,
+				...(payload === undefined ? {} : { payload }),
+				...(error === undefined ? {} : { error }),
+			},
+			'*',
+		)
+	}
 
 	window.addEventListener('message', async (e) => {
 		if (e.source !== window) return
@@ -59,20 +73,21 @@ async function exposeAgentToPage() {
 		switch (action) {
 			case 'execute': {
 				// singleton check
-				if (multiPageAgent && multiPageAgent.status === 'running') {
-					window.postMessage(
-						{
-							channel: 'PAGE_AGENT_EXT_RESPONSE',
-							id,
-							action: 'execute_result',
-							error: 'Agent is already running a task. Please wait until it finishes.',
-						},
-						'*'
+				if (
+					multiPageAgent &&
+					['running', 'waiting_for_user', 'paused'].includes(multiPageAgent.status)
+				) {
+					activeRequestId = id
+					postResponse(
+						'execute_result',
+						undefined,
+						'Agent already has an active task. Stop it or resume the paused task first.',
 					)
 					return
 				}
 
 				try {
+					activeRequestId = id
 					const { task, config } = payload
 					const { systemInstruction, ...agentConfig } = config
 
@@ -88,68 +103,43 @@ async function exposeAgentToPage() {
 
 					multiPageAgent.addEventListener('statuschange', (event) => {
 						if (!multiPageAgent) return
-						window.postMessage(
-							{
-								channel: 'PAGE_AGENT_EXT_RESPONSE',
-								id,
-								action: 'status_change_event',
-								payload: multiPageAgent.status,
-							},
-							'*'
-						)
+						postResponse('status_change_event', multiPageAgent.status)
 					})
 
 					multiPageAgent.addEventListener('activity', (event) => {
 						if (!multiPageAgent) return
-						window.postMessage(
-							{
-								channel: 'PAGE_AGENT_EXT_RESPONSE',
-								id,
-								action: 'activity_event',
-								payload: (event as CustomEvent).detail,
-							},
-							'*'
-						)
+						postResponse('activity_event', (event as CustomEvent).detail)
 					})
 
 					multiPageAgent.addEventListener('historychange', (event) => {
 						if (!multiPageAgent) return
-						window.postMessage(
-							{
-								channel: 'PAGE_AGENT_EXT_RESPONSE',
-								id,
-								action: 'history_change_event',
-								payload: multiPageAgent.history,
-							},
-							'*'
-						)
+						postResponse('history_change_event', multiPageAgent.history)
 					})
 
 					// result
 
 					const result = await multiPageAgent.execute(task)
 
-					window.postMessage(
-						{
-							channel: 'PAGE_AGENT_EXT_RESPONSE',
-							id,
-							action: 'execute_result',
-							payload: result,
-						},
-						'*'
-					)
+					postResponse('execute_result', result)
 				} catch (error) {
-					window.postMessage(
-						{
-							channel: 'PAGE_AGENT_EXT_RESPONSE',
-							id,
-							action: 'execute_result',
-							error: (error as Error).message,
-						},
-						'*'
-					)
+					postResponse('execute_result', undefined, (error as Error).message)
 				}
 
+				break
+			}
+
+			case 'resume': {
+				activeRequestId = id
+				if (!multiPageAgent || multiPageAgent.status !== 'paused') {
+					postResponse('resume_result', undefined, 'No paused task to resume.')
+					break
+				}
+
+				try {
+					postResponse('resume_result', await multiPageAgent.resume())
+				} catch (error) {
+					postResponse('resume_result', undefined, (error as Error).message)
+				}
 				break
 			}
 

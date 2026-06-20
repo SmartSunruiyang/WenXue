@@ -84,6 +84,133 @@ describe('createActionSignature', () => {
 		expect(create()).toEqual(create())
 		expect(create()?.input).toBe('{"self":"[circular]","z":1}')
 	})
+
+	it('keeps equal previews distinct when full input suffixes differ', () => {
+		const prefix = 'a'.repeat(300)
+		const first = createActionSignature({
+			url: 'https://example.com',
+			action: {
+				name: 'input_text',
+				input: { text: `${prefix}first` },
+				output: 'ok',
+			},
+		})!
+		const second = createActionSignature({
+			url: 'https://example.com',
+			action: {
+				name: 'input_text',
+				input: { text: `${prefix}second` },
+				output: 'ok',
+			},
+		})!
+		const guard = new StuckActionGuard(2)
+
+		expect(first.input).toBe(second.input)
+		expect(guard.record(first)).toBe(false)
+		expect(guard.record(second)).toBe(false)
+	})
+
+	it('uses typed deterministic identities for special values', () => {
+		const cyclic: Record<string, unknown> = {}
+		cyclic.self = cyclic
+		const equivalentCycle: Record<string, unknown> = {}
+		equivalentCycle.self = equivalentCycle
+
+		const cases: Array<{
+			label: string
+			special: unknown
+			equivalent: unknown
+			ordinaryCollision: unknown
+		}> = [
+			{
+				label: 'undefined',
+				special: { value: undefined },
+				equivalent: { value: undefined },
+				ordinaryCollision: { value: '[undefined]' },
+			},
+			{
+				label: 'bigint',
+				special: { value: 42n },
+				equivalent: { value: 42n },
+				ordinaryCollision: { value: '[bigint:42]' },
+			},
+			{
+				label: 'NaN',
+				special: { value: Number.NaN },
+				equivalent: { value: Number.NaN },
+				ordinaryCollision: { value: null },
+			},
+			{
+				label: 'Infinity',
+				special: { value: Number.POSITIVE_INFINITY },
+				equivalent: { value: Number.POSITIVE_INFINITY },
+				ordinaryCollision: { value: null },
+			},
+			{
+				label: 'Date',
+				special: new Date('2026-06-19T00:00:00.000Z'),
+				equivalent: new Date('2026-06-19T00:00:00.000Z'),
+				ordinaryCollision: {},
+			},
+			{
+				label: 'Map',
+				special: new Map([['answer', 42]]),
+				equivalent: new Map([['answer', 42]]),
+				ordinaryCollision: {},
+			},
+			{
+				label: 'Set',
+				special: new Set(['answer']),
+				equivalent: new Set(['answer']),
+				ordinaryCollision: {},
+			},
+			{
+				label: 'cycle',
+				special: cyclic,
+				equivalent: equivalentCycle,
+				ordinaryCollision: { self: '[circular]' },
+			},
+		]
+
+		for (const { label, special, equivalent, ordinaryCollision } of cases) {
+			const create = (input: unknown) =>
+				createActionSignature({
+					url: 'https://example.com',
+					action: { name: 'custom_action', input, output: 'ok' },
+				})!
+			const stabilityGuard = new StuckActionGuard(2)
+			const collisionGuard = new StuckActionGuard(2)
+
+			expect(stabilityGuard.record(create(special)), label).toBe(false)
+			expect(stabilityGuard.record(create(equivalent)), label).toBe(true)
+			expect(collisionGuard.record(create(special)), label).toBe(false)
+			expect(collisionGuard.record(create(ordinaryCollision)), label).toBe(false)
+		}
+	})
+
+	it('does not collide special output values with ordinary strings', () => {
+		const special = createActionSignature({
+			url: 'https://example.com',
+			action: {
+				name: 'custom_action',
+				input: {},
+				output: undefined as unknown as string,
+			},
+		})!
+		const ordinary = createActionSignature({
+			url: 'https://example.com',
+			action: {
+				name: 'custom_action',
+				input: {},
+				output: '[undefined]',
+			},
+		})!
+		const guard = new StuckActionGuard(2)
+
+		expect(special.output).toBe(ordinary.output)
+		expect(guard.record(special)).toBe(false)
+		expect(guard.record(ordinary)).toBe(false)
+	})
 })
 
 describe('StuckActionGuard', () => {
@@ -108,6 +235,34 @@ describe('StuckActionGuard', () => {
 
 		expect(guard.record(signature)).toBe(false)
 		expect(guard.record(signature)).toBe(false)
+		expect(guard.record(changed)).toBe(false)
+		expect(guard.record(changed)).toBe(false)
+		expect(guard.record(changed)).toBe(true)
+	})
+
+	it('resets when full output changes beyond the shared preview', () => {
+		const prefix = 'a'.repeat(300)
+		const first = createActionSignature({
+			url: signature.url,
+			action: {
+				name: signature.name,
+				input: { index: 1 },
+				output: `${prefix}first`,
+			},
+		})!
+		const changed = createActionSignature({
+			url: signature.url,
+			action: {
+				name: signature.name,
+				input: { index: 1 },
+				output: `${prefix}second`,
+			},
+		})!
+		const guard = new StuckActionGuard(3)
+
+		expect(first.output).toBe(changed.output)
+		expect(guard.record(first)).toBe(false)
+		expect(guard.record(first)).toBe(false)
 		expect(guard.record(changed)).toBe(false)
 		expect(guard.record(changed)).toBe(false)
 		expect(guard.record(changed)).toBe(true)

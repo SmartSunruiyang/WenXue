@@ -14,7 +14,23 @@ export type AgentActivity =
 	| { type: 'executing'; tool: string; input: unknown }
 	| { type: 'executed'; tool: string; input: unknown; output: string; duration: number }
 	| { type: 'retrying'; attempt: number; maxAttempts: number }
+	| { type: 'waiting_for_user'; request: UserTakeoverRequest }
 	| { type: 'error'; message: string }
+
+export type UserTakeoverResolution = 'completed' | 'paused'
+
+export interface UserTakeoverRequest {
+	id: string
+	reason: 'login' | 'captcha' | 'permission' | 'page_unavailable' | 'stuck' | 'other'
+	title: string
+	message: string
+	goal?: string
+	lastAction?: {
+		name: string
+		input: unknown
+		output: string
+	}
+}
 
 /**
  * Minimal interface that Panel expects from an agent.
@@ -22,14 +38,14 @@ export type AgentActivity =
  * This enables decoupling and allows any agent implementation to work with Panel.
  *
  * Events:
- * - 'statuschange': Agent status changed (idle/running/completed/error)
+ * - 'statuschange': Agent status changed
  * - 'historychange': Historical events updated (persisted)
  * - 'activity': Transient activity for immediate UI feedback (thinking/executing/etc)
  * - 'dispose': Agent is being disposed
  */
 export interface PanelAgentAdapter extends EventTarget {
 	/** Current agent status */
-	readonly status: 'idle' | 'running' | 'completed' | 'error'
+	readonly status: 'idle' | 'running' | 'waiting_for_user' | 'paused' | 'completed' | 'error'
 
 	/** History of agent events */
 	readonly history: readonly {
@@ -54,6 +70,9 @@ export interface PanelAgentAdapter extends EventTarget {
 		maxAttempts?: number
 		/** For 'retry' and 'error' types */
 		message?: string
+		/** For 'user_takeover' type */
+		request?: UserTakeoverRequest
+		status?: 'waiting' | 'completed' | 'paused'
 	}[]
 
 	/** Current task being executed */
@@ -67,8 +86,17 @@ export interface PanelAgentAdapter extends EventTarget {
 	 */
 	onAskUser?: (question: string, options?: { signal: AbortSignal }) => Promise<string>
 
+	/** Called when the user must manually take over the page. */
+	onUserTakeover?: (
+		request: UserTakeoverRequest,
+		options?: { signal: AbortSignal },
+	) => Promise<UserTakeoverResolution>
+
 	/** Execute a task */
 	execute(task: string): Promise<unknown>
+
+	/** Resume a paused task. */
+	resume?(): Promise<unknown>
 
 	/** Stop the current task (agent remains reusable) */
 	stop(): void

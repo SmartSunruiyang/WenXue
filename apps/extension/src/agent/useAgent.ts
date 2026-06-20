@@ -7,6 +7,8 @@ import type {
 	ExecutionResult,
 	HistoricalEvent,
 	SupportedLanguage,
+	UserTakeoverRequest,
+	UserTakeoverResolution,
 } from '@page-agent/core'
 import type { LLMConfig } from '@page-agent/llms'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -44,9 +46,13 @@ export interface UseAgentResult {
 	history: HistoricalEvent[]
 	activity: AgentActivity | null
 	currentTask: string
+	takeoverRequest: UserTakeoverRequest | null
 	config: ExtConfig | null
 	execute: (task: string) => Promise<ExecutionResult>
 	stop: () => void
+	completeUserTakeover: () => void
+	pauseUserTakeover: () => void
+	resume: () => Promise<ExecutionResult>
 	resetConversation: () => boolean
 	restoreConversation: (session: RestorableAgentConversation) => boolean
 	configure: (config: ExtConfig) => Promise<void>
@@ -68,6 +74,275 @@ export interface RestorableAgentConversation {
 	task: string
 	history: HistoricalEvent[]
 	status: Extract<AgentStatus, 'completed' | 'error'>
+}
+
+export interface UseAgentOptions {
+	enableUserTakeover?: boolean
+}
+
+export interface AgentSessionAgent {
+	status: AgentStatus
+	task: string
+	history: HistoricalEvent[]
+	onUserTakeover?: (
+		request: UserTakeoverRequest,
+		options?: { signal: AbortSignal },
+	) => Promise<UserTakeoverResolution>
+	execute: (task: string) => Promise<ExecutionResult>
+	resume: () => Promise<ExecutionResult>
+	stop: () => void
+	dispose: () => void
+	addEventListener: EventTarget['addEventListener']
+	removeEventListener: EventTarget['removeEventListener']
+}
+
+export interface AgentSessionStateSinks {
+	setStatus: (status: AgentStatus) => void
+	setHistory: (history: HistoricalEvent[]) => void
+	setActivity: (activity: AgentActivity | null) => void
+	setCurrentTask: (task: string) => void
+	setTakeoverRequest: (request: UserTakeoverRequest | null) => void
+}
+
+interface PendingTakeoverRequest {
+	signal?: AbortSignal
+	abortListener?: () => void
+	resolve: (resolution: UserTakeoverResolution) => void
+	reject: (reason: unknown) => void
+}
+
+export interface TakeoverRequestController {
+	request: (
+		request: UserTakeoverRequest,
+		options?: { signal?: AbortSignal },
+	) => Promise<UserTakeoverResolution>
+	resolve: (resolution: UserTakeoverResolution) => void
+	cancel: (reason?: unknown) => void
+	dispose: () => void
+}
+
+function createTakeoverAbortError(message: string): DOMException {
+	return new DOMException(message, 'AbortError')
+}
+
+export function createTakeoverRequestController(
+	onRequestChange: (request: UserTakeoverRequest | null) => void,
+): TakeoverRequestController {
+	let pending: PendingTakeoverRequest | null = null
+
+	const clearPending = (entry: PendingTakeoverRequest): boolean => {
+		if (pending !== entry) return false
+
+		pending = null
+		if (entry.signal && entry.abortListener) {
+			entry.signal.removeEventListener('abort', entry.abortListener)
+		}
+		onRequestChange(null)
+		return true
+	}
+
+	const rejectEntry = (entry: PendingTakeoverRequest, reason: unknown) => {
+		if (!clearPending(entry)) return
+		entry.reject(reason)
+	}
+
+	const cancel = (reason: unknown = createTakeoverAbortError('User takeover was cancelled.')) => {
+		if (!pending) return
+		rejectEntry(pending, reason)
+	}
+
+	const request: TakeoverRequestController['request'] = (nextRequest, options) => {
+		cancel(createTakeoverAbortError('User takeover was superseded by a newer request.'))
+
+		const signal = options?.signal
+		if (signal?.aborted) {
+			const rejected = Promise.reject<UserTakeoverResolution>(
+				signal.reason ?? createTakeoverAbortError('User takeover was aborted.'),
+			)
+			rejected.catch(() => undefined)
+			return rejected
+		}
+
+		const promise = new Promise<UserTakeoverResolution>((resolve, reject) => {
+			const entry: PendingTakeoverRequest = { signal, resolve, reject }
+			entry.abortListener = () => {
+				rejectEntry(entry, signal?.reason ?? createTakeoverAbortError('User takeover was aborted.'))
+			}
+
+			pending = entry
+			onRequestChange(nextRequest)
+			signal?.addEventListener('abort', entry.abortListener, { once: true })
+			if (signal?.aborted) entry.abortListener()
+		})
+		promise.catch(() => undefined)
+		return promise
+	}
+
+	return {
+		request,
+		resolve(resolution) {
+			const entry = pending
+			if (!entry || !clearPending(entry)) return
+			entry.resolve(resolution)
+		},
+		cancel,
+		dispose() {
+			cancel(createTakeoverAbortError('User takeover controller was disposed.'))
+		},
+	}
+}
+
+export function isAgentTaskActive(status: AgentStatus): boolean {
+	return status === 'running' || status === 'waiting_for_user' || status === 'paused'
+}
+
+export interface AgentSessionController {
+	bind: (agent: AgentSessionAgent, options: UseAgentOptions) => void
+	unbind: (agent: AgentSessionAgent) => void
+	dispose: () => void
+	execute: (task: string) => Promise<ExecutionResult>
+	stop: () => void
+	resume: () => Promise<ExecutionResult>
+	completeUserTakeover: () => void
+	pauseUserTakeover: () => void
+	cancelUserTakeover: () => void
+	isTaskActive: () => boolean
+	configure: <T>(
+		nextConfig: T,
+		save: (config: T) => Promise<T>,
+		apply: (config: T) => void | Promise<void>,
+	) => Promise<void>
+}
+
+interface AgentSessionBinding {
+	agent: AgentSessionAgent
+	takeoverController: TakeoverRequestController | null
+	handleStatusChange: () => void
+	handleHistoryChange: () => void
+	handleActivity: (event: Event) => void
+}
+
+function assertAgentInactive(agent: AgentSessionAgent): void {
+	if (isAgentTaskActive(agent.status)) throw new Error('Agent task is active.')
+}
+
+export function createAgentSessionController(
+	sinks: AgentSessionStateSinks,
+): AgentSessionController {
+	let binding: AgentSessionBinding | null = null
+	let configuring = false
+
+	const getAgent = (): AgentSessionAgent => {
+		if (!binding) throw new Error('Agent not initialized')
+		return binding.agent
+	}
+
+	const release = (expectedAgent?: AgentSessionAgent) => {
+		const current = binding
+		if (!current || (expectedAgent && current.agent !== expectedAgent)) return
+
+		binding = null
+		current.agent.removeEventListener('statuschange', current.handleStatusChange)
+		current.agent.removeEventListener('historychange', current.handleHistoryChange)
+		current.agent.removeEventListener('activity', current.handleActivity)
+		current.agent.onUserTakeover = undefined
+		current.takeoverController?.dispose()
+		current.agent.dispose()
+	}
+
+	return {
+		bind(agent, options) {
+			if (binding?.agent === agent) return
+			release()
+
+			const takeoverController = options.enableUserTakeover
+				? createTakeoverRequestController(sinks.setTakeoverRequest)
+				: null
+			agent.onUserTakeover = takeoverController?.request
+
+			const handleStatusChange = () => {
+				sinks.setStatus(agent.status)
+				if (
+					agent.status === 'idle' ||
+					agent.status === 'paused' ||
+					agent.status === 'completed' ||
+					agent.status === 'error'
+				) {
+					sinks.setActivity(null)
+				}
+			}
+			const handleHistoryChange = () => {
+				sinks.setHistory([...agent.history])
+			}
+			const handleActivity = (event: Event) => {
+				sinks.setActivity((event as CustomEvent<AgentActivity>).detail)
+			}
+
+			binding = {
+				agent,
+				takeoverController,
+				handleStatusChange,
+				handleHistoryChange,
+				handleActivity,
+			}
+			agent.addEventListener('statuschange', handleStatusChange)
+			agent.addEventListener('historychange', handleHistoryChange)
+			agent.addEventListener('activity', handleActivity)
+
+			sinks.setStatus(agent.status)
+			sinks.setHistory([...agent.history])
+			sinks.setActivity(null)
+			sinks.setCurrentTask(agent.task)
+			sinks.setTakeoverRequest(null)
+		},
+		unbind: release,
+		dispose() {
+			release()
+		},
+		async execute(task) {
+			if (configuring) throw new Error('Agent is being configured.')
+			const agent = getAgent()
+			assertAgentInactive(agent)
+
+			binding?.takeoverController?.cancel(
+				createTakeoverAbortError('User takeover was cancelled by a new task.'),
+			)
+			sinks.setTakeoverRequest(null)
+			sinks.setCurrentTask(task)
+			sinks.setHistory([])
+			sinks.setActivity(null)
+			return agent.execute(task)
+		},
+		stop() {
+			binding?.agent.stop()
+		},
+		resume() {
+			return getAgent().resume()
+		},
+		completeUserTakeover() {
+			binding?.takeoverController?.resolve('completed')
+		},
+		pauseUserTakeover() {
+			binding?.takeoverController?.resolve('paused')
+		},
+		cancelUserTakeover() {
+			binding?.takeoverController?.cancel()
+			sinks.setTakeoverRequest(null)
+		},
+		isTaskActive() {
+			return binding ? isAgentTaskActive(binding.agent.status) : false
+		},
+		async configure(nextConfig, save, apply) {
+			if (configuring) throw new Error('Agent is being configured.')
+			if (binding) assertAgentInactive(binding.agent)
+			configuring = true
+			try {
+				await apply(await save(nextConfig))
+			} finally {
+				configuring = false
+			}
+		},
+	}
 }
 
 export function hasAgentConversationContent({
@@ -100,119 +375,180 @@ export function createRestoredAgentConversationState({
 	}
 }
 
-export function useAgent(): UseAgentResult {
-	const agentRef = useRef<MultiPageAgent | null>(null)
+export function createAgentForConfig(config: ExtConfig): MultiPageAgent {
+	const customModels = config.customModels ?? []
+	// 系统级文本 + 视觉模型；学习通流水线跟随这两个系统模型。
+	const chaoxingModels = {
+		text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
+		vision: resolveVisionLLMConfig(config.visionModelId, customModels),
+	}
+
+	return new MultiPageAgent({
+		baseURL: config.baseURL,
+		model: config.model,
+		apiKey: config.apiKey,
+		language: config.language,
+		experimentalLlmsTxt: config.experimentalLlmsTxt,
+		experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
+		disableNamedToolChoice: config.disableNamedToolChoice,
+		chaoxingModels,
+		instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
+	})
+}
+
+export async function initializeAgentSession<TConfig>({
+	signal,
+	loadConfig,
+	createAgent,
+	bindAgent,
+	setConfig,
+}: {
+	signal: AbortSignal
+	loadConfig: () => Promise<TConfig>
+	createAgent: (config: TConfig) => AgentSessionAgent
+	bindAgent: (agent: AgentSessionAgent) => void
+	setConfig: (config: TConfig) => void
+}): Promise<void> {
+	const loadedConfig = await loadConfig()
+	if (signal.aborted) return
+
+	const agent = createAgent(loadedConfig)
+	if (signal.aborted) {
+		agent.dispose()
+		return
+	}
+
+	bindAgent(agent)
+	setConfig(loadedConfig)
+}
+
+export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): UseAgentResult {
 	const [status, setStatus] = useState<AgentStatus>('idle')
 	const [history, setHistory] = useState<HistoricalEvent[]>([])
 	const [activity, setActivity] = useState<AgentActivity | null>(null)
 	const [currentTask, setCurrentTask] = useState('')
+	const [takeoverRequest, setTakeoverRequest] = useState<UserTakeoverRequest | null>(null)
 	const [config, setConfig] = useState<ExtConfig | null>(null)
-
-	useEffect(() => {
-		loadStoredConfig().then(setConfig)
-	}, [])
-
-	useEffect(() => {
-		if (!config) return
-
-		const agentConfig = {
-			baseURL: config.baseURL,
-			model: config.model,
-			apiKey: config.apiKey,
-			language: config.language,
-			experimentalLlmsTxt: config.experimentalLlmsTxt,
-			experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
-			disableNamedToolChoice: config.disableNamedToolChoice,
-		}
-		const customModels = config.customModels ?? []
-		// 系统级文本 + 视觉模型；学习通流水线跟随这两个系统模型。
-		const chaoxingModels = {
-			text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
-			vision: resolveVisionLLMConfig(config.visionModelId, customModels),
-		}
-		const agent = new MultiPageAgent({
-			...agentConfig,
-			chaoxingModels,
-			instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
+	const sessionControllerRef = useRef<AgentSessionController | null>(null)
+	const mountedRef = useRef(false)
+	const initialLoadAbortRef = useRef<AbortController | null>(null)
+	if (!sessionControllerRef.current) {
+		sessionControllerRef.current = createAgentSessionController({
+			setStatus,
+			setHistory,
+			setActivity,
+			setCurrentTask,
+			setTakeoverRequest,
 		})
-		agentRef.current = agent
+	}
+	const sessionController = sessionControllerRef.current
 
-		const handleStatusChange = (e: Event) => {
-			const newStatus = agent.status as AgentStatus
-			setStatus(newStatus)
-			if (newStatus === 'idle' || newStatus === 'completed' || newStatus === 'error') {
-				setActivity(null)
+	useEffect(() => {
+		mountedRef.current = true
+		const abortController = new AbortController()
+		initialLoadAbortRef.current = abortController
+		initializeAgentSession({
+			signal: abortController.signal,
+			loadConfig: () => loadStoredConfig(),
+			createAgent: createAgentForConfig,
+			bindAgent: (agent) => sessionController.bind(agent, { enableUserTakeover }),
+			setConfig,
+		}).catch((error) => {
+			if (!abortController.signal.aborted) {
+				console.error('[useAgent] Failed to initialize agent:', error)
 			}
-		}
-
-		const handleHistoryChange = (e: Event) => {
-			setHistory([...agent.history])
-		}
-
-		const handleActivity = (e: Event) => {
-			const newActivity = (e as CustomEvent).detail as AgentActivity
-			setActivity(newActivity)
-		}
-
-		agent.addEventListener('statuschange', handleStatusChange)
-		agent.addEventListener('historychange', handleHistoryChange)
-		agent.addEventListener('activity', handleActivity)
+		})
 
 		return () => {
-			agent.removeEventListener('statuschange', handleStatusChange)
-			agent.removeEventListener('historychange', handleHistoryChange)
-			agent.removeEventListener('activity', handleActivity)
-			agent.dispose()
+			mountedRef.current = false
+			abortController.abort()
+			if (initialLoadAbortRef.current === abortController) {
+				initialLoadAbortRef.current = null
+			}
+			sessionController.dispose()
 		}
-	}, [config])
+	}, [enableUserTakeover, sessionController])
 
-	const execute = useCallback(async (task: string) => {
-		const agent = agentRef.current
-		if (!agent) throw new Error('Agent not initialized')
-
-		setCurrentTask(task)
-		setHistory([])
-		return agent.execute(task)
-	}, [])
-
-	const stop = useCallback(() => {
-		agentRef.current?.stop()
-	}, [])
+	const execute = useCallback(
+		(task: string) => sessionController.execute(task),
+		[sessionController],
+	)
+	const stop = useCallback(() => sessionController.stop(), [sessionController])
+	const completeUserTakeover = useCallback(
+		() => sessionController.completeUserTakeover(),
+		[sessionController],
+	)
+	const pauseUserTakeover = useCallback(
+		() => sessionController.pauseUserTakeover(),
+		[sessionController],
+	)
+	const resume = useCallback(() => sessionController.resume(), [sessionController])
 
 	const resetConversation = useCallback(() => {
-		if (agentRef.current?.status === 'running') return false
+		if (sessionController.isTaskActive()) return false
 
+		sessionController.cancelUserTakeover()
 		const nextState = createClearedAgentConversationState()
 		setStatus(nextState.status)
 		setHistory(nextState.history)
 		setActivity(nextState.activity)
 		setCurrentTask(nextState.currentTask)
 		return true
-	}, [])
+	}, [sessionController])
 
-	const restoreConversation = useCallback((session: RestorableAgentConversation) => {
-		if (agentRef.current?.status === 'running') return false
+	const restoreConversation = useCallback(
+		(session: RestorableAgentConversation) => {
+			if (sessionController.isTaskActive()) return false
 
-		const nextState = createRestoredAgentConversationState(session)
-		setStatus(nextState.status)
-		setHistory(nextState.history)
-		setActivity(nextState.activity)
-		setCurrentTask(nextState.currentTask)
-		return true
-	}, [])
+			sessionController.cancelUserTakeover()
+			const nextState = createRestoredAgentConversationState(session)
+			setStatus(nextState.status)
+			setHistory(nextState.history)
+			setActivity(nextState.activity)
+			setCurrentTask(nextState.currentTask)
+			return true
+		},
+		[sessionController],
+	)
 
-	const configure = useCallback(async (nextConfig: ExtConfig) => {
-		setConfig(await saveStoredConfig(chrome.storage.local, nextConfig))
-	}, [])
+	const configure = useCallback(
+		async (nextConfig: ExtConfig) => {
+			initialLoadAbortRef.current?.abort()
+			initialLoadAbortRef.current = null
+			await sessionController.configure(
+				nextConfig,
+				(value) => saveStoredConfig(chrome.storage.local, value),
+				async (savedConfig) => {
+					if (!mountedRef.current) {
+						throw createTakeoverAbortError('Agent session has been disposed.')
+					}
+
+					const replacement = createAgentForConfig(savedConfig)
+					if (!mountedRef.current) {
+						replacement.dispose()
+						throw createTakeoverAbortError('Agent session has been disposed.')
+					}
+
+					sessionController.bind(replacement, { enableUserTakeover })
+					setConfig(savedConfig)
+				},
+			)
+		},
+		[enableUserTakeover, sessionController],
+	)
 
 	return {
 		status,
 		history,
 		activity,
 		currentTask,
+		takeoverRequest,
 		config,
 		execute,
 		stop,
+		completeUserTakeover,
+		pauseUserTakeover,
+		resume,
 		resetConversation,
 		restoreConversation,
 		configure,

@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -6,18 +6,21 @@ import { type SessionRecord, deleteSession, getSession } from '@/lib/db'
 import { useI18n } from '@/lib/i18n'
 
 import { Conversation } from './conversation'
+import { HistoryRerunControl } from './HistoryList'
 
 export function HistoryDetail({
 	sessionId,
 	onBack,
 	onRerun,
 	onGoToSession,
+	canRerun = true,
 	canGoToSession = true,
 }: {
 	sessionId: string
 	onBack: () => void
 	onRerun: (task: string) => void
 	onGoToSession: (session: SessionRecord) => void
+	canRerun?: boolean
 	canGoToSession?: boolean
 }) {
 	const { t } = useI18n()
@@ -43,46 +46,68 @@ export function HistoryDetail({
 					<ArrowLeft className="size-3.5" />
 				</Button>
 				<span className="text-sm font-medium truncate">{t('history')}</span>
-				<div className="ml-auto flex items-center gap-2">
-					<Button
-						type="button"
-						variant="secondary"
-						size="sm"
-						onClick={() => onGoToSession(session)}
-						disabled={!canGoToSession}
-						className="h-7 px-2 text-[10px]"
-						aria-label={`${t('goToSession')}: ${session.task}`}
-						title={t('goToSession')}
-					>
-						<ArrowRight className="size-3" />
-						{t('goToSession')}
-					</Button>
-					<button
-						type="button"
-						onClick={() => onRerun(session.task)}
-						className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-					>
-						<RotateCcw className="size-3" />
-						{t('runAgain')}
-					</button>
-					<button
-						type="button"
-						onClick={async () => {
-							await deleteSession(sessionId)
-							onBack()
-						}}
-						className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-					>
-						<Trash2 className="size-3" />
-						{t('delete')}
-					</button>
-				</div>
+				<HistoryDetailActions
+					session={session}
+					onRerun={onRerun}
+					onGoToSession={onGoToSession}
+					onDelete={async () => {
+						await deleteSession(sessionId)
+						onBack()
+					}}
+					canRerun={canRerun}
+					canGoToSession={canGoToSession}
+				/>
 			</header>
 
 			{/* Events (read-only) */}
 			<div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pb-4 pt-2">
 				<Conversation task={session.task} events={session.history} />
 			</div>
+		</div>
+	)
+}
+
+export function HistoryDetailActions({
+	session,
+	onRerun,
+	onGoToSession,
+	onDelete,
+	canRerun = true,
+	canGoToSession = true,
+}: {
+	session: SessionRecord
+	onRerun: (task: string) => void
+	onGoToSession: (session: SessionRecord) => void
+	onDelete: () => void | Promise<void>
+	canRerun?: boolean
+	canGoToSession?: boolean
+}) {
+	const { t } = useI18n()
+
+	return (
+		<div className="ml-auto flex items-center gap-2">
+			<Button
+				type="button"
+				variant="secondary"
+				size="sm"
+				onClick={() => onGoToSession(session)}
+				disabled={!canGoToSession}
+				className="h-7 px-2 text-[10px]"
+				aria-label={`${t('goToSession')}: ${session.task}`}
+				title={t('goToSession')}
+			>
+				<ArrowRight className="size-3" />
+				{t('goToSession')}
+			</Button>
+			<HistoryRerunControl task={session.task} onRerun={onRerun} canRerun={canRerun} showLabel />
+			<button
+				type="button"
+				onClick={onDelete}
+				className="flex cursor-pointer items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-destructive"
+			>
+				<Trash2 className="size-3" />
+				{t('delete')}
+			</button>
 		</div>
 	)
 }

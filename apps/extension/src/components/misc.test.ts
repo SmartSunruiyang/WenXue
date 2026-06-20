@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-import { isValidElement, type ReactElement } from 'react'
+import { createElement, isValidElement, type ReactElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 
-import { EmptyState, Logo } from './misc'
+import { EmptyState, Logo, StatusDot } from './misc'
 
 const HIGH_RES_LOGO_SRC = '/assets/wenxue-logo-1254.png'
 const HIGH_RES_LOGO_FILE = fileURLToPath(
@@ -50,5 +51,17 @@ describe('EmptyState', () => {
 		expect(logo.props.className).not.toContain('shadow')
 		expect(slogan.props.className).toContain('wx-brand-slogan')
 		expect(emptyState.props.children).toHaveLength(2)
+	})
+})
+
+describe('StatusDot', () => {
+	test.each([
+		['waiting_for_user', '等待接管', true],
+		['paused', '已暂停', false],
+	] as const)('renders the %s status', (status, label, shouldPulse) => {
+		const html = renderToStaticMarkup(createElement(StatusDot, { status }))
+
+		expect(html).toContain(label)
+		expect(html.includes('animate-pulse')).toBe(shouldPulse)
 	})
 })

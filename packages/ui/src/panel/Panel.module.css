@@ -474,6 +474,32 @@
 				line-height: 1;
 			}
 		}
+
+		.takeoverActions {
+			display: flex;
+			gap: 6px;
+			margin: 0 0 6px;
+		}
+
+		.takeoverButton {
+			flex: 1;
+			min-height: 30px;
+			padding: 6px 10px;
+			border: 1px solid rgba(255, 255, 255, 0.28);
+			border-radius: 6px;
+			background: rgba(255, 255, 255, 0.12);
+			color: white;
+			font-size: 12px;
+			cursor: pointer;
+
+			&:hover {
+				background: rgba(255, 255, 255, 0.2);
+			}
+		}
+
+		.takeoverPrimary {
+			background: rgba(57, 182, 255, 0.3);
+		}
 	}
 }
 

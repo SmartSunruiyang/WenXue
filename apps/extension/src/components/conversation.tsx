@@ -1,17 +1,20 @@
 import type {
 	AgentActivity,
 	AgentErrorEvent,
+	AgentStatus,
 	AgentStepEvent,
 	HistoricalEvent,
 	ObservationEvent,
 	RetryEvent,
 	UserTakeoverEvent,
+	UserTakeoverRequest,
 } from '@page-agent/core'
-import { Check, ChevronRight, CircleAlert, Hand, X } from 'lucide-react'
+import { Check, ChevronRight, CircleAlert, CirclePause, Hand, Play, X } from 'lucide-react'
 import { useState } from 'react'
 
 import { Markdown } from '@/components/markdown'
-import { useI18n } from '@/lib/i18n'
+import { Button } from '@/components/ui/button'
+import { type TranslationKey, useI18n } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
 // Stable message PageAgentCore uses when a task is aborted via stop()
@@ -49,7 +52,7 @@ function toFlowItems(events: readonly HistoricalEvent[]): FlowItem[] {
 			}
 		} else if (event.type === 'observation') {
 			items.push({ kind: 'observation', event })
-		} else if (event.type === 'user_takeover') {
+		} else if (event.type === 'user_takeover' && event.status === 'completed') {
 			items.push({ kind: 'user-takeover', event })
 		} else if (event.type === 'retry') {
 			items.push({ kind: 'retry', event })
@@ -92,20 +95,33 @@ export function Conversation({
 	events,
 	activity,
 	running = false,
+	takeoverRequest = null,
+	onCompleteTakeover,
+	onPauseTakeover,
+	onResumePausedTask,
+	status,
 }: {
 	task: string
 	events: readonly HistoricalEvent[]
 	activity?: AgentActivity | null
 	running?: boolean
+	takeoverRequest?: UserTakeoverRequest | null
+	onCompleteTakeover?: () => void
+	onPauseTakeover?: () => void
+	onResumePausedTask?: () => void
+	status?: AgentStatus
 }) {
 	const { t } = useI18n()
 	const blocks = toBlocks(toFlowItems(events))
 	const shouldShowWaiting = running && !activity && Boolean(task) && blocks.length === 0
+	const pausedTakeover = status === 'paused' ? findLatestPausedTakeover(events) : null
+	const shouldShowActivity = activity && !(activity.type === 'waiting_for_user' && takeoverRequest)
+	const isLive = running || status === 'waiting_for_user'
 
 	return (
 		<div
 			className="w-full min-w-0 max-w-full overflow-x-hidden space-y-5 pb-1"
-			aria-live={running ? 'polite' : undefined}
+			aria-live={isLive ? 'polite' : undefined}
 		>
 			{task && <UserMessage text={task} />}
 
@@ -118,7 +134,17 @@ export function Conversation({
 			)}
 
 			{shouldShowWaiting && <LiveStatus text={t('thinking')} live />}
-			{activity && <ActivityLine activity={activity} />}
+			{takeoverRequest && (
+				<TakeoverPrompt
+					request={takeoverRequest}
+					onComplete={onCompleteTakeover}
+					onPause={onPauseTakeover}
+				/>
+			)}
+			{pausedTakeover && (
+				<PausedTakeoverPrompt request={pausedTakeover.request} onResume={onResumePausedTask} />
+			)}
+			{shouldShowActivity && <ActivityLine activity={activity} />}
 		</div>
 	)
 }
@@ -127,7 +153,7 @@ function SingleBlock({ item }: { item: FlowItem }) {
 	if (item.kind === 'result')
 		return <ResultBlock success={item.success} text={item.text} event={item.event} />
 	if (item.kind === 'error') return <ErrorCallout event={item.event} />
-	if (item.kind === 'user-takeover') return <UserTakeoverNote />
+	if (item.kind === 'user-takeover') return <UserTakeoverNote event={item.event} />
 	if (item.kind === 'stopped') return <StoppedNote />
 	return null
 }
@@ -310,18 +336,222 @@ function StoppedNote() {
 	)
 }
 
-function UserTakeoverNote() {
+function UserTakeoverNote({ event }: { event: UserTakeoverEvent }) {
 	const { t } = useI18n()
 	return (
-		<div className="min-w-0 max-w-full overflow-x-hidden pl-7 animate-in fade-in-0 slide-in-from-bottom-1 duration-300">
-			<div className="flex min-w-0 items-start gap-2 rounded-xl bg-amber-500/10 px-3 py-2.5 text-amber-700 dark:text-amber-300">
-				<Hand className="mt-0.5 size-3.5 shrink-0" />
-				<p className="min-w-0 text-[12px] leading-relaxed [overflow-wrap:anywhere]">
-					{t('userTakeoverNeeded')}
-				</p>
-			</div>
+		<div className="flex min-w-0 max-w-full items-start gap-2 overflow-x-hidden pl-7 text-amber-700 animate-in fade-in-0 duration-300 dark:text-amber-300">
+			<Hand className="mt-0.5 size-3.5 shrink-0" />
+			<p className="min-w-0 text-[12px] leading-relaxed [overflow-wrap:anywhere]">
+				{t('takeoverCompletedNote')}: {event.request.title}
+			</p>
 		</div>
 	)
+}
+
+function findLatestPausedTakeover(events: readonly HistoricalEvent[]): UserTakeoverEvent | null {
+	for (let index = events.length - 1; index >= 0; index--) {
+		const event = events[index]
+		if (event.type === 'user_takeover' && event.status === 'paused') return event
+	}
+	return null
+}
+
+interface TakeoverAction {
+	label: TranslationKey
+	onSelect: () => void
+	disabled: boolean
+}
+
+export function createTakeoverActionModel(
+	request: UserTakeoverRequest,
+	{
+		onComplete,
+		onPause,
+	}: {
+		onComplete?: () => void
+		onPause?: () => void
+	},
+): { primary: TakeoverAction; secondary: TakeoverAction } {
+	return {
+		primary: {
+			label: request.reason === 'stuck' ? 'takeoverContinueAfterManual' : 'takeoverCompleted',
+			onSelect: onComplete ?? (() => undefined),
+			disabled: !onComplete,
+		},
+		secondary: {
+			label: 'pauseTask',
+			onSelect: onPause ?? (() => undefined),
+			disabled: !onPause,
+		},
+	}
+}
+
+export function createPausedTakeoverActionModel(onResume?: () => void): TakeoverAction {
+	return {
+		label: 'resumeTask',
+		onSelect: onResume ?? (() => undefined),
+		disabled: !onResume,
+	}
+}
+
+function TakeoverPrompt({
+	request,
+	onComplete,
+	onPause,
+}: {
+	request: UserTakeoverRequest
+	onComplete?: () => void
+	onPause?: () => void
+}) {
+	const { t } = useI18n()
+	const actions = createTakeoverActionModel(request, { onComplete, onPause })
+	const title =
+		request.title ||
+		(request.reason === 'stuck' ? t('takeoverStuckTitle') : t('takeoverNeededTitle'))
+
+	return (
+		<TakeoverCallout
+			request={request}
+			eyebrow={request.reason === 'stuck' ? t('takeoverStuckTitle') : t('takeoverNeededTitle')}
+			title={title}
+			actions={
+				<>
+					<Button
+						type="button"
+						size="sm"
+						onClick={actions.primary.onSelect}
+						disabled={actions.primary.disabled}
+						className="min-w-0 flex-1 whitespace-normal"
+					>
+						<Check className="size-3.5" />
+						{t(actions.primary.label)}
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={actions.secondary.onSelect}
+						disabled={actions.secondary.disabled}
+						className="min-w-0 whitespace-normal"
+					>
+						<CirclePause className="size-3.5" />
+						{t(actions.secondary.label)}
+					</Button>
+				</>
+			}
+		/>
+	)
+}
+
+function PausedTakeoverPrompt({
+	request,
+	onResume,
+}: {
+	request: UserTakeoverRequest
+	onResume?: () => void
+}) {
+	const { t } = useI18n()
+	const action = createPausedTakeoverActionModel(onResume)
+
+	return (
+		<TakeoverCallout
+			request={request}
+			eyebrow={t('takeoverPausedTitle')}
+			title={request.title}
+			actions={
+				<Button
+					type="button"
+					size="sm"
+					onClick={action.onSelect}
+					disabled={action.disabled}
+					className="min-w-0 whitespace-normal"
+				>
+					<Play className="size-3.5" />
+					{t(action.label)}
+				</Button>
+			}
+		/>
+	)
+}
+
+function TakeoverCallout({
+	request,
+	eyebrow,
+	title,
+	actions,
+}: {
+	request: UserTakeoverRequest
+	eyebrow: string
+	title: string
+	actions: React.ReactNode
+}) {
+	return (
+		<section className="min-w-0 max-w-full overflow-x-hidden rounded-lg bg-amber-500/10 px-3.5 py-3 text-amber-950 animate-in fade-in-0 slide-in-from-bottom-1 duration-300 dark:text-amber-100">
+			<div className="flex min-w-0 items-start gap-2.5">
+				<Hand className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+				<div className="min-w-0 flex-1">
+					<p className="text-[10px] font-medium uppercase text-amber-700/75 dark:text-amber-300/75">
+						{eyebrow}
+					</p>
+					<h3 className="mt-0.5 min-w-0 text-[13px] font-semibold leading-relaxed [overflow-wrap:anywhere]">
+						{title}
+					</h3>
+					<p className="mt-1 min-w-0 text-[12px] leading-relaxed text-amber-900/80 [overflow-wrap:anywhere] dark:text-amber-100/80">
+						{request.message}
+					</p>
+					<TakeoverRequestDetails request={request} />
+					<div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">{actions}</div>
+				</div>
+			</div>
+		</section>
+	)
+}
+
+function TakeoverRequestDetails({ request }: { request: UserTakeoverRequest }) {
+	const { t } = useI18n()
+
+	if (!request.goal && !request.lastAction) return null
+
+	return (
+		<div className="mt-2.5 min-w-0 space-y-2 border-t border-amber-600/15 pt-2.5">
+			{request.goal && (
+				<div className="min-w-0">
+					<p className="text-[10px] font-medium text-amber-700/70 dark:text-amber-300/70">
+						{t('takeoverGoalLabel')}
+					</p>
+					<p className="mt-0.5 min-w-0 text-[11px] leading-relaxed [overflow-wrap:anywhere]">
+						{request.goal}
+					</p>
+				</div>
+			)}
+			{request.lastAction && (
+				<div className="min-w-0">
+					<p className="text-[10px] font-medium text-amber-700/70 dark:text-amber-300/70">
+						{t('takeoverLastActionLabel')}
+					</p>
+					<p className="mt-0.5 min-w-0 break-all font-mono text-[11px] leading-relaxed">
+						{request.lastAction.name}
+					</p>
+					<div className="mt-1.5 min-w-0 space-y-1 text-[10px] leading-relaxed text-amber-900/75 dark:text-amber-100/75">
+						<p className="min-w-0 whitespace-pre-wrap break-all">
+							<span className="font-medium">{t('takeoverActionInputLabel')}:</span>{' '}
+							{formatTakeoverValue(request.lastAction.input)}
+						</p>
+						<p className="min-w-0 whitespace-pre-wrap break-all">
+							<span className="font-medium">{t('takeoverActionOutputLabel')}:</span>{' '}
+							{request.lastAction.output}
+						</p>
+					</div>
+				</div>
+			)}
+		</div>
+	)
+}
+
+function formatTakeoverValue(value: unknown): string {
+	if (typeof value === 'string') return value
+	const serialized = JSON.stringify(value, null, 2)
+	return serialized ?? String(value)
 }
 
 // ---- Terminal blocks ----
@@ -393,20 +623,34 @@ function ResultBlock({
 function ActivityLine({ activity }: { activity: AgentActivity }) {
 	const { t } = useI18n()
 
-	const text =
-		activity.type === 'thinking'
-			? t('thinking')
-			: activity.type === 'executing'
-				? `${t('executing')} ${activity.tool}…`
-				: activity.type === 'executed'
-					? `${t('executed')}: ${activity.tool}`
-					: activity.type === 'retrying'
-						? `${t('retrying')} (${activity.attempt}/${activity.maxAttempts})…`
-						: activity.message
+	let text: string
+	switch (activity.type) {
+		case 'thinking':
+			text = t('thinking')
+			break
+		case 'executing':
+			text = `${t('executing')} ${activity.tool}…`
+			break
+		case 'executed':
+			text = `${t('executed')}: ${activity.tool}`
+			break
+		case 'retrying':
+			text = `${t('retrying')} (${activity.attempt}/${activity.maxAttempts})…`
+			break
+		case 'waiting_for_user':
+			text = `${t('takeoverWaitingStatus')}: ${activity.request.title}`
+			break
+		case 'error':
+			text = activity.message
+			break
+	}
 
 	const isError = activity.type === 'error'
 	const isLive =
-		activity.type === 'thinking' || activity.type === 'executing' || activity.type === 'retrying'
+		activity.type === 'thinking' ||
+		activity.type === 'executing' ||
+		activity.type === 'retrying' ||
+		activity.type === 'waiting_for_user'
 
 	return <LiveStatus text={text} tone={isError ? 'error' : 'neutral'} live={isLive} />
 }

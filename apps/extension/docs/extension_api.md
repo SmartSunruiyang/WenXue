@@ -46,24 +46,24 @@ import type { AgentActivity, AgentStatus, ExecutionResult, HistoricalEvent } fro
 
 // Wait for extension injection (up to 1 second)
 async function waitForExtension(timeout = 1000): Promise<boolean> {
-    const start = Date.now()
-    while (Date.now() - start < timeout) {
-        if (window.PAGE_AGENT_EXT) return true
-        await new Promise((r) => setTimeout(r, 100))
-    }
-    return false
+	const start = Date.now()
+	while (Date.now() - start < timeout) {
+		if (window.PAGE_AGENT_EXT) return true
+		await new Promise((r) => setTimeout(r, 100))
+	}
+	return false
 }
 
 // Usage
 if (await waitForExtension()) {
-    const result = await window.PAGE_AGENT_EXT!.execute('Click the login button', {
-        baseURL: 'https://api.openai.com/v1',
-        apiKey: 'your-api-key',
-        model: 'gpt-5.2',
-        onStatusChange: (status) => console.log('Status:', status),
-        onActivity: (activity) => console.log('Activity:', activity),
-    })
-    console.log('Result:', result)
+	const result = await window.PAGE_AGENT_EXT!.execute('Click the login button', {
+		baseURL: 'https://api.openai.com/v1',
+		apiKey: 'your-api-key',
+		model: 'gpt-5.2',
+		onStatusChange: (status) => console.log('Status:', status),
+		onActivity: (activity) => console.log('Activity:', activity),
+	})
+	console.log('Result:', result)
 }
 ```
 
@@ -96,6 +96,11 @@ Returns: `Promise<ExecutionResult>`
 
 Stop the current task.
 
+#### `PAGE_AGENT_EXT.resume()`
+
+Resume the current task after `execute()` returned with `state: 'paused'`. The original callbacks and
+task history remain active.
+
 ## Types
 
 Install `@page-agent/core` for complete types:
@@ -104,25 +109,25 @@ Install `@page-agent/core` for complete types:
 import type { AgentActivity, AgentStatus, ExecutionResult, HistoricalEvent } from '@page-agent/core'
 
 export interface ExecuteConfig {
-    baseURL: string
-    model: string
-    apiKey?: string
+	baseURL: string
+	model: string
+	apiKey?: string
 
-    // Global system-level instructions for the agent.
-    // Equivalent to AgentConfig.instructions.system.
-    systemInstruction?: string
+	// Global system-level instructions for the agent.
+	// Equivalent to AgentConfig.instructions.system.
+	systemInstruction?: string
 
-    // Include the initial tab where page JS starts. Default: true.
-    includeInitialTab?: boolean
+	// Include the initial tab where page JS starts. Default: true.
+	includeInitialTab?: boolean
 
-    // Control all unpinned tabs in the window instead of only the tab group.
-    // When enabled, agent sees and can switch to every non-pinned tab.
-    // Default: false. Experimental.
-    experimentalIncludeAllTabs?: boolean
+	// Control all unpinned tabs in the window instead of only the tab group.
+	// When enabled, agent sees and can switch to every non-pinned tab.
+	// Default: false. Experimental.
+	experimentalIncludeAllTabs?: boolean
 
-    onStatusChange?: (status: AgentStatus) => void
-    onActivity?: (activity: AgentActivity) => void
-    onHistoryUpdate?: (history: HistoricalEvent[]) => void
+	onStatusChange?: (status: AgentStatus) => void
+	onActivity?: (activity: AgentActivity) => void
+	onHistoryUpdate?: (history: HistoricalEvent[]) => void
 }
 
 export type Execute = (task: string, config: ExecuteConfig) => Promise<ExecutionResult>
@@ -131,38 +136,44 @@ export type Execute = (task: string, config: ExecuteConfig) => Promise<Execution
 `AgentStatus`
 
 ```typescript
-type AgentStatus = 'idle' | 'running' | 'completed' | 'error'
+type AgentStatus = 'idle' | 'running' | 'waiting_for_user' | 'paused' | 'completed' | 'error'
 ```
 
 `AgentActivity`
 
 ```typescript
 type AgentActivity =
-    | { type: 'thinking' }
-    | { type: 'executing'; tool: string; input: unknown }
-    | { type: 'executed'; tool: string; input: unknown; output: string; duration: number }
-    | { type: 'retrying'; attempt: number; maxAttempts: number }
-    | { type: 'error'; message: string }
+	| { type: 'thinking' }
+	| { type: 'executing'; tool: string; input: unknown }
+	| { type: 'executed'; tool: string; input: unknown; output: string; duration: number }
+	| { type: 'retrying'; attempt: number; maxAttempts: number }
+	| { type: 'waiting_for_user'; request: UserTakeoverRequest }
+	| { type: 'error'; message: string }
 ```
 
 `HistoricalEvent`
 
 ```typescript
 type HistoricalEvent =
-    | { type: 'step'; stepIndex: number; reflection: AgentReflection; action: Action }
-    | { type: 'observation'; content: string }
-    | { type: 'user_takeover' }
-    | { type: 'retry'; message: string; attempt: number; maxAttempts: number }
-    | { type: 'error'; message: string; rawResponse?: unknown }
+	| { type: 'step'; stepIndex: number; reflection: AgentReflection; action: Action }
+	| { type: 'observation'; content: string }
+	| {
+			type: 'user_takeover'
+			request: UserTakeoverRequest
+			status: 'waiting' | 'completed' | 'paused'
+	  }
+	| { type: 'retry'; message: string; attempt: number; maxAttempts: number }
+	| { type: 'error'; message: string; rawResponse?: unknown }
 ```
 
 `ExecutionResult`
 
 ```typescript
 interface ExecutionResult {
-    success: boolean
-    data: string
-    history: HistoricalEvent[]
+	success: boolean
+	data: string
+	history: HistoricalEvent[]
+	state?: 'completed' | 'error' | 'paused'
 }
 ```
 
@@ -172,15 +183,15 @@ interface ExecutionResult {
 
 ```typescript
 const result = await window.PAGE_AGENT_EXT!.execute(
-    'Fill in the email field with test@example.com and click Submit',
-    {
-        baseURL: 'https://api.openai.com/v1',
-        apiKey: process.env.OPENAI_API_KEY!,
-        model: 'gpt-5.2',
-        includeInitialTab: false, // Optional: exclude current tab
-        onStatusChange: (status) => console.log(status),
-        onActivity: (activity) => console.log(activity),
-    }
+	'Fill in the email field with test@example.com and click Submit',
+	{
+		baseURL: 'https://api.openai.com/v1',
+		apiKey: process.env.OPENAI_API_KEY!,
+		model: 'gpt-5.2',
+		includeInitialTab: false, // Optional: exclude current tab
+		onStatusChange: (status) => console.log(status),
+		onActivity: (activity) => console.log(activity),
+	},
 )
 ```
 
@@ -190,6 +201,15 @@ const result = await window.PAGE_AGENT_EXT!.execute(
 window.PAGE_AGENT_EXT!.stop()
 ```
 
+### Resume a Paused Task
+
+```typescript
+const result = await window.PAGE_AGENT_EXT!.resume()
+```
+
+The page API exposes the paused result and resume transport, but does not provide a built-in takeover
+dialog. A host that needs login/captcha takeover must supply its own user interaction surface.
+
 ## Window Type Declaration
 
 If you are not importing `@page-agent/core`, add:
@@ -198,27 +218,28 @@ If you are not importing `@page-agent/core`, add:
 import type { AgentActivity, AgentStatus, ExecutionResult, HistoricalEvent } from '@page-agent/core'
 
 interface ExecuteConfig {
-    baseURL: string
-    model: string
-    apiKey?: string
+	baseURL: string
+	model: string
+	apiKey?: string
 
-    systemInstruction?: string
+	systemInstruction?: string
 
-    includeInitialTab?: boolean
-    experimentalIncludeAllTabs?: boolean
-    onStatusChange?: (status: AgentStatus) => void
-    onActivity?: (activity: AgentActivity) => void
-    onHistoryUpdate?: (history: HistoricalEvent[]) => void
+	includeInitialTab?: boolean
+	experimentalIncludeAllTabs?: boolean
+	onStatusChange?: (status: AgentStatus) => void
+	onActivity?: (activity: AgentActivity) => void
+	onHistoryUpdate?: (history: HistoricalEvent[]) => void
 }
 
 declare global {
-    interface Window {
-        PAGE_AGENT_EXT_VERSION?: string
-        PAGE_AGENT_EXT?: {
-            version: string
-            execute: Execute
-            stop: () => void
-        }
-    }
+	interface Window {
+		PAGE_AGENT_EXT_VERSION?: string
+		PAGE_AGENT_EXT?: {
+			version: string
+			execute: Execute
+			resume: () => Promise<ExecutionResult>
+			stop: () => void
+		}
+	}
 }
 ```

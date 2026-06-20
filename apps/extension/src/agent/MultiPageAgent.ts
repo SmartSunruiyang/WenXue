@@ -172,13 +172,31 @@ export class MultiPageAgent extends PageAgentCore {
 					url: agent.currentURL,
 					action: lastStep.action,
 				})
+				if (!agent.onUserTakeover) {
+					stuckGuard.reset()
+					await onAfterStep?.(agent, history)
+					return
+				}
 				const shouldRequestTakeover = stuckGuard.record(signature)
+				const executionEpoch = agent.taskId
+				const executionPhase = agent.status
+				const takeoverCount = history.filter((event) => event.type === 'user_takeover').length
 
 				await onAfterStep?.(agent, history)
 				if (!shouldRequestTakeover) return
 
 				stuckGuard.reset()
-				if (agent.status !== 'running') return
+				const callerAddedTakeover =
+					history.filter((event) => event.type === 'user_takeover').length > takeoverCount
+				const executionChanged = agent.taskId !== executionEpoch || agent.status !== executionPhase
+				if (
+					callerAddedTakeover ||
+					executionChanged ||
+					agent.status !== 'running' ||
+					!agent.onUserTakeover
+				) {
+					return
+				}
 
 				await agent.requestUserTakeover({
 					reason: 'stuck',

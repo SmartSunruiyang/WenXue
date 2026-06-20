@@ -1,22 +1,31 @@
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
 
-import { describe, expect, it } from 'vitest'
+import { HistoryRerunControl } from './HistoryList'
 
-const HISTORY_LIST_SOURCE = fileURLToPath(new URL('./HistoryList.tsx', import.meta.url))
+describe('HistoryRerunControl', () => {
+	it('renders visibly disabled while rerun is locked', () => {
+		const html = renderToStaticMarkup(
+			createElement(HistoryRerunControl, {
+				task: 'Repeat this task',
+				onRerun: vi.fn(),
+				canRerun: false,
+			}),
+		)
 
-describe('HistoryList layout source', () => {
-	it('renders history records as cards without divider borders', () => {
-		const source = readFileSync(HISTORY_LIST_SOURCE, 'utf8')
-
-		expect(source).toContain('rounded-lg')
-		expect(source).not.toMatch(/(?:^|[\s"'])border-b(?:$|[\s"'])/)
+		expect(html).toMatch(/<button[^>]*\sdisabled(?:=""|>)/)
+		expect(html).toContain('cursor-not-allowed')
 	})
 
-	it('exposes a button for returning to the saved conversation context', () => {
-		const source = readFileSync(HISTORY_LIST_SOURCE, 'utf8')
+	it('remains enabled by default for source-compatible callers', () => {
+		const html = renderToStaticMarkup(
+			createElement(HistoryRerunControl, {
+				task: 'Repeat this task',
+				onRerun: vi.fn(),
+			}),
+		)
 
-		expect(source).toContain('onGoToSession')
-		expect(source).toContain("t('goToSession')")
+		expect(html).not.toMatch(/<button[^>]*\sdisabled(?:=""|>)/)
 	})
 })

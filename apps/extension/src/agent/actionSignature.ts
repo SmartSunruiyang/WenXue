@@ -8,6 +8,11 @@ export interface ActionSignature {
 }
 
 const IGNORED_ACTIONS = new Set(['done', 'ask_user', 'request_user_takeover'])
+const ACTION_SIGNATURE_IDENTITY = Symbol('actionSignatureIdentity')
+
+type ActionSignatureWithIdentity = ActionSignature & {
+	[ACTION_SIGNATURE_IDENTITY]?: string
+}
 
 export function createActionSignature({
 	url,
@@ -18,12 +23,22 @@ export function createActionSignature({
 }): ActionSignature | null {
 	if (IGNORED_ACTIONS.has(action.name)) return null
 
-	return {
-		url: stripHash(url),
+	const normalizedURL = stripHash(url)
+	const signature: ActionSignatureWithIdentity = {
+		url: normalizedURL,
 		name: action.name,
 		input: truncate(stableStringify(action.input), 160),
 		output: truncate(toStableText(action.output), 240),
 	}
+	Object.defineProperty(signature, ACTION_SIGNATURE_IDENTITY, {
+		value: hashIdentity([
+			normalizedURL,
+			action.name,
+			canonicalStringify(action.input),
+			canonicalStringify(action.output),
+		]),
+	})
+	return signature
 }
 
 export class StuckActionGuard {
@@ -38,7 +53,9 @@ export class StuckActionGuard {
 			return false
 		}
 
-		const current = JSON.stringify(signature)
+		const current =
+			(signature as ActionSignatureWithIdentity)[ACTION_SIGNATURE_IDENTITY] ??
+			hashIdentity([signature.url, signature.name, signature.input, signature.output])
 		if (current === this.#lastSignature) {
 			this.#count++
 		} else {
@@ -69,6 +86,106 @@ function stableStringify(value: unknown): string {
 	} catch {
 		return '[unserializable]'
 	}
+}
+
+function canonicalStringify(value: unknown): string {
+	return serializeCanonical(value, new Map(), '$')
+}
+
+function serializeCanonical(value: unknown, ancestors: Map<object, string>, path: string): string {
+	switch (typeof value) {
+		case 'undefined':
+			return 'undefined'
+		case 'boolean':
+			return `boolean:${value ? 'true' : 'false'}`
+		case 'number':
+			if (Number.isNaN(value)) return 'number:NaN'
+			if (value === Number.POSITIVE_INFINITY) return 'number:Infinity'
+			if (value === Number.NEGATIVE_INFINITY) return 'number:-Infinity'
+			if (Object.is(value, -0)) return 'number:-0'
+			return `number:${value}`
+		case 'bigint':
+			return `bigint:${value}`
+		case 'string':
+			return `string:${JSON.stringify(value)}`
+		case 'function':
+			return `function:${JSON.stringify(value.name || 'anonymous')}`
+		case 'symbol':
+			return `symbol:${JSON.stringify(value.description ?? '')}`
+		case 'object':
+			break
+	}
+
+	if (value === null) return 'null'
+	const cyclePath = ancestors.get(value)
+	if (cyclePath) return `cycle:${JSON.stringify(cyclePath)}`
+
+	ancestors.set(value, path)
+	try {
+		if (value instanceof Date) {
+			const time = value.getTime()
+			return `date:${Number.isNaN(time) ? 'invalid' : value.toISOString()}`
+		}
+		if (Array.isArray(value)) {
+			return `array:[${value
+				.map((item, index) => serializeCanonical(item, ancestors, `${path}[${index}]`))
+				.join(',')}]`
+		}
+		if (value instanceof Map) {
+			const entries = Array.from(value.entries(), ([key, nested]) => {
+				const canonicalKey = serializeCanonical(key, ancestors, `${path}.<map-key>`)
+				const canonicalValue = serializeCanonical(nested, ancestors, `${path}.<map-value>`)
+				return `${canonicalKey}=>${canonicalValue}`
+			}).sort()
+			return `map:[${entries.join(',')}]`
+		}
+		if (value instanceof Set) {
+			const entries = Array.from(value, (item) =>
+				serializeCanonical(item, ancestors, `${path}.<set-value>`),
+			).sort()
+			return `set:[${entries.join(',')}]`
+		}
+
+		const entries = Object.keys(value)
+			.sort()
+			.map((key) => {
+				const nested = (value as Record<string, unknown>)[key]
+				return `${JSON.stringify(key)}:${serializeCanonical(
+					nested,
+					ancestors,
+					`${path}[${JSON.stringify(key)}]`,
+				)}`
+			})
+		return `object:{${entries.join(',')}}`
+	} catch {
+		return `unserializable:${Object.prototype.toString.call(value)}`
+	} finally {
+		ancestors.delete(value)
+	}
+}
+
+function hashIdentity(parts: string[]): string {
+	let first = 0x811c9dc5
+	let second = 0x9e3779b9
+
+	const update = (value: string) => {
+		for (let index = 0; index < value.length; index++) {
+			const code = value.charCodeAt(index)
+			first = Math.imul(first ^ code, 0x01000193)
+			second = Math.imul(second ^ code, 0x5bd1e995)
+		}
+	}
+
+	for (const part of parts) {
+		update(`${part.length}:`)
+		update(part)
+	}
+
+	return `${toHex(first)}${toHex(second)}`
+}
+
+function toHex(value: number): string {
+	return (value >>> 0).toString(16).padStart(8, '0')
 }
 
 function sortValue(value: unknown, ancestors: WeakSet<object>): unknown {
