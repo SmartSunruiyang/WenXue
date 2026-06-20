@@ -150,6 +150,9 @@ export class TabsController {
 			})
 		}
 
+		// Re-activate after grouping — chrome.tabs.group() can steal focus
+		await this.switchToTab(tabId)
+
 		await this.waitUntilTabLoaded(tabId)
 
 		return `✅ Opened new tab ID ${tabId} with URL ${url}`
@@ -276,7 +279,7 @@ export class TabsController {
 		for (const tab of this.tabs) {
 			const { title, url } = await this.getTabInfo(tab.id)
 			summaries.push(
-				`| ${tab.id} | ${url} | ${title} | ${this.currentTabId === tab.id ? '✅' : ''} |`
+				`| ${tab.id} | ${url} | ${title} | ${this.currentTabId === tab.id ? '✅' : ''} |`,
 			)
 		}
 		if (!this.tabs.length) {
@@ -407,7 +410,7 @@ function randomColor(): TabGroupColor {
 export async function waitUntil(
 	check: () => boolean | Promise<boolean>,
 	timeoutMS = 60_000,
-	error?: string
+	error?: string,
 ): Promise<boolean> {
 	if (await check()) return true
 
