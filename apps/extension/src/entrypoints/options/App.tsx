@@ -7,6 +7,42 @@ import { loadStoredConfig, saveStoredConfig } from '@/lib/configStorage'
 import { useI18n } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 
+export { SETTINGS_PAGE_VERSION } from '@/components/SettingsForm'
+
+interface ActiveSectionInput {
+	sectionTops: ReadonlyArray<readonly [SettingsSectionId, number]>
+	viewportHeight: number
+	scrollY: number
+	documentHeight: number
+}
+
+export function resolveActiveSettingsSection({
+	sectionTops,
+	viewportHeight,
+	scrollY,
+	documentHeight,
+}: ActiveSectionInput): SettingsSectionId {
+	const lastSection = SETTINGS_SECTIONS.at(-1)?.id ?? 'account'
+	const lastSectionTop = sectionTops.at(-1)?.[1]
+	if (
+		lastSectionTop !== undefined &&
+		scrollY + viewportHeight >= documentHeight - 2 &&
+		lastSectionTop <= viewportHeight * 0.65
+	) {
+		return lastSection
+	}
+
+	const focusLine = Math.min(220, Math.max(120, viewportHeight * 0.28))
+	let activeSection: SettingsSectionId = SETTINGS_SECTIONS[0].id
+
+	for (const [sectionId, top] of sectionTops) {
+		if (top > focusLine) break
+		activeSection = sectionId
+	}
+
+	return activeSection
+}
+
 export default function App() {
 	const { t } = useI18n()
 	const [config, setConfig] = useState<ExtConfig | null>(null)
@@ -20,6 +56,43 @@ export default function App() {
 				console.error('[Options] Failed to load config:', error)
 			})
 	}, [])
+
+	useEffect(() => {
+		if (!config) return
+
+		let frame = 0
+		const updateActiveSection = () => {
+			frame = 0
+			const sectionTops = SETTINGS_SECTIONS.flatMap((section) => {
+				const element = document.getElementById(section.id)
+				return element ? ([[section.id, element.getBoundingClientRect().top]] as const) : []
+			})
+
+			if (sectionTops.length === 0) return
+			setActiveSection(
+				resolveActiveSettingsSection({
+					sectionTops,
+					viewportHeight: window.innerHeight,
+					scrollY: window.scrollY,
+					documentHeight: document.documentElement.scrollHeight,
+				}),
+			)
+		}
+		const scheduleUpdate = () => {
+			if (frame) return
+			frame = window.requestAnimationFrame(updateActiveSection)
+		}
+
+		scheduleUpdate()
+		window.addEventListener('scroll', scheduleUpdate, { passive: true })
+		window.addEventListener('resize', scheduleUpdate)
+
+		return () => {
+			if (frame) window.cancelAnimationFrame(frame)
+			window.removeEventListener('scroll', scheduleUpdate)
+			window.removeEventListener('resize', scheduleUpdate)
+		}
+	}, [config])
 
 	const handleAutoSave = async (nextConfig: ExtConfig) => {
 		setConfig(await saveStoredConfig(chrome.storage.local, nextConfig))
@@ -37,13 +110,13 @@ export default function App() {
 
 	return (
 		<div className="min-h-screen bg-background text-foreground">
-			<header className="border-b bg-background/95 backdrop-blur">
-				<div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4">
+			<header className="sticky top-0 z-30 border-b bg-background/92 backdrop-blur-md">
+				<div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-5">
 					<div className="flex min-w-0 items-center gap-3">
-						<Logo className="size-8" />
+						<Logo className="size-9" />
 						<div className="min-w-0">
 							<h1 className="truncate text-lg font-semibold">{t('settingsPageTitle')}</h1>
-							<p className="truncate text-xs text-muted-foreground">{t('settingsPageSubtitle')}</p>
+							<p className="truncate text-sm text-muted-foreground">{t('settingsPageSubtitle')}</p>
 						</div>
 					</div>
 					<div
@@ -59,15 +132,14 @@ export default function App() {
 				</div>
 			</header>
 
-			<div className="mx-auto grid max-w-6xl gap-6 px-5 py-6 md:grid-cols-[220px_minmax(0,1fr)]">
-				<aside className="md:sticky md:top-6 md:self-start">
-					<nav className="flex gap-2 overflow-x-auto border-b pb-3 md:flex-col md:overflow-visible md:border-b-0 md:pb-0">
+			<div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)] gap-10 px-6 py-8 md:grid-cols-[220px_minmax(0,1fr)] lg:gap-14">
+				<aside className="min-w-0 md:sticky md:top-28 md:self-start">
+					<nav className="flex min-w-0 max-w-full gap-1.5 overflow-x-auto border-b pb-3 md:flex-col md:overflow-visible md:rounded-md md:border md:bg-muted/20 md:p-1.5">
 						{SETTINGS_SECTIONS.map((section) => (
 							<SettingsSectionTab
 								key={section.id}
 								active={activeSection === section.id}
 								title={t(section.labelKey)}
-								description={t(section.descriptionKey)}
 								onClick={() => scrollToSection(section.id)}
 							/>
 						))}
@@ -94,12 +166,10 @@ export default function App() {
 function SettingsSectionTab({
 	active,
 	title,
-	description,
 	onClick,
 }: {
 	active: boolean
 	title: string
-	description: string
 	onClick: () => void
 }) {
 	return (
@@ -108,33 +178,20 @@ function SettingsSectionTab({
 			aria-current={active ? 'page' : undefined}
 			onClick={onClick}
 			className={cn(
-				'group relative h-auto shrink-0 cursor-pointer overflow-hidden rounded-md border px-3 py-2 text-left text-xs transition-all duration-200',
+				'group relative h-10 shrink-0 cursor-pointer overflow-hidden rounded-sm border border-transparent px-3 text-left text-sm transition-colors duration-200',
 				'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
 				active
-					? 'border-primary/35 bg-primary/10 text-foreground shadow-sm'
-					: 'border-transparent text-muted-foreground hover:border-border hover:bg-muted/55 hover:text-foreground',
+					? 'bg-background text-foreground shadow-xs'
+					: 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
 			)}
 		>
 			<span
 				className={cn(
-					'pointer-events-none absolute inset-x-2 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent transition-transform duration-300',
-					active ? 'scale-x-100' : 'scale-x-0 group-hover:scale-x-100',
+					'pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary transition-opacity duration-200',
+					active ? 'opacity-100' : 'opacity-0',
 				)}
 			/>
-			<span
-				className={cn(
-					'pointer-events-none absolute top-2 right-2 size-1.5 rounded-full bg-primary transition-all duration-300',
-					active
-						? 'scale-100 opacity-80'
-						: 'scale-0 opacity-0 group-hover:scale-75 group-hover:opacity-50',
-				)}
-			/>
-			<span className="flex min-w-0 flex-col items-start gap-0.5">
-				<span className="truncate font-medium">{title}</span>
-				<span className="hidden whitespace-normal text-[10px] font-normal leading-4 text-muted-foreground md:block">
-					{description}
-				</span>
-			</span>
+			<span className="truncate font-medium">{title}</span>
 		</button>
 	)
 }
