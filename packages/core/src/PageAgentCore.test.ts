@@ -127,6 +127,51 @@ function createContinueTool() {
 	})
 }
 
+describe('execute_javascript gate', () => {
+	it('is enabled by default (no experimentalScriptExecutionTool)', () => {
+		const agent = new PageAgentCore(createConfig())
+		expect(agent.tools.has('execute_javascript')).toBe(true)
+		agent.dispose()
+	})
+
+	it('is removed only when explicitly disabled', () => {
+		const agent = new PageAgentCore(
+			createConfig({ experimentalScriptExecutionTool: false } as Partial<PageAgentCoreConfig>),
+		)
+		expect(agent.tools.has('execute_javascript')).toBe(false)
+		agent.dispose()
+	})
+
+	it('defaults world to isolated when parsing input', () => {
+		const agent = new PageAgentCore(createConfig({ experimentalScriptExecutionTool: true }))
+		const tool = agent.tools.get('execute_javascript')!
+
+		expect(tool.inputSchema.parse({ script: 'return 1' })).toEqual({
+			script: 'return 1',
+			world: 'isolated',
+		})
+		agent.dispose()
+	})
+
+	it('passes world and frame_id to pageController.executeJavascript', async () => {
+		const executeJavascript = vi.fn(async () => ({ success: true, message: 'ok' }))
+		const agent = new PageAgentCore(
+			createConfig({
+				experimentalScriptExecutionTool: true,
+				pageController: { ...createPageController(), executeJavascript } as any,
+			}),
+		)
+		const tool = agent.tools.get('execute_javascript')!
+		const input = tool.inputSchema.parse({ script: 'return 1', world: 'main', frame_id: 7 })
+
+		await expect(
+			tool.execute.call(agent, input, { signal: new AbortController().signal }),
+		).resolves.toBe('ok')
+		expect(executeJavascript).toHaveBeenCalledWith('return 1', { world: 'main', frameId: 7 })
+		agent.dispose()
+	})
+})
+
 describe('PageAgentCore', () => {
 	it('records the initial task as a user_message event', async () => {
 		const agent = new PageAgentCore(
