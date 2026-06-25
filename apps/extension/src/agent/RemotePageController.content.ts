@@ -5,6 +5,30 @@ import { PageController } from '@page-agent/page-controller'
 
 import { shouldShowAgentMask } from './RemotePageController'
 
+type JsResult = { success: boolean; message: string }
+
+export async function dispatchJsExecution(
+	pc: { executeJavascript: (script: string) => Promise<JsResult> },
+	runInMainWorld: (script: string) => Promise<JsResult>,
+	payload: [string, { world?: 'isolated' | 'main' }] | undefined,
+): Promise<JsResult> {
+	const [script, opts] = payload ?? ['', {}]
+	const world = opts?.world ?? 'isolated'
+	const run = world === 'main' ? runInMainWorld(script) : pc.executeJavascript(script)
+	return withTimeout(run, 10_000)
+}
+
+function withTimeout(p: Promise<JsResult>, ms: number): Promise<JsResult> {
+	let timer: ReturnType<typeof setTimeout>
+	const timeout = new Promise<JsResult>((resolve) => {
+		timer = setTimeout(
+			() => resolve({ success: false, message: `❌ 执行超时（${ms / 1000}s）` }),
+			ms,
+		)
+	})
+	return Promise.race([p.finally(() => clearTimeout(timer)), timeout])
+}
+
 export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
@@ -28,6 +52,11 @@ export function initPageController() {
 		}
 		return pageController
 	}
+
+	const executeInMainWorld = async (_script: string): Promise<JsResult> => ({
+		success: false,
+		message: 'main world not wired yet',
+	})
 
 	intervalID = window.setInterval(async () => {
 		const {
@@ -95,13 +124,23 @@ export function initPageController() {
 			case 'select_option':
 			case 'scroll':
 			case 'scroll_horizontally':
-			case 'execute_javascript':
 				pc[methodName](...(payload || []))
 					.then((result: any) => sendResponse(result))
 					.catch((error: any) =>
 						sendResponse({
 							success: false,
 							error: error instanceof Error ? error.message : String(error),
+						}),
+					)
+				break
+
+			case 'execute_javascript':
+				dispatchJsExecution(pc, executeInMainWorld, payload)
+					.then((result: any) => sendResponse(result))
+					.catch((error: any) =>
+						sendResponse({
+							success: false,
+							message: `❌ ${error instanceof Error ? error.message : String(error)}`,
 						}),
 					)
 				break
