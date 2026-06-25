@@ -66,7 +66,7 @@ export default defineConfig({
 		},
 		web_accessible_resources: [
 			{
-				resources: ['main-world.js'],
+				resources: ['main-world.js', 'main-world-executor.js'],
 				matches: ['*://*/*'],
 			},
 		],

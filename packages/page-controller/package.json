@@ -8,6 +8,10 @@
         ".": {
             "types": "./src/PageController.ts",
             "default": "./src/PageController.ts"
+        },
+        "./serializeResult": {
+            "types": "./src/serializeResult.ts",
+            "default": "./src/serializeResult.ts"
         }
     },
     "publishConfig": {
@@ -19,6 +23,11 @@
                 "types": "./dist/lib/PageController.d.ts",
                 "import": "./dist/lib/page-controller.js",
                 "default": "./dist/lib/page-controller.js"
+            },
+            "./serializeResult": {
+                "types": "./dist/lib/serializeResult.d.ts",
+                "import": "./dist/lib/serializeResult.js",
+                "default": "./dist/lib/serializeResult.js"
             }
         }
     },

@@ -2,6 +2,7 @@
  * content script for RemotePageController
  */
 import { PageController } from '@page-agent/page-controller'
+import { injectScript } from 'wxt/utils/inject-script'
 
 import { shouldShowAgentMask } from './RemotePageController'
 
@@ -32,6 +33,8 @@ function withTimeout(p: Promise<JsResult>, ms: number): Promise<JsResult> {
 export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
+	let mainWorldExecutorInjected = false
+	let mainExecId = 0
 
 	const myTabIdPromise = chrome.runtime
 		.sendMessage({ type: 'PAGE_CONTROL', action: 'get_my_tab_id' })
@@ -53,10 +56,42 @@ export function initPageController() {
 		return pageController
 	}
 
-	const executeInMainWorld = async (_script: string): Promise<JsResult> => ({
-		success: false,
-		message: 'main world not wired yet',
-	})
+	async function ensureMainWorldExecutor(): Promise<void> {
+		if (mainWorldExecutorInjected) return
+		await injectScript('/main-world-executor.js', { keepInDom: true })
+		mainWorldExecutorInjected = true
+	}
+
+	async function executeInMainWorld(script: string): Promise<JsResult> {
+		try {
+			await ensureMainWorldExecutor()
+		} catch (error) {
+			return { success: false, message: `❌ 无法注入 main world executor: ${String(error)}` }
+		}
+
+		const id = ++mainExecId
+		return new Promise((resolve) => {
+			const onMessage = (e: MessageEvent) => {
+				if (e.source !== window) return
+				const d = e.data
+				if (typeof d !== 'object' || d === null) return
+				if (d.channel !== 'PAGE_AGENT_EXEC_RESPONSE' || d.id !== id) return
+
+				window.removeEventListener('message', onMessage)
+				resolve(
+					d.ok
+						? { success: true, message: `✅ Executed JavaScript (main world). Result: ${d.result}` }
+						: {
+								success: false,
+								message: `❌ main world 执行失败（可能被页面 CSP 阻止）: ${d.error}`,
+							},
+				)
+			}
+
+			window.addEventListener('message', onMessage)
+			window.postMessage({ channel: 'PAGE_AGENT_EXEC_REQUEST', id, script }, '*')
+		})
+	}
 
 	intervalID = window.setInterval(async () => {
 		const {
