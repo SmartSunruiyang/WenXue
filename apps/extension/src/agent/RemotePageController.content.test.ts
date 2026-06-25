@@ -22,7 +22,7 @@ describe('dispatchJsExecution', () => {
 		const pc = { executeJavascript: vi.fn() }
 		const main = vi.fn(async () => ({ success: true, message: 'main' }))
 		const r = await dispatchJsExecution(pc as any, main, ['return 1', { world: 'main' }])
-		expect(main).toHaveBeenCalledWith('return 1')
+		expect(main).toHaveBeenCalledWith('return 1', expect.any(AbortSignal))
 		expect(pc.executeJavascript).not.toHaveBeenCalled()
 		expect(r.message).toBe('main')
 	})
@@ -39,5 +39,20 @@ describe('dispatchJsExecution', () => {
 			success: false,
 			message: '❌ 执行超时（10s）',
 		})
+	})
+
+	it('aborts main-world execution when the timeout wins', async () => {
+		vi.useFakeTimers()
+		const pc = { executeJavascript: vi.fn() }
+		const main = vi.fn((_script: string, _signal?: AbortSignal) => new Promise<any>(() => {}))
+
+		const r = dispatchJsExecution(pc as any, main as any, ['return slow()', { world: 'main' }])
+		await vi.advanceTimersByTimeAsync(10_000)
+
+		await expect(r).resolves.toEqual({
+			success: false,
+			message: '❌ 执行超时（10s）',
+		})
+		expect((main.mock.calls[0][1] as AbortSignal).aborted).toBe(true)
 	})
 })

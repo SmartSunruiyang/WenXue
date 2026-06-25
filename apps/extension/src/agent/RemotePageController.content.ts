@@ -7,23 +7,32 @@ import { injectScript } from 'wxt/utils/inject-script'
 import { shouldShowAgentMask } from './RemotePageController'
 
 type JsResult = { success: boolean; message: string }
+type MainWorldRunner = (script: string, signal?: AbortSignal) => Promise<JsResult>
 
 export async function dispatchJsExecution(
 	pc: { executeJavascript: (script: string) => Promise<JsResult> },
-	runInMainWorld: (script: string) => Promise<JsResult>,
+	runInMainWorld: MainWorldRunner,
 	payload: [string, { world?: 'isolated' | 'main' }] | undefined,
 ): Promise<JsResult> {
 	const [script, opts] = payload ?? ['', {}]
 	const world = opts?.world ?? 'isolated'
-	const run = world === 'main' ? runInMainWorld(script) : pc.executeJavascript(script)
-	return withTimeout(run, 10_000)
+
+	if (world === 'main') {
+		const controller = new AbortController()
+		return withTimeout(runInMainWorld(script, controller.signal), 10_000, () => controller.abort())
+	}
+
+	return withTimeout(pc.executeJavascript(script), 10_000)
 }
 
-function withTimeout(p: Promise<JsResult>, ms: number): Promise<JsResult> {
+function withTimeout(p: Promise<JsResult>, ms: number, onTimeout?: () => void): Promise<JsResult> {
 	let timer: ReturnType<typeof setTimeout>
 	const timeout = new Promise<JsResult>((resolve) => {
 		timer = setTimeout(
-			() => resolve({ success: false, message: `❌ 执行超时（${ms / 1000}s）` }),
+			() => {
+				onTimeout?.()
+				resolve({ success: false, message: `❌ 执行超时（${ms / 1000}s）` })
+			},
 			ms,
 		)
 	})
@@ -34,6 +43,7 @@ export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
 	let mainWorldExecutorInjected = false
+	let mainWorldExecutorInjection: Promise<void> | null = null
 	let mainExecId = 0
 
 	const myTabIdPromise = chrome.runtime
@@ -58,26 +68,47 @@ export function initPageController() {
 
 	async function ensureMainWorldExecutor(): Promise<void> {
 		if (mainWorldExecutorInjected) return
-		await injectScript('/main-world-executor.js', { keepInDom: true })
-		mainWorldExecutorInjected = true
+		if (!mainWorldExecutorInjection) {
+			mainWorldExecutorInjection = injectScript('/main-world-executor.js', { keepInDom: true }).then(
+				() => {
+					mainWorldExecutorInjected = true
+				},
+			)
+		}
+
+		try {
+			await mainWorldExecutorInjection
+		} catch (error) {
+			mainWorldExecutorInjection = null
+			throw error
+		}
 	}
 
-	async function executeInMainWorld(script: string): Promise<JsResult> {
+	async function executeInMainWorld(script: string, signal?: AbortSignal): Promise<JsResult> {
 		try {
 			await ensureMainWorldExecutor()
 		} catch (error) {
 			return { success: false, message: `❌ 无法注入 main world executor: ${String(error)}` }
 		}
+		if (signal?.aborted) return { success: false, message: '❌ main world 执行已取消' }
 
 		const id = ++mainExecId
 		return new Promise((resolve) => {
+			const cleanup = () => {
+				window.removeEventListener('message', onMessage)
+				signal?.removeEventListener('abort', onAbort)
+			}
+			const onAbort = () => {
+				cleanup()
+				resolve({ success: false, message: '❌ main world 执行已取消' })
+			}
 			const onMessage = (e: MessageEvent) => {
 				if (e.source !== window) return
 				const d = e.data
 				if (typeof d !== 'object' || d === null) return
 				if (d.channel !== 'PAGE_AGENT_EXEC_RESPONSE' || d.id !== id) return
 
-				window.removeEventListener('message', onMessage)
+				cleanup()
 				resolve(
 					d.ok
 						? { success: true, message: `✅ Executed JavaScript (main world). Result: ${d.result}` }
@@ -89,6 +120,7 @@ export function initPageController() {
 			}
 
 			window.addEventListener('message', onMessage)
+			signal?.addEventListener('abort', onAbort, { once: true })
 			window.postMessage({ channel: 'PAGE_AGENT_EXEC_REQUEST', id, script }, '*')
 		})
 	}
