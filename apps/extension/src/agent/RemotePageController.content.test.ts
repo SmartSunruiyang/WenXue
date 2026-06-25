@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { dispatchJsExecution } from './RemotePageController.content'
+
+afterEach(() => {
+	vi.useRealTimers()
+})
 
 describe('dispatchJsExecution', () => {
 	it('routes isolated to the PageController eval', async () => {
@@ -21,5 +25,19 @@ describe('dispatchJsExecution', () => {
 		expect(main).toHaveBeenCalledWith('return 1')
 		expect(pc.executeJavascript).not.toHaveBeenCalled()
 		expect(r.message).toBe('main')
+	})
+
+	it('returns a timeout result after 10 seconds', async () => {
+		vi.useFakeTimers()
+		const pc = { executeJavascript: vi.fn(() => new Promise<any>(() => {})) }
+		const main = vi.fn()
+
+		const r = dispatchJsExecution(pc as any, main, ['return slow()', { world: 'isolated' }])
+		await vi.advanceTimersByTimeAsync(10_000)
+
+		await expect(r).resolves.toEqual({
+			success: false,
+			message: '❌ 执行超时（10s）',
+		})
 	})
 })

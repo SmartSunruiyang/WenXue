@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { handlePageControlMessage } from './RemotePageController.background'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+	vi.restoreAllMocks()
+	vi.unstubAllGlobals()
+})
 
 describe('handlePageControlMessage frame routing', () => {
 	it('forwards frameId to chrome.tabs.sendMessage', async () => {
@@ -46,6 +49,36 @@ describe('handlePageControlMessage frame routing', () => {
 			3,
 			{ type: 'PAGE_CONTROL', action: 'click_element', payload: [1] },
 			{ frameId: 0 },
+		)
+	})
+
+	it('normalizes proxy failures with a human-readable message', async () => {
+		vi.spyOn(console, 'error').mockImplementation(() => {})
+		const sendMessage = vi.fn(async () => {
+			throw new Error('Could not establish connection. Receiving end does not exist.')
+		})
+		vi.stubGlobal('chrome', { tabs: { sendMessage } })
+		const respond = vi.fn()
+
+		handlePageControlMessage(
+			{
+				type: 'PAGE_CONTROL',
+				action: 'execute_javascript',
+				payload: ['return 1', {}],
+				targetTabId: 3,
+				frameId: 7,
+			} as any,
+			{} as any,
+			respond,
+		)
+		await new Promise((r) => setTimeout(r, 0))
+
+		expect(respond).toHaveBeenCalledWith(
+			expect.objectContaining({
+				success: false,
+				error: 'Could not establish connection. Receiving end does not exist.',
+				message: expect.stringContaining('Receiving end does not exist'),
+			}),
 		)
 	})
 

@@ -24,7 +24,7 @@ function originOf(url: string | undefined): string {
 export function handlePageControlMessage(
 	message: PageControlMessage,
 	sender: chrome.runtime.MessageSender,
-	sendResponse: (response: unknown) => void
+	sendResponse: (response: unknown) => void,
 ): true | undefined {
 	const PREFIX = '[RemotePageController.background]'
 
@@ -82,10 +82,12 @@ export function handlePageControlMessage(
 			sendResponse(result)
 		})
 		.catch((error) => {
+			const message = error instanceof Error ? error.message : String(error)
 			console.error(PREFIX, error)
 			sendResponse({
 				success: false,
-				error: error instanceof Error ? error.message : String(error),
+				error: message,
+				message,
 			})
 		})
 
