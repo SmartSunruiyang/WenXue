@@ -18,6 +18,7 @@ import * as dom from './dom'
 import type { FlatDomTree, InteractiveElementDomNode } from './dom/dom_tree/type'
 import { getPageInfo } from './dom/getPageInfo'
 import { patchReact } from './patches/react'
+import { serializeResult } from './serializeResult'
 import { isAnchorElement } from './utils'
 
 /**
@@ -385,7 +386,7 @@ export class PageController extends EventTarget {
 			const result = await asyncFunction()
 			return {
 				success: true,
-				message: `✅ Executed JavaScript. Result: ${result}`,
+				message: `✅ Executed JavaScript. Result: ${serializeResult(result)}`,
 			}
 		} catch (error) {
 			return {
@@ -431,3 +432,4 @@ export class PageController extends EventTarget {
 }
 
 export * from './actions'
+export { serializeResult } from './serializeResult'

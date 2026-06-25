@@ -42,6 +42,7 @@
     "homepage": "https://alibaba.github.io/page-agent/",
     "scripts": {
         "build": "vite build",
+        "test": "vitest run",
         "prepublishOnly": "node ../../scripts/pre-publish.js",
         "postpublish": "node ../../scripts/post-publish.js"
     },
@@ -49,8 +50,10 @@
     },
     "devDependencies": {
         "chalk": "^5.6.2",
+        "jsdom": "^29.1.1",
         "unplugin-dts": "^1.0.2",
         "vite": "^8.0.16",
-        "vite-plugin-css-injected-by-js": "^5.0.1"
+        "vite-plugin-css-injected-by-js": "^5.0.1",
+        "vitest": "^4.1.8"
     }
 }
