@@ -1,0 +1,25 @@
+{
+	"name": "website",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite --host 0.0.0.0 --port 5175 --strictPort",
+		"build": "tsc --noEmit && vite build",
+		"preview": "vite preview --host 0.0.0.0",
+		"test": "tsx --test src/*.test.ts"
+	},
+	"dependencies": {
+		"lucide-react": "^1.16.0",
+		"motion": "^12.40.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0"
+	},
+	"devDependencies": {
+		"@types/react": "^19.2.15",
+		"@types/react-dom": "^19.2.3",
+		"@vitejs/plugin-react": "^4.3.4",
+		"typescript": "^6.0.3",
+		"vite": "^6.3.4"
+	}
+}

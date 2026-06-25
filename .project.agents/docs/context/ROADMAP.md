@@ -66,6 +66,7 @@
 - **CI**：M0 后接入 lint + typecheck + `pnpm -r test` PR 门禁；M5 后接双平台打包工作流（产物传 artifacts）。
 - **品牌视觉资产**：图标全套（UIUX §11 清单），依赖 PRD 开放问题 #1 定稿，须在 M4 开始前交付（占位图标不阻塞 M4 之前的里程碑）。
 - **示例验收页**：本地静态 research 示例页 + 表单答题示例页，M3 开始前备好，供 M3–M5 验收复用。
+- **官网**：`apps/website` 独立静态站点，首期只做白色极简首页：全屏 DotField 首屏、浏览器 hero 演示、下载 CTA；后续再接下载页、文档页与 CloudBase 部署。
 
 ## 4. 完成定义（DoD）
 - 构建通过；`pnpm -r test` 通过。

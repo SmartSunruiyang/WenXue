@@ -11,15 +11,15 @@
 
 ### 1.1 实体
 
-| 实体                     | 关键字段                                                                                                                                                 | 关系                             | 持久化与生命周期                                                  |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------- |
-| BrowserProfile           | id（目录名，demo 固定 `default`）、dirPath、createdAt                                                                                                    | 1:N → 运行中的浏览器实例（瞬态） | 是：磁盘目录 `<userData>/profiles/<id>`，首次启动创建，删除即重置 |
-| BrowserRuntimeDescriptor | version、platform、binaryPath                                                                                                                            | 被 LaunchConfig / 版本查询消费   | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更  |
-| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage、logRetentionDays、logMaxEntries | 被 Agent 循环、插件 UI 与 Logging 消费 | 是：`chrome.storage.local`（仅本机，I2）                          |
-| AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                           | 1:N → AgentActivity              | 是：插件 IndexedDB，用户可删                                      |
-| AgentActivity            | taskId、type、payload、ts                                                                                                                                | 属于 AgentTask                   | 是：插件 IndexedDB，随任务删除                                    |
-| QuickLink                | id、title、url、icon?                                                                                                                                    | 属于 NewTabHome 仪表盘           | 是：chrome.storage.local（newtabQuickLinks，仅本机，I2）          |
-| LogEntry                 | id、ts、level、source、context、message、data?                                                                                                           | 由插件各运行时产生，由 Logging 管理 | 是：插件 IndexedDB `page-agent-ext` v2 的 `logs`；按保留天数与条数上限自动清理，用户可导出/清空 |
+| 实体                     | 关键字段                                                                                                                                                                                  | 关系                                   | 持久化与生命周期                                                                                |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| BrowserProfile           | id（目录名，demo 固定 `default`）、dirPath、createdAt                                                                                                                                     | 1:N → 运行中的浏览器实例（瞬态）       | 是：磁盘目录 `<userData>/profiles/<id>`，首次启动创建，删除即重置                               |
+| BrowserRuntimeDescriptor | version、platform、binaryPath                                                                                                                                                             | 被 LaunchConfig / 版本查询消费         | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更                                |
+| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage、logRetentionDays、logMaxEntries | 被 Agent 循环、插件 UI 与 Logging 消费 | 是：`chrome.storage.local`（仅本机，I2）                                                        |
+| AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                                                            | 1:N → AgentActivity                    | 是：插件 IndexedDB，用户可删                                                                    |
+| AgentActivity            | taskId、type、payload、ts                                                                                                                                                                 | 属于 AgentTask                         | 是：插件 IndexedDB，随任务删除                                                                  |
+| QuickLink                | id、title、url、icon?                                                                                                                                                                     | 属于 NewTabHome 仪表盘                 | 是：chrome.storage.local（newtabQuickLinks，仅本机，I2）                                        |
+| LogEntry                 | id、ts、level、source、context、message、data?                                                                                                                                            | 由插件各运行时产生，由 Logging 管理    | 是：插件 IndexedDB `page-agent-ext` v2 的 `logs`；按保留天数与条数上限自动清理，用户可导出/清空 |
 
 ### 1.2 派生概念（非持久化）
 
@@ -253,6 +253,20 @@ fork 应用层（apps/extension）：
 - 持有状态：会话级路由表
 ```
 
+### 2.3 官网域（apps/website）
+
+官网域是静态前端站点，与桌面域、插件域均无运行时依赖边；它只消费公开产品叙事、品牌资产与下载链接。
+
+```
+## 模块名：WebsiteSite
+- 职责：问学对外官网首页与文档页体验；首屏 DotField 品牌背景、VariableProximity 主标题 hover、React Bits 官网 `ln-navbar` 风格固定导航（默认透明任务栏，滚动后收束成悬浮胶囊；左侧透明 slogan 无底图 + Docs，右侧下载 + GitHub，无中英切换入口）、浏览器 hero 演示、下载 CTA 与三栏文档站（hash 子页 / 左侧固定大目录 / 中间 README 式正文 / 右侧固定章节目录）
+- 不负责：不启动浏览器；不注入插件；不存储 API Key；不调用 LLM；不读取插件/桌面本地数据
+- 输入：透明品牌资产、静态文案、构建期环境变量或静态下载链接（后续 CloudBase 托管时接入）
+- 输出：静态 HTML/CSS/JS 站点（CloudBase 静态托管目标）
+- 关键类型/接口：无跨运行时接口；React + motion 组件仅持有本页交互状态
+- 持有状态：仅浏览器内瞬态 UI 状态（演示步骤、演示任务选项、语言与页面视图）
+```
+
 ## 3. 依赖图（DAG）
 
 ```mermaid
@@ -296,9 +310,12 @@ graph TD
         Chaoxing --> Logging
         PA_CORE --> PA_LLMS["@page-agent/llms"]
     end
+    subgraph 官网域
+        WebsiteSite --> WebsiteAssets["透明品牌资产"]
+    end
 ```
 
-> 跨两个 subgraph **不存在任何边**（I3）。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。手工验证：所有箭头自高层指向低层，无环。
+> 桌面域与插件域两个 subgraph **不存在任何边**（I3）；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。手工验证：所有箭头自高层指向低层，无环。
 
 ### 3.1 依赖方向规则
 
@@ -372,15 +389,16 @@ graph TD
 
 ## 4. 持久化与边界
 
-| 数据                                          | 位置                        | 谁写                                      | 边界约束                                                                                                 |
-| --------------------------------------------- | --------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 画像数据（cookie、登录态、浏览记录）          | `<userData>/profiles/<id>/` | 仅 CfT 进程                               | 桌面端只创建目录，永不读内容                                                                             |
-| 运行日志                                      | `<userData>/logs/`          | AppLogger                                 | 不含 Key/对话内容（I2）                                                                                  |
-| ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`      | SidepanelApp options 设置页与语言快捷入口 | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置 |
-| 任务历史                                      | 插件 IndexedDB              | MultiPageAgent / SidepanelApp             | 不出本机；用户可清空                                                                                     |
+| 数据                                          | 位置                                                                                     | 谁写                                                   | 边界约束                                                                                                                                                   |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 画像数据（cookie、登录态、浏览记录）          | `<userData>/profiles/<id>/`                                                              | 仅 CfT 进程                                            | 桌面端只创建目录，永不读内容                                                                                                                               |
+| 运行日志                                      | `<userData>/logs/`                                                                       | AppLogger                                              | 不含 Key/对话内容（I2）                                                                                                                                    |
+| ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`                                                                   | SidepanelApp options 设置页与语言快捷入口              | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置                                                   |
+| 任务历史                                      | 插件 IndexedDB                                                                           | MultiPageAgent / SidepanelApp                          | 不出本机；用户可清空                                                                                                                                       |
 | 插件日志                                      | IndexedDB `page-agent-ext` v2：`logs`（`id` 自增，`by-ts` 索引）；原 `sessions` 保持不变 | 仅 background Logging 写；LogViewer 经消息读/导出/清空 | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；不进桌面域、不远程上报 |
-| 快捷入口与 onboarding 标志                    | chrome.storage.local        | NewTabHome                                | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                        |
-| browser.lock.json                             | 仓库 `apps/desktop/`        | 开发者（升级 CfT 时）                     | 构建期消费，运行期只读                                                                                   |
+| 快捷入口与 onboarding 标志                    | chrome.storage.local                                                                     | NewTabHome                                             | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                                                                          |
+| browser.lock.json                             | 仓库 `apps/desktop/`                                                                     | 开发者（升级 CfT 时）                                  | 构建期消费，运行期只读                                                                                                                                     |
+| 官网演示 UI 状态                              | 浏览器内存                                                                               | WebsiteSite                                            | 仅本页交互演示，不持久化、不出网                                                                                                                           |
 
 出网边界：插件域 → 用户配置的 LLM baseURL（HTTPS）是**唯一**业务出网；桌面域 demo 阶段零出网；CfT 自身的浏览流量属用户行为，不在系统边界内。
 
@@ -406,7 +424,7 @@ WenXue/
 │   │   ├── scripts/                 # fetch-browser.ts / smoke-launch.ts（构建工具，非运行时模块）
 │   │   ├── browser.lock.json        # BrowserRuntimeDescriptor 版本来源
 │   │   └── electron-builder.yml
-│   └── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · Logging · LogViewer · chaoxing/* · ExtensionEntrypoints
+│   ├── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · Logging · LogViewer · chaoxing/* · ExtensionEntrypoints
 │       ├── src/entrypoints/         # background / content / main-world / sidepanel / hub / newtab
 │       ├── src/agent/chaoxing/      # chaoxing/*：solve.ts · adapter.content.ts · tools.ts（学习通求解器）
 │       ├── src/components/
@@ -419,6 +437,13 @@ WenXue/
 │           ├── log.background.ts    # LOG_APPEND/QUERY/EXPORT/CLEAR 分派
 │           ├── loggingFetch.ts      # LLM fetch 请求/响应正文捕获
 │           └── db.ts                # page-agent-ext v2：sessions + logs/by-ts
+│   └── website/                     # 官网域：WebsiteSite（DotField 首页、浏览器 hero、下载 CTA、三栏文档页）
+│       ├── src/
+│       │   ├── App.tsx
+│       │   ├── DotField.tsx
+│       │   ├── SiteNavbar.tsx
+│       │   └── styles.css
+│       └── public/assets/           # 官网消费的透明品牌资产
 ├── packages/                        # vendor：@page-agent/{ui, llms, page-controller, core}（I5）
 ├── third_party/page-agent/LICENSE   # 上游 MIT 协议与版权声明
 ├── .project.agents/                 # 治理（CLAUDE/AGENTS/约束/指南/log）
