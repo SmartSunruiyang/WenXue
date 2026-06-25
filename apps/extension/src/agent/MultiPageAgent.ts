@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger'
 
 import { createActionSignature, StuckActionGuard } from './actionSignature'
 import { createChaoxingTools } from './chaoxing/tools'
+import { createFrameTools } from './frameTools'
 import { RemotePageController } from './RemotePageController'
 import SYSTEM_PROMPT from './system_prompt.md?raw'
 import { TabsController } from './TabsController'
@@ -95,7 +96,11 @@ export class MultiPageAgent extends PageAgentCore {
 			tabsController,
 			getModels: () => config.chaoxingModels ?? { text: fallbackTextModel, vision: undefined },
 		})
-		const customTools = { ...createTabTools(tabsController), ...chaoxingTools }
+		const customTools = {
+			...createTabTools(tabsController),
+			...createFrameTools(pageController),
+			...chaoxingTools,
+		}
 
 		// system prompt - auto-detect language if not specified
 		const language = config.language ?? detectLanguage()
