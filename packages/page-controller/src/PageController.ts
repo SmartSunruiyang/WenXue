@@ -379,7 +379,10 @@ export class PageController extends EventTarget {
 	/**
 	 * Execute arbitrary JavaScript on the page
 	 */
-	async executeJavascript(script: string): Promise<ActionResult> {
+	async executeJavascript(
+		script: string,
+		_opts?: { world?: 'isolated' | 'main'; frameId?: number }
+	): Promise<ActionResult> {
 		try {
 			// Wrap script in async function to support await
 			const asyncFunction = eval(`(async () => { ${script} })`)
