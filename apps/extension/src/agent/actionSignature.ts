@@ -7,7 +7,7 @@ export interface ActionSignature {
 	output: string
 }
 
-const IGNORED_ACTIONS = new Set(['done', 'ask_user', 'request_user_takeover'])
+const IGNORED_ACTIONS = new Set(['done', 'ask_user', 'request_user_takeover', 'recall_steps'])
 const ACTION_SIGNATURE_IDENTITY = Symbol('actionSignatureIdentity')
 
 type ActionSignatureWithIdentity = ActionSignature & {

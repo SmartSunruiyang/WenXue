@@ -41,6 +41,16 @@ class FakeAgent extends EventTarget {
 		options?: { signal: AbortSignal },
 	) => Promise<UserTakeoverResolution>
 	execute = vi.fn(async (_task: string) => COMPLETED_RESULT)
+	followUp = vi.fn(async (_task: string) => COMPLETED_RESULT)
+	restoreConversation = vi.fn(
+		(session: { task: string; history: HistoricalEvent[]; status: 'completed' | 'error' }) => {
+			this.task = session.task
+			this.history = [...session.history]
+			this.status = session.status
+			this.dispatchEvent(new Event('statuschange'))
+			this.dispatchEvent(new Event('historychange'))
+		},
+	)
 	resume = vi.fn(async () => COMPLETED_RESULT)
 	stop = vi.fn()
 	dispose = vi.fn()
@@ -379,6 +389,48 @@ describe('agent session controller', () => {
 			currentTask: 'New task',
 			takeoverRequest: null,
 		})
+	})
+
+	it('followUp delegates to agent.followUp without clearing history', async () => {
+		const event = { type: 'observation', content: 'Existing history' } as HistoricalEvent
+		const agent = new FakeAgent()
+		agent.status = 'completed'
+		agent.task = 'Existing task'
+		agent.history = [event]
+		const { controller, state } = createSessionHarness()
+		controller.bind(agent, { enableUserTakeover: true })
+
+		await expect(controller.followUp('Follow-up task')).resolves.toBe(COMPLETED_RESULT)
+
+		expect(agent.followUp).toHaveBeenCalledWith('Follow-up task')
+		expect(state.currentTask).toBe('Follow-up task')
+		expect(state.history).toEqual([event])
+	})
+
+	it('restores a saved conversation into the bound agent before follow-up', async () => {
+		const event = { type: 'user_message', content: '任务A' } as HistoricalEvent
+		const agent = new FakeAgent()
+		const { controller, state } = createSessionHarness()
+		controller.bind(agent, { enableUserTakeover: true })
+
+		expect(
+			controller.restoreConversation({
+				task: '任务A',
+				history: [event],
+				status: 'completed',
+			}),
+		).toBe(true)
+		await controller.followUp('任务B')
+
+		expect(agent.restoreConversation).toHaveBeenCalledWith({
+			task: '任务A',
+			history: [event],
+			status: 'completed',
+		})
+		expect(agent.followUp).toHaveBeenCalledWith('任务B')
+		expect(state.status).toBe('completed')
+		expect(state.history).toEqual([event])
+		expect(state.currentTask).toBe('任务B')
 	})
 
 	it.each(['running', 'waiting_for_user', 'paused'] as const)(

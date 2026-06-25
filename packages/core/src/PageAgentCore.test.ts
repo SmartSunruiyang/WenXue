@@ -71,6 +71,32 @@ function createToolCallResponse(action: Record<string, unknown>, step: number): 
 	)
 }
 
+function createSummaryResponse(summary: string): Response {
+	return new Response(
+		JSON.stringify({
+			choices: [
+				{
+					finish_reason: 'tool_calls',
+					message: {
+						tool_calls: [
+							{
+								id: 'summary_call',
+								type: 'function',
+								function: {
+									name: 'submit_summary',
+									arguments: JSON.stringify({ summary }),
+								},
+							},
+						],
+					},
+				},
+			],
+			usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+		}),
+		{ status: 200, headers: { 'Content-Type': 'application/json' } },
+	)
+}
+
 function getStepInfoLines(prompt: string): string[] {
 	const prefix = '<step_info>\n'
 	const start = prompt.indexOf(prefix)
@@ -102,6 +128,234 @@ function createContinueTool() {
 }
 
 describe('PageAgentCore', () => {
+	it('records the initial task as a user_message event', async () => {
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () => createToolCallResponse({ done: { text: 'ok', success: true } }, 1),
+			}),
+		)
+
+		await agent.execute('出一道物理题')
+
+		expect(agent.history[0]).toEqual({ type: 'user_message', content: '出一道物理题' })
+		agent.dispose()
+	})
+
+	it('followUp continues without wiping history', async () => {
+		let step = 0
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () =>
+					createToolCallResponse({ done: { text: `r${++step}`, success: true } }, step),
+			}),
+		)
+
+		await agent.execute('任务A')
+		const afterFirst = agent.history.length
+		await agent.followUp('任务B')
+
+		const userMessages = agent.history.filter((event) => event.type === 'user_message')
+		expect(userMessages.map((event) => event.content)).toEqual(['任务A', '任务B'])
+		expect(agent.history.length).toBeGreaterThan(afterFirst)
+		expect(agent.task).toBe('任务B')
+		agent.dispose()
+	})
+
+	it('restores a completed conversation so followUp can continue it', async () => {
+		const capturedPrompts: string[] = []
+		let step = 0
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async (_input, init) => {
+					capturedPrompts.push(getUserPrompt(init))
+					step++
+					return createToolCallResponse({ done: { text: `r${step}`, success: true } }, step)
+				},
+			}),
+		)
+		const restoredHistory: HistoricalEvent[] = [
+			{ type: 'user_message', content: '任务A' },
+			{
+				type: 'step',
+				stepIndex: 0,
+				reflection: { memory: 'RESTORED_CONTEXT' },
+				action: { name: 'done', input: { text: 'r0', success: true }, output: 'r0' },
+				usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+			},
+		]
+
+		agent.restoreConversation({
+			task: '任务A',
+			history: restoredHistory,
+			status: 'completed',
+		})
+		await agent.followUp('任务B')
+
+		expect(agent.history.filter((event) => event.type === 'user_message')).toHaveLength(2)
+		expect(capturedPrompts[0]).toContain('RESTORED_CONTEXT')
+		expect(capturedPrompts[0]).toContain('<user_message>任务B</user_message>')
+		agent.dispose()
+	})
+
+	it('projection drops covered steps but keeps user_message and summary', async () => {
+		const capturedPrompts: string[] = []
+		let fetchCount = 0
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async (_input, init) => {
+					capturedPrompts.push(getUserPrompt(init))
+					fetchCount++
+					return createToolCallResponse(
+						{ done: { text: `ok ${fetchCount}`, success: true } },
+						fetchCount,
+					)
+				},
+			}),
+		)
+
+		await agent.execute('任务A')
+		const oldStep = agent.history.find((event) => event.type === 'step')
+		expect(oldStep).toBeDefined()
+		if (oldStep?.type === 'step') {
+			oldStep.reflection.memory = 'SECRET_OLD_STEP'
+			agent.history.push({
+				type: 'summary',
+				content: 'SUMMARY_HEAD step0: done -> ok',
+				coversThroughIndex: agent.history.indexOf(oldStep),
+			})
+		}
+
+		capturedPrompts.length = 0
+		await agent.followUp('任务B')
+
+		const followUpPrompt = capturedPrompts[0]
+		expect(followUpPrompt).toContain('SUMMARY_HEAD')
+		expect(followUpPrompt).toContain('<user_message>任务A</user_message>')
+		expect(followUpPrompt).toContain('<user_message>任务B</user_message>')
+		expect(followUpPrompt).not.toContain('SECRET_OLD_STEP')
+		agent.dispose()
+	})
+
+	it('compacts older steps into a summary when history exceeds softTokens', async () => {
+		const prompts: string[] = []
+		let step = 0
+		const agent = new PageAgentCore(
+			createConfig({
+				compaction: { enabled: true, softTokens: 1, hardTokens: 100_000, keepRecentSteps: 1 },
+				customTools: { continue_task: createContinueTool() },
+				customFetch: async (_input, init) => {
+					const body = getOutboundRequest(init)
+					const isSummary = body.tools?.some(
+						(candidate: any) => candidate.function?.name === 'submit_summary',
+					)
+					if (isSummary) return createSummaryResponse('COMPACTED_DIGEST')
+
+					prompts.push(getUserPrompt(init))
+					step++
+					if (step < 3) return createToolCallResponse({ continue_task: {} }, step)
+					return createToolCallResponse({ done: { text: 'ok', success: true } }, step)
+				},
+			}),
+		)
+
+		await agent.execute('长任务')
+
+		expect(agent.history.some((event) => event.type === 'summary')).toBe(true)
+		expect(prompts[prompts.length - 1]).toContain('COMPACTED_DIGEST')
+		agent.dispose()
+	})
+
+	it('falls back to mechanical condense when summarizer fails', async () => {
+		let step = 0
+		const agent = new PageAgentCore(
+			createConfig({
+				compaction: { enabled: true, softTokens: 1, hardTokens: 100_000, keepRecentSteps: 1 },
+				customTools: { continue_task: createContinueTool() },
+				maxRetries: 0,
+				customFetch: async (_input, init) => {
+					const body = getOutboundRequest(init)
+					const isSummary = body.tools?.some(
+						(candidate: any) => candidate.function?.name === 'submit_summary',
+					)
+					if (isSummary) throw new Error('summarizer down')
+
+					step++
+					if (step < 3) return createToolCallResponse({ continue_task: {} }, step)
+					return createToolCallResponse({ done: { text: 'ok', success: true } }, step)
+				},
+			}),
+		)
+
+		const result = await agent.execute('长任务')
+
+		expect(result.success).toBe(true)
+		expect(agent.history.some((event) => event.type === 'summary')).toBe(true)
+		agent.dispose()
+	})
+
+	it('recall_steps returns the verbatim record of a step by index', async () => {
+		let step = 0
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () => {
+					step++
+					if (step === 1) {
+						return createToolCallResponse({ done: { text: 'stored', success: true } }, step)
+					}
+					if (step === 2) return createToolCallResponse({ recall_steps: { indices: [0] } }, step)
+					return createToolCallResponse({ done: { text: 'ok', success: true } }, step)
+				},
+			}),
+		)
+
+		await agent.execute('任务A')
+		const originalStep = agent.history.find((event) => event.type === 'step')
+		if (originalStep?.type === 'step') {
+			originalStep.action = {
+				name: 'input_text',
+				input: { text: 'VERBATIM_VALUE' },
+				output: 'typed VERBATIM_VALUE',
+			}
+		}
+
+		await agent.followUp('回到刚才输入那步')
+
+		const recalled = agent.history.find(
+			(event) => event.type === 'step' && event.action.name === 'recall_steps',
+		)
+		expect(recalled?.type).toBe('step')
+		if (recalled?.type === 'step') {
+			expect(recalled.action.output).toContain('VERBATIM_VALUE')
+		}
+		agent.dispose()
+	})
+
+	it('evicts oldest steps under hard pressure but keeps user_message and never throws', async () => {
+		const prompts: string[] = []
+		let step = 0
+		const agent = new PageAgentCore(
+			createConfig({
+				compaction: { enabled: true, softTokens: 100_000, hardTokens: 1, keepRecentSteps: 1 },
+				customTools: { continue_task: createContinueTool() },
+				customFetch: async (_input, init) => {
+					prompts.push(getUserPrompt(init))
+					step++
+					if (step < 4) return createToolCallResponse({ continue_task: {} }, step)
+					return createToolCallResponse({ done: { text: 'ok', success: true } }, step)
+				},
+			}),
+		)
+
+		const result = await agent.execute('任务A')
+
+		const lastPrompt = prompts[prompts.length - 1]
+		expect(result.success).toBe(true)
+		expect(lastPrompt).toContain('<user_message>任务A</user_message>')
+		expect(lastPrompt).toContain('<summary>')
+		expect(lastPrompt).not.toContain('Reached step 1')
+		agent.dispose()
+	})
+
 	it('keeps a snapshot of the constructor config', () => {
 		const sourceConfig = createConfig()
 		const agent = new PageAgentCore(sourceConfig)

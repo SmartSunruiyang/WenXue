@@ -171,7 +171,7 @@ vendor 四包为上游快照（粗粒度卡片；内部实现以上游为准，�
 
 ```
 ## 模块名：@page-agent/core（L4）
-- 职责：PageAgentCore Agent 循环（系统提示词、工具执行、活动流、ExecutionResult、可恢复人工接管状态）
+- 职责：PageAgentCore Agent 循环（系统提示词、工具执行、活动流、ExecutionResult、可恢复人工接管状态、完成后同会话续接、agent_history 投影压缩、recall_steps 回退取回）
 - 不负责：不直接操作多标签（MultiPageAgent 的事）；不渲染历史 UI；不决定问学产品层卡住阈值
 ```
 
@@ -199,11 +199,11 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：SidepanelApp（L5）
-- 职责：侧边栏对话流、人工接管/暂停/继续 UI、右上角更多菜单、语言快捷入口、任务历史 UI、options 设置页 UI、自定义模型列表与默认模型选择
+- 职责：侧边栏对话流、完成/错误后的 followUp 续接路由、近溢出上下文横幅、人工接管/暂停/继续 UI、右上角更多菜单、语言快捷入口、任务历史 UI、options 设置页 UI、自定义模型列表与默认模型选择
 - 不负责：不实现 Agent 循环；不直接发 LLM 请求
 - 输入：MultiPageAgent、ExtensionSettingsConfig、@page-agent/ui
 - 输出：用户
-- 持有状态：UI 态；读写 ModelConfig（chrome.storage.local）与历史（IndexedDB）
+- 持有状态：UI 态；读写 ModelConfig（chrome.storage.local）与按 conversationId upsert 的会话历史（IndexedDB）
 ```
 
 ```
@@ -227,7 +227,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：MultiPageAgent（L5）
-- 职责：多标签编排、当前标签加载等待、问学产品层卡住检测（连续 3 次重复动作触发人工接管）
+- 职责：多标签编排、当前标签加载等待、向 PageAgentCore 透传压缩配置、问学产品层卡住检测（连续 3 次重复动作触发人工接管，done/ask_user/request_user_takeover/recall_steps 不计入重复）
 - 不负责：不渲染 UI
 - 输入：@page-agent/core、@page-agent/page-controller
 - 输出：SidepanelApp
@@ -382,8 +382,21 @@ graph TD
 // module: 插件域对 vendor 的消费面（签名以上游 1.9.x 为准，本地变更先登记 UPSTREAM.md，I5）
 //   PageAgentCore.status: 'idle' | 'running' | 'waiting_for_user' | 'paused' | 'completed' | 'error'
 //   PageAgentCore.execute(instruction): Promise<ExecutionResult>
+//   PageAgentCore.followUp(instruction): Promise<ExecutionResult>
+//     // 仅 completed/error；保留 history 并追加 user_message，作为同一会话下一轮继续
+//   PageAgentCore.restoreConversation({ task, history, status }): void
+//     // 仅 completed/error 历史；供 SidepanelApp 从 IndexedDB 记录恢复后继续 followUp
 //   PageAgentCore.requestUserTakeover(input, { signal? }): Promise<'completed' | 'paused'>
 //   PageAgentCore.resume(): Promise<ExecutionResult>    // 仅 paused；保留 task/taskId/history/内部状态
+//   AgentConfig.compaction?: {
+//     enabled: boolean; softTokens: number; hardTokens: number; keepRecentSteps: number
+//   }
+//     // 默认 enabled=true, softTokens=12000, hardTokens=28000, keepRecentSteps=5
+//   HistoricalEvent +=
+//     | { type: 'user_message'; content: string }
+//     | { type: 'summary'; content: string; coversThroughIndex: number }
+//   tool recall_steps({ indices: number[] }): Promise<string>
+//     // 根据 stepIndex 从全量 history 取回归档步骤原文，供摘要不足时回退/重做
 //   new OpenAIClient({ baseURL, apiKey, model })        // I4：插件域唯一 LLM 出口
 ```
 
@@ -394,8 +407,8 @@ graph TD
 | 画像数据（cookie、登录态、浏览记录）          | `<userData>/profiles/<id>/`                                                              | 仅 CfT 进程                                            | 桌面端只创建目录，永不读内容                                                                                                                               |
 | 运行日志                                      | `<userData>/logs/`                                                                       | AppLogger                                              | 不含 Key/对话内容（I2）                                                                                                                                    |
 | ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`                                                                   | SidepanelApp options 设置页与语言快捷入口              | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置                                                   |
-| 任务历史                                      | 插件 IndexedDB                                                                           | MultiPageAgent / SidepanelApp                          | 不出本机；用户可清空                                                                                                                                       |
-| 插件日志                                      | IndexedDB `page-agent-ext` v2：`logs`（`id` 自增，`by-ts` 索引）；原 `sessions` 保持不变 | 仅 background Logging 写；LogViewer 经消息读/导出/清空 | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；不进桌面域、不远程上报 |
+| 任务历史                                      | 插件 IndexedDB `page-agent-ext` v3：`sessions`（`id`、`conversationId`、`createdAt`、`updatedAt`，索引 `by-created` / `by-conversation`） | SidepanelApp                          | 不出本机；同一会话多轮续接按 `conversationId` upsert 为一条记录；用户可清空                                                                                 |
+| 插件日志                                      | IndexedDB `page-agent-ext` v3：`logs`（`id` 自增，`by-ts` 索引）；与 `sessions` 同库 | 仅 background Logging 写；LogViewer 经消息读/导出/清空 | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；不进桌面域、不远程上报 |
 | 快捷入口与 onboarding 标志                    | chrome.storage.local                                                                     | NewTabHome                                             | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                                                                          |
 | browser.lock.json                             | 仓库 `apps/desktop/`                                                                     | 开发者（升级 CfT 时）                                  | 构建期消费，运行期只读                                                                                                                                     |
 | 官网演示 UI 状态                              | 浏览器内存                                                                               | WebsiteSite                                            | 仅本页交互演示，不持久化、不出网                                                                                                                           |
@@ -405,7 +418,8 @@ graph TD
 ## 5. 测试边界
 
 - **必有单测（vitest）**：LaunchConfig（argv 组装全分支）、BrowserResources（路径解析，mock resourcesPath）、ProfileStore、BrowserSupervisor 状态机（mock child_process）。
-- **vendor 四包**：上游测试套件随包保留，`pnpm -r test` 必绿；对 vendor 的本地补丁必须配套回归测试。
+- **vendor 四包**：上游测试套件随包保留，`pnpm -r test` 必绿；对 vendor 的本地补丁必须配套回归测试。`@page-agent/core` 的续接/压缩补丁需覆盖 `user_message`、`followUp`、历史投影、摘要降级、`recall_steps`、硬阈值淘汰与恢复历史后续接。
+- **SidepanelApp 会话续接**：`useAgent` 覆盖 execute/followUp/restoreConversation 的状态同步，`db` 覆盖 v1/v2→v3 迁移与 `conversationId` upsert，`ContextBanner` 覆盖近溢出判定与横幅文案。
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1→v2 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
 - **LogViewer**：组件测试覆盖筛选、分页/详情、导出与清空确认；UI 仅消费 Logging 契约，不直接访问 IndexedDB。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。
@@ -428,7 +442,8 @@ WenXue/
 │       ├── src/entrypoints/         # background / content / main-world / sidepanel / hub / newtab
 │       ├── src/agent/chaoxing/      # chaoxing/*：solve.ts · adapter.content.ts · tools.ts（学习通求解器）
 │       ├── src/components/
-│       │   └── LogViewer.tsx        # 设置内日志筛选、详情、导出与清空 UI
+│       │   ├── LogViewer.tsx        # 设置内日志筛选、详情、导出与清空 UI
+│       │   └── ContextBanner.tsx    # 侧边栏近溢出上下文提示横幅
 │       └── src/lib/
 │           ├── logTypes.ts          # LogEntry / LogFilter / LOG_* 消息类型
 │           ├── logRedaction.ts      # Key/Authorization/Bearer 脱敏与正文截断
@@ -436,7 +451,7 @@ WenXue/
 │           ├── logStore.ts          # background IndexedDB 读写与 retention
 │           ├── log.background.ts    # LOG_APPEND/QUERY/EXPORT/CLEAR 分派
 │           ├── loggingFetch.ts      # LLM fetch 请求/响应正文捕获
-│           └── db.ts                # page-agent-ext v2：sessions + logs/by-ts
+│           └── db.ts                # page-agent-ext v3：sessions/by-conversation + logs/by-ts
 │   └── website/                     # 官网域：WebsiteSite（DotField 首页、浏览器 hero、下载 CTA、三栏文档页）
 │       ├── src/
 │       │   ├── App.tsx

@@ -5,7 +5,7 @@
 import * as z from 'zod/v4'
 
 import type { PageAgentCore } from '../PageAgentCore'
-import type { UserTakeoverReason } from '../types'
+import type { AgentStepEvent, UserTakeoverReason } from '../types'
 import { waitFor } from '../utils'
 
 /**
@@ -220,6 +220,25 @@ tools.set(
 		execute: async function (this: PageAgentCore, input) {
 			const result = await this.pageController.executeJavascript(input.script)
 			return result.message
+		},
+	}),
+)
+
+tools.set(
+	'recall_steps',
+	tool({
+		description:
+			'Retrieve the verbatim record of earlier step(s) by their step index, when the summary is not detailed enough, e.g. to roll back or redo a past action. Indices come from the <summary> step log.',
+		inputSchema: z.object({ indices: z.array(z.number()).min(1).max(10) }),
+		execute: async function (this: PageAgentCore, { indices }) {
+			const wanted = new Set(indices)
+			const found = this.history.filter(
+				(event): event is AgentStepEvent => event.type === 'step' && wanted.has(event.stepIndex),
+			)
+			if (found.length === 0) return `No archived steps found for indices ${indices.join(', ')}.`
+			return found
+				.map((event) => `step ${event.stepIndex}:\n${JSON.stringify(event, null, 2)}`)
+				.join('\n---\n')
 		},
 	}),
 )

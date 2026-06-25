@@ -1,3 +1,4 @@
+import type { AgentStatus } from '@page-agent/core'
 import {
 	Check,
 	ChevronDown,
@@ -12,9 +13,10 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { DEMO_MODEL } from '@/agent/constants'
+import { ContextBanner, shouldShowContextBanner } from '@/components/ContextBanner'
+import { Conversation } from '@/components/conversation'
 import { HistoryDetail } from '@/components/HistoryDetail'
 import { HistoryList } from '@/components/HistoryList'
-import { Conversation } from '@/components/conversation'
 import { EmptyState, MotionOverlay, PinTip, StatusDot } from '@/components/misc'
 import { Button } from '@/components/ui/button'
 import {
@@ -23,7 +25,7 @@ import {
 	InputGroupButton,
 	InputGroupTextarea,
 } from '@/components/ui/input-group'
-import { type SessionRecord, saveSession } from '@/lib/db'
+import { type SessionRecord, updateSession } from '@/lib/db'
 import { openExtensionOptionsPage } from '@/lib/extensionPages'
 import type { UILanguage } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n'
@@ -46,15 +48,28 @@ import {
 type View = { name: 'chat' } | { name: 'history' } | { name: 'history-detail'; sessionId: string }
 
 const NEW_CONVERSATION_COLLECT_ANIMATION_MS = 520
+const DEFAULT_HARD_TOKENS = 28_000
 const SIDEPANEL_AGENT_OPTIONS = { enableUserTakeover: true } as const
+
+export function pickSendAction({
+	status,
+	hasConversation,
+}: {
+	status: AgentStatus
+	hasConversation: boolean
+}): 'execute' | 'followUp' {
+	return hasConversation && (status === 'completed' || status === 'error') ? 'followUp' : 'execute'
+}
 
 export default function App() {
 	const [view, setView] = useState<View>({ name: 'chat' })
 	const [inputValue, setInputValue] = useState('')
 	const [clearingConversation, setClearingConversation] = useState(false)
+	const [contextBannerDismissed, setContextBannerDismissed] = useState(false)
 	const historyRef = useRef<HTMLDivElement>(null)
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
 	const clearConversationTimeoutRef = useRef<number | null>(null)
+	const conversationIdRef = useRef<string>(crypto.randomUUID())
 	const { t } = useI18n()
 
 	const {
@@ -65,6 +80,7 @@ export default function App() {
 		takeoverRequest,
 		config,
 		execute,
+		followUp,
 		stop,
 		completeUserTakeover,
 		pauseUserTakeover,
@@ -93,8 +109,8 @@ export default function App() {
 			history.length > 0 &&
 			currentTask
 		) {
-			saveSession({ task: currentTask, history, status }).catch((err) =>
-				console.error('[SidePanel] Failed to save session:', err),
+			updateSession(conversationIdRef.current, { task: currentTask, history, status }).catch(
+				(err) => console.error('[SidePanel] Failed to save session:', err),
 			)
 		}
 	}, [status, history, currentTask])
@@ -114,11 +130,13 @@ export default function App() {
 			setInputValue('')
 			setView({ name: 'chat' })
 
-			execute(normalizedTask).catch((error) => {
-				console.error('[SidePanel] Failed to execute task:', error)
+			const action = pickSendAction({ status, hasConversation: hasVisibleConversation })
+			const run = action === 'followUp' ? followUp : execute
+			run(normalizedTask).catch((error) => {
+				console.error('[SidePanel] Failed to run task:', error)
 			})
 		},
-		[execute, isTaskLocked],
+		[execute, followUp, hasVisibleConversation, isTaskLocked, status],
 	)
 
 	const handleOpenHistory = useCallback(
@@ -139,6 +157,8 @@ export default function App() {
 		(session: SessionRecord) => {
 			if (!restoreConversation(session)) return
 
+			conversationIdRef.current = session.conversationId || session.id
+			setContextBannerDismissed(false)
 			setInputValue('')
 			setView({ name: 'chat' })
 			window.requestAnimationFrame(() => {
@@ -220,19 +240,28 @@ export default function App() {
 
 		setView({ name: 'chat' })
 		if (!hasVisibleConversation) {
-			resetConversation()
+			if (resetConversation()) {
+				conversationIdRef.current = crypto.randomUUID()
+				setContextBannerDismissed(false)
+			}
 			textareaRef.current?.focus()
 			return
 		}
 
 		setClearingConversation(true)
 		clearConversationTimeoutRef.current = window.setTimeout(() => {
-			resetConversation()
+			if (resetConversation()) {
+				conversationIdRef.current = crypto.randomUUID()
+				setContextBannerDismissed(false)
+			}
 			setClearingConversation(false)
 			clearConversationTimeoutRef.current = null
 			window.requestAnimationFrame(() => textareaRef.current?.focus())
 		}, NEW_CONVERSATION_COLLECT_ANIMATION_MS)
 	}
+	const hardTokens = config?.compaction?.hardTokens ?? DEFAULT_HARD_TOKENS
+	const showContextBanner =
+		!isTaskLocked && !contextBannerDismissed && shouldShowContextBanner(history, hardTokens)
 
 	return (
 		<div className="relative flex h-screen w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-background">
@@ -303,6 +332,14 @@ export default function App() {
 
 			{/* Input */}
 			<footer className="px-3 pb-2 pt-1">
+				{showContextBanner && (
+					<div className="mb-2">
+						<ContextBanner
+							onNewConversation={handleNewConversation}
+							onDismiss={() => setContextBannerDismissed(true)}
+						/>
+					</div>
+				)}
 				<InputGroup className="relative rounded-[22px] border-border/70 bg-background/95 shadow-[0_10px_28px_rgb(0_0_0/0.07)] dark:bg-background/90">
 					<TaskInput
 						ref={textareaRef}
