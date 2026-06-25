@@ -54,6 +54,7 @@ class FakeAgent extends EventTarget {
 	resume = vi.fn(async () => COMPLETED_RESULT)
 	stop = vi.fn()
 	dispose = vi.fn()
+	pushObservation = vi.fn()
 
 	setStatus(status: AgentStatus) {
 		this.status = status
@@ -577,6 +578,53 @@ describe('agent session controller', () => {
 
 		expect(agent.resume).toHaveBeenCalledTimes(1)
 		expect(state.currentTask).toBe('Paused task')
+		expect(state.history).toEqual([event])
+	})
+
+	it('resets a waiting takeover by disposing the active agent and binding a replacement', async () => {
+		const event = { type: 'observation', content: 'Waiting history' } as HistoricalEvent
+		const agent = new FakeAgent()
+		agent.status = 'waiting_for_user'
+		agent.task = 'Waiting task'
+		agent.history = [event]
+		const replacement = new FakeAgent()
+		const { controller, state } = createSessionHarness()
+		controller.bind(agent, { enableUserTakeover: true })
+		const resolution = agent.onUserTakeover!(TAKEOVER_REQUEST)
+
+		expect(controller.resetActiveConversation(replacement, { enableUserTakeover: true })).toBe(true)
+
+		await expect(resolution).rejects.toMatchObject({ name: 'AbortError' })
+		expect(agent.stop).toHaveBeenCalledTimes(1)
+		expect(agent.dispose).toHaveBeenCalledTimes(1)
+		expect(agent.onUserTakeover).toBeUndefined()
+		expect(replacement.dispose).not.toHaveBeenCalled()
+		expect(state).toEqual({
+			status: 'idle',
+			history: [],
+			activity: null,
+			currentTask: '',
+			takeoverRequest: null,
+		})
+	})
+
+	it('submits waiting takeover input to the active task without replacing its memory', async () => {
+		const event = { type: 'observation', content: 'Waiting history' } as HistoricalEvent
+		const agent = new FakeAgent()
+		agent.status = 'waiting_for_user'
+		agent.task = 'Waiting task'
+		agent.history = [event]
+		const { controller, state } = createSessionHarness()
+		controller.bind(agent, { enableUserTakeover: true })
+		const resolution = agent.onUserTakeover!(TAKEOVER_REQUEST)
+
+		await expect(controller.submitActiveTaskMessage('验证码已经处理好了')).resolves.toBeUndefined()
+
+		await expect(resolution).resolves.toBe('completed')
+		expect(agent.pushObservation).toHaveBeenCalledWith(expect.stringContaining('验证码已经处理好了'))
+		expect(agent.stop).not.toHaveBeenCalled()
+		expect(agent.dispose).not.toHaveBeenCalled()
+		expect(state.currentTask).toBe('Waiting task')
 		expect(state.history).toEqual([event])
 	})
 

@@ -61,6 +61,29 @@ export function pickSendAction({
 	return hasConversation && (status === 'completed' || status === 'error') ? 'followUp' : 'execute'
 }
 
+export function getSidepanelControlState(status: AgentStatus): {
+	isRunning: boolean
+	isAwaitingTakeover: boolean
+	inputDisabled: boolean
+	canStartNewConversation: boolean
+	showStopButton: boolean
+	showSendButton: boolean
+	shouldSubmitToActiveTask: boolean
+} {
+	const isRunning = status === 'running'
+	const isAwaitingTakeover = status === 'waiting_for_user' || status === 'paused'
+
+	return {
+		isRunning,
+		isAwaitingTakeover,
+		inputDisabled: isRunning,
+		canStartNewConversation: !isRunning,
+		showStopButton: isAgentTaskActive(status),
+		showSendButton: !isRunning,
+		shouldSubmitToActiveTask: isAwaitingTakeover,
+	}
+}
+
 export default function App() {
 	const [view, setView] = useState<View>({ name: 'chat' })
 	const [inputValue, setInputValue] = useState('')
@@ -81,6 +104,7 @@ export default function App() {
 		config,
 		execute,
 		followUp,
+		submitActiveTaskMessage,
 		stop,
 		completeUserTakeover,
 		pauseUserTakeover,
@@ -89,9 +113,9 @@ export default function App() {
 		restoreConversation,
 		configure,
 	} = useAgent(SIDEPANEL_AGENT_OPTIONS)
-	const isRunning = status === 'running'
+	const controlState = getSidepanelControlState(status)
+	const isRunning = controlState.isRunning
 	const isTaskLocked = isAgentTaskActive(status)
-	const isAwaitingTakeover = status === 'waiting_for_user' || status === 'paused'
 	const hasVisibleConversation = hasAgentConversationContent({ currentTask, history, activity })
 	const [historyEnterOrigin, setHistoryEnterOrigin] = useState<{ x: number; y: number } | null>(
 		null,
@@ -125,10 +149,17 @@ export default function App() {
 	const runTask = useCallback(
 		(task: string) => {
 			const normalizedTask = task.trim()
-			if (!normalizedTask || isTaskLocked) return
+			if (!normalizedTask || controlState.inputDisabled) return
 
 			setInputValue('')
 			setView({ name: 'chat' })
+
+			if (controlState.shouldSubmitToActiveTask) {
+				submitActiveTaskMessage(normalizedTask).catch((error) => {
+					console.error('[SidePanel] Failed to submit active task message:', error)
+				})
+				return
+			}
 
 			const action = pickSendAction({ status, hasConversation: hasVisibleConversation })
 			const run = action === 'followUp' ? followUp : execute
@@ -136,7 +167,7 @@ export default function App() {
 				console.error('[SidePanel] Failed to run task:', error)
 			})
 		},
-		[execute, followUp, hasVisibleConversation, isTaskLocked, status],
+		[controlState, execute, followUp, hasVisibleConversation, status, submitActiveTaskMessage],
 	)
 
 	const handleOpenHistory = useCallback(
@@ -236,9 +267,19 @@ export default function App() {
 
 	const showEmptyState = !hasVisibleConversation && !isTaskLocked
 	const handleNewConversation = () => {
-		if (isTaskLocked || clearingConversation) return
+		if (!controlState.canStartNewConversation || clearingConversation) return
 
 		setView({ name: 'chat' })
+		if (controlState.isAwaitingTakeover) {
+			if (resetConversation()) {
+				conversationIdRef.current = crypto.randomUUID()
+				setContextBannerDismissed(false)
+				setInputValue('')
+			}
+			window.requestAnimationFrame(() => textareaRef.current?.focus())
+			return
+		}
+
 		if (!hasVisibleConversation) {
 			if (resetConversation()) {
 				conversationIdRef.current = crypto.randomUUID()
@@ -281,7 +322,7 @@ export default function App() {
 						variant="ghost"
 						size="icon-sm"
 						onClick={handleNewConversation}
-						disabled={isTaskLocked || clearingConversation}
+						disabled={!controlState.canStartNewConversation || clearingConversation}
 						className="cursor-pointer"
 						aria-label={t('newConversation')}
 						title={t('newConversation')}
@@ -346,15 +387,15 @@ export default function App() {
 						value={inputValue}
 						onChange={(e) => setInputValue(e.target.value)}
 						onKeyDown={handleKeyDown}
-						disabled={isTaskLocked}
+						disabled={controlState.inputDisabled || clearingConversation}
 						aria-label={t('describeTask')}
 						className="max-h-36 min-h-11 px-3.5 pb-2 pt-3 text-[14px] leading-relaxed"
 					/>
 					<InputGroupAddon align="block-end" className="justify-between gap-2 px-2.5 pb-2">
 						<ModelMenu config={config} onConfigure={configure} disabled={isTaskLocked} />
-						<div className="flex items-center">
+						<div className="flex items-center gap-1">
 							<StatusDot status={status} />
-							{isRunning ? (
+							{controlState.showStopButton && (
 								<InputGroupButton
 									size="icon-sm"
 									variant="destructive"
@@ -365,19 +406,20 @@ export default function App() {
 								>
 									<Square className="size-3" />
 								</InputGroupButton>
-							) : !isAwaitingTakeover ? (
+							)}
+							{controlState.showSendButton && (
 								<InputGroupButton
 									size="icon-sm"
 									variant="default"
 									onClick={() => handleSubmit()}
-									disabled={!inputValue.trim()}
+									disabled={!inputValue.trim() || clearingConversation}
 									className="size-7 cursor-pointer"
 									aria-label={t('send')}
 									title={t('send')}
 								>
 									<Send className="size-3" />
 								</InputGroupButton>
-							) : null}
+							)}
 						</div>
 					</InputGroupAddon>
 				</InputGroup>
