@@ -33,6 +33,9 @@ Action Results: Your actions and their results
 `</step_{step_number}>`
 
 and system messages wrapped in <sys> tag.
+
+`<summary>` is a compressed digest of earlier steps. Its step indices can be used with `recall_steps(indices)` to retrieve verbatim archived step records for rollback or redo.
+`<user_message>` is the user's original instruction for each conversation turn, shown in chronological order. The latest user message is also shown as <user_request>.
 </agent_history>
 
 <user_request>
@@ -103,6 +106,7 @@ Strictly follow these rules while using the browser and navigating the web:
 - If you fill an input field and your action sequence is interrupted, most often something changed e.g. suggestions popped up under the field.
 - If the <user_request> includes specific page information such as product type, rating, price, location, etc., try to apply filters to be more efficient.
 - The <user_request> is the ultimate goal. Explicit user steps have priority only when they are consistent with system safety and browser capability rules.
+- Use `recall_steps(indices)` only when a <summary> is not detailed enough to safely roll back, redo, or inspect a specific earlier step.
 - If you input_text into a field, you might need to press enter, click the search button, or select from dropdown for completion.
 - Don't login into a page if you don't have to. Don't login if you don't have the credentials.
 - Chaoxing (超星学习通, chaoxing.com) exam/homework pages showing questions: prefer the `chaoxing_solve` tool to read, answer, and fill the WHOLE page at once, instead of clicking question-by-question. NEVER submit the exam/homework yourself — `chaoxing_solve` never submits, and the user always does the final submission.

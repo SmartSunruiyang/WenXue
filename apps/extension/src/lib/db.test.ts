@@ -33,8 +33,12 @@ describe('PageAgentDB', () => {
 		const db = await getDB()
 		openDatabases.push(db)
 
-		expect(db.version).toBe(2)
+		expect(db.version).toBe(3)
 		expect(Array.from(db.objectStoreNames)).toEqual(['logs', 'sessions'])
+		expect(Array.from(db.transaction('sessions').store.indexNames)).toEqual([
+			'by-conversation',
+			'by-created',
+		])
 		expect(Array.from(db.transaction('logs').store.indexNames)).toEqual(['by-ts'])
 	})
 
@@ -58,12 +62,38 @@ describe('PageAgentDB', () => {
 		const db = await getDB()
 		openDatabases.push(db)
 
-		expect(db.version).toBe(2)
+		expect(db.version).toBe(3)
 		expect(await db.get('sessions', 'legacy-session')).toMatchObject({
+			conversationId: 'legacy-session',
 			id: 'legacy-session',
 			task: 'keep me',
+			updatedAt: 1,
 		})
 		expect(db.objectStoreNames.contains('logs')).toBe(true)
 		expect(db.transaction('logs').store.indexNames.contains('by-ts')).toBe(true)
+	})
+
+	it('upserts one record per conversationId', async () => {
+		const { getDB, listSessions, saveSession, updateSession } = await import('./db')
+		openDatabases.push(await getDB())
+
+		const first = await saveSession({
+			conversationId: 'c1',
+			task: 'A',
+			history: [],
+			status: 'completed',
+		})
+		await updateSession('c1', {
+			task: 'B',
+			history: [{ type: 'user_message', content: 'B' } as never],
+			status: 'completed',
+		})
+
+		const all = await listSessions()
+		const c1 = all.filter((record) => record.conversationId === 'c1')
+		expect(c1).toHaveLength(1)
+		expect(c1[0].id).toBe(first.id)
+		expect(c1[0].task).toBe('B')
+		expect(c1[0].updatedAt).toBeGreaterThanOrEqual(first.updatedAt)
 	})
 })

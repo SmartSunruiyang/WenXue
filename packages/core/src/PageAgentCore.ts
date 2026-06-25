@@ -16,10 +16,12 @@ import type {
 	AgentReflection,
 	AgentStatus,
 	AgentStepEvent,
+	CompactionConfig,
 	ExecutionResult,
 	HistoricalEvent,
 	MacroToolInput,
 	MacroToolResult,
+	SummaryEvent,
 	UserTakeoverEvent,
 	UserTakeoverRequest,
 	UserTakeoverResolution,
@@ -33,6 +35,16 @@ export type PageAgentCoreConfig = AgentConfig & { pageController: PageController
 
 const MANUAL_TAKEOVER_RULES_PATTERN = /<manual_takeover_rules>[\s\S]*?<\/manual_takeover_rules>\s*/g
 const ASK_USER_RULES_PATTERN = /<ask_user_rules>[\s\S]*?<\/ask_user_rules>\s*/g
+const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
+	enabled: true,
+	softTokens: 12_000,
+	hardTokens: 28_000,
+	keepRecentSteps: 5,
+}
+
+function isAgentStatusActive(status: AgentStatus): boolean {
+	return status === 'running' || status === 'waiting_for_user' || status === 'paused'
+}
 
 /**
  * AI agent for browser automation.
@@ -97,6 +109,7 @@ export class PageAgentCore extends EventTarget {
 
 	#status: AgentStatus = 'idle'
 	#llm: LLM
+	#compaction: CompactionConfig
 	/**
 	 * Task cancellation primitive: its signal reaches the LLM fetch, tools
 	 * (via `ctx.signal`) and async callbacks. Replaced for new and resumed runs,
@@ -122,6 +135,7 @@ export class PageAgentCore extends EventTarget {
 		super()
 
 		this.config = { ...config }
+		this.#compaction = { ...DEFAULT_COMPACTION_CONFIG, ...config.compaction }
 
 		this.#llm = new LLM(this.config)
 		this.tools = new Map(tools)
@@ -293,6 +307,7 @@ export class PageAgentCore extends EventTarget {
 		this.taskId = uid()
 
 		this.history = []
+		this.history.push({ type: 'user_message', content: task })
 		this.#observations = []
 		this.#pauseRequested = false
 		this.#states = { totalWaitTime: 0, lastURL: '', browserState: null }
@@ -302,6 +317,52 @@ export class PageAgentCore extends EventTarget {
 		this.#emitHistoryChange()
 
 		return this.#runTaskLoop({ setupTask: true })
+	}
+
+	async followUp(task: string): Promise<ExecutionResult> {
+		if (this.disposed) throw new Error('PageAgent has been disposed. Create a new instance.')
+		if (this.#runLoopActive) throw new Error('A task is already running.')
+		if (this.#status !== 'completed' && this.#status !== 'error') {
+			throw new Error('followUp requires a completed or errored task.')
+		}
+		if (!task) throw new Error('Task is required')
+
+		this.task = task
+		this.taskId = uid()
+		this.history.push({ type: 'user_message', content: task })
+		this.#pauseRequested = false
+		this.#abortController = new AbortController()
+
+		this.#setStatus('running')
+		this.#emitHistoryChange()
+
+		return this.#runTaskLoop({ setupTask: true })
+	}
+
+	restoreConversation({
+		task,
+		history,
+		status,
+	}: {
+		task: string
+		history: HistoricalEvent[]
+		status: Extract<AgentStatus, 'completed' | 'error'>
+	}): void {
+		if (this.disposed) throw new Error('PageAgent has been disposed. Create a new instance.')
+		if (this.#runLoopActive || isAgentStatusActive(this.#status)) {
+			throw new Error('Cannot restore a conversation while a task is active.')
+		}
+		if (!task) throw new Error('Task is required')
+
+		this.task = task
+		this.taskId = uid()
+		this.history = [...history]
+		this.#observations = []
+		this.#pauseRequested = false
+		this.#states = { totalWaitTime: 0, lastURL: '', browserState: null }
+		this.#abortController = new AbortController()
+		this.#setStatus(status)
+		this.#emitHistoryChange()
 	}
 
 	async resume(): Promise<ExecutionResult> {
@@ -372,6 +433,8 @@ export class PageAgentCore extends EventTarget {
 			console.group(`step: ${step}`)
 
 			try {
+				await this.#maybeCompactHistory()
+				this.#abortController.signal.throwIfAborted()
 				await onBeforeStep?.(this, step)
 				this.#abortController.signal.throwIfAborted()
 			} catch (error: unknown) {
@@ -781,6 +844,168 @@ export class PageAgentCore extends EventTarget {
 		}
 	}
 
+	#estimateHistoryTokens(): number {
+		let chars = 0
+		for (const event of this.#projectHistory()) {
+			if (event.type === 'summary') {
+				chars += event.content.length
+			} else if (event.type === 'user_message') {
+				chars += event.content.length
+			} else if (event.type === 'step') {
+				chars += (event.reflection.evaluation_previous_goal ?? '').length
+				chars += (event.reflection.memory ?? '').length
+				chars += (event.reflection.next_goal ?? '').length
+				chars += event.action.output.length
+			} else if (event.type === 'observation') {
+				chars += event.content.length
+			} else if (event.type === 'user_takeover') {
+				chars += 'User took over control and made changes to the page'.length
+			}
+		}
+		return Math.ceil(chars / 4)
+	}
+
+	async #maybeCompactHistory(): Promise<void> {
+		if (!this.#compaction.enabled) return
+		if (this.#estimateHistoryTokens() >= this.#compaction.softTokens) {
+			await this.#compactProjectedHistory()
+		}
+		this.#evictOldestIfHardPressure()
+	}
+
+	async #compactProjectedHistory(): Promise<void> {
+		const projected = this.#projectHistory()
+		const steps = projected.filter((event): event is AgentStepEvent => event.type === 'step')
+		if (steps.length <= this.#compaction.keepRecentSteps) return
+
+		const keepFrom = steps[steps.length - this.#compaction.keepRecentSteps]
+		const keepFromIndex = this.history.indexOf(keepFrom)
+		if (keepFromIndex <= 0) return
+
+		const toSummarize = this.history
+			.slice(0, keepFromIndex)
+			.filter(
+				(event) =>
+					event.type === 'step' || event.type === 'observation' || event.type === 'summary',
+			)
+		if (toSummarize.length === 0) return
+
+		let content: string
+		try {
+			content = await this.#summarizeForCompaction(toSummarize)
+		} catch (error) {
+			if (this.#isAbortError(error)) throw error
+			const dropped = toSummarize.filter((event) => event.type === 'step').length
+			content = `[earlier ${dropped} steps condensed; summarizer unavailable. Call recall_steps(indices) for verbatim records.]`
+		}
+		this.history.splice(keepFromIndex, 0, {
+			type: 'summary',
+			content,
+			coversThroughIndex: keepFromIndex - 1,
+		})
+		this.#emitHistoryChange()
+	}
+
+	#evictOldestIfHardPressure(): void {
+		const lastStep = [...this.#projectHistory()]
+			.reverse()
+			.find((event): event is AgentStepEvent => event.type === 'step')
+		if (!lastStep || lastStep.usage.promptTokens < this.#compaction.hardTokens) return
+		this.#evictOldest()
+	}
+
+	#evictOldest(): void {
+		const projected = this.#projectHistory()
+		const firstEvictable = projected.find(
+			(event) => event.type === 'step' || event.type === 'observation',
+		)
+		if (!firstEvictable) return
+
+		const index = this.history.indexOf(firstEvictable)
+		if (index < 0) return
+
+		const latestSummary = [...this.history]
+			.reverse()
+			.find((event): event is SummaryEvent => event.type === 'summary')
+		if (latestSummary && latestSummary.coversThroughIndex >= index) return
+
+		if (latestSummary) {
+			latestSummary.coversThroughIndex = index
+		} else {
+			this.history.splice(index + 1, 0, {
+				type: 'summary',
+				content:
+					'[oldest steps evicted under context pressure; call recall_steps(indices) for verbatim records.]',
+				coversThroughIndex: index,
+			})
+		}
+		this.#emitHistoryChange()
+	}
+
+	async #summarizeForCompaction(events: HistoricalEvent[]): Promise<string> {
+		const transcript = events
+			.map((event) => {
+				if (event.type === 'step') {
+					return (
+						`step ${event.stepIndex}: ${event.action.name} -> ${event.action.output}` +
+						` | memory: ${event.reflection.memory ?? ''}`
+					)
+				}
+				if (event.type === 'observation') return `sys: ${event.content}`
+				if (event.type === 'summary') return `prior_summary: ${event.content}`
+				return ''
+			})
+			.filter(Boolean)
+			.join('\n')
+
+		const result = await this.#llm.invoke(
+			[
+				{
+					role: 'system',
+					content:
+						'You compress an autonomous web agent progress log. Preserve a ' +
+						'step-indexed action log (step N: action -> result), current page/state, ' +
+						'key findings, and unresolved items. Keep it faithful and concise. End with: ' +
+						'"Earlier step details are archived; call recall_steps(indices) to fetch verbatim."',
+				},
+				{ role: 'user', content: transcript },
+			],
+			{
+				submit_summary: {
+					description: 'Submit the compacted progress summary.',
+					inputSchema: z.object({ summary: z.string() }),
+					execute: async (input: { summary: string }) => input.summary,
+				},
+			},
+			this.#abortController.signal,
+			{ toolChoiceName: 'submit_summary' },
+		)
+
+		return String(result.toolResult)
+	}
+
+	#projectHistory(): HistoricalEvent[] {
+		let latestSummary: SummaryEvent | undefined
+		for (let i = this.history.length - 1; i >= 0; i--) {
+			const event = this.history[i]
+			if (event.type === 'summary') {
+				latestSummary = event
+				break
+			}
+		}
+
+		const floor = latestSummary?.coversThroughIndex ?? -1
+		const projected: HistoricalEvent[] = []
+
+		this.history.forEach((event, index) => {
+			if (event.type === 'summary') return
+			if (index <= floor && event.type !== 'user_message') return
+			projected.push(event)
+		})
+
+		return latestSummary ? [latestSummary, ...projected] : projected
+	}
+
 	async #assembleUserPrompt(): Promise<string> {
 		const browserState = this.#states.browserState!
 
@@ -795,7 +1020,8 @@ export class PageAgentCore extends EventTarget {
 		//  - <step_info>
 		// <agent_state>
 
-		const stepCount = this.history.filter((e) => e.type === 'step').length
+		const projectedHistory = this.#projectHistory()
+		const stepCount = projectedHistory.filter((e) => e.type === 'step').length
 
 		prompt += '<agent_state>\n'
 		prompt += '<user_request>\n'
@@ -814,8 +1040,12 @@ export class PageAgentCore extends EventTarget {
 		prompt += '<agent_history>\n'
 
 		let stepIndex = 0
-		for (const event of this.history) {
-			if (event.type === 'step') {
+		for (const event of projectedHistory) {
+			if (event.type === 'summary') {
+				prompt += `<summary>\n${event.content}\n</summary>\n`
+			} else if (event.type === 'user_message') {
+				prompt += `<user_message>${event.content}</user_message>\n`
+			} else if (event.type === 'step') {
 				stepIndex++
 				prompt += `<step_${stepIndex}>\n`
 				prompt += `Evaluation of Previous Step: ${event.reflection.evaluation_previous_goal}\n`

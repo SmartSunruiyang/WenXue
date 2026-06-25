@@ -51,3 +51,9 @@
 - Reason: WenXue removes user-facing step limits and adds recoverable human takeover for login, captcha, permission, unavailable pages, and stuck repeated actions.
 - Upstream sync note: keep the patch isolated to public types, PageAgentCore loop control, tools, and prompts so future alibaba/page-agent syncs can diff it cleanly.
 - UI adapter note: `packages/ui` now recognizes waiting/paused statuses and supplies the legacy Panel takeover/resume controls.
+
+## Local patch: conversational continuation + history compaction
+
+- Scope: `packages/core`
+- 内容：`followUp()` 续接、`restoreConversation()` 历史恢复、`user_message` / `summary` 事件与压缩配置、`#assembleUserPrompt` 历史投影、token 触发 LLM 摘要 + 机械降级、`recall_steps` 工具、硬阈值 FIFO 淘汰、system prompt 增 `<summary>` / `<user_message>` / `recall_steps` 说明。
+- Upstream sync note: 隔离在 public types、PageAgentCore loop control、tools 与 prompts，便于对 alibaba/page-agent diff；应用层 `apps/extension` 只负责 Sidepanel 续接路由、IndexedDB 会话 upsert、近溢出横幅与 MultiPageAgent 配置透传。

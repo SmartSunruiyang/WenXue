@@ -5,11 +5,18 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { SidepanelHistoryButton } from './App'
+import { SidepanelHistoryButton, pickSendAction } from './App'
 
 const APP_SOURCE = fileURLToPath(new URL('./App.tsx', import.meta.url))
 
 describe('Sidepanel new conversation transition', () => {
+	it('routes a follow-up message to followUp after completion', () => {
+		expect(pickSendAction({ status: 'completed', hasConversation: true })).toBe('followUp')
+		expect(pickSendAction({ status: 'error', hasConversation: true })).toBe('followUp')
+		expect(pickSendAction({ status: 'idle', hasConversation: false })).toBe('execute')
+		expect(pickSendAction({ status: 'running', hasConversation: true })).toBe('execute')
+	})
+
 	it('collects the visible conversation into the history button before showing home', () => {
 		const source = readFileSync(APP_SOURCE, 'utf8')
 

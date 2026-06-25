@@ -11,6 +11,11 @@ export interface AgentConfig extends LLMConfig {
 	language?: SupportedLanguage
 
 	/**
+	 * Controls projection compaction for the persistent agent history.
+	 */
+	compaction?: CompactionConfig
+
+	/**
 	 * Custom tools to extend PageAgent capabilities
 	 * @experimental
 	 * @note You can also override or remove internal tools by using the same name.
@@ -271,6 +276,23 @@ export interface AgentErrorEvent {
 }
 
 /**
+ * User message event - the original instruction for each conversation turn.
+ */
+export interface UserMessageEvent {
+	type: 'user_message'
+	content: string
+}
+
+/**
+ * Summary event - compact projection of older history events.
+ */
+export interface SummaryEvent {
+	type: 'summary'
+	content: string
+	coversThroughIndex: number
+}
+
+/**
  * Union type for all history events
  */
 export type HistoricalEvent =
@@ -279,6 +301,15 @@ export type HistoricalEvent =
 	| UserTakeoverEvent
 	| RetryEvent
 	| AgentErrorEvent
+	| UserMessageEvent
+	| SummaryEvent
+
+export interface CompactionConfig {
+	enabled: boolean
+	softTokens: number
+	hardTokens: number
+	keepRecentSteps: number
+}
 
 /**
  * Agent execution status

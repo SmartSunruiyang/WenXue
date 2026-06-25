@@ -4,6 +4,7 @@
 import type {
 	AgentActivity,
 	AgentStatus,
+	CompactionConfig,
 	ExecutionResult,
 	HistoricalEvent,
 	SupportedLanguage,
@@ -30,9 +31,12 @@ export interface AdvancedConfig {
 	experimentalLlmsTxt?: boolean
 	experimentalIncludeAllTabs?: boolean
 	disableNamedToolChoice?: boolean
+	compaction?: ExtensionCompactionConfig
 	logRetentionDays?: number
 	logMaxEntries?: number
 }
+
+export type ExtensionCompactionConfig = CompactionConfig
 
 export interface ExtConfig extends LLMConfig, AdvancedConfig {
 	language?: LanguagePreference
@@ -51,6 +55,7 @@ export interface UseAgentResult {
 	takeoverRequest: UserTakeoverRequest | null
 	config: ExtConfig | null
 	execute: (task: string) => Promise<ExecutionResult>
+	followUp: (task: string) => Promise<ExecutionResult>
 	stop: () => void
 	completeUserTakeover: () => void
 	pauseUserTakeover: () => void
@@ -91,6 +96,8 @@ export interface AgentSessionAgent {
 		options?: { signal: AbortSignal },
 	) => Promise<UserTakeoverResolution>
 	execute: (task: string) => Promise<ExecutionResult>
+	followUp: (task: string) => Promise<ExecutionResult>
+	restoreConversation: (session: RestorableAgentConversation) => void
 	resume: () => Promise<ExecutionResult>
 	stop: () => void
 	dispose: () => void
@@ -203,6 +210,8 @@ export interface AgentSessionController {
 	unbind: (agent: AgentSessionAgent) => void
 	dispose: () => void
 	execute: (task: string) => Promise<ExecutionResult>
+	followUp: (task: string) => Promise<ExecutionResult>
+	restoreConversation: (session: RestorableAgentConversation) => boolean
 	stop: () => void
 	resume: () => Promise<ExecutionResult>
 	completeUserTakeover: () => void
@@ -315,6 +324,28 @@ export function createAgentSessionController(
 			sinks.setActivity(null)
 			return agent.execute(task)
 		},
+		async followUp(task) {
+			if (configuring) throw new Error('Agent is being configured.')
+			const agent = getAgent()
+			assertAgentInactive(agent)
+
+			sinks.setCurrentTask(task)
+			sinks.setActivity(null)
+			return agent.followUp(task)
+		},
+		restoreConversation(session) {
+			if (!binding || isAgentTaskActive(binding.agent.status)) return false
+
+			binding.takeoverController?.cancel()
+			sinks.setTakeoverRequest(null)
+			binding.agent.restoreConversation(session)
+			const nextState = createRestoredAgentConversationState(session)
+			sinks.setStatus(nextState.status)
+			sinks.setHistory(nextState.history)
+			sinks.setActivity(nextState.activity)
+			sinks.setCurrentTask(nextState.currentTask)
+			return true
+		},
 		stop() {
 			binding?.agent.stop()
 		},
@@ -393,6 +424,7 @@ export function createAgentForConfig(config: ExtConfig): MultiPageAgent {
 		experimentalLlmsTxt: config.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
 		disableNamedToolChoice: config.disableNamedToolChoice,
+		compaction: config.compaction,
 		chaoxingModels,
 		instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
 	})
@@ -475,6 +507,10 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 		(task: string) => sessionController.execute(task),
 		[sessionController],
 	)
+	const followUp = useCallback(
+		(task: string) => sessionController.followUp(task),
+		[sessionController],
+	)
 	const stop = useCallback(() => sessionController.stop(), [sessionController])
 	const completeUserTakeover = useCallback(
 		() => sessionController.completeUserTakeover(),
@@ -500,15 +536,7 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 
 	const restoreConversation = useCallback(
 		(session: RestorableAgentConversation) => {
-			if (sessionController.isTaskActive()) return false
-
-			sessionController.cancelUserTakeover()
-			const nextState = createRestoredAgentConversationState(session)
-			setStatus(nextState.status)
-			setHistory(nextState.history)
-			setActivity(nextState.activity)
-			setCurrentTask(nextState.currentTask)
-			return true
+			return sessionController.restoreConversation(session)
 		},
 		[sessionController],
 	)
@@ -547,6 +575,7 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 		takeoverRequest,
 		config,
 		execute,
+		followUp,
 		stop,
 		completeUserTakeover,
 		pauseUserTakeover,

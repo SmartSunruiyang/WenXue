@@ -108,7 +108,7 @@ export class MultiPageAgent extends PageAgentCore {
 		const includeInitialTab = config.includeInitialTab ?? true
 		const experimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? false
 		const stuckGuard = new StuckActionGuard(3)
-		const { onBeforeTask, onAfterTask, onBeforeStep, onAfterStep, onDispose } = config
+		const { compaction, onBeforeTask, onAfterTask, onBeforeStep, onAfterStep, onDispose } = config
 
 		const runtime = createAgentRuntimeLifecycle({
 			setStorage: (values) => chrome.storage.local.set(values),
@@ -123,6 +123,7 @@ export class MultiPageAgent extends PageAgentCore {
 			pageController: pageController as any,
 			customTools: customTools,
 			customSystemPrompt: systemPrompt,
+			compaction,
 
 			onBeforeTask: async (agent) => {
 				logger.info('agent', `task started: ${agent.task}`, { task: agent.task })
