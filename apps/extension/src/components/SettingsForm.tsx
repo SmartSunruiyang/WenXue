@@ -39,8 +39,6 @@ import {
 import { buildSettingsConfig, settingsConfigKey } from '@/lib/settingsConfig'
 import { cn } from '@/lib/utils'
 
-import { LogViewer } from './LogViewer'
-
 export const SETTINGS_SECTIONS = [
 	{
 		id: 'account',
@@ -803,7 +801,6 @@ export function SettingsForm({
 						/>
 					</div>
 				</div>
-				<LogViewer />
 			</SettingsSection>
 
 			{modelDialogOpen && (

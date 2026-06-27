@@ -37,11 +37,23 @@ const node_util = require("node:util");
 require("node:assert");
 require("node:stream");
 require("node:process");
-function createAppLogger(paths) {
+function createAppLogger(paths, launcherLogStore) {
   log.transports.file.resolvePathFn = () => path.join(paths.logsDir(), "main.log");
   return {
     log(scope, level, message) {
       log[level](`[${scope}] ${message}`);
+      void launcherLogStore?.append([
+        {
+          ts: Date.now(),
+          level,
+          source: "system",
+          context: "background",
+          browserId: "launcher",
+          message: `[${scope}] ${message}`,
+          data: { scope }
+        }
+      ]).catch(() => {
+      });
     },
     attachStream(profileId, readable) {
       const logPath = path.join(paths.logsDir(), `browser-${profileId}.log`);
@@ -55,16 +67,146 @@ class AppPaths {
   constructor(userDataDir) {
     this.userDataDir = userDataDir;
   }
+  userDataRoot() {
+    return this.userDataDir;
+  }
   profilesRoot() {
     return path.join(this.userDataDir, "profiles");
   }
   logsDir() {
     return path.join(this.userDataDir, "logs");
   }
+  dataFile(name) {
+    return path.join(this.userDataDir, name);
+  }
   async ensure() {
     await fs$1.mkdir(this.profilesRoot(), { recursive: true });
     await fs$1.mkdir(this.logsDir(), { recursive: true });
   }
+}
+const COLORS = ["blue", "purple", "cyan", "green", "coral", "red"];
+const PROFILE_ID$1 = /^[a-zA-Z0-9_-]+$/;
+class BrowserProfileStore {
+  constructor(paths, profiles, options = {}) {
+    this.profiles = profiles;
+    this.filePath = paths.dataFile("browsers.json");
+    this.now = options.now ?? Date.now;
+    this.idFactory = options.idFactory ?? createProfileId;
+  }
+  async list() {
+    return this.readProfiles();
+  }
+  async create() {
+    const profiles = await this.readProfiles();
+    const id = this.nextProfileId(profiles);
+    const userDataDir = await this.profiles.ensureProfile(id);
+    const profile = {
+      id,
+      displayName: defaultDisplayName(profiles.length),
+      type: "persistent",
+      colorKey: COLORS[profiles.length % COLORS.length],
+      createdAt: this.now(),
+      lastUsedAt: null,
+      userDataDir
+    };
+    await this.writeProfiles([...profiles, profile]);
+    return profile;
+  }
+  async duplicate(id) {
+    const profiles = await this.readProfiles();
+    const source = profiles.find((profile2) => profile2.id === id);
+    if (!source) {
+      throw new Error(`Unknown browser profile: ${id}`);
+    }
+    const nextId = this.nextProfileId(profiles);
+    const userDataDir = await this.profiles.copyProfile(source.id, nextId);
+    const profile = {
+      ...source,
+      id: nextId,
+      displayName: `${source.displayName} 副本`,
+      colorKey: COLORS[profiles.length % COLORS.length],
+      createdAt: this.now(),
+      lastUsedAt: null,
+      userDataDir
+    };
+    await this.writeProfiles([...profiles, profile]);
+    return profile;
+  }
+  async remove(id) {
+    const profiles = await this.readProfiles();
+    const index = profiles.findIndex((profile) => profile.id === id);
+    if (index < 0) {
+      throw new Error(`Unknown browser profile: ${id}`);
+    }
+    const removed = profiles[index];
+    await this.profiles.deleteProfile(id);
+    await this.writeProfiles(profiles.filter((profile) => profile.id !== id));
+    return removed;
+  }
+  async rename(id, displayName) {
+    const profiles = await this.readProfiles();
+    const index = profiles.findIndex((profile) => profile.id === id);
+    if (index < 0) {
+      throw new Error(`Unknown browser profile: ${id}`);
+    }
+    const next = [...profiles];
+    next[index] = {
+      ...next[index],
+      displayName: displayName.trim() || defaultDisplayName(index)
+    };
+    await this.writeProfiles(next);
+    return next[index];
+  }
+  async touch(id) {
+    const profiles = await this.readProfiles();
+    const index = profiles.findIndex((profile) => profile.id === id);
+    if (index < 0) {
+      throw new Error(`Unknown browser profile: ${id}`);
+    }
+    const next = [...profiles];
+    next[index] = {
+      ...next[index],
+      lastUsedAt: this.now()
+    };
+    await this.writeProfiles(next);
+    return next[index];
+  }
+  async readProfiles() {
+    try {
+      const raw = JSON.parse(await fs$1.readFile(this.filePath, "utf8"));
+      if (Array.isArray(raw.profiles)) {
+        return raw.profiles.map((profile) => ({ ...profile }));
+      }
+    } catch (error) {
+      if (!isMissingFile$3(error)) {
+        throw error;
+      }
+    }
+    return [];
+  }
+  async writeProfiles(profiles) {
+    await fs$1.writeFile(this.filePath, `${JSON.stringify({ profiles }, null, 2)}
+`, "utf8");
+  }
+  nextProfileId(profiles) {
+    let id = this.idFactory();
+    while (profiles.some((profile) => profile.id === id)) {
+      id = this.idFactory();
+    }
+    if (!PROFILE_ID$1.test(id)) {
+      throw new Error(`Invalid profile id: ${id}`);
+    }
+    return id;
+  }
+}
+function createProfileId() {
+  return `profile_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+function defaultDisplayName(index) {
+  return `浏览器 ${index + 1}`;
+}
+function isMissingFile$3(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 /**
  * @license
@@ -789,16 +931,18 @@ class BrowserSupervisor {
   constructor(deps) {
     this.deps = deps;
     this.listeners = /* @__PURE__ */ new Set();
-    this.statusValue = "idle";
+    this.profileListeners = /* @__PURE__ */ new Set();
+    this.instances = /* @__PURE__ */ new Map();
+    this.statusValues = /* @__PURE__ */ new Map();
     this.spawnBrowser = deps.spawnBrowser ?? defaultSpawnBrowser;
     this.focusExisting = deps.focusExisting ?? defaultFocusExisting;
   }
   async launch(profileId = "default") {
-    if (this.statusValue === "launching") return;
-    if (this.statusValue === "running") {
-      if (this.currentBinary && this.currentArgv) {
-        await this.focusExisting(this.currentBinary, this.currentArgv);
-      }
+    const status = this.profileStatus(profileId);
+    if (status === "launching") return;
+    const current = this.instances.get(profileId);
+    if (status === "running" && current) {
+      await this.focusExisting(current.binary, current.argv);
       return;
     }
     const userDataDir = await this.deps.profiles.ensureProfile(profileId);
@@ -808,33 +952,32 @@ class BrowserSupervisor {
       extensionDir: this.deps.resources.extensionDir(),
       startUrl: "chrome://newtab"
     });
-    this.setStatus("launching");
+    this.setProfileStatus(profileId, "launching");
+    this.deps.logger.log("BrowserSupervisor", "info", `launching profile ${profileId}`);
     let child;
     try {
       child = this.spawnBrowser(binary, argv);
     } catch (error) {
-      this.clearCurrentProcess();
-      this.setStatus("error");
+      this.instances.delete(profileId);
+      this.setProfileStatus(profileId, "error");
       throw error;
     }
-    this.child = child;
-    this.currentBinary = binary;
-    this.currentArgv = [...argv];
+    this.instances.set(profileId, {
+      child,
+      binary,
+      argv: [...argv],
+      shutdownRequested: false
+    });
     this.attachBrowserLogs(profileId, child);
-    this.bindChildEvents(child);
+    this.bindChildEvents(profileId, child);
   }
-  status() {
-    return this.statusValue;
-  }
-  onStatusChange(cb) {
-    this.listeners.add(cb);
-    return () => {
-      this.listeners.delete(cb);
-    };
-  }
-  async requestShutdown() {
-    const child = this.child;
-    if (!child) return;
+  async stop(profileId) {
+    const current = this.instances.get(profileId);
+    if (!current) {
+      this.setProfileStatus(profileId, "idle");
+      return;
+    }
+    this.deps.logger.log("BrowserSupervisor", "info", `stopping profile ${profileId}`);
     await new Promise((resolve) => {
       let settled = false;
       const settle = () => {
@@ -844,29 +987,61 @@ class BrowserSupervisor {
         resolve();
       };
       const timer = setTimeout(settle, 2e3);
-      child.on("exit", settle);
-      this.shutdownRequestedFor = child;
-      child.kill();
+      current.child.on("exit", settle);
+      current.shutdownRequested = true;
+      current.child.kill();
     });
   }
-  bindChildEvents(child) {
+  status() {
+    const statuses = Array.from(this.statusValues.values());
+    if (statuses.includes("error")) return "error";
+    if (statuses.includes("launching")) return "launching";
+    if (statuses.includes("running")) return "running";
+    return "idle";
+  }
+  statuses() {
+    return Object.fromEntries(this.statusValues.entries());
+  }
+  onStatusChange(cb) {
+    this.listeners.add(cb);
+    return () => {
+      this.listeners.delete(cb);
+    };
+  }
+  onProfileStatusChange(cb) {
+    this.profileListeners.add(cb);
+    return () => {
+      this.profileListeners.delete(cb);
+    };
+  }
+  async requestShutdown() {
+    await Promise.all(Array.from(this.instances.keys()).map((profileId) => this.stop(profileId)));
+  }
+  bindChildEvents(profileId, child) {
     child.on("spawn", () => {
-      if (this.child === child) {
-        this.setStatus("running");
+      if (this.instances.get(profileId)?.child === child) {
+        this.deps.logger.log("BrowserSupervisor", "info", `profile ${profileId} running`);
+        this.setProfileStatus(profileId, "running");
       }
     });
     child.on("error", (error) => {
-      if (this.child !== child) return;
+      if (this.instances.get(profileId)?.child !== child) return;
       this.deps.logger.log("BrowserSupervisor", "error", error.message);
-      this.clearCurrentProcess();
-      this.setStatus("error");
+      this.instances.delete(profileId);
+      this.setProfileStatus(profileId, "error");
     });
     child.on("exit", (code, signal) => {
-      if (this.child !== child) return;
-      const wasRequestedShutdown = this.shutdownRequestedFor === child;
+      const current = this.instances.get(profileId);
+      if (current?.child !== child) return;
+      const wasRequestedShutdown = current.shutdownRequested;
       const wasNormalExit = (code === 0 || code === null) && signal === null;
-      this.clearCurrentProcess();
-      this.setStatus(wasRequestedShutdown || wasNormalExit ? "idle" : "error");
+      this.instances.delete(profileId);
+      this.deps.logger.log(
+        "BrowserSupervisor",
+        wasRequestedShutdown || wasNormalExit ? "info" : "error",
+        `profile ${profileId} exited with code ${code ?? "null"} signal ${signal ?? "null"}`
+      );
+      this.setProfileStatus(profileId, wasRequestedShutdown || wasNormalExit ? "idle" : "error");
     });
   }
   attachBrowserLogs(profileId, child) {
@@ -877,18 +1052,22 @@ class BrowserSupervisor {
       this.deps.logger.attachStream(profileId, child.stderr);
     }
   }
-  clearCurrentProcess() {
-    this.child = void 0;
-    this.shutdownRequestedFor = void 0;
-    this.currentBinary = void 0;
-    this.currentArgv = void 0;
+  profileStatus(profileId) {
+    return this.statusValues.get(profileId) ?? "idle";
   }
-  setStatus(next) {
-    if (next === this.statusValue) return;
-    this.statusValue = next;
-    this.listeners.forEach((listener) => {
-      listener(next);
+  setProfileStatus(profileId, next) {
+    if (next === this.profileStatus(profileId)) return;
+    const previousAggregate = this.status();
+    this.statusValues.set(profileId, next);
+    this.profileListeners.forEach((listener) => {
+      listener(profileId, next);
     });
+    const nextAggregate = this.status();
+    if (previousAggregate !== nextAggregate) {
+      this.listeners.forEach((listener) => {
+        listener(nextAggregate);
+      });
+    }
   }
 }
 function defaultSpawnBrowser(binary, argv) {
@@ -910,6 +1089,93 @@ function registerDesktopBridge(options) {
   options.ipcMain.handle("browser:getStatus", async () => {
     return options.supervisor.status();
   });
+  options.ipcMain.handle(
+    "browser:getStatuses",
+    async () => {
+      return options.supervisor.statuses();
+    }
+  );
+  options.ipcMain.handle("browser:listProfiles", async () => {
+    return options.profileStore.list();
+  });
+  options.ipcMain.handle("browser:addProfile", async () => {
+    try {
+      return { ok: true, profile: await options.profileStore.create() };
+    } catch (error) {
+      return { ok: false, error: toUserSafeMessage(error) };
+    }
+  });
+  options.ipcMain.handle(
+    "browser:renameProfile",
+    async (_event, profileId, displayName) => {
+      try {
+        return { ok: true, profile: await options.profileStore.rename(profileId, displayName) };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
+  options.ipcMain.handle(
+    "browser:duplicateProfile",
+    async (_event, profileId) => {
+      try {
+        return { ok: true, profile: await options.profileStore.duplicate(profileId) };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
+  options.ipcMain.handle(
+    "browser:removeProfile",
+    async (_event, profileId) => {
+      try {
+        return { ok: true, profile: await options.profileStore.remove(profileId) };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
+  options.ipcMain.handle(
+    "browser:openProfileFolder",
+    async (_event, profileId) => {
+      try {
+        const profile = (await options.profileStore.list()).find((item) => item.id === profileId);
+        if (!profile) {
+          throw new Error(`Unknown browser profile: ${profileId}`);
+        }
+        const message = await options.openPath(profile.userDataDir);
+        if (message.length > 0) {
+          throw new Error(message);
+        }
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
+  options.ipcMain.handle(
+    "browser:launchProfile",
+    async (_event, profileId) => {
+      try {
+        await options.supervisor.launch(profileId);
+        await options.profileStore.touch(profileId);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
+  options.ipcMain.handle(
+    "browser:stopProfile",
+    async (_event, profileId) => {
+      try {
+        await options.supervisor.stop(profileId);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
   options.ipcMain.handle("app:getVersions", async () => {
     return {
       app: options.getAppVersion(),
@@ -925,7 +1191,48 @@ function registerDesktopBridge(options) {
       return { ok: false, error: toUserSafeMessage(error) };
     }
   });
-  return options.supervisor.onStatusChange(options.sendStatus);
+  options.ipcMain.handle("logs:query", async (_event, filter) => {
+    return options.logStore.query(asRecord$1(filter));
+  });
+  options.ipcMain.handle("logs:clear", async () => {
+    try {
+      await options.logStore.clear();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: toUserSafeMessage(error) };
+    }
+  });
+  options.ipcMain.handle("settings:get", async () => {
+    return options.settingsStore.get();
+  });
+  options.ipcMain.handle(
+    "settings:update",
+    async (_event, patch) => {
+      try {
+        return { ok: true, settings: await options.settingsStore.update(patch) };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
+  options.ipcMain.handle("tokens:getSummary", async () => {
+    return options.tokenUsageStore.summary();
+  });
+  options.ipcMain.handle("telemetry:ingest", async (_event, payload) => {
+    try {
+      return { ok: true, result: await options.telemetryIngest.ingest(payload) };
+    } catch (error) {
+      return { ok: false, error: toUserSafeMessage(error) };
+    }
+  });
+  const unsubscribeStatus = options.supervisor.onStatusChange(options.sendStatus);
+  const unsubscribeProfileStatus = options.supervisor.onProfileStatusChange((profileId, status) => {
+    options.sendProfileStatus({ profileId, status });
+  });
+  return () => {
+    unsubscribeStatus();
+    unsubscribeProfileStatus();
+  };
 }
 function readExtensionVersion(extensionDir) {
   try {
@@ -948,6 +1255,338 @@ function toUserSafeMessage(error) {
   }
   return "Unknown launch error";
 }
+function asRecord$1(value) {
+  return value && typeof value === "object" ? value : {};
+}
+const LEVEL_ORDER = ["debug", "info", "warn", "error"];
+const SENSITIVE_LOG_KEYS = /* @__PURE__ */ new Set([
+  "accesstoken",
+  "apikey",
+  "apisecret",
+  "authorization",
+  "authtoken",
+  "bearer",
+  "bearertoken",
+  "clientsecret",
+  "idtoken",
+  "refreshtoken",
+  "secret",
+  "token",
+  "xapikey",
+  "xauthorization"
+]);
+class LauncherLogStore {
+  constructor(paths, settings) {
+    this.settings = settings;
+    this.filePath = paths.dataFile("launcher-logs.json");
+  }
+  async query(filter = {}) {
+    const entries = await this.readEntries();
+    const text = filter.text?.trim().toLowerCase();
+    return entries.filter((entry) => !filter.levels?.length || filter.levels.includes(entry.level)).filter((entry) => !filter.sources?.length || filter.sources.includes(entry.source)).filter((entry) => !filter.browserIds?.length || filter.browserIds.includes(entry.browserId)).filter((entry) => filter.sinceTs === void 0 || entry.ts >= filter.sinceTs).filter((entry) => filter.untilTs === void 0 || entry.ts <= filter.untilTs).filter((entry) => !text || entry.message.toLowerCase().includes(text)).slice(-(filter.limit ?? 500));
+  }
+  async append(entries) {
+    const current = await this.readEntries();
+    let nextId = current.reduce((max, entry) => Math.max(max, entry.id), 0) + 1;
+    const appended = entries.map((entry) => ({
+      ...entry,
+      id: nextId++,
+      data: sanitizeLogData(entry.data)
+    }));
+    const next = await this.applyRetention([...current, ...appended]);
+    await this.writeEntries(next);
+    return appended;
+  }
+  async clear() {
+    await this.writeEntries([]);
+  }
+  async purge() {
+    await this.writeEntries(await this.applyRetention(await this.readEntries()));
+  }
+  async applyRetention(entries) {
+    const { logs } = await this.settings.get();
+    const minimumLevelIndex = LEVEL_ORDER.indexOf(logs.minLevel);
+    const cutoff = Date.now() - logs.retentionDays * 24 * 60 * 60 * 1e3;
+    return entries.filter((entry) => entry.ts >= cutoff).filter((entry) => LEVEL_ORDER.indexOf(entry.level) >= minimumLevelIndex).sort((a, b) => a.ts - b.ts).slice(-logs.maxEntries);
+  }
+  async readEntries() {
+    try {
+      const raw = JSON.parse(await fs$1.readFile(this.filePath, "utf8"));
+      return Array.isArray(raw.entries) ? raw.entries : [];
+    } catch (error) {
+      if (!isMissingFile$2(error)) {
+        throw error;
+      }
+      return [];
+    }
+  }
+  async writeEntries(entries) {
+    await fs$1.writeFile(this.filePath, `${JSON.stringify({ entries }, null, 2)}
+`, "utf8");
+  }
+}
+function sanitizeLogData(value) {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeLogData);
+  }
+  if (value && typeof value === "object") {
+    const clean = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (isSensitiveLogKey(key)) {
+        clean[key] = "[redacted]";
+      } else {
+        clean[key] = sanitizeLogData(child);
+      }
+    }
+    return clean;
+  }
+  return value;
+}
+function isSensitiveLogKey(key) {
+  return SENSITIVE_LOG_KEYS.has(key.toLowerCase().replace(/[-_\s]/g, ""));
+}
+function isMissingFile$2(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+const DEFAULT_LAUNCHER_SETTINGS = {
+  launch: {
+    windowWidth: 1280,
+    windowHeight: 820,
+    startUrl: "chrome://newtab",
+    concurrencyLimit: 3,
+    staggerMs: 400,
+    profileType: "persistent",
+    proxyMode: "none",
+    language: "zh-CN",
+    zoom: 100
+  },
+  behavior: {
+    closeAction: "ask",
+    exitWithBrowsers: "ask",
+    openAtLogin: false,
+    downloadDir: ""
+  },
+  logs: {
+    retentionDays: 3,
+    maxEntries: 5e3,
+    minLevel: "info",
+    captureLlmRequests: true,
+    captureLlmResponses: false,
+    defaultExportFormat: "json"
+  },
+  localUser: {
+    displayName: "本地用户",
+    colorKey: "purple"
+  }
+};
+class LauncherSettingsStore {
+  constructor(paths) {
+    this.filePath = paths.dataFile("settings.json");
+  }
+  async get() {
+    try {
+      const raw = JSON.parse(await fs$1.readFile(this.filePath, "utf8"));
+      return mergeSettings(DEFAULT_LAUNCHER_SETTINGS, raw);
+    } catch (error) {
+      if (!isMissingFile$1(error)) {
+        throw error;
+      }
+      return structuredClone(DEFAULT_LAUNCHER_SETTINGS);
+    }
+  }
+  async update(patch) {
+    const next = mergeSettings(await this.get(), patch);
+    await fs$1.writeFile(this.filePath, `${JSON.stringify(next, null, 2)}
+`, "utf8");
+    return next;
+  }
+}
+function mergeSettings(base, patch) {
+  return {
+    launch: { ...base.launch, ...patch.launch },
+    behavior: { ...base.behavior, ...patch.behavior },
+    logs: { ...base.logs, ...patch.logs },
+    localUser: { ...base.localUser, ...patch.localUser }
+  };
+}
+function isMissingFile$1(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+const LOG_LEVELS = ["debug", "info", "warn", "error"];
+const LOG_SOURCES = [
+  "agent",
+  "llm",
+  "tabs",
+  "page",
+  "chaoxing",
+  "config",
+  "system"
+];
+const LOG_CONTEXTS = ["background", "sidepanel", "newtab", "hub", "content"];
+class LauncherTelemetryIngest {
+  constructor(logStore, tokenUsageStore) {
+    this.logStore = logStore;
+    this.tokenUsageStore = tokenUsageStore;
+  }
+  async ingest(message) {
+    const payload = asRecord(message);
+    const browserId = asNonEmptyString(payload.browserId);
+    if (!browserId) {
+      throw new Error("Telemetry browserId is required");
+    }
+    const logs = normalizeLogs(payload.logs, browserId);
+    const explicitTokenUsage = normalizeTokenUsageBatch(payload.tokenUsage, browserId);
+    const inferredTokenUsage = logs.map((entry, index) => extractTokenUsage(entry, index)).filter((record) => record !== void 0);
+    const tokenUsage = [...explicitTokenUsage, ...inferredTokenUsage];
+    if (logs.length > 0) {
+      await this.logStore.append(logs);
+    }
+    if (tokenUsage.length > 0) {
+      await this.tokenUsageStore.append(tokenUsage);
+    }
+    return {
+      logs: logs.length,
+      tokenUsage: tokenUsage.length
+    };
+  }
+}
+function normalizeLogs(value, fallbackBrowserId) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => normalizeLog(item, fallbackBrowserId)).filter((entry) => entry !== void 0);
+}
+function normalizeLog(value, fallbackBrowserId) {
+  const draft = asRecord(value);
+  const message = asNonEmptyString(draft.message);
+  if (!message) return void 0;
+  return {
+    ts: asFiniteNumber(draft.ts) ?? Date.now(),
+    level: oneOf(draft.level, LOG_LEVELS) ?? "info",
+    source: oneOf(draft.source, LOG_SOURCES) ?? "system",
+    context: oneOf(draft.context, LOG_CONTEXTS) ?? "background",
+    browserId: asNonEmptyString(draft.browserId) ?? fallbackBrowserId,
+    message,
+    data: draft.data
+  };
+}
+function normalizeTokenUsageBatch(value, fallbackBrowserId) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => normalizeTokenUsage(item, fallbackBrowserId, index)).filter((record) => record !== void 0);
+}
+function normalizeTokenUsage(value, fallbackBrowserId, index) {
+  const draft = asRecord(value);
+  const ts = asFiniteNumber(draft.ts) ?? Date.now();
+  const browserId = asNonEmptyString(draft.browserId) ?? fallbackBrowserId;
+  const model = asNonEmptyString(draft.model) ?? "unknown";
+  const inputTokens = asNonNegativeNumber(draft.inputTokens) ?? 0;
+  const outputTokens = asNonNegativeNumber(draft.outputTokens) ?? 0;
+  const totalTokens = asNonNegativeNumber(draft.totalTokens) ?? inputTokens + outputTokens;
+  if (totalTokens <= 0) return void 0;
+  return {
+    id: asNonEmptyString(draft.id) ?? usageId(browserId, ts, index, totalTokens),
+    ts,
+    browserId,
+    model,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    estimatedCostCny: asNonNegativeNumber(draft.estimatedCostCny) ?? 0
+  };
+}
+function extractTokenUsage(entry, index) {
+  if (entry.source !== "llm") return void 0;
+  const usage = findUsageObject(entry.data);
+  if (!usage) return void 0;
+  const inputTokens = asNonNegativeNumber(usage.inputTokens) ?? asNonNegativeNumber(usage.input_tokens) ?? asNonNegativeNumber(usage.promptTokens) ?? asNonNegativeNumber(usage.prompt_tokens) ?? 0;
+  const outputTokens = asNonNegativeNumber(usage.outputTokens) ?? asNonNegativeNumber(usage.output_tokens) ?? asNonNegativeNumber(usage.completionTokens) ?? asNonNegativeNumber(usage.completion_tokens) ?? 0;
+  const totalTokens = asNonNegativeNumber(usage.totalTokens) ?? asNonNegativeNumber(usage.total_tokens) ?? inputTokens + outputTokens;
+  if (totalTokens <= 0) return void 0;
+  return {
+    id: usageId(entry.browserId, entry.ts, index, totalTokens),
+    ts: entry.ts,
+    browserId: entry.browserId,
+    model: findStringByKey(entry.data, "model") ?? "unknown",
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    estimatedCostCny: 0
+  };
+}
+function findUsageObject(value, depth = 0) {
+  if (depth > 8) return void 0;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findUsageObject(item, depth + 1);
+      if (found) return found;
+    }
+    return void 0;
+  }
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) return void 0;
+  if (record.usage && typeof record.usage === "object" && (hasTokenCount(record.usage) || hasTokenCount(asRecord(record.usage)))) {
+    return asRecord(record.usage);
+  }
+  if (hasTokenCount(record)) {
+    return record;
+  }
+  for (const child of Object.values(record)) {
+    const found = findUsageObject(child, depth + 1);
+    if (found) return found;
+  }
+  return void 0;
+}
+function hasTokenCount(value) {
+  const record = asRecord(value);
+  return [
+    "inputTokens",
+    "input_tokens",
+    "promptTokens",
+    "prompt_tokens",
+    "outputTokens",
+    "output_tokens",
+    "completionTokens",
+    "completion_tokens",
+    "totalTokens",
+    "total_tokens"
+  ].some((key) => asNonNegativeNumber(record[key]) !== void 0);
+}
+function findStringByKey(value, key, depth = 0) {
+  if (depth > 8) return void 0;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringByKey(item, key, depth + 1);
+      if (found) return found;
+    }
+    return void 0;
+  }
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) return void 0;
+  const direct = asNonEmptyString(record[key]);
+  if (direct) return direct;
+  for (const child of Object.values(record)) {
+    const found = findStringByKey(child, key, depth + 1);
+    if (found) return found;
+  }
+  return void 0;
+}
+function usageId(browserId, ts, index, totalTokens) {
+  return `usage-${browserId}-${Math.trunc(ts)}-${index}-${Math.trunc(totalTokens)}`;
+}
+function oneOf(value, values) {
+  return typeof value === "string" && values.includes(value) ? value : void 0;
+}
+function asRecord(value) {
+  return value && typeof value === "object" ? value : {};
+}
+function asNonEmptyString(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function asFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : void 0;
+}
+function asNonNegativeNumber(value) {
+  const number = asFiniteNumber(value);
+  return number !== void 0 && number >= 0 ? number : void 0;
+}
 const PROFILE_ID = /^[a-zA-Z0-9_-]+$/;
 class ProfileStore {
   constructor(paths) {
@@ -961,12 +1600,102 @@ class ProfileStore {
   listProfiles() {
     return fs.readdirSync(this.paths.profilesRoot(), { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort((a, b) => a.localeCompare(b));
   }
+  async copyProfile(sourceId, targetId) {
+    const targetDir = this.profileDir(targetId);
+    await fs$1.cp(this.profileDir(sourceId), targetDir, {
+      errorOnExist: true,
+      force: false,
+      recursive: true
+    });
+    return targetDir;
+  }
+  async deleteProfile(id) {
+    await fs$1.rm(this.profileDir(id), { force: true, recursive: true });
+  }
   profileDir(id) {
     if (!PROFILE_ID.test(id)) {
       throw new Error(`Invalid profile id: ${id}`);
     }
     return path.join(this.paths.profilesRoot(), id);
   }
+}
+class TokenUsageStore {
+  constructor(paths) {
+    this.filePath = paths.dataFile("token-usage.json");
+  }
+  async summary() {
+    const records = await this.readRecords();
+    return {
+      totalInputTokens: sum(records, "inputTokens"),
+      totalOutputTokens: sum(records, "outputTokens"),
+      totalTokens: sum(records, "totalTokens"),
+      estimatedCostCny: roundCurrency(sum(records, "estimatedCostCny")),
+      byBrowser: bucket(records, (record) => record.browserId),
+      byModel: bucket(records, (record) => record.model),
+      daily: bucket(records, (record) => new Date(record.ts).toISOString().slice(0, 10)),
+      recent: records.slice().sort((a, b) => b.ts - a.ts).slice(0, 20)
+    };
+  }
+  async append(records) {
+    const next = [...await this.readRecords(), ...records.map(sanitizeRecord)];
+    await fs$1.writeFile(this.filePath, `${JSON.stringify({ records: next }, null, 2)}
+`, "utf8");
+  }
+  async readRecords() {
+    try {
+      const raw = JSON.parse(await fs$1.readFile(this.filePath, "utf8"));
+      return Array.isArray(raw.records) ? raw.records : [];
+    } catch (error) {
+      if (!isMissingFile(error)) {
+        throw error;
+      }
+      return [];
+    }
+  }
+}
+function bucket(records, keyOf) {
+  const buckets = /* @__PURE__ */ new Map();
+  for (const record of records) {
+    const key = keyOf(record);
+    const current = buckets.get(key) ?? {
+      key,
+      label: key,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      estimatedCostCny: 0
+    };
+    current.inputTokens += record.inputTokens;
+    current.outputTokens += record.outputTokens;
+    current.totalTokens += record.totalTokens;
+    current.estimatedCostCny = roundCurrency(current.estimatedCostCny + record.estimatedCostCny);
+    buckets.set(key, current);
+  }
+  return Array.from(buckets.values()).sort((a, b) => b.totalTokens - a.totalTokens);
+}
+function sum(records, key) {
+  return records.reduce((total, record) => {
+    const value = record[key];
+    return typeof value === "number" ? total + value : total;
+  }, 0);
+}
+function sanitizeRecord(record) {
+  return {
+    id: record.id,
+    ts: record.ts,
+    browserId: record.browserId,
+    model: record.model,
+    inputTokens: record.inputTokens,
+    outputTokens: record.outputTokens,
+    totalTokens: record.totalTokens,
+    estimatedCostCny: record.estimatedCostCny
+  };
+}
+function roundCurrency(value) {
+  return Math.round(value * 1e4) / 1e4;
+}
+function isMissingFile(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 async function handleBrowserRunningClose(deps) {
   const status = deps.status();
@@ -984,18 +1713,28 @@ async function startMainBootstrap() {
   await electron.app.whenReady();
   const paths = new AppPaths(electron.app.getPath("userData"));
   await paths.ensure();
-  const logger = createAppLogger(paths);
   const resources = createBrowserResources({
     repoRoot: resolveRepoRoot(electron.app.getAppPath()),
     isPackaged: electron.app.isPackaged,
     resourcesPath: process.resourcesPath
   });
   const profiles = new ProfileStore(paths);
+  const profileStore = new BrowserProfileStore(paths, profiles);
+  const settingsStore = new LauncherSettingsStore(paths);
+  const logStore = new LauncherLogStore(paths, settingsStore);
+  const tokenUsageStore = new TokenUsageStore(paths);
+  const telemetryIngest = new LauncherTelemetryIngest(logStore, tokenUsageStore);
+  const logger = createAppLogger(paths, logStore);
   const supervisor = new BrowserSupervisor({ resources, profiles, logger });
   let currentWindow;
   registerDesktopBridge({
     ipcMain: electron.ipcMain,
     supervisor,
+    profileStore,
+    logStore,
+    settingsStore,
+    telemetryIngest,
+    tokenUsageStore,
     resources,
     getAppVersion: () => electron.app.getVersion(),
     openLogs: async () => {
@@ -1004,7 +1743,9 @@ async function startMainBootstrap() {
         throw new Error(message);
       }
     },
-    sendStatus: (status) => currentWindow?.webContents.send("browser:status-changed", status)
+    openPath: (targetPath) => electron.shell.openPath(targetPath),
+    sendStatus: (status) => currentWindow?.webContents.send("browser:status-changed", status),
+    sendProfileStatus: (payload) => currentWindow?.webContents.send("browser:profile-status-changed", payload)
   });
   const createWindow = () => {
     currentWindow = createControlWindow(electron, supervisor);
@@ -1040,21 +1781,13 @@ function resolveRepoRoot(start) {
   }
 }
 function createControlWindow(electron, supervisor) {
-  const win = new electron.BrowserWindow({
-    width: 500,
-    height: 440,
-    minWidth: 480,
-    minHeight: 400,
-    resizable: true,
-    maximizable: false,
-    icon: path.join(__dirname, "../../resources/icon.png"),
-    webPreferences: {
-      preload: path.join(__dirname, "../preload/index.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  });
+  const win = new electron.BrowserWindow(
+    buildControlWindowOptions({
+      platform: process.platform,
+      iconPath: path.join(__dirname, "../../resources/icon.png"),
+      preloadPath: path.join(__dirname, "../preload/index.js")
+    })
+  );
   let allowClose = false;
   win.on("close", (event) => {
     if (allowClose || supervisor.status() === "idle" || supervisor.status() === "error") {
@@ -1086,6 +1819,29 @@ function createControlWindow(electron, supervisor) {
     void win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
   return win;
+}
+function buildControlWindowOptions(input) {
+  return {
+    width: 1120,
+    height: 720,
+    minWidth: 920,
+    minHeight: 600,
+    resizable: true,
+    maximizable: true,
+    titleBarStyle: input.platform === "darwin" ? "hiddenInset" : "hidden",
+    titleBarOverlay: input.platform === "win32" ? {
+      color: "#FAFAFA",
+      symbolColor: "#060606",
+      height: 32
+    } : void 0,
+    icon: input.iconPath,
+    webPreferences: {
+      preload: input.preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  };
 }
 startMainBootstrap().catch((error) => {
   console.error(error);

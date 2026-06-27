@@ -1,5 +1,41 @@
 import { describe, expect, it, vi } from 'vitest'
-import { handleBrowserRunningClose } from './MainBootstrap'
+import { buildControlWindowOptions, handleBrowserRunningClose } from './MainBootstrap'
+
+describe('buildControlWindowOptions', () => {
+	it('uses the redesigned borderless app window size and macOS title controls', () => {
+		const options = buildControlWindowOptions({
+			platform: 'darwin',
+			iconPath: '/icon.png',
+			preloadPath: '/preload.js',
+		})
+
+		expect(options).toMatchObject({
+			width: 1120,
+			height: 720,
+			minWidth: 920,
+			minHeight: 600,
+			resizable: true,
+			maximizable: true,
+			titleBarStyle: 'hiddenInset',
+		})
+		expect(options.titleBarOverlay).toBeUndefined()
+	})
+
+	it('uses title bar overlay safe area on Windows', () => {
+		const options = buildControlWindowOptions({
+			platform: 'win32',
+			iconPath: '/icon.png',
+			preloadPath: '/preload.js',
+		})
+
+		expect(options.titleBarStyle).toBe('hidden')
+		expect(options.titleBarOverlay).toEqual({
+			color: '#FAFAFA',
+			symbolColor: '#060606',
+			height: 32,
+		})
+	})
+})
 
 describe('handleBrowserRunningClose', () => {
 	it('does not prompt when browser is idle', async () => {

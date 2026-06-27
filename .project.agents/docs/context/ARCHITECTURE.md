@@ -11,15 +11,17 @@
 
 ### 1.1 实体
 
-| 实体                     | 关键字段                                                                                                                                                 | 关系                             | 持久化与生命周期                                                  |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------- |
-| BrowserProfile           | id（目录名，demo 固定 `default`）、dirPath、createdAt                                                                                                    | 1:N → 运行中的浏览器实例（瞬态） | 是：磁盘目录 `<userData>/profiles/<id>`，首次启动创建，删除即重置 |
-| BrowserRuntimeDescriptor | version、platform、binaryPath                                                                                                                            | 被 LaunchConfig / 版本查询消费   | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更  |
-| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage、logRetentionDays、logMaxEntries | 被 Agent 循环、插件 UI 与 Logging 消费 | 是：`chrome.storage.local`（仅本机，I2）                          |
-| AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                           | 1:N → AgentActivity              | 是：插件 IndexedDB，用户可删                                      |
-| AgentActivity            | taskId、type、payload、ts                                                                                                                                | 属于 AgentTask                   | 是：插件 IndexedDB，随任务删除                                    |
-| QuickLink                | id、title、url、icon?                                                                                                                                    | 属于 NewTabHome 仪表盘           | 是：chrome.storage.local（newtabQuickLinks，仅本机，I2）          |
-| LogEntry                 | id、ts、level、source、context、message、data?                                                                                                           | 由插件各运行时产生，由 Logging 管理 | 是：插件 IndexedDB `page-agent-ext` v2 的 `logs`；按保留天数与条数上限自动清理，用户可导出/清空 |
+| 实体                     | 关键字段                                                                                                                                                                                  | 关系                                                   | 持久化与生命周期                                                                                           |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| BrowserProfile           | id（目录名）、displayName、type、colorKey、createdAt、lastUsedAt、userDataDir                                                                                                             | 1:1 → 画像目录；1:0/1 → 运行中的浏览器实例（瞬态）     | 是：元数据 `<userData>/browsers.json` + 磁盘目录 `<userData>/profiles/<id>`                                |
+| BrowserRuntimeDescriptor | version、platform、binaryPath                                                                                                                                                             | 被 LaunchConfig / 版本查询消费                         | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更                                           |
+| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage、logRetentionDays、logMaxEntries | 被 Agent 循环、插件 UI 与 Logging 消费                 | 是：`chrome.storage.local`（仅本机，I2）                                                                   |
+| AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                                                            | 1:N → AgentActivity                                    | 是：插件 IndexedDB，用户可删                                                                               |
+| AgentActivity            | taskId、type、payload、ts                                                                                                                                                                 | 属于 AgentTask                                         | 是：插件 IndexedDB，随任务删除                                                                             |
+| QuickLink                | id、title、url、icon?                                                                                                                                                                     | 属于 NewTabHome 仪表盘                                 | 是：chrome.storage.local（newtabQuickLinks，仅本机，I2）                                                   |
+| LogEntry                 | id、ts、level、source、context、browserId、message、data?                                                                                                                                 | 由插件各运行时产生，由 Logging / LauncherLogStore 管理 | 插件侧 IndexedDB + 启动器侧 `<userData>/launcher-logs.json`；按保留天数与条数上限自动清理，用户可导出/清空 |
+| LauncherSettings         | launch、behavior、logs、kernel、本地资料等设置组                                                                                                                                          | 被启动器 UI、BrowserSupervisor、LauncherLogStore 消费  | 是：`<userData>/settings.json`，即时保存                                                                   |
+| TokenUsageRecord         | id、ts、browserId、model、inputTokens、outputTokens、totalTokens、estimatedCostCny                                                                                                        | 由已脱敏日志遥测或未来网关计量生成                     | 是：`<userData>/token-usage.json`；不包含提示词正文、API Key 或敏感头                                      |
 
 ### 1.2 派生概念（非持久化）
 
@@ -30,8 +32,8 @@
 ### 1.3 不变量（任何模块都必须维护）
 
 - **I1.** 同一画像目录同一时刻至多一个浏览器实例（BrowserSupervisor 状态机为主，CfT ProcessSingleton 兜底）。
-- **I2.** API Key 与对话内容永不离开本机、永不经过桌面端进程。插件日志允许在本机 IndexedDB 保存已脱敏的对话与 LLM 请求/响应正文；API Key、`Authorization` 头与 `Bearer` 凭据绝不持久化。插件日志和正文不得进入桌面 IPC、桌面进程、桌面文件日志或任何远程上报通道。
-- **I3.** Demo 阶段桌面域与插件域零运行时通信；引入任何通道前必须先修改本文 §2/§3 并经评审。
+- **I2.** API Key 与对话内容永不离开本机。插件日志允许在本机 IndexedDB 保存已脱敏的对话与 LLM 请求/响应正文；API Key、`Authorization` 头与 `Bearer` 凭据绝不持久化。进入桌面域的日志 / tokens 遥测必须已脱敏，桌面侧再做二次清洗；桌面持久化数据不得包含 API Key、敏感头或提示词正文。
+- **I3.** Demo 阶段桌面域与插件域无运行时控制通信。唯一豁免：插件域可通过 Chrome Native Messaging 向桌面域单向发送已脱敏日志 / tokens 遥测；桌面域禁止通过该通道向 Agent 发送控制指令。
 - **I4.** 插件域只经 OpenAI-compatible HTTP 接口调用 LLM；更换供应商/接入网关只允许改配置（baseURL/key/model），不允许改 Agent 核心代码。
 - **I5.** vendor 的 `@page-agent/*` 四包保持上游包名、目录结构与版权头；任何本地改动必须登记 `UPSTREAM.md`（ROADMAP M1 建立）。
 
@@ -56,10 +58,10 @@
 
 ```
 ## 模块名：AppLogger
-- 职责：滚动文件日志（main.log、browser-<profile>.log），接管 CfT stdout/stderr
-- 不负责：不上报云端；不解析日志内容；不记录敏感值（I2）
+- 职责：滚动文件日志（main.log、browser-<profile>.log），接管 CfT stdout/stderr，并把主进程系统事件镜像写入 LauncherLogStore
+- 不负责：不上报云端；不解析 LLM 载荷；不记录敏感值（I2）
 - 输入：各模块日志调用；BrowserSupervisor 转交的子进程流
-- 输出：<userData>/logs/
+- 输出：`<userData>/logs/`；`<userData>/launcher-logs.json` 的 system/background 事件
 - 关键类型/接口：log(scope, level, msg) · attachStream(profileId, readable)
 - 持有状态：文件句柄
 ```
@@ -102,22 +104,72 @@
 ```
 
 ```
+## 模块名：BrowserProfileStore
+- 职责：持久化浏览器画像元数据（名称、颜色、时间、路径）并与 ProfileStore 目录对齐
+- 不负责：不读取画像内部 cookie/登录态；不 spawn；不渲染 UI
+- 输入：AppPaths、ProfileStore
+- 输出：DesktopBridge、BrowserSupervisor 调用方、ConsoleUI
+- 关键类型/接口：BrowserProfile · list · create · rename · touch
+- 持有状态：`<userData>/browsers.json`
+```
+
+```
+## 模块名：LauncherSettingsStore
+- 职责：持久化启动默认值、启动器行为、日志策略、内核/关于可显示配置与本地资料
+- 不负责：不直接应用设置副作用；不渲染表单
+- 输入：AppPaths、ConsoleUI 的设置 patch
+- 输出：BrowserSupervisor、LauncherLogStore、ConsoleUI
+- 关键类型/接口：LauncherSettings · get · update
+- 持有状态：`<userData>/settings.json`
+```
+
+```
+## 模块名：LauncherLogStore
+- 职责：启动器侧日志查询、清空、导出前数据读取、保留裁剪；承接单向插件日志遥测
+- 不负责：不发起插件控制；不保存 API Key / Authorization / Bearer；不渲染日志 UI
+- 输入：AppPaths、LauncherSettingsStore、AppLogger 系统事件、LauncherTelemetryIngest 的已脱敏日志批次
+- 输出：DesktopBridge、ConsoleUI 日志页、TokenUsageStore 的用量提取源
+- 关键类型/接口：LauncherLogEntry · LauncherLogFilter · query · append · clear · purge
+- 持有状态：`<userData>/launcher-logs.json`
+```
+
+```
+## 模块名：TokenUsageStore
+- 职责：启动器侧 tokens 用量记录、按日期/画像/模型聚合与成本估算
+- 不负责：不保存提示词正文；不执行计费扣费；不发起网络请求
+- 输入：AppPaths、LauncherTelemetryIngest 从 LLM usage 提取的记录、单向 tokens 遥测或未来网关计量导入
+- 输出：DesktopBridge、ConsoleUI tokens 页
+- 关键类型/接口：TokenUsageRecord · TokenUsageSummary · summary · append
+- 持有状态：`<userData>/token-usage.json`
+```
+
+```
+## 模块名：LauncherTelemetryIngest
+- 职责：接收单向遥测批次，校验 browserId，归一化日志字段，写入 LauncherLogStore，并从已脱敏 LLM usage 载荷提取 TokenUsageRecord
+- 不负责：不注册 Native Messaging 宿主；不向插件回送控制命令；不保存提示词正文或 API Key
+- 输入：Native Messaging 宿主或受控主进程入口传入的 `{ browserId, logs?, tokenUsage? }`
+- 输出：LauncherLogStore、TokenUsageStore
+- 关键类型/接口：LauncherTelemetryIngest.ingest(payload) -> { logs, tokenUsage }
+- 持有状态：无
+```
+
+```
 ## 模块名：BrowserSupervisor
-- 职责：spawn CfT、监听 exit/error、维护 idle→launching→running 状态机、崩溃通知（I1 执行者）
+- 职责：按画像 spawn CfT、监听 exit/error、维护每个画像 idle→launching→running 状态机、崩溃通知（I1 执行者）
 - 不负责：不组参数（LaunchConfig）；不定位资源（BrowserResources）；不渲染 UI
 - 输入：LaunchConfig、BrowserResources、ProfileStore、AppLogger
 - 输出：状态事件 → DesktopBridge
 - 关键类型/接口：见 §3.2
-- 持有状态：子进程句柄 + 当前 BrowserStatus
+- 持有状态：profileId → 子进程句柄 + BrowserStatus
 ```
 
 #### Layer 4 — 桥接
 
 ```
 ## 模块名：DesktopBridge
-- 职责：preload contextBridge + IPC 通道注册；渲染层访问主进程的唯一入口（5 通道）
-- 不负责：不含业务逻辑（仅转译与入参校验）；不出现插件域数据（I2/I3）
-- 输入：BrowserSupervisor、BrowserResources
+- 职责：preload contextBridge + IPC 通道注册；渲染层访问主进程的唯一入口
+- 不负责：不含业务逻辑（仅转译与入参校验）；不绕过 I2/I3 直接控制插件域
+- 输入：BrowserSupervisor、BrowserProfileStore、LauncherLogStore、LauncherSettingsStore、LauncherTelemetryIngest、TokenUsageStore、BrowserResources
 - 输出：ConsoleUI（window.wenxue.*）
 - 关键类型/接口：见 §3.2 IPC 契约
 - 持有状态：无
@@ -127,7 +179,7 @@
 
 ```
 ## 模块名：ConsoleUI
-- 职责：React 控制台（状态卡、启动按钮、版本 footer）
+- 职责：React 启动器 App shell（侧栏路由、浏览器多开页、日志页、tokens 页、设置页）
 - 不负责：不触 Node API；不写业务判断（仅消费状态、发送意图）
 - 输入：DesktopBridge
 - 输出：用户
@@ -192,7 +244,7 @@ fork 应用层（apps/extension）：
 - 职责：定义日志类型与脱敏规则；为所有插件运行时提供统一 logger；由 background 作为 IndexedDB 单写入者完成追加、查询、导出、清空与自动清理；限定并记录 LLM fetch 请求/响应正文
 - 不负责：不渲染日志 UI；不写桌面日志；不远程上报；不持久化 API Key、Authorization 或 Bearer；不修改 packages/*（I2/I3/I5）
 - 输入：background / sidepanel / hub / newtab / content 的日志事件；ExtensionSettingsConfig 的 logRetentionDays/logMaxEntries；命中 LLM 端点的 fetch 请求与响应
-- 输出：已脱敏 LogEntry；LOG_APPEND/LOG_QUERY/LOG_EXPORT/LOG_CLEAR 响应；LogViewer 查询与导出结果
+- 输出：已脱敏 LogEntry；LOG_APPEND/LOG_QUERY/LOG_EXPORT/LOG_CLEAR 响应；启动器遥测出口的日志批次
 - 关键类型/接口：LogEntry · LogFilter · logger.debug/info/warn/error · appendBatch · query · exportAll · clear · purge · handleLogControlMessage · installLlmFetchLogging（详见 §3.2）
 - 持有状态：background 独占的 IndexedDB `page-agent-ext` v2 `logs` 对象库；非 background 上下文的瞬态发送批次
 ```
@@ -207,11 +259,11 @@ fork 应用层（apps/extension）：
 ```
 
 ```
-## 模块名：LogViewer（L5）
-- 职责：在插件设置中呈现本地日志；按级别/来源/时间/关键词筛选，展示列表与单条详情，按当前筛选导出并经二次确认清空
-- 不负责：不直接访问 IndexedDB；不执行脱敏或保留策略；不向桌面域或远程发送日志
-- 输入：Logging 的 LOG_QUERY/LOG_EXPORT/LOG_CLEAR 通道；用户筛选与操作意图
-- 输出：日志列表、详情、导出文件与清空反馈
+## 模块名：LogViewer（L5 / legacy）
+- 职责：历史插件内日志查看器组件；M3.5 后不再挂载到 SettingsForm，查看入口迁移到桌面启动器日志页
+- 不负责：不作为当前产品入口；不直接访问 IndexedDB；不执行脱敏或保留策略；不向桌面域或远程发送日志
+- 输入：无活跃入口；组件文件暂留供回滚参考
+- 输出：无活跃输出
 - 关键类型/接口：LogViewer · LogFilter
 - 持有状态：筛选条件、分页游标、当前详情与加载/错误 UI 态
 ```
@@ -263,14 +315,28 @@ graph TD
         MainBootstrap --> ProfileStore
         ConsoleUI --> DesktopBridge
         DesktopBridge --> BrowserSupervisor
+        DesktopBridge --> BrowserProfileStore
+        DesktopBridge --> LauncherLogStore
+        DesktopBridge --> LauncherSettingsStore
+        DesktopBridge --> LauncherTelemetryIngest
+        DesktopBridge --> TokenUsageStore
         DesktopBridge --> BrowserResources
         BrowserSupervisor --> LaunchConfig
         BrowserSupervisor --> BrowserResources
         BrowserSupervisor --> ProfileStore
         BrowserSupervisor --> AppLogger
+        BrowserProfileStore --> AppPaths
+        BrowserProfileStore --> ProfileStore
+        LauncherSettingsStore --> AppPaths
+        LauncherLogStore --> AppPaths
+        LauncherLogStore --> LauncherSettingsStore
+        LauncherTelemetryIngest --> LauncherLogStore
+        LauncherTelemetryIngest --> TokenUsageStore
+        TokenUsageStore --> AppPaths
         ProfileStore --> AppPaths
         BrowserResources --> AppPaths
         AppLogger --> AppPaths
+        AppLogger --> LauncherLogStore
     end
     subgraph 插件域
         ExtensionEntrypoints --> SidepanelApp
@@ -282,11 +348,8 @@ graph TD
         ExtensionEntrypoints --> Chaoxing["chaoxing/*"]
         SidepanelApp --> MultiPageAgent
         SidepanelApp --> ExtensionSettingsConfig
-        SidepanelApp --> LogViewer
         SidepanelApp --> Logging
         SidepanelApp --> PA_UI["@page-agent/ui"]
-        LogViewer --> Logging
-        LogViewer --> PA_UI
         Logging --> ExtensionSettingsConfig
         MultiPageAgent --> PA_CORE["@page-agent/core"]
         MultiPageAgent --> PA_PC["@page-agent/page-controller"]
@@ -311,15 +374,35 @@ graph TD
 // module: DesktopBridge —— IPC 通道（渲染层唯一入口；通道上禁止出现插件域数据，I2/I3）
 //   browser:launch         invoke () => Promise<{ ok: boolean; error?: string }>  // 幂等，保证 I1
 //   browser:getStatus      invoke () => BrowserStatus                             // 'idle'|'launching'|'running'|'error'
+//   browser:getStatuses    invoke () => Record<string, BrowserStatus>
+//   browser:listProfiles   invoke () => Promise<BrowserProfile[]>
+//   browser:addProfile     invoke () => Promise<{ ok: boolean; profile?: BrowserProfile; error?: string }>
+//   browser:renameProfile  invoke (id: string, displayName: string) => Promise<{ ok: boolean; profile?: BrowserProfile; error?: string }>
+//   browser:duplicateProfile invoke (id: string) => Promise<{ ok: boolean; profile?: BrowserProfile; error?: string }>
+//   browser:removeProfile  invoke (id: string) => Promise<{ ok: boolean; profile?: BrowserProfile; error?: string }>
+//   browser:openProfileFolder invoke (id: string) => Promise<{ ok: boolean; error?: string }>
+//   browser:launchProfile  invoke (id: string) => Promise<{ ok: boolean; error?: string }>
+//   browser:stopProfile    invoke (id: string) => Promise<{ ok: boolean; error?: string }>
 //   browser:status-changed event  (status: BrowserStatus)                         // main → renderer
+//   browser:profile-status-changed event ({ profileId, status })                   // main → renderer
 //   app:getVersions        invoke () => { app: string; browser: string; extension: string }
 //   app:openLogs           invoke () => Promise<{ ok: boolean; error?: string }>  // 打开本机日志目录，不传插件域数据
+//   logs:query             invoke (filter?: LauncherLogFilter) => Promise<LauncherLogEntry[]>
+//   logs:clear             invoke () => Promise<{ ok: boolean; error?: string }>
+//   settings:get           invoke () => Promise<LauncherSettings>
+//   settings:update        invoke (patch: DeepPartial<LauncherSettings>) => Promise<{ ok: boolean; settings?: LauncherSettings; error?: string }>
+//   telemetry:ingest       invoke (payload: unknown) => Promise<{ ok: boolean; result?: { logs: number; tokenUsage: number }; error?: string }>
+//                            // 主进程受控入口；preload 不暴露给 renderer；后续 Native Messaging host 复用同一校验逻辑
+//   tokens:getSummary      invoke () => Promise<TokenUsageSummary>
 
 // module: BrowserSupervisor
 //   launch(profileId = 'default'): Promise<void>        // I1：running 时不二次 spawn，转为聚焦
-//   status(): BrowserStatus
+//   stop(profileId: string): Promise<void>
+//   status(): BrowserStatus                             // 聚合状态：任一 running/launching/error 优先
+//   statuses(): Record<string, BrowserStatus>
 //   onStatusChange(cb: (s: BrowserStatus) => void): () => void
-//   requestShutdown(): Promise<void>                    // 仅响应用户"退出时一并关闭"的选择
+//   onProfileStatusChange(cb: (profileId: string, s: BrowserStatus) => void): () => void
+//   requestShutdown(): Promise<void>                    // 仅响应用户"退出时一并关闭"的选择，关闭全部运行画像
 
 // module: LaunchConfig（纯函数）
 //   buildArgv(opts: { userDataDir: string; extensionDir: string;
@@ -372,24 +455,29 @@ graph TD
 
 ## 4. 持久化与边界
 
-| 数据                                          | 位置                        | 谁写                                      | 边界约束                                                                                                 |
-| --------------------------------------------- | --------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 画像数据（cookie、登录态、浏览记录）          | `<userData>/profiles/<id>/` | 仅 CfT 进程                               | 桌面端只创建目录，永不读内容                                                                             |
-| 运行日志                                      | `<userData>/logs/`          | AppLogger                                 | 不含 Key/对话内容（I2）                                                                                  |
-| ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`      | SidepanelApp options 设置页与语言快捷入口 | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置 |
-| 任务历史                                      | 插件 IndexedDB              | MultiPageAgent / SidepanelApp             | 不出本机；用户可清空                                                                                     |
-| 插件日志                                      | IndexedDB `page-agent-ext` v2：`logs`（`id` 自增，`by-ts` 索引）；原 `sessions` 保持不变 | 仅 background Logging 写；LogViewer 经消息读/导出/清空 | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；不进桌面域、不远程上报 |
-| 快捷入口与 onboarding 标志                    | chrome.storage.local        | NewTabHome                                | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                        |
-| browser.lock.json                             | 仓库 `apps/desktop/`        | 开发者（升级 CfT 时）                     | 构建期消费，运行期只读                                                                                   |
+| 数据                                          | 位置                                                                                     | 谁写                                                   | 边界约束                                                                                                                                                   |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 画像数据（cookie、登录态、浏览记录）          | `<userData>/profiles/<id>/`                                                              | 仅 CfT 进程                                            | 桌面端只创建目录，永不读内容                                                                                                                               |
+| 画像元数据                                    | `<userData>/browsers.json`                                                               | BrowserProfileStore                                    | 只含名称、颜色、时间、目录路径，不含 cookie/登录态                                                                                                         |
+| 启动器设置                                    | `<userData>/settings.json`                                                               | LauncherSettingsStore                                  | 即时保存；不得包含 API Key                                                                                                                                 |
+| 运行日志                                      | `<userData>/logs/`                                                                       | AppLogger                                              | 不含 Key/对话内容（I2）；主进程系统事件同时镜像到启动器日志                                                                                                |
+| 启动器日志                                    | `<userData>/launcher-logs.json`                                                          | LauncherLogStore / AppLogger / LauncherTelemetryIngest | 仅保存已脱敏日志；支持 browserId 归类、保留裁剪、清空与导出；桌面侧二次清洗敏感键但保留 token 计数字段                                                     |
+| tokens 用量                                   | `<userData>/token-usage.json`                                                            | TokenUsageStore / LauncherTelemetryIngest              | 仅保存 tokens 数量、模型、画像、时间与估算成本；不含提示词正文或敏感头                                                                                     |
+| ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`                                                                   | SidepanelApp options 设置页与语言快捷入口              | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置                                                   |
+| 任务历史                                      | 插件 IndexedDB                                                                           | MultiPageAgent / SidepanelApp                          | 不出本机；用户可清空                                                                                                                                       |
+| 插件日志                                      | IndexedDB `page-agent-ext` v2：`logs`（`id` 自增，`by-ts` 索引）；原 `sessions` 保持不变 | 仅 background Logging 写；启动器日志页接管查看入口     | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；不进桌面域、不远程上报 |
+| 快捷入口与 onboarding 标志                    | chrome.storage.local                                                                     | NewTabHome                                             | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                                                                          |
+| browser.lock.json                             | 仓库 `apps/desktop/`                                                                     | 开发者（升级 CfT 时）                                  | 构建期消费，运行期只读                                                                                                                                     |
 
 出网边界：插件域 → 用户配置的 LLM baseURL（HTTPS）是**唯一**业务出网；桌面域 demo 阶段零出网；CfT 自身的浏览流量属用户行为，不在系统边界内。
 
 ## 5. 测试边界
 
 - **必有单测（vitest）**：LaunchConfig（argv 组装全分支）、BrowserResources（路径解析，mock resourcesPath）、ProfileStore、BrowserSupervisor 状态机（mock child_process）。
+- **启动器 App 化新增单测**：BrowserProfileStore 持久化与目录对齐；BrowserSupervisor 多画像并行与同画像 I1；DesktopBridge 新 IPC 契约；LauncherTelemetryIngest 日志/tokens 导入与二次清洗；窗口外壳选项纯函数。
 - **vendor 四包**：上游测试套件随包保留，`pnpm -r test` 必绿；对 vendor 的本地补丁必须配套回归测试。
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1→v2 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
-- **LogViewer**：组件测试覆盖筛选、分页/详情、导出与清空确认；UI 仅消费 Logging 契约，不直接访问 IndexedDB。
+- **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。
 - **仅手动**：ConsoleUI、SidepanelApp 的视觉与交互（按 `UIUX.md` 与 PRD 验收标准）。
 
@@ -400,17 +488,18 @@ WenXue/
 ├── apps/
 │   ├── desktop/                     # 桌面域
 │   │   ├── src/main/                # AppPaths · AppLogger · BrowserResources · LaunchConfig
-│   │   │                            #   · ProfileStore · BrowserSupervisor · MainBootstrap
+│   │   │                            #   · ProfileStore · BrowserProfileStore · LauncherSettingsStore
+│   │   │                            #   · LauncherLogStore · LauncherTelemetryIngest · TokenUsageStore · BrowserSupervisor · MainBootstrap
 │   │   ├── src/preload/             # DesktopBridge（preload 侧）
 │   │   ├── src/renderer/            # ConsoleUI（含 strings.ts 文案）
 │   │   ├── scripts/                 # fetch-browser.ts / smoke-launch.ts（构建工具，非运行时模块）
 │   │   ├── browser.lock.json        # BrowserRuntimeDescriptor 版本来源
 │   │   └── electron-builder.yml
-│   └── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · Logging · LogViewer · chaoxing/* · ExtensionEntrypoints
+│   └── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · Logging · chaoxing/* · ExtensionEntrypoints
 │       ├── src/entrypoints/         # background / content / main-world / sidepanel / hub / newtab
 │       ├── src/agent/chaoxing/      # chaoxing/*：solve.ts · adapter.content.ts · tools.ts（学习通求解器）
 │       ├── src/components/
-│       │   └── LogViewer.tsx        # 设置内日志筛选、详情、导出与清空 UI
+│       │   └── LogViewer.tsx        # legacy：入口已下线，桌面启动器日志页接管
 │       └── src/lib/
 │           ├── logTypes.ts          # LogEntry / LogFilter / LOG_* 消息类型
 │           ├── logRedaction.ts      # Key/Authorization/Bearer 脱敏与正文截断

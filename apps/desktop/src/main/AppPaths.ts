@@ -1,8 +1,12 @@
-import path from 'node:path'
 import { mkdir } from 'node:fs/promises'
+import path from 'node:path'
 
 export class AppPaths {
 	constructor(private readonly userDataDir: string) {}
+
+	userDataRoot(): string {
+		return this.userDataDir
+	}
 
 	profilesRoot(): string {
 		return path.join(this.userDataDir, 'profiles')
@@ -10,6 +14,10 @@ export class AppPaths {
 
 	logsDir(): string {
 		return path.join(this.userDataDir, 'logs')
+	}
+
+	dataFile(name: string): string {
+		return path.join(this.userDataDir, name)
 	}
 
 	async ensure(): Promise<void> {

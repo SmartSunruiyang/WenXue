@@ -12568,19 +12568,144 @@ const createLucideIcon = (iconName, iconNode) => {
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$d = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
-const Check = createLucideIcon("check", __iconNode$d);
+const __iconNode$n = [
+  [
+    "path",
+    {
+      d: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2",
+      key: "169zse"
+    }
+  ]
+];
+const Activity = createLucideIcon("activity", __iconNode$n);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$c = [
+const __iconNode$m = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
+const Check = createLucideIcon("check", __iconNode$m);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$l = [["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]];
+const ChevronDown = createLucideIcon("chevron-down", __iconNode$l);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$k = [
   ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
-  ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+  ["path", { d: "M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8", key: "1h4pet" }],
+  ["path", { d: "M12 18V6", key: "zqpxq5" }]
 ];
-const CircleCheck = createLucideIcon("circle-check", __iconNode$c);
+const CircleDollarSign = createLucideIcon("circle-dollar-sign", __iconNode$k);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$j = [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "M12 6v6l4 2", key: "mmk7yg" }]
+];
+const Clock = createLucideIcon("clock", __iconNode$j);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$i = [
+  ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2", key: "17jyea" }],
+  ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2", key: "zix9uf" }]
+];
+const Copy = createLucideIcon("copy", __iconNode$i);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$h = [
+  ["path", { d: "M12 15V3", key: "m9g1x1" }],
+  ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
+  ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
+];
+const Download = createLucideIcon("download", __iconNode$h);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$g = [
+  ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }],
+  ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
+  ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
+  ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
+  ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
+];
+const Focus = createLucideIcon("focus", __iconNode$g);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$f = [
+  [
+    "path",
+    {
+      d: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2",
+      key: "usdka0"
+    }
+  ]
+];
+const FolderOpen = createLucideIcon("folder-open", __iconNode$f);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$e = [
+  [
+    "path",
+    {
+      d: "M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z",
+      key: "sc7q7i"
+    }
+  ]
+];
+const Funnel = createLucideIcon("funnel", __iconNode$e);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$d = [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "M12 16v-4", key: "1dtifu" }],
+  ["path", { d: "M12 8h.01", key: "e9boi3" }]
+];
+const Info = createLucideIcon("info", __iconNode$d);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$c = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
+const LoaderCircle = createLucideIcon("loader-circle", __iconNode$c);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12588,19 +12713,22 @@ const CircleCheck = createLucideIcon("circle-check", __iconNode$c);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$b = [
-  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
-  ["path", { d: "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3", key: "1u773s" }],
-  ["path", { d: "M12 17h.01", key: "p32p05" }]
+  ["path", { d: "m16 17 5-5-5-5", key: "1bji2h" }],
+  ["path", { d: "M21 12H9", key: "dn1m92" }],
+  ["path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", key: "1uf3rs" }]
 ];
-const CircleQuestionMark = createLucideIcon("circle-question-mark", __iconNode$b);
+const LogOut = createLucideIcon("log-out", __iconNode$b);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$a = [["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }]];
-const Circle = createLucideIcon("circle", __iconNode$a);
+const __iconNode$a = [
+  ["rect", { x: "14", y: "3", width: "5", height: "18", rx: "1", key: "kaeet6" }],
+  ["rect", { x: "5", y: "3", width: "5", height: "18", rx: "1", key: "1wsw3u" }]
+];
+const Pause = createLucideIcon("pause", __iconNode$a);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12608,13 +12736,16 @@ const Circle = createLucideIcon("circle", __iconNode$a);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$9 = [
-  ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }],
-  ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
-  ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
-  ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
-  ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
+  [
+    "path",
+    {
+      d: "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",
+      key: "1a8usu"
+    }
+  ],
+  ["path", { d: "m15 5 4 4", key: "1mk7zo" }]
 ];
-const Focus = createLucideIcon("focus", __iconNode$9);
+const Pencil = createLucideIcon("pencil", __iconNode$9);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12625,20 +12756,23 @@ const __iconNode$8 = [
   [
     "path",
     {
-      d: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2",
-      key: "usdka0"
+      d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z",
+      key: "10ikf1"
     }
   ]
 ];
-const FolderOpen = createLucideIcon("folder-open", __iconNode$8);
+const Play = createLucideIcon("play", __iconNode$8);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$7 = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
-const LoaderCircle = createLucideIcon("loader-circle", __iconNode$7);
+const __iconNode$7 = [
+  ["path", { d: "M5 12h14", key: "1ays0h" }],
+  ["path", { d: "M12 5v14", key: "s699le" }]
+];
+const Plus = createLucideIcon("plus", __iconNode$7);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12646,15 +12780,18 @@ const LoaderCircle = createLucideIcon("loader-circle", __iconNode$7);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$6 = [
+  ["path", { d: "M15 12h-5", key: "r7krc0" }],
+  ["path", { d: "M15 8h-5", key: "1khuty" }],
+  ["path", { d: "M19 17V5a2 2 0 0 0-2-2H4", key: "zz82l3" }],
   [
     "path",
     {
-      d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z",
-      key: "10ikf1"
+      d: "M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3",
+      key: "1ph1d7"
     }
   ]
 ];
-const Play = createLucideIcon("play", __iconNode$6);
+const ScrollText = createLucideIcon("scroll-text", __iconNode$6);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12662,10 +12799,10 @@ const Play = createLucideIcon("play", __iconNode$6);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$5 = [
-  ["path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", key: "1357e3" }],
-  ["path", { d: "M3 3v5h5", key: "1xhq8a" }]
+  ["path", { d: "m21 21-4.34-4.34", key: "14j7rj" }],
+  ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
 ];
-const RotateCcw = createLucideIcon("rotate-ccw", __iconNode$5);
+const Search = createLucideIcon("search", __iconNode$5);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12676,13 +12813,13 @@ const __iconNode$4 = [
   [
     "path",
     {
-      d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
-      key: "oel41y"
+      d: "M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915",
+      key: "1i5ecw"
     }
   ],
-  ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+  ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
 ];
-const ShieldCheck = createLucideIcon("shield-check", __iconNode$4);
+const Settings = createLucideIcon("settings", __iconNode$4);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12690,18 +12827,9 @@ const ShieldCheck = createLucideIcon("shield-check", __iconNode$4);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$3 = [
-  [
-    "path",
-    {
-      d: "M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z",
-      key: "1s2grr"
-    }
-  ],
-  ["path", { d: "M20 2v4", key: "1rf3ol" }],
-  ["path", { d: "M22 4h-4", key: "gwowj6" }],
-  ["circle", { cx: "4", cy: "20", r: "2", key: "6kqj1y" }]
+  ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2", key: "afitv7" }]
 ];
-const Sparkles = createLucideIcon("sparkles", __iconNode$3);
+const Square = createLucideIcon("square", __iconNode$3);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12709,10 +12837,13 @@ const Sparkles = createLucideIcon("sparkles", __iconNode$3);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$2 = [
-  ["path", { d: "M12 19h8", key: "baeox8" }],
-  ["path", { d: "m4 17 6-6-6-6", key: "1yngyt" }]
+  ["path", { d: "M10 11v6", key: "nco0om" }],
+  ["path", { d: "M14 11v6", key: "outv1u" }],
+  ["path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6", key: "miytrc" }],
+  ["path", { d: "M3 6h18", key: "d0wm0j" }],
+  ["path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2", key: "e791ji" }]
 ];
-const Terminal = createLucideIcon("terminal", __iconNode$2);
+const Trash2 = createLucideIcon("trash-2", __iconNode$2);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12720,17 +12851,10 @@ const Terminal = createLucideIcon("terminal", __iconNode$2);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$1 = [
-  [
-    "path",
-    {
-      d: "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3",
-      key: "wmoenq"
-    }
-  ],
-  ["path", { d: "M12 9v4", key: "juzpu7" }],
-  ["path", { d: "M12 17h.01", key: "p32p05" }]
+  ["path", { d: "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2", key: "975kel" }],
+  ["circle", { cx: "12", cy: "7", r: "4", key: "17ys0d" }]
 ];
-const TriangleAlert = createLucideIcon("triangle-alert", __iconNode$1);
+const User = createLucideIcon("user", __iconNode$1);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12738,312 +12862,1278 @@ const TriangleAlert = createLucideIcon("triangle-alert", __iconNode$1);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode = [
-  [
-    "path",
-    {
-      d: "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z",
-      key: "1xq2db"
-    }
-  ]
+  ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+  ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
 ];
-const Zap = createLucideIcon("zap", __iconNode);
-const strings = {
-  brand: "问学 WenXue",
-  slogan: "ask for everything",
-  shellLabel: "问学桌面启动器",
-  runtimeLabel: "DESKTOP",
-  statusCapsuleLabel: "浏览器运行状态",
-  status: {
-    idle: "未运行",
-    launching: "启动中",
-    running: "浏览器运行中",
-    error: "启动异常"
+const X = createLucideIcon("x", __iconNode);
+const routeItems = [
+  { id: "logs", label: "日志", icon: ScrollText },
+  { id: "tokens", label: "Tokens", icon: CircleDollarSign }
+];
+const settingsSections = [
+  { id: "launch", label: "启动默认值" },
+  { id: "behavior", label: "启动器行为" },
+  { id: "logs", label: "日志" },
+  { id: "kernel", label: "浏览器内核" },
+  { id: "about", label: "关于" }
+];
+const statusLabels = {
+  idle: "空闲",
+  launching: "启动中",
+  running: "运行中",
+  error: "异常"
+};
+const defaultSettings = {
+  launch: {
+    windowWidth: 1280,
+    windowHeight: 820,
+    startUrl: "chrome://newtab",
+    concurrencyLimit: 3,
+    staggerMs: 400,
+    profileType: "persistent",
+    proxyMode: "none",
+    language: "zh-CN",
+    zoom: 100
   },
-  description: {
-    idle: "浏览器尚未启动。点击后会打开独立的问学浏览器。",
-    launching: "正在准备浏览器与问学插件。",
-    running: "在浏览器工具栏打开问学侧边栏，输入你的任务。",
-    error: "浏览器启动或运行异常。可重新启动，或查看日志定位原因。"
+  behavior: {
+    closeAction: "ask",
+    exitWithBrowsers: "ask",
+    openAtLogin: false,
+    downloadDir: ""
   },
-  action: {
-    launch: "启动浏览器",
-    focus: "聚焦窗口",
-    relaunch: "重新启动",
-    openLogs: "查看日志"
+  logs: {
+    retentionDays: 3,
+    maxEntries: 5e3,
+    minLevel: "info",
+    captureLlmRequests: true,
+    captureLlmResponses: false,
+    defaultExportFormat: "json"
   },
-  launchTimeline: {
-    title: "启动序列",
-    items: ["检查资源", "启动浏览器", "加载插件"]
-  },
-  onboarding: {
-    title: "第一次使用问学",
-    items: [
-      "启动独立的问学浏览器。",
-      "在工具栏打开或固定问学插件。",
-      "需要自定义模型时，进入插件设置页添加 OpenAI-compatible 模型。",
-      "打开目标网页，在侧边栏输入自然语言任务。",
-      "执行过程中可随时停止或人工接管。"
-    ]
-  },
-  errorFallback: "浏览器启动或运行异常。请重新启动；若仍失败，请查看主进程日志定位原因。",
-  openLogsFallback: "无法打开日志目录。请在系统的应用数据目录中手动查看问学日志。",
-  versionLabel: {
-    app: "App",
-    browser: "Browser",
-    extension: "Extension"
+  localUser: {
+    displayName: "本地用户",
+    colorKey: "purple"
   }
 };
-function useDarkMode() {
-  const [dark, setDark] = reactExports.useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
-  reactExports.useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = (e) => setDark(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, []);
-  return dark;
-}
-const statusPresentation = {
-  idle: {
-    code: "IDLE",
-    icon: ShieldCheck,
-    panelClassName: "status-panel--idle",
-    timelineIndex: -1
-  },
-  launching: {
-    code: "IGNITION",
-    icon: LoaderCircle,
-    panelClassName: "status-panel--launching",
-    timelineIndex: 1
-  },
-  running: {
-    code: "ONLINE",
-    icon: Zap,
-    panelClassName: "status-panel--running",
-    timelineIndex: 2
-  },
-  error: {
-    code: "FAULT",
-    icon: TriangleAlert,
-    panelClassName: "status-panel--error",
-    timelineIndex: -1
-  }
+const emptyTokenSummary = {
+  totalInputTokens: 0,
+  totalOutputTokens: 0,
+  totalTokens: 0,
+  estimatedCostCny: 0,
+  byBrowser: [],
+  byModel: [],
+  daily: [],
+  recent: []
 };
 function App() {
-  const dark = useDarkMode();
-  const [status, setStatus] = reactExports.useState("idle");
+  const [route, setRoute] = reactExports.useState("browsers");
+  const [profiles, setProfiles] = reactExports.useState([]);
+  const [statuses, setStatuses] = reactExports.useState({});
+  const [logs, setLogs] = reactExports.useState([]);
+  const [settings, setSettings] = reactExports.useState(defaultSettings);
+  const [tokens, setTokens] = reactExports.useState(emptyTokenSummary);
   const [versions, setVersions] = reactExports.useState({
     app: "unknown",
     browser: "unknown",
     extension: "unknown"
   });
-  const [launchError, setLaunchError] = reactExports.useState();
-  const [openLogsError, setOpenLogsError] = reactExports.useState();
+  const [selectedIds, setSelectedIds] = reactExports.useState([]);
+  const [editingId, setEditingId] = reactExports.useState(null);
+  const [draftName, setDraftName] = reactExports.useState("");
+  const [query, setQuery] = reactExports.useState("");
+  const [logQuery, setLogQuery] = reactExports.useState("");
+  const [logLevels, setLogLevels] = reactExports.useState(["info", "warn", "error"]);
+  const [followLogs, setFollowLogs] = reactExports.useState(true);
+  const [avatarOpen, setAvatarOpen] = reactExports.useState(false);
+  const [savedTick, setSavedTick] = reactExports.useState(false);
+  const [message, setMessage] = reactExports.useState(null);
+  const refreshProfiles = reactExports.useCallback(async () => {
+    const [nextProfiles, nextStatuses] = await Promise.all([
+      window.wenxue.browser.listProfiles(),
+      window.wenxue.browser.getStatuses()
+    ]);
+    setProfiles(sortProfiles(nextProfiles));
+    setStatuses(nextStatuses);
+  }, []);
+  const refreshLogs = reactExports.useCallback(async () => {
+    const nextLogs = await window.wenxue.logs.query({ limit: 600 });
+    setLogs(nextLogs.sort((a, b) => a.ts - b.ts));
+  }, []);
+  reactExports.useCallback(async () => {
+    setTokens(await window.wenxue.tokens.getSummary());
+  }, []);
   reactExports.useEffect(() => {
     let mounted = true;
-    const unsubscribe = window.wenxue.browser.onStatusChange((next) => {
+    const load = async () => {
+      const [nextProfiles, nextStatuses, nextLogs, nextSettings, nextTokens, nextVersions] = await Promise.all([
+        window.wenxue.browser.listProfiles(),
+        window.wenxue.browser.getStatuses(),
+        window.wenxue.logs.query({ limit: 600 }),
+        window.wenxue.settings.get(),
+        window.wenxue.tokens.getSummary(),
+        window.wenxue.app.getVersions()
+      ]);
       if (!mounted) return;
-      setStatus(next);
-      if (next !== "error") {
-        setLaunchError(void 0);
-        setOpenLogsError(void 0);
-      }
+      setProfiles(sortProfiles(nextProfiles));
+      setStatuses(nextStatuses);
+      setLogs(nextLogs.sort((a, b) => a.ts - b.ts));
+      setSettings(nextSettings);
+      setTokens(nextTokens);
+      setVersions(nextVersions);
+    };
+    void load().catch((error) => {
+      setMessage(error instanceof Error ? error.message : "启动器数据加载失败");
     });
-    window.wenxue.browser.getStatus().then((next) => {
-      if (mounted) setStatus(next);
+    const unsubscribeProfile = window.wenxue.browser.onProfileStatusChange((payload) => {
+      setStatuses((current) => ({ ...current, [payload.profileId]: payload.status }));
     });
-    window.wenxue.app.getVersions().then((next) => {
-      if (mounted) setVersions(next);
-    });
+    const logTimer = window.setInterval(() => {
+      if (followLogs) void refreshLogs();
+    }, 2200);
     return () => {
       mounted = false;
-      unsubscribe();
+      unsubscribeProfile();
+      window.clearInterval(logTimer);
     };
-  }, []);
-  const action = reactExports.useMemo(() => {
-    if (status === "running") {
-      return {
-        icon: Focus,
-        label: strings.action.focus
-      };
-    }
-    if (status === "error") {
-      return {
-        icon: RotateCcw,
-        label: strings.action.relaunch
-      };
-    }
-    return {
-      icon: Play,
-      label: strings.action.launch
-    };
-  }, [status]);
-  const launchBrowser = reactExports.useCallback(async () => {
-    setLaunchError(void 0);
-    setOpenLogsError(void 0);
-    if (status !== "running") {
-      setStatus("launching");
-    }
-    const result = await window.wenxue.browser.launch();
+  }, [followLogs, refreshLogs]);
+  const visibleProfiles = reactExports.useMemo(() => {
+    const text = query.trim().toLowerCase();
+    if (!text) return profiles;
+    return profiles.filter(
+      (profile) => profile.displayName.toLowerCase().includes(text) || profile.id.toLowerCase().includes(text)
+    );
+  }, [profiles, query]);
+  const visibleLogs = reactExports.useMemo(() => {
+    const text = logQuery.trim().toLowerCase();
+    return logs.filter((entry) => logLevels.includes(entry.level)).filter((entry) => !text || entry.message.toLowerCase().includes(text)).slice(-160);
+  }, [logLevels, logQuery, logs]);
+  const launchProfile = reactExports.useCallback(
+    async (profileId) => {
+      setStatuses((current) => ({ ...current, [profileId]: "launching" }));
+      const result = await window.wenxue.browser.launchProfile(profileId);
+      if (!result.ok) {
+        setStatuses((current) => ({ ...current, [profileId]: "error" }));
+        setMessage(result.error ?? "浏览器启动失败");
+        return;
+      }
+      await refreshProfiles();
+    },
+    [refreshProfiles]
+  );
+  const stopProfile = reactExports.useCallback(async (profileId) => {
+    const result = await window.wenxue.browser.stopProfile(profileId);
     if (!result.ok) {
-      setStatus("error");
-      setLaunchError(result.error);
+      setMessage(result.error ?? "浏览器停止失败");
+      return;
     }
-  }, [status]);
-  const openLogs = reactExports.useCallback(async () => {
-    setOpenLogsError(void 0);
-    const result = await window.wenxue.app.openLogs();
+    setStatuses((current) => ({ ...current, [profileId]: "idle" }));
+  }, []);
+  const addProfile = reactExports.useCallback(async () => {
+    const result = await window.wenxue.browser.addProfile();
+    if (!result.ok || !result.profile) {
+      setMessage(result.error ?? "无法添加浏览器画像");
+      return;
+    }
+    setProfiles((current) => sortProfiles([...current, result.profile]));
+    setEditingId(result.profile.id);
+    setDraftName(result.profile.displayName);
+  }, []);
+  const duplicateProfile = reactExports.useCallback(async (profileId) => {
+    const result = await window.wenxue.browser.duplicateProfile(profileId);
+    if (!result.ok || !result.profile) {
+      setMessage(result.error ?? "复制画像失败");
+      return;
+    }
+    setProfiles((current) => sortProfiles([...current, result.profile]));
+    setEditingId(result.profile.id);
+    setDraftName(result.profile.displayName);
+  }, []);
+  const removeProfile = reactExports.useCallback(async (profileId) => {
+    if (!window.confirm("删除该浏览器画像？登录态、Cookie 与缓存会一并清除。")) return;
+    const result = await window.wenxue.browser.removeProfile(profileId);
     if (!result.ok) {
-      setOpenLogsError(result.error ?? strings.openLogsFallback);
+      setMessage(result.error ?? "删除画像失败");
+      return;
+    }
+    setProfiles((current) => current.filter((profile) => profile.id !== profileId));
+    setSelectedIds((current) => current.filter((id) => id !== profileId));
+    setStatuses((current) => {
+      const next = { ...current };
+      delete next[profileId];
+      return next;
+    });
+  }, []);
+  const openProfileFolder = reactExports.useCallback(async (profileId) => {
+    const result = await window.wenxue.browser.openProfileFolder(profileId);
+    if (!result.ok) {
+      setMessage(result.error ?? "打开画像目录失败");
     }
   }, []);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: `launcher-root launcher-root--${status}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "launcher-grid", "aria-hidden": "true" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "launcher-shell", "aria-label": strings.shellLabel, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(BrandHeader, { dark, status }),
+  const commitRename = reactExports.useCallback(
+    async (profileId) => {
+      const result = await window.wenxue.browser.renameProfile(profileId, draftName);
+      if (!result.ok || !result.profile) {
+        setMessage(result.error ?? "重命名失败");
+        return;
+      }
+      setProfiles(
+        (current) => sortProfiles(
+          current.map((profile) => profile.id === profileId ? result.profile : profile)
+        )
+      );
+      setEditingId(null);
+      setDraftName("");
+    },
+    [draftName]
+  );
+  const launchSelected = reactExports.useCallback(async () => {
+    const ids = [...selectedIds];
+    const limit = Math.max(1, settings.launch.concurrencyLimit);
+    for (let i = 0; i < ids.length; i += limit) {
+      const batch = ids.slice(i, i + limit);
+      await Promise.all(
+        batch.map(
+          (profileId, index2) => new Promise((resolve) => {
+            window.setTimeout(() => {
+              void launchProfile(profileId).then(resolve);
+            }, index2 * settings.launch.staggerMs);
+          })
+        )
+      );
+    }
+    setSelectedIds([]);
+  }, [launchProfile, selectedIds, settings.launch.concurrencyLimit, settings.launch.staggerMs]);
+  const updateSettings = reactExports.useCallback(async (patch) => {
+    const result = await window.wenxue.settings.update(patch);
+    if (!result.ok || !result.settings) {
+      setMessage(result.error ?? "设置保存失败");
+      return;
+    }
+    setSettings(result.settings);
+    setSavedTick(true);
+    window.setTimeout(() => setSavedTick(false), 1200);
+  }, []);
+  const clearLogs = reactExports.useCallback(async () => {
+    const result = await window.wenxue.logs.clear();
+    if (!result.ok) {
+      setMessage(result.error ?? "清空日志失败");
+      return;
+    }
+    setLogs([]);
+  }, []);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "app-shell", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "sidebar drag-region", "aria-label": "启动器导航", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
-        BrowserStatusPanel,
+        "button",
         {
-          actionIcon: action.icon,
-          actionLabel: action.label,
-          launchError,
-          onAction: launchBrowser,
-          onOpenLogs: openLogs,
-          openLogsError,
-          status
+          "aria-label": "本地资料",
+          className: "avatar-button no-drag",
+          onClick: () => setAvatarOpen((open) => !open),
+          type: "button",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "问" })
         }
       ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(OnboardingChecklist, { status }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(VersionFooter, { versions })
-    ] })
-  ] });
-}
-function BrandHeader({ dark, status }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "brand-header", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand-lockup", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "brand-mark-wrap", children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { "aria-hidden": "true", className: "brand-mark", src: "/logo.png" }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand-copy", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "sidebar-nav no-drag", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "img",
+          RailButton,
           {
-            alt: strings.brand,
-            className: "brand-wordmark",
-            src: dark ? "/darkslogen.png" : "/lightslogen.png"
+            active: route === "browsers",
+            label: "浏览器",
+            onClick: () => setRoute("browsers"),
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx(ChromeMark, {})
           }
         ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: strings.slogan })
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-capsule", "aria-label": strings.statusCapsuleLabel, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `status-capsule__dot status-capsule__dot--${status}` }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.status[status] })
-    ] })
-  ] });
-}
-function BrowserStatusPanel({
-  actionIcon: ActionIcon,
-  actionLabel,
-  launchError,
-  onAction,
-  onOpenLogs,
-  openLogsError,
-  status
-}) {
-  const presentation = statusPresentation[status];
-  const StatusIcon = presentation.icon;
-  const isLaunching = status === "launching";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("article", { className: `energy-frame status-panel ${presentation.panelClassName}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__head", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-panel__icon", "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(StatusIcon, { className: isLaunching ? "motion-spin" : void 0, size: 20 }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__copy", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__eyebrow", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: presentation.code }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.runtimeLabel })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: strings.status[status] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: strings.description[status] })
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(LaunchTimeline, { activeIndex: presentation.timelineIndex, status }),
-    status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__alerts", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "status-panel__error", title: launchError ?? strings.errorFallback, children: launchError ?? strings.errorFallback }),
-      openLogsError ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "status-panel__error", title: openLogsError, children: openLogsError }) : null
-    ] }) : null,
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "status-panel__actions", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "primary-action", disabled: isLaunching, onClick: onAction, type: "button", children: [
-        isLaunching ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { "aria-hidden": "true", className: "motion-spin", size: 17 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(ActionIcon, { "aria-hidden": "true", size: 17 }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: actionLabel })
+        routeItems.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          RailButton,
+          {
+            active: route === item.id,
+            icon: item.icon,
+            label: item.label,
+            onClick: () => setRoute(item.id)
+          },
+          item.id
+        ))
       ] }),
-      status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "secondary-action", onClick: onOpenLogs, type: "button", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, { "aria-hidden": "true", size: 16 }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: strings.action.openLogs })
-      ] }) : null
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sidebar-bottom no-drag", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        RailButton,
+        {
+          active: route === "settings",
+          icon: Settings,
+          label: "设置",
+          onClick: () => setRoute("settings")
+        }
+      ) }),
+      avatarOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx(AvatarMenu, { setRoute, versions }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "main-surface", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "top-drag-zone drag-region", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "WENXUE LAUNCHER" }) }),
+      message ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "toast no-drag", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Info, { size: 15 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: message }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => setMessage(null), type: "button", children: /* @__PURE__ */ jsxRuntimeExports.jsx(X, { size: 14 }) })
+      ] }) : null,
+      route === "browsers" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        BrowserPage,
+        {
+          addProfile,
+          commitRename,
+          draftName,
+          duplicateProfile,
+          editingId,
+          launchProfile,
+          launchSelected,
+          openProfileFolder,
+          profiles: visibleProfiles,
+          query,
+          removeProfile,
+          selectedIds,
+          setDraftName,
+          setEditingId,
+          setQuery,
+          setSelectedIds,
+          settings,
+          statuses,
+          stopProfile
+        }
+      ) : null,
+      route === "logs" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        LogsPage,
+        {
+          clearLogs,
+          followLogs,
+          logLevels,
+          logQuery,
+          logs: visibleLogs,
+          profiles,
+          settings,
+          setFollowLogs,
+          setLogLevels,
+          setLogQuery
+        }
+      ) : null,
+      route === "tokens" ? /* @__PURE__ */ jsxRuntimeExports.jsx(TokensPage, { summary: tokens }) : null,
+      route === "settings" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        SettingsPage,
+        {
+          savedTick,
+          settings,
+          updateSettings,
+          versions
+        }
+      ) : null
     ] })
   ] });
 }
-function LaunchTimeline({ activeIndex, status }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { className: "launch-timeline", "aria-label": strings.launchTimeline.title, children: strings.launchTimeline.items.map((item, index2) => {
-    const complete = status === "running" || status === "launching" && index2 < activeIndex;
-    const active = status === "launching" && index2 === activeIndex;
-    const failed = status === "error" && index2 === 1;
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-      "li",
-      {
-        className: `launch-timeline__item ${complete ? "launch-timeline__item--complete" : ""} ${active ? "launch-timeline__item--active" : ""} ${failed ? "launch-timeline__item--failed" : ""}`,
-        children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "launch-timeline__marker", "aria-hidden": "true", children: complete ? /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 11 }) : null }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: item })
-        ]
-      },
-      item
-    );
-  }) });
+function RailButton({ active, children, icon: Icon2, label, onClick }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "button",
+    {
+      "aria-label": label,
+      className: `rail-button ${active ? "rail-button--active" : ""}`,
+      onClick,
+      title: label,
+      type: "button",
+      children: [
+        Icon2 ? /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { size: 20 }) : children,
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label })
+      ]
+    }
+  );
 }
-function OnboardingChecklist({ status }) {
-  const browserStarted = status === "launching" || status === "running";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "onboarding-panel", "aria-labelledby": "onboarding-title", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-heading", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Sparkles, { "aria-hidden": "true", size: 15 }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "onboarding-title", children: strings.onboarding.title })
+function ChromeMark() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("i", { "aria-hidden": "true", className: "chrome-mark" });
+}
+function AvatarMenu({
+  setRoute,
+  versions
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "avatar-menu no-drag", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "avatar-menu__head", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "avatar-menu__mark", children: "问" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "本地资料" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "ask for everything" })
+      ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("ol", { className: "onboarding-list", children: strings.onboarding.items.map((item, index2) => {
-      const complete = index2 === 0 && browserStarted;
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: complete ? "onboarding-list__item--complete" : "", children: [
-        complete ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { "aria-hidden": "true", size: 15 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Circle, { "aria-hidden": "true", size: 15 }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: item })
-      ] }, item);
-    }) })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(User, { size: 15 }),
+      "资料"
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { onClick: () => setRoute("settings"), type: "button", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Settings, { size: 15 }),
+      "设置"
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Info, { size: 15 }),
+      "关于 ",
+      versions.app
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(LogOut, { size: 15 }),
+      "退出"
+    ] })
   ] });
 }
-function VersionFooter({ versions }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("footer", { className: "version-footer", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(VersionItem, { icon: Terminal, label: strings.versionLabel.app, value: versions.app }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      VersionItem,
+function BrowserPage(props) {
+  const runningCount = props.profiles.filter(
+    (profile) => props.statuses[profile.id] === "running"
+  ).length;
+  const launchingCount = props.profiles.filter(
+    (profile) => props.statuses[profile.id] === "launching"
+  ).length;
+  const errorCount = props.profiles.filter(
+    (profile) => props.statuses[profile.id] === "error"
+  ).length;
+  const inspectorProfile = props.profiles.find((profile) => props.selectedIds.includes(profile.id)) ?? props.profiles.find((profile) => props.statuses[profile.id] === "running") ?? props.profiles[0];
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page page--browsers", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "page-header safe-actions", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: "浏览器" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "持久画像、多账号隔离与批量启动。" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "header-actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "search-field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Search, { size: 16 }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              onChange: (event) => props.setQuery(event.target.value),
+              placeholder: "搜索画像、路径或标签",
+              value: props.query
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "soft-button", type: "button", children: [
+          "最近使用",
+          /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDown, { size: 15 })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "primary-button", onClick: props.addProfile, type: "button", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { size: 16 }),
+          "添加浏览器"
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "metric-row", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(MetricCard, { label: "浏览器画像", value: props.profiles.length.toString() }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(MetricCard, { label: "运行中", value: runningCount.toString(), tone: "green" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(MetricCard, { label: "启动队列", value: launchingCount.toString(), tone: "coral" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(MetricCard, { label: "插件错误", value: errorCount.toString(), tone: "red" })
+    ] }),
+    props.profiles.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      EmptyState,
       {
-        icon: ShieldCheck,
-        label: strings.versionLabel.browser,
-        value: versions.browser
+        action: props.addProfile,
+        actionLabel: "添加第一个浏览器",
+        title: "还没有浏览器画像",
+        children: "创建一个持久画像后，登录态、Cookie 与缓存会保存在独立目录中。"
+      }
+    ) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "browser-workspace", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "profile-list", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "profile-row profile-row--head", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", {}),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "画像" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "状态" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "上次使用" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "操作" })
+        ] }),
+        props.profiles.map((profile) => /* @__PURE__ */ jsxRuntimeExports.jsx(ProfileRow, { profile, ...props }, profile.id))
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        ProfileInspector,
+        {
+          launchProfile: props.launchProfile,
+          profile: inspectorProfile,
+          settings: props.settings,
+          status: props.statuses[inspectorProfile.id] ?? "idle",
+          stopProfile: props.stopProfile,
+          versionsCount: props.profiles.length
+        }
+      )
+    ] }),
+    props.selectedIds.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "selection-bar", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Activity, { size: 16 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          "已选择 ",
+          props.selectedIds.length,
+          " 个画像"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: "primary-button",
+          onClick: () => void props.launchSelected(),
+          type: "button",
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 16 }),
+            "打开选中 (",
+            props.selectedIds.length,
+            ")"
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "soft-button", onClick: () => props.setSelectedIds([]), type: "button", children: "取消选择" })
+    ] }) : null
+  ] });
+}
+function MetricCard({
+  label,
+  value,
+  tone = "neutral"
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `metric-card metric-card--${tone}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: value })
+  ] });
+}
+function ProfileRow(props) {
+  const status = props.statuses[props.profile.id] ?? "idle";
+  const selected = props.selectedIds.includes(props.profile.id);
+  const running = status === "running";
+  const launching = status === "launching";
+  const toggleSelected = () => {
+    props.setSelectedIds(
+      selected ? props.selectedIds.filter((id) => id !== props.profile.id) : [...props.selectedIds, props.profile.id]
+    );
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: `profile-row profile-row--${status} ${selected ? "profile-row--selected" : ""}`,
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "checkbox-control", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { checked: selected, onChange: toggleSelected, type: "checkbox" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", {})
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "profile-identity", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `profile-avatar profile-avatar--${props.profile.colorKey}`, children: props.profile.displayName.slice(0, 1) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+            props.editingId === props.profile.id ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rename-field", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  autoFocus: true,
+                  onChange: (event) => props.setDraftName(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key === "Enter") props.commitRename(props.profile.id);
+                    if (event.key === "Escape") props.setEditingId(null);
+                  },
+                  value: props.draftName
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => props.commitRename(props.profile.id), type: "button", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 14 }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => props.setEditingId(null), type: "button", children: /* @__PURE__ */ jsxRuntimeExports.jsx(X, { size: 14 }) })
+            ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                className: "profile-name",
+                onDoubleClick: () => {
+                  props.setEditingId(props.profile.id);
+                  props.setDraftName(props.profile.displayName);
+                },
+                type: "button",
+                children: props.profile.displayName
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "profile-id", children: props.profile.id })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(StatusBadge, { status }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono-text", children: formatRelativeTime(props.profile.lastUsedAt) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row-actions", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              disabled: launching,
+              onClick: () => running ? void props.launchProfile(props.profile.id) : void props.launchProfile(props.profile.id),
+              title: running ? "聚焦" : "打开",
+              type: "button",
+              children: launching ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "spin", size: 15 }) : running ? /* @__PURE__ */ jsxRuntimeExports.jsx(Focus, { size: 15 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 15 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              disabled: !running,
+              onClick: () => void props.stopProfile(props.profile.id),
+              title: "停止",
+              type: "button",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Square, { size: 15 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              onClick: () => {
+                props.setEditingId(props.profile.id);
+                props.setDraftName(props.profile.displayName);
+              },
+              title: "重命名",
+              type: "button",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Pencil, { size: 15 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              disabled: launching || running,
+              onClick: () => void props.duplicateProfile(props.profile.id),
+              title: "复制为新画像",
+              type: "button",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Copy, { size: 15 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              onClick: () => void props.openProfileFolder(props.profile.id),
+              title: "打开画像文件夹",
+              type: "button",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, { size: 15 })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: "danger-icon",
+              disabled: launching || running,
+              onClick: () => void props.removeProfile(props.profile.id),
+              title: "删除",
+              type: "button",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Trash2, { size: 15 })
+            }
+          )
+        ] })
+      ]
+    }
+  );
+}
+function ProfileInspector({
+  launchProfile,
+  profile,
+  settings,
+  status,
+  stopProfile,
+  versionsCount
+}) {
+  const launching = status === "launching";
+  const running = status === "running";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "inspector-panel", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inspector-head", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `profile-avatar profile-avatar--${profile.colorKey}`, children: profile.displayName[0] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: profile.displayName }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(StatusBadge, { status })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        className: "primary-button",
+        disabled: launching,
+        onClick: () => void launchProfile(profile.id),
+        type: "button",
+        children: [
+          launching ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "spin", size: 16 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 16 }),
+          running ? "聚焦" : "打开"
+        ]
       }
     ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      VersionItem,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
       {
-        icon: CircleQuestionMark,
-        label: strings.versionLabel.extension,
-        value: versions.extension
+        className: "soft-button",
+        disabled: !running,
+        onClick: () => void stopProfile(profile.id),
+        type: "button",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Square, { size: 16 }),
+          "停止"
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(InspectorInfo, { label: "画像目录", value: profile.userDataDir }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(InspectorInfo, { label: "并发上限", value: `${settings.launch.concurrencyLimit} 个` }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(InspectorInfo, { label: "错峰间隔", value: `${settings.launch.staggerMs} ms` }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(InspectorInfo, { label: "画像数量", value: `${versionsCount} 个` }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "recent-log-card", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "近期日志" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "等待浏览器内问学插件发送遥测日志。" })
+    ] })
+  ] });
+}
+function InspectorInfo({ label, value }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "inspector-info", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: value })
+  ] });
+}
+function LogsPage({
+  clearLogs,
+  followLogs,
+  logLevels,
+  logQuery,
+  logs,
+  profiles,
+  settings,
+  setFollowLogs,
+  setLogLevels,
+  setLogQuery
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "page-header safe-actions", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: "日志" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "实时 tail、筛选、详情与保留裁剪。" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "header-actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: `soft-button ${followLogs ? "soft-button--active" : ""}`,
+            onClick: () => setFollowLogs(!followLogs),
+            type: "button",
+            children: [
+              followLogs ? /* @__PURE__ */ jsxRuntimeExports.jsx(Activity, { size: 15 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Pause, { size: 15 }),
+              followLogs ? "跟随最新" : "已暂停"
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: "soft-button",
+            onClick: () => {
+              if (window.confirm("清空全部日志？此操作不可撤销。")) void clearLogs();
+            },
+            type: "button",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Trash2, { size: 15 }),
+              "清空"
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: "primary-button",
+            disabled: logs.length === 0,
+            onClick: () => exportLauncherLogs(logs, settings.logs.defaultExportFormat),
+            type: "button",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Download, { size: 15 }),
+              "导出"
+            ]
+          }
+        )
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "log-toolbar", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "search-field", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Search, { size: 16 }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            onChange: (event) => setLogQuery(event.target.value),
+            placeholder: "全文搜索日志",
+            value: logQuery
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "level-filter", children: ["debug", "info", "warn", "error"].map((level) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: logLevels.includes(level) ? "level-filter__item--active" : "",
+          onClick: () => setLogLevels(
+            logLevels.includes(level) ? logLevels.filter((item) => item !== level) : [...logLevels, level]
+          ),
+          type: "button",
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `level-dot level-dot--${level}` }),
+            level
+          ]
+        },
+        level
+      )) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "soft-button", type: "button", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Funnel, { size: 15 }),
+        "筛选"
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "legend-row", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+        "画像维度：",
+        profiles.length > 0 ? profiles.map((profile) => profile.displayName).join(" / ") : "暂无画像"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "保留策略由设置页控制" })
+    ] }),
+    logs.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      EmptyState,
+      {
+        action: () => setFollowLogs(true),
+        actionLabel: "跟随最新",
+        title: "还没有启动器日志",
+        children: "插件日志通道连接后，会在这里按时间线实时出现。"
+      }
+    ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "log-stream", children: logs.map((entry) => /* @__PURE__ */ jsxRuntimeExports.jsx(LogRow, { entry }, entry.id)) })
+  ] });
+}
+function LogRow({ entry }) {
+  const [open, setOpen] = reactExports.useState(false);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `log-row log-row--${entry.level}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { onClick: () => setOpen(!open), type: "button", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono-text", children: formatTime(entry.ts) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `level-dot level-dot--${entry.level}` }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "log-tag", children: entry.source }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "log-tag", children: entry.browserId }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: entry.message }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(ChevronDown, { size: 14 })
+    ] }),
+    open ? /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { children: JSON.stringify(entry.data ?? { context: entry.context }, null, 2) }) : null
+  ] });
+}
+function TokensPage({ summary }) {
+  const hasData = summary.totalTokens > 0;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page page--tokens", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "page-header safe-actions", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: "Tokens" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "按画像、模型与日期查看本机消耗。" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "header-actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "soft-button", type: "button", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Clock, { size: 15 }),
+          "最近 30 天"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "primary-button", type: "button", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Download, { size: 15 }),
+          "导出统计"
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-summary-grid", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(MetricCard, { label: "输入 tokens", value: formatNumber(summary.totalInputTokens) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        MetricCard,
+        {
+          label: "输出 tokens",
+          value: formatNumber(summary.totalOutputTokens),
+          tone: "green"
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(MetricCard, { label: "总 tokens", value: formatNumber(summary.totalTokens), tone: "blue" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        MetricCard,
+        {
+          label: "估算成本",
+          value: `¥${summary.estimatedCostCny.toFixed(4)}`,
+          tone: "coral"
+        }
+      )
+    ] }),
+    hasData ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-grid", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(TokenPanel, { title: "按浏览器画像", buckets: summary.byBrowser }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(TokenPanel, { title: "按模型", buckets: summary.byModel }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(TokenPanel, { title: "日期趋势", buckets: summary.daily }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-panel", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "最近调用" }),
+        summary.recent.map((record) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "usage-record", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono-text", children: formatTime(record.ts) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: record.model }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+            formatNumber(record.totalTokens),
+            " tokens"
+          ] })
+        ] }, record.id))
+      ] })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(EmptyState, { action: () => void 0, actionLabel: "等待遥测", title: "还没有 tokens 记录", children: "启动器会从已脱敏日志遥测或后续网关计量中汇总 tokens，不保存提示词正文。" })
+  ] });
+}
+function TokenPanel({ buckets, title }) {
+  const max = Math.max(...buckets.map((bucket) => bucket.totalTokens), 1);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-panel", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: title }),
+    buckets.map((bucket) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "usage-bar", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: bucket.label }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          formatNumber(bucket.totalTokens),
+          " tokens"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: /* @__PURE__ */ jsxRuntimeExports.jsx("i", { style: { width: `${Math.max(6, bucket.totalTokens / max * 100)}%` } }) })
+    ] }, bucket.key))
+  ] });
+}
+function SettingsPage({
+  savedTick,
+  settings,
+  updateSettings,
+  versions
+}) {
+  const [section, setSection] = reactExports.useState("launch");
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page page--settings", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "page-header safe-actions", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: "设置" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "启动默认值、启动器行为、日志、内核与关于。" })
+      ] }),
+      savedTick ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "saved-indicator", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 15 }),
+        "已保存"
+      ] }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-layout", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "settings-tabs", children: settingsSections.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: section === item.id ? "settings-tabs__item--active" : "",
+          onClick: () => setSection(item.id),
+          type: "button",
+          children: item.label
+        },
+        item.id
+      )) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-panels", children: [
+        section === "launch" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "settings-panel", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "启动默认值" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            NumberSetting,
+            {
+              label: "默认窗口宽度",
+              onChange: (value) => updateSettings({ launch: { windowWidth: value } }),
+              value: settings.launch.windowWidth
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            NumberSetting,
+            {
+              label: "默认窗口高度",
+              onChange: (value) => updateSettings({ launch: { windowHeight: value } }),
+              value: settings.launch.windowHeight
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            TextSetting,
+            {
+              label: "起始页 URL",
+              onChange: (value) => updateSettings({ launch: { startUrl: value } }),
+              value: settings.launch.startUrl
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            NumberSetting,
+            {
+              label: "同时打开上限",
+              onChange: (value) => updateSettings({ launch: { concurrencyLimit: value } }),
+              value: settings.launch.concurrencyLimit
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            NumberSetting,
+            {
+              label: "错峰间隔 ms",
+              onChange: (value) => updateSettings({ launch: { staggerMs: value } }),
+              value: settings.launch.staggerMs
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            SelectSetting,
+            {
+              label: "新建画像类型",
+              onChange: (value) => updateSettings({
+                launch: { profileType: value }
+              }),
+              options: ["persistent", "incognito"],
+              value: settings.launch.profileType
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            SelectSetting,
+            {
+              label: "代理模式",
+              onChange: (value) => updateSettings({
+                launch: { proxyMode: value }
+              }),
+              options: ["none", "system", "custom"],
+              value: settings.launch.proxyMode
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            NumberSetting,
+            {
+              label: "默认缩放",
+              onChange: (value) => updateSettings({ launch: { zoom: value } }),
+              value: settings.launch.zoom
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            SelectSetting,
+            {
+              label: "界面语言",
+              onChange: (value) => updateSettings({ launch: { language: value } }),
+              options: ["zh-CN", "en-US"],
+              value: settings.launch.language
+            }
+          )
+        ] }) : null,
+        section === "behavior" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "settings-panel", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "启动器行为" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            SelectSetting,
+            {
+              label: "关闭按钮行为",
+              onChange: (value) => updateSettings({
+                behavior: {
+                  closeAction: value
+                }
+              }),
+              options: ["ask", "minimizeToTray", "quit"],
+              value: settings.behavior.closeAction
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            SelectSetting,
+            {
+              label: "退出处理",
+              onChange: (value) => updateSettings({
+                behavior: {
+                  exitWithBrowsers: value
+                }
+              }),
+              options: ["ask", "launcherOnly", "closeBrowsers"],
+              value: settings.behavior.exitWithBrowsers
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            CheckboxSetting,
+            {
+              checked: settings.behavior.openAtLogin,
+              label: "开机自启",
+              onChange: (value) => updateSettings({ behavior: { openAtLogin: value } })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            TextSetting,
+            {
+              label: "默认下载目录",
+              onChange: (value) => updateSettings({ behavior: { downloadDir: value } }),
+              value: settings.behavior.downloadDir
+            }
+          )
+        ] }) : null,
+        section === "logs" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "settings-panel", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "日志" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            NumberSetting,
+            {
+              label: "保留时长 天",
+              onChange: (value) => updateSettings({ logs: { retentionDays: value } }),
+              value: settings.logs.retentionDays
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            NumberSetting,
+            {
+              label: "最大条数",
+              onChange: (value) => updateSettings({ logs: { maxEntries: value } }),
+              value: settings.logs.maxEntries
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            SelectSetting,
+            {
+              label: "最低捕获级别",
+              onChange: (value) => updateSettings({ logs: { minLevel: value } }),
+              options: ["debug", "info", "warn", "error"],
+              value: settings.logs.minLevel
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            CheckboxSetting,
+            {
+              checked: settings.logs.captureLlmRequests,
+              label: "捕获 LLM 请求",
+              onChange: (value) => updateSettings({ logs: { captureLlmRequests: value } })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            CheckboxSetting,
+            {
+              checked: settings.logs.captureLlmResponses,
+              label: "捕获 LLM 响应",
+              onChange: (value) => updateSettings({ logs: { captureLlmResponses: value } })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            SelectSetting,
+            {
+              label: "默认导出格式",
+              onChange: (value) => updateSettings({
+                logs: {
+                  defaultExportFormat: value
+                }
+              }),
+              options: ["json", "ndjson", "text"],
+              value: settings.logs.defaultExportFormat
+            }
+          )
+        ] }) : null,
+        section === "kernel" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "settings-panel", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "浏览器内核" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "about-card", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Browser" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: versions.browser }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Extension" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: versions.extension })
+          ] })
+        ] }) : null,
+        section === "about" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "settings-panel", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "关于" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "about-card", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "App" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: versions.app }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Browser" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: versions.browser }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Extension" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: versions.extension })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: "soft-button",
+              onClick: () => void window.wenxue.app.openLogs(),
+              type: "button",
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, { size: 15 }),
+                "打开日志目录"
+              ]
+            }
+          )
+        ] }) : null
+      ] })
+    ] })
+  ] });
+}
+function NumberSetting({
+  label,
+  onChange,
+  value
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "setting-row", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        onBlur: (event) => onChange(Number(event.target.value)),
+        type: "number",
+        defaultValue: value
       }
     )
   ] });
 }
-function VersionItem({ icon: Icon2, label, value }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "version-item", title: `${label}: ${value}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { "aria-hidden": "true", size: 13 }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: label }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: value })
+function TextSetting({
+  label,
+  onChange,
+  value
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "setting-row", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("input", { onBlur: (event) => onChange(event.target.value), type: "text", defaultValue: value })
+  ] });
+}
+function SelectSetting({
+  label,
+  onChange,
+  options,
+  value
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "setting-row", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("select", { onChange: (event) => onChange(event.target.value), value, children: options.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { children: option }, option)) })
+  ] });
+}
+function CheckboxSetting({
+  checked,
+  label,
+  onChange
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "setting-row", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        checked,
+        onChange: (event) => onChange(event.target.checked),
+        type: "checkbox"
+      }
+    )
+  ] });
+}
+function StatusBadge({ status }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `status-badge status-badge--${status}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("i", {}),
+    statusLabels[status]
+  ] });
+}
+function EmptyState({
+  action,
+  actionLabel,
+  children,
+  title
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "empty-state", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "empty-state__mark", children: "问" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: title }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "primary-button", onClick: action, type: "button", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { size: 16 }),
+      actionLabel
     ] })
   ] });
+}
+function sortProfiles(profiles) {
+  return [...profiles].sort((a, b) => {
+    const aTime = a.lastUsedAt ?? a.createdAt;
+    const bTime = b.lastUsedAt ?? b.createdAt;
+    return bTime - aTime;
+  });
+}
+function formatRelativeTime(ts) {
+  if (!ts) return "从未";
+  const diff = Date.now() - ts;
+  if (diff < 6e4) return "刚刚";
+  if (diff < 36e5) return `${Math.floor(diff / 6e4)} 分钟前`;
+  if (diff < 864e5) return `${Math.floor(diff / 36e5)} 小时前`;
+  return `${Math.floor(diff / 864e5)} 天前`;
+}
+function formatTime(ts) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(ts);
+}
+function formatNumber(value) {
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+function exportLauncherLogs(logs, format) {
+  if (logs.length === 0) return;
+  const date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const fileName = `wenxue-launcher-logs-${date}.${format === "text" ? "txt" : format}`;
+  const content = format === "ndjson" ? logs.map((entry) => JSON.stringify(entry)).join("\n") : format === "text" ? logs.map(
+    (entry) => `${new Date(entry.ts).toISOString()} [${entry.level}] ${entry.source}/${entry.browserId} ${entry.message}`
+  ).join("\n") : JSON.stringify(logs, null, 2);
+  const blob = new Blob([`${content}
+`], {
+    type: format === "text" ? "text/plain;charset=utf-8" : "application/json;charset=utf-8"
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 ReactDOM.createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(React$2.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
