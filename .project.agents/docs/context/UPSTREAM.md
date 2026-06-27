@@ -57,3 +57,10 @@
 - Scope: `packages/core`
 - 内容：`followUp()` 续接、`restoreConversation()` 历史恢复、`user_message` / `summary` 事件与压缩配置、`#assembleUserPrompt` 历史投影、token 触发 LLM 摘要 + 机械降级、`recall_steps` 工具、硬阈值 FIFO 淘汰、system prompt 增 `<summary>` / `<user_message>` / `recall_steps` 说明。
 - Upstream sync note: 隔离在 public types、PageAgentCore loop control、tools 与 prompts，便于对 alibaba/page-agent diff；应用层 `apps/extension` 只负责 Sidepanel 续接路由、IndexedDB 会话 upsert、近溢出横幅与 MultiPageAgent 配置透传。
+
+## Local patch: execute_javascript full-context execution
+
+- Scope: `packages/core`, `packages/page-controller`, `apps/extension`
+- 内容：`@page-agent/core` 将 `execute_javascript` 改为默认启用（仅 `experimentalScriptExecutionTool === false` 时关闭），工具 schema 增加 `world: 'isolated' | 'main'` 与 `frame_id`；`@page-agent/page-controller` 新增零依赖 `serializeResult`，修复对象结果显示为 `[object Object]`，并允许 `executeJavascript(script, options?)` 签名供 extension 透传；`apps/extension` 增加 allFrames content script、background `frameId` 路由、`webNavigation.getAllFrames`、main-world executor postMessage 桥接、`RemotePageController.listFrames()` 与 `list_frames` customTool。
+- 配套测试：`PageAgentCore` 覆盖默认开关与 schema 解析；`serializeResult` 覆盖基础类型、循环引用、函数、DOM、Error 与截断；extension 覆盖 `RemotePageController` payload、background frame 路由/list_frames、content world 分发/超时、`frameTools` 输出与 `MultiPageAgent` 注入。
+- Upstream sync note: vendor 侧改动集中在公开工具 schema、公开/准公开 PageController 执行入口和独立序列化函数；extension 侧为 WenXue runtime 能力扩展。未来升级 alibaba/page-agent 时优先保留测试作为偏离哨兵，再逐项评估上游是否已提供等价能力。
