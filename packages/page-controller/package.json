@@ -17,12 +17,17 @@
     "publishConfig": {
         "main": "./dist/lib/page-controller.js",
         "module": "./dist/lib/page-controller.js",
-        "types": "./dist/lib/PageController.d.ts",
+        "types": "./dist/lib/page-controller.d.ts",
         "exports": {
             ".": {
-                "types": "./dist/lib/PageController.d.ts",
+                "types": "./dist/lib/page-controller.d.ts",
                 "import": "./dist/lib/page-controller.js",
                 "default": "./dist/lib/page-controller.js"
+            },
+            "./serializeResult": {
+                "types": "./dist/lib/serializeResult.d.ts",
+                "import": "./dist/lib/serializeResult.js",
+                "default": "./dist/lib/serializeResult.js"
             }
         }
     },
