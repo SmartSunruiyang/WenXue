@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
+import type { BrowserProfileStore } from './BrowserProfileStore'
 import type { BrowserResources } from './BrowserResources'
 import type { BrowserStatus, BrowserSupervisor } from './BrowserSupervisor'
+import type { LauncherLogStore } from './LauncherLogStore'
+import type { DeepPartial, LauncherSettings, LauncherSettingsStore } from './LauncherSettingsStore'
+import type { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
+import type { TokenUsageStore } from './TokenUsageStore'
 
 export interface IpcMainLike {
 	handle(channel: string, handler: (...args: unknown[]) => unknown): void
@@ -22,11 +27,24 @@ export type OpenLogsResult = LaunchResult
 
 export interface DesktopBridgeOptions {
 	ipcMain: IpcMainLike
-	supervisor: Pick<BrowserSupervisor, 'launch' | 'status' | 'onStatusChange'>
+	supervisor: Pick<
+		BrowserSupervisor,
+		'launch' | 'stop' | 'status' | 'statuses' | 'onStatusChange' | 'onProfileStatusChange'
+	>
+	profileStore: Pick<
+		BrowserProfileStore,
+		'list' | 'create' | 'duplicate' | 'rename' | 'remove' | 'touch'
+	>
+	logStore: Pick<LauncherLogStore, 'query' | 'clear'>
+	settingsStore: Pick<LauncherSettingsStore, 'get' | 'update'>
+	telemetryIngest: Pick<LauncherTelemetryIngest, 'ingest'>
+	tokenUsageStore: Pick<TokenUsageStore, 'summary'>
 	resources: BrowserResources
 	getAppVersion: () => string
 	openLogs: () => Promise<void>
+	openPath: (path: string) => Promise<string>
 	sendStatus: (status: BrowserStatus) => void
+	sendProfileStatus: (payload: { profileId: string; status: BrowserStatus }) => void
 }
 
 export function registerDesktopBridge(options: DesktopBridgeOptions): () => void {
@@ -42,6 +60,106 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	options.ipcMain.handle('browser:getStatus', async (): Promise<BrowserStatus> => {
 		return options.supervisor.status()
 	})
+
+	options.ipcMain.handle(
+		'browser:getStatuses',
+		async (): Promise<Record<string, BrowserStatus>> => {
+			return options.supervisor.statuses()
+		},
+	)
+
+	options.ipcMain.handle('browser:listProfiles', async () => {
+		return options.profileStore.list()
+	})
+
+	options.ipcMain.handle('browser:addProfile', async (): Promise<ProfileMutationResult> => {
+		try {
+			return { ok: true, profile: await options.profileStore.create() }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
+	})
+
+	options.ipcMain.handle(
+		'browser:renameProfile',
+		async (
+			_event: unknown,
+			profileId: string,
+			displayName: string,
+		): Promise<ProfileMutationResult> => {
+			try {
+				return { ok: true, profile: await options.profileStore.rename(profileId, displayName) }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
+
+	options.ipcMain.handle(
+		'browser:duplicateProfile',
+		async (_event: unknown, profileId: string): Promise<ProfileMutationResult> => {
+			try {
+				return { ok: true, profile: await options.profileStore.duplicate(profileId) }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
+
+	options.ipcMain.handle(
+		'browser:removeProfile',
+		async (_event: unknown, profileId: string): Promise<ProfileMutationResult> => {
+			try {
+				return { ok: true, profile: await options.profileStore.remove(profileId) }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
+
+	options.ipcMain.handle(
+		'browser:openProfileFolder',
+		async (_event: unknown, profileId: string): Promise<LaunchResult> => {
+			try {
+				const profile = (await options.profileStore.list()).find((item) => item.id === profileId)
+				if (!profile) {
+					throw new Error(`Unknown browser profile: ${profileId}`)
+				}
+				const message = await options.openPath(profile.userDataDir)
+				if (message.length > 0) {
+					throw new Error(message)
+				}
+				return { ok: true }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
+
+	options.ipcMain.handle(
+		'browser:launchProfile',
+		async (_event: unknown, profileId: string): Promise<LaunchResult> => {
+			try {
+				await options.supervisor.launch(profileId)
+				await options.profileStore.touch(profileId)
+				return { ok: true }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
+
+	options.ipcMain.handle(
+		'browser:stopProfile',
+		async (_event: unknown, profileId: string): Promise<LaunchResult> => {
+			try {
+				await options.supervisor.stop(profileId)
+				return { ok: true }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
 
 	options.ipcMain.handle('app:getVersions', async (): Promise<AppVersions> => {
 		return {
@@ -60,7 +178,66 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		}
 	})
 
-	return options.supervisor.onStatusChange(options.sendStatus)
+	options.ipcMain.handle('logs:query', async (_event: unknown, filter?: unknown) => {
+		return options.logStore.query(asRecord(filter))
+	})
+
+	options.ipcMain.handle('logs:clear', async (): Promise<LaunchResult> => {
+		try {
+			await options.logStore.clear()
+			return { ok: true }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
+	})
+
+	options.ipcMain.handle('settings:get', async (): Promise<LauncherSettings> => {
+		return options.settingsStore.get()
+	})
+
+	options.ipcMain.handle(
+		'settings:update',
+		async (
+			_event: unknown,
+			patch: DeepPartial<LauncherSettings>,
+		): Promise<SettingsMutationResult> => {
+			try {
+				return { ok: true, settings: await options.settingsStore.update(patch) }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
+
+	options.ipcMain.handle('tokens:getSummary', async () => {
+		return options.tokenUsageStore.summary()
+	})
+
+	options.ipcMain.handle('telemetry:ingest', async (_event: unknown, payload?: unknown) => {
+		try {
+			return { ok: true, result: await options.telemetryIngest.ingest(payload) }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
+	})
+
+	const unsubscribeStatus = options.supervisor.onStatusChange(options.sendStatus)
+	const unsubscribeProfileStatus = options.supervisor.onProfileStatusChange((profileId, status) => {
+		options.sendProfileStatus({ profileId, status })
+	})
+
+	return () => {
+		unsubscribeStatus()
+		unsubscribeProfileStatus()
+	}
+}
+
+interface ProfileMutationResult extends LaunchResult {
+	profile?: Awaited<ReturnType<BrowserProfileStore['create']>>
+}
+
+interface SettingsMutationResult extends LaunchResult {
+	settings?: LauncherSettings
 }
 
 function readExtensionVersion(extensionDir: string): string {
@@ -86,4 +263,8 @@ function toUserSafeMessage(error: unknown): string {
 	}
 
 	return 'Unknown launch error'
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 }

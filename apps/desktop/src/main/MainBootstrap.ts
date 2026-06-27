@@ -1,12 +1,21 @@
-import type { BrowserWindow, Event as ElectronEvent } from 'electron'
+import type {
+	BrowserWindow,
+	BrowserWindowConstructorOptions,
+	Event as ElectronEvent,
+} from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { createAppLogger } from './AppLogger'
 import { AppPaths } from './AppPaths'
+import { BrowserProfileStore } from './BrowserProfileStore'
 import { createBrowserResources } from './BrowserResources'
 import { BrowserSupervisor, type BrowserStatus } from './BrowserSupervisor'
 import { registerDesktopBridge } from './DesktopBridge'
+import { LauncherLogStore } from './LauncherLogStore'
+import { LauncherSettingsStore } from './LauncherSettingsStore'
+import { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import { ProfileStore } from './ProfileStore'
+import { TokenUsageStore } from './TokenUsageStore'
 
 type ElectronModule = typeof import('electron')
 export type CloseDecision = 'allow' | 'prevented'
@@ -38,19 +47,29 @@ export async function startMainBootstrap(): Promise<void> {
 	const paths = new AppPaths(electron.app.getPath('userData'))
 	await paths.ensure()
 
-	const logger = createAppLogger(paths)
 	const resources = createBrowserResources({
 		repoRoot: resolveRepoRoot(electron.app.getAppPath()),
 		isPackaged: electron.app.isPackaged,
 		resourcesPath: process.resourcesPath,
 	})
 	const profiles = new ProfileStore(paths)
+	const profileStore = new BrowserProfileStore(paths, profiles)
+	const settingsStore = new LauncherSettingsStore(paths)
+	const logStore = new LauncherLogStore(paths, settingsStore)
+	const tokenUsageStore = new TokenUsageStore(paths)
+	const telemetryIngest = new LauncherTelemetryIngest(logStore, tokenUsageStore)
+	const logger = createAppLogger(paths, logStore)
 	const supervisor = new BrowserSupervisor({ resources, profiles, logger })
 	let currentWindow: BrowserWindow | undefined
 
 	registerDesktopBridge({
 		ipcMain: electron.ipcMain,
 		supervisor,
+		profileStore,
+		logStore,
+		settingsStore,
+		telemetryIngest,
+		tokenUsageStore,
 		resources,
 		getAppVersion: () => electron.app.getVersion(),
 		openLogs: async () => {
@@ -59,7 +78,10 @@ export async function startMainBootstrap(): Promise<void> {
 				throw new Error(message)
 			}
 		},
+		openPath: (targetPath) => electron.shell.openPath(targetPath),
 		sendStatus: (status) => currentWindow?.webContents.send('browser:status-changed', status),
+		sendProfileStatus: (payload) =>
+			currentWindow?.webContents.send('browser:profile-status-changed', payload),
 	})
 
 	const createWindow = () => {
@@ -105,21 +127,13 @@ function createControlWindow(
 	electron: ElectronModule,
 	supervisor: BrowserSupervisor,
 ): BrowserWindow {
-	const win = new electron.BrowserWindow({
-		width: 500,
-		height: 440,
-		minWidth: 480,
-		minHeight: 400,
-		resizable: true,
-		maximizable: false,
-		icon: path.join(__dirname, '../../resources/icon.png'),
-		webPreferences: {
-			preload: path.join(__dirname, '../preload/index.js'),
-			contextIsolation: true,
-			nodeIntegration: false,
-			sandbox: true,
-		},
-	})
+	const win = new electron.BrowserWindow(
+		buildControlWindowOptions({
+			platform: process.platform,
+			iconPath: path.join(__dirname, '../../resources/icon.png'),
+			preloadPath: path.join(__dirname, '../preload/index.js'),
+		}),
+	)
 	let allowClose = false
 
 	win.on('close', (event: ElectronEvent) => {
@@ -156,4 +170,35 @@ function createControlWindow(
 	}
 
 	return win
+}
+
+export function buildControlWindowOptions(input: {
+	platform: NodeJS.Platform
+	iconPath: string
+	preloadPath: string
+}): BrowserWindowConstructorOptions {
+	return {
+		width: 1120,
+		height: 720,
+		minWidth: 920,
+		minHeight: 600,
+		resizable: true,
+		maximizable: true,
+		titleBarStyle: input.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+		titleBarOverlay:
+			input.platform === 'win32'
+				? {
+						color: '#FAFAFA',
+						symbolColor: '#060606',
+						height: 32,
+					}
+				: undefined,
+		icon: input.iconPath,
+		webPreferences: {
+			preload: input.preloadPath,
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+		},
+	}
 }

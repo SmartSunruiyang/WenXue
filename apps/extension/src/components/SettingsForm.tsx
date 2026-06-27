@@ -39,8 +39,6 @@ import {
 import { buildSettingsConfig, settingsConfigKey } from '@/lib/settingsConfig'
 import { cn } from '@/lib/utils'
 
-import { LogViewer } from './LogViewer'
-
 export const SETTINGS_SECTIONS = [
 	{
 		id: 'account',
@@ -747,7 +745,6 @@ export function SettingsForm({
 						/>
 					</div>
 				</div>
-				<LogViewer />
 			</SettingsSection>
 
 			<SettingsSection
@@ -792,6 +789,18 @@ export function SettingsForm({
 					>
 						<HatGlasses className="size-4" />
 						<span>{t('privacy')}</span>
+					</a>
+				</div>
+
+				<div className="text-[10px] text-muted-foreground">
+					{t('builtWith')} ♥️ {t('builtWithSuffix')}{' '}
+					<a
+						href="https://github.com/gaomeng1900"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="underline hover:text-foreground"
+					>
+						@Simon
 					</a>
 				</div>
 			</SettingsSection>

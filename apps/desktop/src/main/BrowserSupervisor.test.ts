@@ -28,17 +28,19 @@ class FakeBrowserProcess extends EventEmitter {
 }
 
 function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
-	const child = options.child ?? new FakeBrowserProcess()
+	const firstChild = options.child ?? new FakeBrowserProcess()
+	const queuedChildren: FakeBrowserProcess[] = [firstChild]
 	const spawns: Array<{ binary: string; argv: string[] }> = []
 	const focusCalls: Array<{ binary: string; argv: string[] }> = []
 	const events: BrowserStatus[] = []
+	const profileEvents: Array<{ profileId: string; status: BrowserStatus }> = []
 	const resources: BrowserResources = {
 		browserBinary: () => '/browsers/cft',
 		extensionDir: () => '/extensions/wenxue',
 		browserVersion: () => '149.0.7827.55',
 	}
 	const profiles = {
-		ensureProfile: vi.fn(async () => '/profiles/default'),
+		ensureProfile: vi.fn(async (profileId = 'default') => `/profiles/${profileId}`),
 		listProfiles: vi.fn(() => ['default']),
 	} as unknown as ProfileStore
 	const logger: AppLogger = {
@@ -51,7 +53,7 @@ function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
 		logger,
 		spawnBrowser: (binary, argv) => {
 			spawns.push({ binary, argv })
-			return child
+			return queuedChildren.shift() ?? new FakeBrowserProcess()
 		},
 		focusExisting: async (binary, argv) => {
 			focusCalls.push({ binary, argv })
@@ -59,7 +61,22 @@ function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
 	})
 
 	supervisor.onStatusChange((status) => events.push(status))
-	return { supervisor, child, spawns, focusCalls, events, logger, profiles }
+	supervisor.onProfileStatusChange((profileId, status) => profileEvents.push({ profileId, status }))
+
+	return {
+		supervisor,
+		child: firstChild,
+		queueChild(next: FakeBrowserProcess) {
+			queuedChildren.push(next)
+			return next
+		},
+		spawns,
+		focusCalls,
+		events,
+		profileEvents,
+		logger,
+		profiles,
+	}
 }
 
 describe('BrowserSupervisor', () => {
@@ -110,6 +127,57 @@ describe('BrowserSupervisor', () => {
 
 		expect(logger.attachStream).toHaveBeenCalledWith('default', child.stdout)
 		expect(logger.attachStream).toHaveBeenCalledWith('default', child.stderr)
+	})
+
+	it('launches different profiles in parallel and reports per-profile statuses', async () => {
+		const { supervisor, child, queueChild, spawns, profileEvents, logger } =
+			createSupervisorHarness()
+		const research = queueChild(new FakeBrowserProcess())
+
+		await supervisor.launch('default')
+		child.emit('spawn')
+		await supervisor.launch('research')
+		research.emit('spawn')
+
+		expect(spawns).toHaveLength(2)
+		expect(spawns[0].argv).toContain('--user-data-dir=/profiles/default')
+		expect(spawns[1].argv).toContain('--user-data-dir=/profiles/research')
+		expect(supervisor.status()).toBe('running')
+		expect(supervisor.statuses()).toEqual({
+			default: 'running',
+			research: 'running',
+		})
+		expect(profileEvents).toEqual([
+			{ profileId: 'default', status: 'launching' },
+			{ profileId: 'default', status: 'running' },
+			{ profileId: 'research', status: 'launching' },
+			{ profileId: 'research', status: 'running' },
+		])
+		expect(logger.attachStream).toHaveBeenCalledWith('research', research.stdout)
+	})
+
+	it('focuses only the requested running profile and can stop it without affecting others', async () => {
+		const { supervisor, child, queueChild, spawns, focusCalls, profileEvents } =
+			createSupervisorHarness()
+		const research = queueChild(new FakeBrowserProcess())
+
+		await supervisor.launch('default')
+		child.emit('spawn')
+		await supervisor.launch('research')
+		research.emit('spawn')
+		await supervisor.launch('research')
+		await supervisor.stop('research')
+
+		expect(spawns).toHaveLength(2)
+		expect(focusCalls).toEqual([spawns[1]])
+		expect(research.killCalls).toBe(1)
+		expect(child.killCalls).toBe(0)
+		expect(supervisor.statuses()).toEqual({
+			default: 'running',
+			research: 'idle',
+		})
+		expect(supervisor.status()).toBe('running')
+		expect(profileEvents.at(-1)).toEqual({ profileId: 'research', status: 'idle' })
 	})
 
 	it('does not spawn twice while launch is in progress', async () => {

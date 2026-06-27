@@ -45,6 +45,21 @@ describe('ProfileStore', () => {
 		expect(store.listProfiles()).toEqual(['alpha', 'zeta'])
 	})
 
+	it('copies and deletes profile directories by id', async () => {
+		const store = new ProfileStore(appPaths)
+		const sourceDir = await store.ensureProfile('source')
+		await writeFile(path.join(sourceDir, 'Preferences'), 'profile-data')
+
+		const copiedDir = await store.copyProfile('source', 'copy')
+
+		expect(copiedDir).toBe(path.join(appPaths.profilesRoot(), 'copy'))
+		expect(store.listProfiles()).toEqual(['copy', 'source'])
+
+		await store.deleteProfile('source')
+
+		expect(store.listProfiles()).toEqual(['copy'])
+	})
+
 	it('rejects directory-unsafe profile IDs', async () => {
 		const store = new ProfileStore(appPaths)
 

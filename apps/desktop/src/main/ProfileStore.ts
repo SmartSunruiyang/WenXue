@@ -1,5 +1,5 @@
-import { mkdir } from 'node:fs/promises'
 import { readdirSync } from 'node:fs'
+import { cp, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { AppPaths } from './AppPaths'
 
@@ -19,6 +19,20 @@ export class ProfileStore {
 			.filter((entry) => entry.isDirectory())
 			.map((entry) => entry.name)
 			.sort((a, b) => a.localeCompare(b))
+	}
+
+	async copyProfile(sourceId: string, targetId: string): Promise<string> {
+		const targetDir = this.profileDir(targetId)
+		await cp(this.profileDir(sourceId), targetDir, {
+			errorOnExist: true,
+			force: false,
+			recursive: true,
+		})
+		return targetDir
+	}
+
+	async deleteProfile(id: string): Promise<void> {
+		await rm(this.profileDir(id), { force: true, recursive: true })
 	}
 
 	private profileDir(id: string): string {

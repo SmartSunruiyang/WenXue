@@ -25,16 +25,22 @@ export interface BrowserSupervisorDeps {
 }
 
 type StatusListener = (status: BrowserStatus) => void
+type ProfileStatusListener = (profileId: string, status: BrowserStatus) => void
+
+interface BrowserInstance {
+	child: BrowserProcessLike
+	binary: string
+	argv: string[]
+	shutdownRequested: boolean
+}
 
 export class BrowserSupervisor {
 	private readonly spawnBrowser: (binary: string, argv: string[]) => BrowserProcessLike
 	private readonly focusExisting: (binary: string, argv: string[]) => void | Promise<void>
 	private readonly listeners = new Set<StatusListener>()
-	private statusValue: BrowserStatus = 'idle'
-	private child: BrowserProcessLike | undefined
-	private shutdownRequestedFor: BrowserProcessLike | undefined
-	private currentBinary: string | undefined
-	private currentArgv: string[] | undefined
+	private readonly profileListeners = new Set<ProfileStatusListener>()
+	private readonly instances = new Map<string, BrowserInstance>()
+	private readonly statusValues = new Map<string, BrowserStatus>()
 
 	constructor(private readonly deps: BrowserSupervisorDeps) {
 		this.spawnBrowser = deps.spawnBrowser ?? defaultSpawnBrowser
@@ -42,12 +48,12 @@ export class BrowserSupervisor {
 	}
 
 	async launch(profileId = 'default'): Promise<void> {
-		if (this.statusValue === 'launching') return
+		const status = this.profileStatus(profileId)
+		if (status === 'launching') return
 
-		if (this.statusValue === 'running') {
-			if (this.currentBinary && this.currentArgv) {
-				await this.focusExisting(this.currentBinary, this.currentArgv)
-			}
+		const current = this.instances.get(profileId)
+		if (status === 'running' && current) {
+			await this.focusExisting(current.binary, current.argv)
 			return
 		}
 
@@ -59,38 +65,35 @@ export class BrowserSupervisor {
 			startUrl: 'chrome://newtab',
 		})
 
-		this.setStatus('launching')
+		this.setProfileStatus(profileId, 'launching')
+		this.deps.logger.log('BrowserSupervisor', 'info', `launching profile ${profileId}`)
 
 		let child: BrowserProcessLike
 		try {
 			child = this.spawnBrowser(binary, argv)
 		} catch (error) {
-			this.clearCurrentProcess()
-			this.setStatus('error')
+			this.instances.delete(profileId)
+			this.setProfileStatus(profileId, 'error')
 			throw error
 		}
 
-		this.child = child
-		this.currentBinary = binary
-		this.currentArgv = [...argv]
+		this.instances.set(profileId, {
+			child,
+			binary,
+			argv: [...argv],
+			shutdownRequested: false,
+		})
 		this.attachBrowserLogs(profileId, child)
-		this.bindChildEvents(child)
+		this.bindChildEvents(profileId, child)
 	}
 
-	status(): BrowserStatus {
-		return this.statusValue
-	}
-
-	onStatusChange(cb: StatusListener): () => void {
-		this.listeners.add(cb)
-		return () => {
-			this.listeners.delete(cb)
+	async stop(profileId: string): Promise<void> {
+		const current = this.instances.get(profileId)
+		if (!current) {
+			this.setProfileStatus(profileId, 'idle')
+			return
 		}
-	}
-
-	async requestShutdown(): Promise<void> {
-		const child = this.child
-		if (!child) return
+		this.deps.logger.log('BrowserSupervisor', 'info', `stopping profile ${profileId}`)
 
 		await new Promise<void>((resolve) => {
 			let settled = false
@@ -102,32 +105,69 @@ export class BrowserSupervisor {
 			}
 			const timer = setTimeout(settle, 2000)
 
-			child.on('exit', settle)
-			this.shutdownRequestedFor = child
-			child.kill()
+			current.child.on('exit', settle)
+			current.shutdownRequested = true
+			current.child.kill()
 		})
 	}
 
-	private bindChildEvents(child: BrowserProcessLike): void {
+	status(): BrowserStatus {
+		const statuses = Array.from(this.statusValues.values())
+		if (statuses.includes('error')) return 'error'
+		if (statuses.includes('launching')) return 'launching'
+		if (statuses.includes('running')) return 'running'
+		return 'idle'
+	}
+
+	statuses(): Record<string, BrowserStatus> {
+		return Object.fromEntries(this.statusValues.entries())
+	}
+
+	onStatusChange(cb: StatusListener): () => void {
+		this.listeners.add(cb)
+		return () => {
+			this.listeners.delete(cb)
+		}
+	}
+
+	onProfileStatusChange(cb: ProfileStatusListener): () => void {
+		this.profileListeners.add(cb)
+		return () => {
+			this.profileListeners.delete(cb)
+		}
+	}
+
+	async requestShutdown(): Promise<void> {
+		await Promise.all(Array.from(this.instances.keys()).map((profileId) => this.stop(profileId)))
+	}
+
+	private bindChildEvents(profileId: string, child: BrowserProcessLike): void {
 		child.on('spawn', () => {
-			if (this.child === child) {
-				this.setStatus('running')
+			if (this.instances.get(profileId)?.child === child) {
+				this.deps.logger.log('BrowserSupervisor', 'info', `profile ${profileId} running`)
+				this.setProfileStatus(profileId, 'running')
 			}
 		})
 		child.on('error', (error) => {
-			if (this.child !== child) return
+			if (this.instances.get(profileId)?.child !== child) return
 
 			this.deps.logger.log('BrowserSupervisor', 'error', error.message)
-			this.clearCurrentProcess()
-			this.setStatus('error')
+			this.instances.delete(profileId)
+			this.setProfileStatus(profileId, 'error')
 		})
 		child.on('exit', (code, signal) => {
-			if (this.child !== child) return
+			const current = this.instances.get(profileId)
+			if (current?.child !== child) return
 
-			const wasRequestedShutdown = this.shutdownRequestedFor === child
+			const wasRequestedShutdown = current.shutdownRequested
 			const wasNormalExit = (code === 0 || code === null) && signal === null
-			this.clearCurrentProcess()
-			this.setStatus(wasRequestedShutdown || wasNormalExit ? 'idle' : 'error')
+			this.instances.delete(profileId)
+			this.deps.logger.log(
+				'BrowserSupervisor',
+				wasRequestedShutdown || wasNormalExit ? 'info' : 'error',
+				`profile ${profileId} exited with code ${code ?? 'null'} signal ${signal ?? 'null'}`,
+			)
+			this.setProfileStatus(profileId, wasRequestedShutdown || wasNormalExit ? 'idle' : 'error')
 		})
 	}
 
@@ -140,20 +180,24 @@ export class BrowserSupervisor {
 		}
 	}
 
-	private clearCurrentProcess(): void {
-		this.child = undefined
-		this.shutdownRequestedFor = undefined
-		this.currentBinary = undefined
-		this.currentArgv = undefined
+	private profileStatus(profileId: string): BrowserStatus {
+		return this.statusValues.get(profileId) ?? 'idle'
 	}
 
-	private setStatus(next: BrowserStatus): void {
-		if (next === this.statusValue) return
+	private setProfileStatus(profileId: string, next: BrowserStatus): void {
+		if (next === this.profileStatus(profileId)) return
 
-		this.statusValue = next
-		this.listeners.forEach((listener) => {
-			listener(next)
+		const previousAggregate = this.status()
+		this.statusValues.set(profileId, next)
+		this.profileListeners.forEach((listener) => {
+			listener(profileId, next)
 		})
+		const nextAggregate = this.status()
+		if (previousAggregate !== nextAggregate) {
+			this.listeners.forEach((listener) => {
+				listener(nextAggregate)
+			})
+		}
 	}
 }
 
