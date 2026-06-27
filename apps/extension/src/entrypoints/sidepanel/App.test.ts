@@ -5,7 +5,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { SidepanelHistoryButton, pickSendAction } from './App'
+import { SidepanelHistoryButton, getSidepanelControlState, pickSendAction } from './App'
 
 const APP_SOURCE = fileURLToPath(new URL('./App.tsx', import.meta.url))
 
@@ -24,6 +24,28 @@ describe('Sidepanel new conversation transition', () => {
 		expect(source).toContain('wx-history-collect-target')
 		expect(source).not.toContain('slide-out-to-bottom')
 		expect(source).not.toContain('zoom-out-95')
+	})
+})
+
+describe('getSidepanelControlState', () => {
+	it('keeps escape controls available while waiting for user takeover', () => {
+		expect(getSidepanelControlState('waiting_for_user')).toMatchObject({
+			inputDisabled: false,
+			canStartNewConversation: true,
+			showStopButton: true,
+			showSendButton: true,
+			shouldSubmitToActiveTask: true,
+		})
+	})
+
+	it('keeps the running state locked to stop-only controls', () => {
+		expect(getSidepanelControlState('running')).toMatchObject({
+			inputDisabled: true,
+			canStartNewConversation: false,
+			showStopButton: true,
+			showSendButton: false,
+			shouldSubmitToActiveTask: false,
+		})
 	})
 })
 
