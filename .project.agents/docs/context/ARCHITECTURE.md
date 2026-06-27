@@ -217,13 +217,13 @@ vendor 四包为上游快照（粗粒度卡片；内部实现以上游为准，�
 
 ```
 ## 模块名：@page-agent/page-controller（L3）
-- 职责：DOM 文本化、动作执行（点击/输入/滚动）、模拟光标与遮罩、框架补丁（react/antd）
+- 职责：DOM 文本化、动作执行（点击/输入/滚动/执行 JS）、执行结果结构化序列化（`serializeResult`）、模拟光标与遮罩、框架补丁（react/antd）
 - 不负责：不调 LLM；不编排任务
 ```
 
 ```
 ## 模块名：@page-agent/core（L4）
-- 职责：PageAgentCore Agent 循环（系统提示词、工具执行、活动流、ExecutionResult、可恢复人工接管状态、完成后同会话续接、agent_history 投影压缩、recall_steps 回退取回）
+- 职责：PageAgentCore Agent 循环（系统提示词、工具执行、`execute_javascript` 的 world/frame 参数、活动流、ExecutionResult、可恢复人工接管状态、完成后同会话续接、agent_history 投影压缩、recall_steps 回退取回）
 - 不负责：不直接操作多标签（MultiPageAgent 的事）；不渲染历史 UI；不决定问学产品层卡住阈值
 ```
 
@@ -300,7 +300,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：ExtensionEntrypoints（L6/组装根）
-- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由、newtab 页面装配
+- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由、按 frameId 路由 PAGE_CONTROL、main-world JS 执行通道、`webNavigation` frame 发现、`list_frames` 工具、newtab 页面装配
 - 不负责：业务决策
 - 持有状态：会话级路由表
 ```
@@ -360,6 +360,7 @@ graph TD
         NewTabHome --> Logging
         ExtensionEntrypoints --> MultiPageAgent
         ExtensionEntrypoints --> Chaoxing["chaoxing/*"]
+        ExtensionEntrypoints --> WebNavigation["chrome.webNavigation"]
         SidepanelApp --> MultiPageAgent
         SidepanelApp --> ExtensionSettingsConfig
         SidepanelApp --> Logging
@@ -378,7 +379,7 @@ graph TD
     end
 ```
 
-> 桌面域与插件域两个 subgraph **不存在任何边**（I3）；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。手工验证：所有箭头自高层指向低层，无环。
+> 桌面域与插件域两个 subgraph **不存在任何边**（I3）；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`chrome.webNavigation` 是浏览器外部 API，仅供 ExtensionEntrypoints 发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
 
 ### 3.1 依赖方向规则
 
@@ -480,6 +481,8 @@ graph TD
 //     | { type: 'summary'; content: string; coversThroughIndex: number }
 //   tool recall_steps({ indices: number[] }): Promise<string>
 //     // 根据 stepIndex 从全量 history 取回归档步骤原文，供摘要不足时回退/重做
+//   tool execute_javascript({ script, world?, frame_id? }): Promise<string>
+//     // world 默认 isolated；frame_id 由 extension 的 list_frames 发现，缺省为 top frame
 //   new OpenAIClient({ baseURL, apiKey, model })        // I4：插件域唯一 LLM 出口
 ```
 

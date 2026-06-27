@@ -86,6 +86,7 @@ flowchart LR
 - 需求点（fork 自 page-agent，验证可用即视为满足）：
   - 自然语言任务输入、流式过程反馈、执行结果总结（结果正文按 Markdown 渲染）；
   - Agent 循环：DOM 文本化 → LLM 决策 → 动作执行（点击/输入/选择/滚动/切换标签页）→ 循环至完成；
+  - Agent 可执行任意 JavaScript（isolated/main world，可指定 frame）；该工具默认启用，需收敛时可通过 `experimentalScriptExecutionTool: false` 关闭；
   - 执行过程在页面上有可视化反馈（模拟光标、元素高亮遮罩）；
   - 支持多标签页任务（打开新页、跨页接续），浏览器视图跟随 Agent 当前操作的标签页（开新页、切换页即前台激活）；
   - 侧边栏右上角提供新建对话加号按钮，点击后当前可见对话以收束进历史按钮的动效清空，随后回到品牌空态；
@@ -184,7 +185,8 @@ sequenceDiagram
 
 ### 7.2 技术能力边界（如实告知用户）
 
-- 跨域 iframe 内容、Canvas 渲染的页面（如部分在线文档/白板）无法被 DOM 文本化方案操作；
+- DOM 文本化方案不覆盖跨域 iframe 与 Canvas 渲染内容；跨域 iframe 可经 `list_frames` + `execute_javascript`（`frame_id`）在目标 frame 自身上下文内执行读取，但 `<iframe sandbox>`（尤其无 `allow-same-origin`）、浏览器特权页和页面防护仍可能限制执行，Canvas 像素/视觉内容仍不等同于可读 DOM；
+- 页面 JS 运行时变量可经 `execute_javascript` 的 `world: 'main'` 读取；严格 CSP、sandbox、同步死循环或页面主动拦截可能导致失败或超时，需提示人工接管；
 - 验证码、滑块等人机校验不在 Agent 能力内，遇到即提示人工接管；
 - 强前端混淆或高度动态的页面可能降低成功率。
 

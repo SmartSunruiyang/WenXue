@@ -183,6 +183,12 @@ describe('MultiPageAgent stuck action guard', () => {
 		vi.unstubAllGlobals()
 	})
 
+	it('exposes list_frames through the core tool registry', () => {
+		const agent = createAgent()
+
+		expect(agent.tools.has('list_frames')).toBe(true)
+	})
+
 	it('requests takeover exactly once on the third repeated step using the observed URL', async () => {
 		const agent = createAgent()
 		let currentURL = 'https://example.com/task#first'

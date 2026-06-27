@@ -31,7 +31,22 @@ import { assert, fetchLlmsTxt, normalizeResponse, uid, waitFor } from './utils'
 export { tool, type PageAgentTool } from './tools'
 export type * from './types'
 
-export type PageAgentCoreConfig = AgentConfig & { pageController: PageController }
+export type ExecuteJavascriptWorld = 'isolated' | 'main'
+export interface ExecuteJavascriptOptions {
+	world: ExecuteJavascriptWorld
+	frameId?: number
+}
+
+type PageControllerWithScriptExecutionTargeting = PageController & {
+	executeJavascript(
+		script: string,
+		options?: ExecuteJavascriptOptions,
+	): ReturnType<PageController['executeJavascript']>
+}
+
+export type PageAgentCoreConfig = AgentConfig & {
+	pageController: PageControllerWithScriptExecutionTargeting
+}
 
 const MANUAL_TAKEOVER_RULES_PATTERN = /<manual_takeover_rules>[\s\S]*?<\/manual_takeover_rules>\s*/g
 const ASK_USER_RULES_PATTERN = /<ask_user_rules>[\s\S]*?<\/ask_user_rules>\s*/g
@@ -81,7 +96,7 @@ export class PageAgentCore extends EventTarget {
 	readonly config: PageAgentCoreConfig
 	readonly tools: typeof tools
 	/** PageController for DOM operations */
-	readonly pageController: PageController
+	readonly pageController: PageControllerWithScriptExecutionTargeting
 
 	task = ''
 	taskId = ''
@@ -168,7 +183,7 @@ export class PageAgentCore extends EventTarget {
 			}
 		}
 
-		if (!this.config.experimentalScriptExecutionTool) {
+		if (this.config.experimentalScriptExecutionTool === false) {
 			this.tools.delete('execute_javascript')
 		}
 	}

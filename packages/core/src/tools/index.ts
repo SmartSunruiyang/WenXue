@@ -213,12 +213,28 @@ tools.set(
 	'execute_javascript',
 	tool({
 		description:
-			'Execute JavaScript code on the current page. Supports async/await syntax. Use with caution!',
+			'Execute JavaScript in the current tab like a DevTools console and return the ' +
+			'(structured) result. ' +
+			'Use it to read content the simplified DOM tree misses: dynamically rendered nodes, ' +
+			'iframe contents, etc. ' +
+			'world: "isolated" (default) reads the live DOM incl. same-origin iframes via ' +
+			'contentDocument; ' +
+			'"main" runs in the page JS runtime (globals/framework state) but may be blocked by ' +
+			'the page CSP. ' +
+			'frame_id: target a specific frame (call list_frames first to discover ids); omit for ' +
+			'the top frame. ' +
+			'Supports async/await. Do NOT write synchronous infinite loops — the timeout cannot ' +
+			'interrupt them.',
 		inputSchema: z.object({
 			script: z.string(),
+			world: z.enum(['isolated', 'main']).default('isolated'),
+			frame_id: z.int().min(0).optional(),
 		}),
 		execute: async function (this: PageAgentCore, input) {
-			const result = await this.pageController.executeJavascript(input.script)
+			const result = await this.pageController.executeJavascript(input.script, {
+				world: input.world,
+				frameId: input.frame_id,
+			})
 			return result.message
 		},
 	}),

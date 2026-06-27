@@ -10,6 +10,7 @@ function sendMessage(message: {
 	type: 'PAGE_CONTROL'
 	action: string
 	targetTabId: number
+	frameId?: number
 	payload?: any
 }): Promise<any> {
 	return chrome.runtime.sendMessage(message).catch((error) => {
@@ -133,8 +134,25 @@ export class RemotePageController {
 		return this.remoteCallDomAction('scroll_horizontally', args)
 	}
 
-	async executeJavascript(...args: any[]): Promise<DomActionReturn> {
-		return this.remoteCallDomAction('execute_javascript', args)
+	async executeJavascript(
+		script: string,
+		opts?: { world?: 'isolated' | 'main'; frameId?: number }
+	): Promise<DomActionReturn> {
+		return this.remoteCallDomAction(
+			'execute_javascript',
+			[script, { world: opts?.world ?? 'isolated' }],
+			opts?.frameId
+		)
+	}
+
+	async listFrames(): Promise<FrameInfo[]> {
+		if (!this.currentTabId) return []
+		const frames = await sendMessage({
+			type: 'PAGE_CONTROL',
+			action: 'list_frames',
+			targetTabId: this.currentTabId,
+		})
+		return Array.isArray(frames) ? frames : []
 	}
 
 	/** @note Managed by content script via storage polling. */
@@ -148,7 +166,11 @@ export class RemotePageController {
 	/** @note Managed by content script via storage polling. */
 	dispose(): void {}
 
-	private async remoteCallDomAction(action: string, payload: any[]): Promise<DomActionReturn> {
+	private async remoteCallDomAction(
+		action: string,
+		payload: any[],
+		frameId?: number
+	): Promise<DomActionReturn> {
 		if (!this.currentTabId) {
 			return { success: false, message: 'RemotePageController not initialized.' }
 		}
@@ -165,6 +187,7 @@ export class RemotePageController {
 			type: 'PAGE_CONTROL',
 			action: action,
 			targetTabId: this.currentTabId!,
+			frameId,
 			payload,
 		})
 	}
@@ -173,6 +196,14 @@ export class RemotePageController {
 interface DomActionReturn {
 	success: boolean
 	message: string
+}
+
+export interface FrameInfo {
+	frameId: number
+	url: string
+	origin: string
+	sameOriginWithTop: boolean
+	parentFrameId: number
 }
 
 export function shouldShowAgentMask({

@@ -45,7 +45,7 @@ export default defineConfig({
 		name: '__MSG_extName__',
 		description: '__MSG_extDescription__',
 		homepage_url: 'https://alibaba.github.io/page-agent/',
-		permissions: ['tabs', 'tabGroups', 'sidePanel', 'storage', 'alarms'],
+		permissions: ['tabs', 'tabGroups', 'sidePanel', 'storage', 'alarms', 'webNavigation'],
 		host_permissions: ['<all_urls>'],
 		icons: {
 			16: 'assets/page-agent-16.png',
@@ -66,7 +66,7 @@ export default defineConfig({
 		},
 		web_accessible_resources: [
 			{
-				resources: ['main-world.js'],
+				resources: ['main-world.js', 'main-world-executor.js'],
 				matches: ['*://*/*'],
 			},
 		],

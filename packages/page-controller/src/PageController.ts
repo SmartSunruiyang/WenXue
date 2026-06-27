@@ -18,6 +18,7 @@ import * as dom from './dom'
 import type { FlatDomTree, InteractiveElementDomNode } from './dom/dom_tree/type'
 import { getPageInfo } from './dom/getPageInfo'
 import { patchReact } from './patches/react'
+import { serializeResult } from './serializeResult'
 import { isAnchorElement } from './utils'
 
 /**
@@ -378,14 +379,17 @@ export class PageController extends EventTarget {
 	/**
 	 * Execute arbitrary JavaScript on the page
 	 */
-	async executeJavascript(script: string): Promise<ActionResult> {
+	async executeJavascript(
+		script: string,
+		_opts?: { world?: 'isolated' | 'main'; frameId?: number }
+	): Promise<ActionResult> {
 		try {
 			// Wrap script in async function to support await
 			const asyncFunction = eval(`(async () => { ${script} })`)
 			const result = await asyncFunction()
 			return {
 				success: true,
-				message: `✅ Executed JavaScript. Result: ${result}`,
+				message: `✅ Executed JavaScript. Result: ${serializeResult(result)}`,
 			}
 		} catch (error) {
 			return {
@@ -431,3 +435,4 @@ export class PageController extends EventTarget {
 }
 
 export * from './actions'
+export { serializeResult } from './serializeResult'

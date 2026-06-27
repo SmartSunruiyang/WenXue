@@ -29,9 +29,12 @@ export default defineConfig({
 	publicDir: false,
 	build: {
 		lib: {
-			entry: resolve(__dirname, 'src/PageController.ts'),
+			entry: {
+				'page-controller': resolve(__dirname, 'src/PageController.ts'),
+				serializeResult: resolve(__dirname, 'src/serializeResult.ts'),
+			},
 			name: 'PageController',
-			fileName: 'page-controller',
+			fileName: (_format, entryName) => `${entryName}.js`,
 			formats: ['es'],
 		},
 		outDir: resolve(__dirname, 'dist', 'lib'),

@@ -173,6 +173,9 @@ extraResources:
 | 6 | 遥测确认 | 审计上游是否有任何外发统计/Demo LLM 端点残留，全部移除或指向空实现 |
 | 7 | 历史与存储 | 沿用 IndexedDB 历史、`chrome.storage.local` 存配置（含 API Key，不出本机） |
 
+- 权限审计补充：保留 `webNavigation` 权限，用于 `list_frames` 获取 frame 元数据，并支撑按 `frame_id` 执行 JavaScript；这是跨 frame JS 能力对权限最小化原则的显式权衡。
+- 页面级 API 补充：本期 main-world executor 是独立 eval 通道，仅服务 `execute_javascript` 的 `world: 'main'`，不启用上游 `window.PAGE_AGENT_EXT`。
+
 构建：`pnpm -F extension build` → WXT 产出 `.output/chrome-mv3/`，被 desktop 打包步骤消费。
 
 ## 7. 业务边界矩阵（插件 / 桌面端 / 未来后端）
@@ -221,7 +224,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 | CfT 运行中崩溃 | 非 0 退出码 | 系统通知 + 一键重启；日志留档 |
 | 插件未加载 | 冒烟测试期 CDP 校验；运行期用户反馈 | 属发布门禁问题，不做运行时自动修复 |
 | LLM 401/限流/超时 | 插件内（上游已有处理） | 侧边栏内联错误与重试引导 |
-| 页面不可操作（跨域 iframe/canvas/验证码） | Agent 自报告 | 提示人工接管，任务可完成后继续或暂停并保留上下文 |
+| 页面不可操作（sandbox/CSP/canvas/验证码） | Agent 自报告；`execute_javascript` 超时或错误 | 提示人工接管，任务可完成后继续或暂停并保留上下文 |
 | 日志 | `<userData>/logs/` 滚动文件 | Demo 不上报云端；M1 评估接入上报 |
 
 ## 10. 安全与隐私基线
@@ -230,6 +233,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 - Electron 渲染层全沙箱（contextIsolation + sandbox），IPC 面最小化且必须登记于 `ARCHITECTURE.md §3.2`；
 - CfT 日常启动不开远程调试端口/管道；
 - 插件权限最小化（改造清单 #4），页面级 API 默认关闭（#5）；
+- `execute_javascript` 默认启用以满足真实网页排障/动态 DOM/iframe 场景；高风险部署可通过 `experimentalScriptExecutionTool: false` 关闭。`world: 'main'` 与 `frame_id` 仍受 sandbox、CSP、特权页、跨源隔离和执行超时约束，不承诺绕过页面安全边界；
 - 画像目录权限沿用 OS 用户级隔离；不写入任何系统级配置（无需管理员权限安装）。
 
 ## 11. 测试策略
