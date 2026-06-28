@@ -15,6 +15,10 @@
 - BrowserSupervisor 停止链路从单次 SIGTERM 改为：SIGTERM 后 2s 未退出则 SIGKILL，5s 仍无退出事件标记 error，避免后端状态卡在 running。
 - 修复生产构建下 logo 资源使用 `/logo.png` 导致 `file://` 破图的问题，改为相对资源路径。
 
+## 提交
+
+- `5afefef` feat(desktop): polish launcher shell and controls
+
 ## 验证
 
 - `./node_modules/.bin/vitest run` 通过：11 个文件、54 个用例。
