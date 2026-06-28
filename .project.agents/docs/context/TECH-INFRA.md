@@ -93,7 +93,7 @@ vendor 原则：
 |---|---|
 | `BrowserResources` | 定位资源路径（CfT 二进制、插件产物）、读 `browser.lock.json` 提供版本（纯函数） |
 | `LaunchConfig` | 由路径参数组装 CfT argv（纯函数，参数全集见 §4.3） |
-| `BrowserSupervisor` | 持有子进程句柄；监听 `exit`/`error`；状态机：`idle → launching → running → idle`；崩溃（非 0 退出码）时通知 UI |
+| `BrowserSupervisor` | 持有子进程句柄；监听 `exit`/`error`；状态机：`idle → launching → running → idle`；停止时 SIGTERM 后 2s 未退出则 SIGKILL；崩溃（非 0 退出码）或停止超时通知 UI |
 | `ProfileStore` | 画像目录创建与定位。Demo 仅 `default` 一个画像，目录结构按多画像设计 |
 | `AppPaths` / `AppLogger` | `app.getPath('userData')` 目录布局 / electron-log，主进程与 CfT stdout/stderr 各一份滚动日志 |
 
@@ -128,6 +128,8 @@ vendor 原则：
 | `browser:getStatus` | renderer → main | 查询状态机当前态 |
 | `browser:status-changed` | main → renderer（事件） | 状态变更推送 |
 | `app:getVersions` | renderer → main | App / CfT / 插件三方版本号 |
+| `app:getShellInfo` | renderer → main | 查询平台、frameless、安全区与最大化状态 |
+| `app:minimizeWindow` / `app:toggleMaximizeWindow` / `app:requestClose` | renderer → main | 自绘窗口按钮调用主进程窗口能力 |
 | `app:openLogs` | renderer → main | 打开本机日志目录 |
 
 安全基线：`contextIsolation: true`、`nodeIntegration: false`、`sandbox: true`；渲染层不接触 Node API。

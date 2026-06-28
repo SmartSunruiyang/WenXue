@@ -18,6 +18,13 @@ export interface AppVersions {
 	extension: string
 }
 
+export interface AppShellInfo {
+	platform: NodeJS.Platform
+	frameless: boolean
+	hasSystemTrafficLights: boolean
+	isMaximized: boolean
+}
+
 export interface LaunchResult {
 	ok: boolean
 	error?: string
@@ -41,8 +48,12 @@ export interface DesktopBridgeOptions {
 	tokenUsageStore: Pick<TokenUsageStore, 'summary'>
 	resources: BrowserResources
 	getAppVersion: () => string
+	getShellInfo: () => AppShellInfo
 	openLogs: () => Promise<void>
 	openPath: (path: string) => Promise<string>
+	minimizeWindow: () => void
+	toggleMaximizeWindow: () => void
+	requestClose: () => void
 	sendStatus: (status: BrowserStatus) => void
 	sendProfileStatus: (payload: { profileId: string; status: BrowserStatus }) => void
 }
@@ -50,7 +61,9 @@ export interface DesktopBridgeOptions {
 export function registerDesktopBridge(options: DesktopBridgeOptions): () => void {
 	options.ipcMain.handle('browser:launch', async (): Promise<LaunchResult> => {
 		try {
-			await options.supervisor.launch()
+			await options.supervisor.launch('default', {
+				startUrl: await launcherStartUrl(options.settingsStore),
+			})
 			return { ok: true }
 		} catch (error) {
 			return { ok: false, error: toUserSafeMessage(error) }
@@ -140,7 +153,9 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		'browser:launchProfile',
 		async (_event: unknown, profileId: string): Promise<LaunchResult> => {
 			try {
-				await options.supervisor.launch(profileId)
+				await options.supervisor.launch(profileId, {
+					startUrl: await launcherStartUrl(options.settingsStore),
+				})
 				await options.profileStore.touch(profileId)
 				return { ok: true }
 			} catch (error) {
@@ -169,6 +184,10 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		}
 	})
 
+	options.ipcMain.handle('app:getShellInfo', async (): Promise<AppShellInfo> => {
+		return options.getShellInfo()
+	})
+
 	options.ipcMain.handle('app:openLogs', async (): Promise<OpenLogsResult> => {
 		try {
 			await options.openLogs()
@@ -176,6 +195,21 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		} catch (error) {
 			return { ok: false, error: toUserSafeMessage(error) }
 		}
+	})
+
+	options.ipcMain.handle('app:minimizeWindow', async (): Promise<LaunchResult> => {
+		options.minimizeWindow()
+		return { ok: true }
+	})
+
+	options.ipcMain.handle('app:toggleMaximizeWindow', async (): Promise<LaunchResult> => {
+		options.toggleMaximizeWindow()
+		return { ok: true }
+	})
+
+	options.ipcMain.handle('app:requestClose', async (): Promise<LaunchResult> => {
+		options.requestClose()
+		return { ok: true }
 	})
 
 	options.ipcMain.handle('logs:query', async (_event: unknown, filter?: unknown) => {
@@ -230,6 +264,13 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		unsubscribeStatus()
 		unsubscribeProfileStatus()
 	}
+}
+
+async function launcherStartUrl(
+	settingsStore: Pick<LauncherSettingsStore, 'get'>,
+): Promise<string | undefined> {
+	const startUrl = (await settingsStore.get()).launch.startUrl.trim()
+	return startUrl.length > 0 ? startUrl : undefined
 }
 
 interface ProfileMutationResult extends LaunchResult {

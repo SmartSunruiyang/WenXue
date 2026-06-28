@@ -37,6 +37,10 @@ electron.contextBridge.exposeInMainWorld("wenxue", {
   },
   app: {
     getVersions: () => electron.ipcRenderer.invoke("app:getVersions"),
-    openLogs: () => electron.ipcRenderer.invoke("app:openLogs")
+    getShellInfo: () => electron.ipcRenderer.invoke("app:getShellInfo"),
+    openLogs: () => electron.ipcRenderer.invoke("app:openLogs"),
+    minimizeWindow: () => electron.ipcRenderer.invoke("app:minimizeWindow"),
+    toggleMaximizeWindow: () => electron.ipcRenderer.invoke("app:toggleMaximizeWindow"),
+    requestClose: () => electron.ipcRenderer.invoke("app:requestClose")
   }
 });

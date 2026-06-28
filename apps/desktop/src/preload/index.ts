@@ -41,6 +41,10 @@ contextBridge.exposeInMainWorld('wenxue', {
 	},
 	app: {
 		getVersions: () => ipcRenderer.invoke('app:getVersions'),
+		getShellInfo: () => ipcRenderer.invoke('app:getShellInfo'),
 		openLogs: () => ipcRenderer.invoke('app:openLogs'),
+		minimizeWindow: () => ipcRenderer.invoke('app:minimizeWindow'),
+		toggleMaximizeWindow: () => ipcRenderer.invoke('app:toggleMaximizeWindow'),
+		requestClose: () => ipcRenderer.invoke('app:requestClose'),
 	},
 })

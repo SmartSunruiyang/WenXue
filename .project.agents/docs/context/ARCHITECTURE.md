@@ -130,7 +130,7 @@
 - 输入：AppPaths、LauncherSettingsStore、AppLogger 系统事件、LauncherTelemetryIngest 的已脱敏日志批次
 - 输出：DesktopBridge、ConsoleUI 日志页、TokenUsageStore 的用量提取源
 - 关键类型/接口：LauncherLogEntry · LauncherLogFilter · query · append · clear · purge
-- 持有状态：`<userData>/launcher-logs.json`
+- 持有状态：`<userData>/launcher-logs.json`；JSON 损坏时先改名为 `.corrupt-<timestamp>` 再重建空日志，日志页不得因单个坏文件持续崩溃
 ```
 
 ```
@@ -155,7 +155,7 @@
 
 ```
 ## 模块名：BrowserSupervisor
-- 职责：按画像 spawn CfT、监听 exit/error、维护每个画像 idle→launching→running 状态机、崩溃通知（I1 执行者）
+- 职责：按画像 spawn CfT、监听 exit/error、维护每个画像 idle→launching→running 状态机、崩溃通知（I1 执行者）；停止时先 SIGTERM，2s 未退出则 SIGKILL，5s 仍无退出事件标记 error
 - 不负责：不组参数（LaunchConfig）；不定位资源（BrowserResources）；不渲染 UI
 - 输入：LaunchConfig、BrowserResources、ProfileStore、AppLogger
 - 输出：状态事件 → DesktopBridge
@@ -404,7 +404,11 @@ graph TD
 //   browser:status-changed event  (status: BrowserStatus)                         // main → renderer
 //   browser:profile-status-changed event ({ profileId, status })                   // main → renderer
 //   app:getVersions        invoke () => { app: string; browser: string; extension: string }
+//   app:getShellInfo       invoke () => { platform: NodeJS.Platform; frameless: boolean; hasSystemTrafficLights: boolean; isMaximized: boolean }
 //   app:openLogs           invoke () => Promise<{ ok: boolean; error?: string }>  // 打开本机日志目录，不传插件域数据
+//   app:minimizeWindow     invoke () => Promise<{ ok: boolean; error?: string }>
+//   app:toggleMaximizeWindow invoke () => Promise<{ ok: boolean; error?: string }>
+//   app:requestClose       invoke () => Promise<{ ok: boolean; error?: string }>  // 触发 MainBootstrap 关闭策略
 //   logs:query             invoke (filter?: LauncherLogFilter) => Promise<LauncherLogEntry[]>
 //   logs:clear             invoke () => Promise<{ ok: boolean; error?: string }>
 //   settings:get           invoke () => Promise<LauncherSettings>
@@ -414,7 +418,8 @@ graph TD
 //   tokens:getSummary      invoke () => Promise<TokenUsageSummary>
 
 // module: BrowserSupervisor
-//   launch(profileId = 'default'): Promise<void>        // I1：running 时不二次 spawn，转为聚焦
+//   launch(profileId = 'default', opts?: { startUrl?: string }): Promise<void>
+//   // I1：running 时不二次 spawn，转为聚焦；startUrl 来自 LauncherSettingsStore
 //   stop(profileId: string): Promise<void>
 //   status(): BrowserStatus                             // 聚合状态：任一 running/launching/error 优先
 //   statuses(): Record<string, BrowserStatus>
@@ -494,7 +499,7 @@ graph TD
 | 画像元数据                                    | `<userData>/browsers.json`                                                               | BrowserProfileStore                                    | 只含名称、颜色、时间、目录路径，不含 cookie/登录态                                                                                                         |
 | 启动器设置                                    | `<userData>/settings.json`                                                               | LauncherSettingsStore                                  | 即时保存；不得包含 API Key                                                                                                                                 |
 | 运行日志                                      | `<userData>/logs/`                                                                       | AppLogger                                              | 不含 Key/对话内容（I2）；主进程系统事件同时镜像到启动器日志                                                                                                |
-| 启动器日志                                    | `<userData>/launcher-logs.json`                                                          | LauncherLogStore / AppLogger / LauncherTelemetryIngest | 仅保存已脱敏日志；支持 browserId 归类、保留裁剪、清空与导出；桌面侧二次清洗敏感键但保留 token 计数字段                                                     |
+| 启动器日志                                    | `<userData>/launcher-logs.json`                                                          | LauncherLogStore / AppLogger / LauncherTelemetryIngest | 仅保存已脱敏日志；支持 browserId 归类、保留裁剪、清空与导出；桌面侧二次清洗敏感键但保留 token 计数字段；坏 JSON 自动隔离为 `.corrupt-<timestamp>` 后重建空文件 |
 | tokens 用量                                   | `<userData>/token-usage.json`                                                            | TokenUsageStore / LauncherTelemetryIngest              | 仅保存 tokens 数量、模型、画像、时间与估算成本；不含提示词正文或敏感头                                                                                     |
 | ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`                                                                   | SidepanelApp options 设置页与语言快捷入口              | 不出本机（I2）；`selectedModelId` + `customModels[]` 为设置页源数据，`llmConfig` 为 Agent 当前运行时配置                                                   |
 | 任务历史                                      | 插件 IndexedDB `page-agent-ext` v3：`sessions`（`id`、`conversationId`、`createdAt`、`updatedAt`，索引 `by-created` / `by-conversation`） | SidepanelApp                          | 不出本机；同一会话多轮续接按 `conversationId` upsert 为一条记录；用户可清空                                                                                 |

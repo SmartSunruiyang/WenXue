@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rename, writeFile } from 'node:fs/promises'
 import type { LogLevel } from './AppLogger'
 import type { AppPaths } from './AppPaths'
 import type { LauncherSettingsStore } from './LauncherSettingsStore'
@@ -111,6 +111,11 @@ export class LauncherLogStore {
 			const raw = JSON.parse(await readFile(this.filePath, 'utf8')) as Partial<LauncherLogFile>
 			return Array.isArray(raw.entries) ? raw.entries : []
 		} catch (error) {
+			if (error instanceof SyntaxError) {
+				await this.quarantineCorruptFile()
+				await this.writeEntries([])
+				return []
+			}
 			if (!isMissingFile(error)) {
 				throw error
 			}
@@ -120,6 +125,16 @@ export class LauncherLogStore {
 
 	private async writeEntries(entries: LauncherLogEntry[]): Promise<void> {
 		await writeFile(this.filePath, `${JSON.stringify({ entries }, null, 2)}\n`, 'utf8')
+	}
+
+	private async quarantineCorruptFile(): Promise<void> {
+		try {
+			await rename(this.filePath, `${this.filePath}.corrupt-${Date.now()}`)
+		} catch (error) {
+			if (!isMissingFile(error)) {
+				throw error
+			}
+		}
 	}
 }
 

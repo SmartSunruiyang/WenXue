@@ -38,6 +38,9 @@ function createBridgeHarness() {
 	const stop = vi.fn(async () => undefined)
 	const openLogs = vi.fn(async () => undefined)
 	const openPath = vi.fn(async () => '')
+	const minimizeWindow = vi.fn()
+	const toggleMaximizeWindow = vi.fn()
+	const requestClose = vi.fn()
 	const unsubscribe = vi.fn()
 	const unsubscribeProfile = vi.fn()
 	const sendStatus = vi.fn()
@@ -79,8 +82,50 @@ function createBridgeHarness() {
 		clear: vi.fn(async () => undefined),
 	} as unknown as LauncherLogStore
 	const settingsStore = {
-		get: vi.fn(async () => ({ launch: { concurrencyLimit: 3, staggerMs: 400 } })),
-		update: vi.fn(async () => ({ launch: { concurrencyLimit: 4, staggerMs: 400 } })),
+		get: vi.fn(async () => ({
+			launch: {
+				windowWidth: 1120,
+				windowHeight: 720,
+				startUrl: 'https://example.test/start',
+				concurrencyLimit: 3,
+				staggerMs: 400,
+				profileType: 'persistent',
+				proxyMode: 'none',
+				language: 'zh-CN',
+				zoom: 100,
+			},
+			behavior: {
+				closeAction: 'ask',
+				exitWithBrowsers: 'ask',
+				openAtLogin: false,
+				downloadDir: '',
+			},
+			logs: {
+				retentionDays: 3,
+				maxEntries: 5000,
+				minLevel: 'info',
+				captureLlmRequests: true,
+				captureLlmResponses: false,
+				defaultExportFormat: 'json',
+			},
+			localUser: {
+				displayName: '本地用户',
+				colorKey: 'purple',
+			},
+		})),
+		update: vi.fn(async () => ({
+			launch: {
+				windowWidth: 1120,
+				windowHeight: 720,
+				startUrl: 'https://example.test/start',
+				concurrencyLimit: 4,
+				staggerMs: 400,
+				profileType: 'persistent',
+				proxyMode: 'none',
+				language: 'zh-CN',
+				zoom: 100,
+			},
+		})),
 	} as unknown as LauncherSettingsStore
 	const tokenUsageStore = {
 		summary: vi.fn(async () => ({
@@ -113,8 +158,17 @@ function createBridgeHarness() {
 		tokenUsageStore,
 		resources,
 		getAppVersion: () => '0.0.0',
+		getShellInfo: () => ({
+			platform: 'darwin',
+			frameless: false,
+			hasSystemTrafficLights: true,
+			isMaximized: false,
+		}),
 		openLogs,
 		openPath,
+		minimizeWindow,
+		toggleMaximizeWindow,
+		requestClose,
 		sendStatus,
 		sendProfileStatus,
 	})
@@ -125,6 +179,9 @@ function createBridgeHarness() {
 		stop,
 		openLogs,
 		openPath,
+		minimizeWindow,
+		toggleMaximizeWindow,
+		requestClose,
 		profileStore,
 		logStore,
 		settingsStore,
@@ -151,7 +208,11 @@ describe('registerDesktopBridge', () => {
 		expect(Array.from(ipcMain.handlers.keys()).sort()).toEqual(
 			[
 				'app:getVersions',
+				'app:getShellInfo',
+				'app:minimizeWindow',
 				'app:openLogs',
+				'app:requestClose',
+				'app:toggleMaximizeWindow',
 				'browser:addProfile',
 				'browser:duplicateProfile',
 				'browser:getStatus',
@@ -234,8 +295,30 @@ describe('registerDesktopBridge', () => {
 		expect(profileStore.remove).toHaveBeenCalledWith('research')
 		expect(profileStore.touch).toHaveBeenCalledWith('research')
 		expect(openPath).toHaveBeenCalledWith('/profiles/research')
-		expect(launch).toHaveBeenCalledWith('research')
+		expect(launch).toHaveBeenCalledWith('research', {
+			startUrl: 'https://example.test/start',
+		})
 		expect(stop).toHaveBeenCalledWith('research')
+	})
+
+	it('returns shell info and controls the launcher window', async () => {
+		const { ipcMain, minimizeWindow, requestClose, toggleMaximizeWindow } = createBridgeHarness()
+
+		await expect(ipcMain.handlers.get('app:getShellInfo')?.()).resolves.toEqual({
+			platform: 'darwin',
+			frameless: false,
+			hasSystemTrafficLights: true,
+			isMaximized: false,
+		})
+		await expect(ipcMain.handlers.get('app:minimizeWindow')?.()).resolves.toEqual({ ok: true })
+		await expect(ipcMain.handlers.get('app:toggleMaximizeWindow')?.()).resolves.toEqual({
+			ok: true,
+		})
+		await expect(ipcMain.handlers.get('app:requestClose')?.()).resolves.toEqual({ ok: true })
+
+		expect(minimizeWindow).toHaveBeenCalledOnce()
+		expect(toggleMaximizeWindow).toHaveBeenCalledOnce()
+		expect(requestClose).toHaveBeenCalledOnce()
 	})
 
 	it('returns launcher logs settings and token usage summary', async () => {
@@ -247,12 +330,16 @@ describe('registerDesktopBridge', () => {
 
 		await expect(ipcMain.handlers.get('logs:query')?.({}, filter)).resolves.toEqual([])
 		await expect(ipcMain.handlers.get('logs:clear')?.()).resolves.toEqual({ ok: true })
-		await expect(ipcMain.handlers.get('settings:get')?.()).resolves.toEqual({
-			launch: { concurrencyLimit: 3, staggerMs: 400 },
-		})
+		await expect(ipcMain.handlers.get('settings:get')?.()).resolves.toEqual(
+			expect.objectContaining({
+				launch: expect.objectContaining({ concurrencyLimit: 3, staggerMs: 400 }),
+			}),
+		)
 		await expect(ipcMain.handlers.get('settings:update')?.({}, patch)).resolves.toEqual({
 			ok: true,
-			settings: { launch: { concurrencyLimit: 4, staggerMs: 400 } },
+			settings: {
+				launch: expect.objectContaining({ concurrencyLimit: 4, staggerMs: 400 }),
+			},
 		})
 		await expect(ipcMain.handlers.get('tokens:getSummary')?.()).resolves.toEqual(
 			expect.objectContaining({ totalTokens: 3000 }),

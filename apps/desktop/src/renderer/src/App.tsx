@@ -4,15 +4,16 @@ import {
 	Check,
 	ChevronDown,
 	CircleDollarSign,
-	Clock,
 	Copy,
 	Download,
-	Filter,
 	Focus,
 	FolderOpen,
+	Globe2,
 	Info,
 	LoaderCircle,
 	LogOut,
+	Maximize2,
+	Minus,
 	Pause,
 	Pencil,
 	Play,
@@ -22,12 +23,12 @@ import {
 	Settings,
 	Square,
 	Trash2,
-	User,
 	X,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
+	AppShellInfo,
 	AppVersions,
 	BrowserProfile,
 	BrowserStatus,
@@ -41,6 +42,8 @@ import type {
 
 type RouteId = 'browsers' | 'logs' | 'tokens' | 'settings'
 type SettingsSectionId = 'launch' | 'behavior' | 'logs' | 'kernel' | 'about'
+type ProfileSortMode = 'recent' | 'name' | 'status'
+type LogSource = LauncherLogEntry['source']
 
 const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
 	{ id: 'logs', label: '日志', icon: ScrollText },
@@ -61,6 +64,15 @@ const statusLabels: Record<BrowserStatus, string> = {
 	running: '运行中',
 	error: '异常',
 }
+
+const statusPriority: Record<BrowserStatus, number> = {
+	running: 0,
+	launching: 1,
+	error: 2,
+	idle: 3,
+}
+
+const logSources: LogSource[] = ['agent', 'llm', 'tabs', 'page', 'chaoxing', 'config', 'system']
 
 const defaultSettings: LauncherSettings = {
 	launch: {
@@ -105,6 +117,13 @@ const emptyTokenSummary: TokenUsageSummary = {
 	recent: [],
 }
 
+const defaultShellInfo: AppShellInfo = {
+	platform: 'darwin',
+	frameless: false,
+	hasSystemTrafficLights: true,
+	isMaximized: false,
+}
+
 export default function App() {
 	const [route, setRoute] = useState<RouteId>('browsers')
 	const [profiles, setProfiles] = useState<BrowserProfile[]>([])
@@ -117,12 +136,15 @@ export default function App() {
 		browser: 'unknown',
 		extension: 'unknown',
 	})
+	const [shellInfo, setShellInfo] = useState<AppShellInfo>(defaultShellInfo)
 	const [selectedIds, setSelectedIds] = useState<string[]>([])
 	const [editingId, setEditingId] = useState<string | null>(null)
 	const [draftName, setDraftName] = useState('')
 	const [query, setQuery] = useState('')
+	const [profileSort, setProfileSort] = useState<ProfileSortMode>('recent')
 	const [logQuery, setLogQuery] = useState('')
 	const [logLevels, setLogLevels] = useState<LogLevel[]>(['info', 'warn', 'error'])
+	const [activeLogSources, setActiveLogSources] = useState<LogSource[]>(logSources)
 	const [followLogs, setFollowLogs] = useState(true)
 	const [avatarOpen, setAvatarOpen] = useState(false)
 	const [savedTick, setSavedTick] = useState(false)
@@ -133,7 +155,7 @@ export default function App() {
 			window.wenxue.browser.listProfiles(),
 			window.wenxue.browser.getStatuses(),
 		])
-		setProfiles(sortProfiles(nextProfiles))
+		setProfiles(nextProfiles)
 		setStatuses(nextStatuses)
 	}, [])
 
@@ -149,22 +171,31 @@ export default function App() {
 	useEffect(() => {
 		let mounted = true
 		const load = async () => {
-			const [nextProfiles, nextStatuses, nextLogs, nextSettings, nextTokens, nextVersions] =
-				await Promise.all([
-					window.wenxue.browser.listProfiles(),
-					window.wenxue.browser.getStatuses(),
-					window.wenxue.logs.query({ limit: 600 }),
-					window.wenxue.settings.get(),
-					window.wenxue.tokens.getSummary(),
-					window.wenxue.app.getVersions(),
-				])
+			const [
+				nextProfiles,
+				nextStatuses,
+				nextLogs,
+				nextSettings,
+				nextTokens,
+				nextVersions,
+				nextShellInfo,
+			] = await Promise.all([
+				window.wenxue.browser.listProfiles(),
+				window.wenxue.browser.getStatuses(),
+				window.wenxue.logs.query({ limit: 600 }),
+				window.wenxue.settings.get(),
+				window.wenxue.tokens.getSummary(),
+				window.wenxue.app.getVersions(),
+				window.wenxue.app.getShellInfo(),
+			])
 			if (!mounted) return
-			setProfiles(sortProfiles(nextProfiles))
+			setProfiles(nextProfiles)
 			setStatuses(nextStatuses)
 			setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
 			setSettings(nextSettings)
 			setTokens(nextTokens)
 			setVersions(nextVersions)
+			setShellInfo(nextShellInfo)
 		}
 
 		void load().catch((error: unknown) => {
@@ -187,20 +218,31 @@ export default function App() {
 
 	const visibleProfiles = useMemo(() => {
 		const text = query.trim().toLowerCase()
-		if (!text) return profiles
-		return profiles.filter(
-			(profile) =>
-				profile.displayName.toLowerCase().includes(text) || profile.id.toLowerCase().includes(text),
-		)
-	}, [profiles, query])
+		const filtered = text
+			? profiles.filter(
+					(profile) =>
+						profile.displayName.toLowerCase().includes(text) ||
+						profile.id.toLowerCase().includes(text) ||
+						profile.userDataDir.toLowerCase().includes(text),
+				)
+			: profiles
+		return sortProfiles(filtered, profileSort, statuses)
+	}, [profileSort, profiles, query, statuses])
 
 	const visibleLogs = useMemo(() => {
 		const text = logQuery.trim().toLowerCase()
 		return logs
 			.filter((entry) => logLevels.includes(entry.level))
-			.filter((entry) => !text || entry.message.toLowerCase().includes(text))
+			.filter((entry) => activeLogSources.includes(entry.source))
+			.filter(
+				(entry) =>
+					!text ||
+					entry.message.toLowerCase().includes(text) ||
+					entry.source.toLowerCase().includes(text) ||
+					entry.browserId.toLowerCase().includes(text),
+			)
 			.slice(-160)
-	}, [logLevels, logQuery, logs])
+	}, [activeLogSources, logLevels, logQuery, logs])
 
 	const launchProfile = useCallback(
 		async (profileId: string) => {
@@ -231,7 +273,7 @@ export default function App() {
 			setMessage(result.error ?? '无法添加浏览器画像')
 			return
 		}
-		setProfiles((current) => sortProfiles([...current, result.profile!]))
+		setProfiles((current) => [...current, result.profile!])
 		setEditingId(result.profile.id)
 		setDraftName(result.profile.displayName)
 	}, [])
@@ -242,7 +284,7 @@ export default function App() {
 			setMessage(result.error ?? '复制画像失败')
 			return
 		}
-		setProfiles((current) => sortProfiles([...current, result.profile!]))
+		setProfiles((current) => [...current, result.profile!])
 		setEditingId(result.profile.id)
 		setDraftName(result.profile.displayName)
 	}, [])
@@ -278,9 +320,7 @@ export default function App() {
 				return
 			}
 			setProfiles((current) =>
-				sortProfiles(
-					current.map((profile) => (profile.id === profileId ? result.profile! : profile)),
-				),
+				current.map((profile) => (profile.id === profileId ? result.profile! : profile)),
 			)
 			setEditingId(null)
 			setDraftName('')
@@ -328,24 +368,26 @@ export default function App() {
 	}, [])
 
 	return (
-		<main className="app-shell">
-			<aside className="sidebar drag-region" aria-label="启动器导航">
+		<main className={`app-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
+			<aside
+				className={`sidebar drag-region ${shellInfo.hasSystemTrafficLights ? 'sidebar--traffic' : ''}`}
+				aria-label="启动器导航"
+			>
 				<button
 					aria-label="本地资料"
 					className="avatar-button no-drag"
 					onClick={() => setAvatarOpen((open) => !open)}
 					type="button"
 				>
-					<span>问</span>
+					<img src="logo.png" alt="" />
 				</button>
 				<nav className="sidebar-nav no-drag">
 					<RailButton
 						active={route === 'browsers'}
+						icon={Globe2}
 						label="浏览器"
 						onClick={() => setRoute('browsers')}
-					>
-						<ChromeMark />
-					</RailButton>
+					/>
 					{routeItems.map((item) => (
 						<RailButton
 							active={route === item.id}
@@ -364,13 +406,19 @@ export default function App() {
 						onClick={() => setRoute('settings')}
 					/>
 				</div>
-				{avatarOpen ? <AvatarMenu setRoute={setRoute} versions={versions} /> : null}
+				{avatarOpen ? (
+					<AvatarMenu
+						setAvatarOpen={setAvatarOpen}
+						setRoute={setRoute}
+						settings={settings}
+						versions={versions}
+					/>
+				) : null}
 			</aside>
 
 			<section className="main-surface">
-				<div className="top-drag-zone drag-region">
-					<span>WENXUE LAUNCHER</span>
-				</div>
+				<div className="top-drag-zone drag-region" />
+				<WindowControls shellInfo={shellInfo} setShellInfo={setShellInfo} />
 				{message ? (
 					<div className="toast no-drag">
 						<Info size={15} />
@@ -390,12 +438,14 @@ export default function App() {
 						launchProfile={launchProfile}
 						launchSelected={launchSelected}
 						openProfileFolder={openProfileFolder}
+						profileSort={profileSort}
 						profiles={visibleProfiles}
 						query={query}
 						removeProfile={removeProfile}
 						selectedIds={selectedIds}
 						setDraftName={setDraftName}
 						setEditingId={setEditingId}
+						setProfileSort={setProfileSort}
 						setQuery={setQuery}
 						setSelectedIds={setSelectedIds}
 						settings={settings}
@@ -410,8 +460,10 @@ export default function App() {
 						logLevels={logLevels}
 						logQuery={logQuery}
 						logs={visibleLogs}
+						activeLogSources={activeLogSources}
 						profiles={profiles}
 						settings={settings}
+						setActiveLogSources={setActiveLogSources}
 						setFollowLogs={setFollowLogs}
 						setLogLevels={setLogLevels}
 						setLogQuery={setLogQuery}
@@ -439,6 +491,49 @@ interface RailButtonProps {
 	onClick: () => void
 }
 
+function WindowControls({
+	shellInfo,
+	setShellInfo,
+}: {
+	shellInfo: AppShellInfo
+	setShellInfo: (info: AppShellInfo) => void
+}) {
+	if (!shellInfo.frameless) return null
+
+	const refreshShellInfo = async () => {
+		setShellInfo(await window.wenxue.app.getShellInfo())
+	}
+
+	return (
+		<div className="window-controls no-drag" aria-label="窗口控制">
+			<button
+				aria-label="最小化"
+				onClick={() => void window.wenxue.app.minimizeWindow()}
+				type="button"
+			>
+				<Minus size={14} />
+			</button>
+			<button
+				aria-label={shellInfo.isMaximized ? '还原窗口' : '最大化'}
+				onClick={() => {
+					void window.wenxue.app.toggleMaximizeWindow().then(refreshShellInfo)
+				}}
+				type="button"
+			>
+				<Maximize2 size={13} />
+			</button>
+			<button
+				aria-label="关闭"
+				className="window-controls__close"
+				onClick={() => void window.wenxue.app.requestClose()}
+				type="button"
+			>
+				<X size={14} />
+			</button>
+		</div>
+	)
+}
+
 function RailButton({ active, children, icon: Icon, label, onClick }: RailButtonProps) {
 	return (
 		<button
@@ -454,39 +549,49 @@ function RailButton({ active, children, icon: Icon, label, onClick }: RailButton
 	)
 }
 
-function ChromeMark() {
-	return <i aria-hidden="true" className="chrome-mark" />
-}
-
 function AvatarMenu({
+	setAvatarOpen,
 	setRoute,
+	settings,
 	versions,
 }: {
+	setAvatarOpen: (open: boolean) => void
 	setRoute: (route: RouteId) => void
+	settings: LauncherSettings
 	versions: AppVersions
 }) {
 	return (
 		<div className="avatar-menu no-drag">
 			<div className="avatar-menu__head">
-				<div className="avatar-menu__mark">问</div>
+				<div className="avatar-menu__mark">
+					<img src="logo.png" alt="" />
+				</div>
 				<div>
-					<strong>本地资料</strong>
+					<strong>{settings.localUser.displayName || '本地用户'}</strong>
 					<span>ask for everything</span>
 				</div>
 			</div>
-			<button type="button">
-				<User size={15} />
-				资料
-			</button>
-			<button onClick={() => setRoute('settings')} type="button">
+			<button
+				onClick={() => {
+					setRoute('settings')
+					setAvatarOpen(false)
+				}}
+				type="button"
+			>
 				<Settings size={15} />
 				设置
 			</button>
-			<button type="button">
+			<button
+				onClick={() => {
+					setRoute('settings')
+					setAvatarOpen(false)
+				}}
+				type="button"
+			>
 				<Info size={15} />
 				关于 {versions.app}
 			</button>
-			<button type="button">
+			<button onClick={() => void window.wenxue.app.requestClose()} type="button">
 				<LogOut size={15} />
 				退出
 			</button>
@@ -503,12 +608,14 @@ interface BrowserPageProps {
 	launchProfile: (profileId: string) => Promise<void>
 	launchSelected: () => Promise<void>
 	openProfileFolder: (profileId: string) => Promise<void>
+	profileSort: ProfileSortMode
 	profiles: BrowserProfile[]
 	query: string
 	removeProfile: (profileId: string) => Promise<void>
 	selectedIds: string[]
 	setDraftName: (name: string) => void
 	setEditingId: (profileId: string | null) => void
+	setProfileSort: (mode: ProfileSortMode) => void
 	setQuery: (query: string) => void
 	setSelectedIds: (ids: string[]) => void
 	settings: LauncherSettings
@@ -543,14 +650,33 @@ function BrowserPage(props: BrowserPageProps) {
 						<Search size={16} />
 						<input
 							onChange={(event) => props.setQuery(event.target.value)}
-							placeholder="搜索画像、路径或标签"
+							placeholder="搜索画像、ID 或目录"
 							value={props.query}
 						/>
 					</label>
-					<button className="soft-button" type="button">
-						最近使用
-						<ChevronDown size={15} />
-					</button>
+					<div className="segmented-control" aria-label="画像排序">
+						<button
+							className={props.profileSort === 'recent' ? 'segmented-control__active' : ''}
+							onClick={() => props.setProfileSort('recent')}
+							type="button"
+						>
+							最近
+						</button>
+						<button
+							className={props.profileSort === 'status' ? 'segmented-control__active' : ''}
+							onClick={() => props.setProfileSort('status')}
+							type="button"
+						>
+							状态
+						</button>
+						<button
+							className={props.profileSort === 'name' ? 'segmented-control__active' : ''}
+							onClick={() => props.setProfileSort('name')}
+							type="button"
+						>
+							名称
+						</button>
+					</div>
 					<button className="primary-button" onClick={props.addProfile} type="button">
 						<Plus size={16} />
 						添加浏览器
@@ -835,6 +961,7 @@ function InspectorInfo({ label, value }: { label: string; value: string }) {
 }
 
 function LogsPage({
+	activeLogSources,
 	clearLogs,
 	followLogs,
 	logLevels,
@@ -842,10 +969,12 @@ function LogsPage({
 	logs,
 	profiles,
 	settings,
+	setActiveLogSources,
 	setFollowLogs,
 	setLogLevels,
 	setLogQuery,
 }: {
+	activeLogSources: LogSource[]
 	clearLogs: () => Promise<void>
 	followLogs: boolean
 	logLevels: LogLevel[]
@@ -853,6 +982,7 @@ function LogsPage({
 	logs: LauncherLogEntry[]
 	profiles: BrowserProfile[]
 	settings: LauncherSettings
+	setActiveLogSources: (sources: LogSource[]) => void
 	setFollowLogs: (follow: boolean) => void
 	setLogLevels: (levels: LogLevel[]) => void
 	setLogQuery: (query: string) => void
@@ -900,7 +1030,7 @@ function LogsPage({
 					<Search size={16} />
 					<input
 						onChange={(event) => setLogQuery(event.target.value)}
-						placeholder="全文搜索日志"
+						placeholder="搜索消息、来源或画像"
 						value={logQuery}
 					/>
 				</label>
@@ -923,10 +1053,24 @@ function LogsPage({
 						</button>
 					))}
 				</div>
-				<button className="soft-button" type="button">
-					<Filter size={15} />
-					筛选
-				</button>
+				<div className="source-filter" aria-label="日志来源筛选">
+					{logSources.map((source) => (
+						<button
+							className={activeLogSources.includes(source) ? 'source-filter__item--active' : ''}
+							key={source}
+							onClick={() =>
+								setActiveLogSources(
+									activeLogSources.includes(source)
+										? activeLogSources.filter((item) => item !== source)
+										: [...activeLogSources, source],
+								)
+							}
+							type="button"
+						>
+							{source}
+						</button>
+					))}
+				</div>
 			</div>
 
 			<div className="legend-row">
@@ -985,11 +1129,12 @@ function TokensPage({ summary }: { summary: TokenUsageSummary }) {
 					<p>按画像、模型与日期查看本机消耗。</p>
 				</div>
 				<div className="header-actions">
-					<button className="soft-button" type="button">
-						<Clock size={15} />
-						最近 30 天
-					</button>
-					<button className="primary-button" type="button">
+					<button
+						className="primary-button"
+						disabled={!hasData}
+						onClick={() => exportTokenUsageSummary(summary)}
+						type="button"
+					>
 						<Download size={15} />
 						导出统计
 					</button>
@@ -1394,8 +1539,20 @@ function EmptyState({
 	)
 }
 
-function sortProfiles(profiles: BrowserProfile[]): BrowserProfile[] {
+function sortProfiles(
+	profiles: BrowserProfile[],
+	mode: ProfileSortMode,
+	statuses: Record<string, BrowserStatus>,
+): BrowserProfile[] {
 	return [...profiles].sort((a, b) => {
+		if (mode === 'name') {
+			return a.displayName.localeCompare(b.displayName, 'zh-CN')
+		}
+		if (mode === 'status') {
+			const statusDiff =
+				statusPriority[statuses[a.id] ?? 'idle'] - statusPriority[statuses[b.id] ?? 'idle']
+			if (statusDiff !== 0) return statusDiff
+		}
 		const aTime = a.lastUsedAt ?? a.createdAt
 		const bTime = b.lastUsedAt ?? b.createdAt
 		return bTime - aTime
@@ -1449,6 +1606,21 @@ function exportLauncherLogs(
 	const link = document.createElement('a')
 	link.href = url
 	link.download = fileName
+	link.click()
+	URL.revokeObjectURL(url)
+}
+
+function exportTokenUsageSummary(summary: TokenUsageSummary): void {
+	if (summary.totalTokens === 0) return
+
+	const date = new Date().toISOString().slice(0, 10)
+	const blob = new Blob([`${JSON.stringify(summary, null, 2)}\n`], {
+		type: 'application/json;charset=utf-8',
+	})
+	const url = URL.createObjectURL(blob)
+	const link = document.createElement('a')
+	link.href = url
+	link.download = `wenxue-token-usage-${date}.json`
 	link.click()
 	URL.revokeObjectURL(url)
 }

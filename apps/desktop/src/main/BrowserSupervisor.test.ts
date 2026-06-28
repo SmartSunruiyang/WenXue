@@ -10,19 +10,23 @@ class FakeBrowserProcess extends EventEmitter {
 	stdout = new PassThrough()
 	stderr = new PassThrough()
 	killCalls = 0
+	killSignals: Array<NodeJS.Signals | undefined> = []
 
 	constructor(
 		private readonly exitOnKill: {
 			code: number | null
 			signal: NodeJS.Signals | null
-		} = { code: 0, signal: null },
+		} | null = { code: 0, signal: null },
 	) {
 		super()
 	}
 
-	kill(): boolean {
+	kill(signal?: NodeJS.Signals): boolean {
 		this.killCalls += 1
-		this.emit('exit', this.exitOnKill.code, this.exitOnKill.signal)
+		this.killSignals.push(signal)
+		if (this.exitOnKill) {
+			this.emit('exit', this.exitOnKill.code, this.exitOnKill.signal)
+		}
 		return true
 	}
 }
@@ -210,7 +214,37 @@ describe('BrowserSupervisor', () => {
 		await supervisor.requestShutdown()
 
 		expect(child.killCalls).toBe(1)
+		expect(child.killSignals).toEqual(['SIGTERM'])
 		expect(supervisor.status()).toBe('idle')
+	})
+
+	it('force kills a profile when graceful shutdown does not exit', async () => {
+		vi.useFakeTimers()
+		try {
+			const child = new FakeBrowserProcess(null)
+			child.kill = vi.fn((signal?: NodeJS.Signals) => {
+				child.killCalls += 1
+				child.killSignals.push(signal)
+				if (signal === 'SIGKILL') {
+					child.emit('exit', null, 'SIGKILL')
+				}
+				return true
+			})
+			const { supervisor } = createSupervisorHarness({ child })
+
+			await supervisor.launch()
+			child.emit('spawn')
+			const stopPromise = supervisor.stop('default')
+
+			expect(child.killSignals).toEqual(['SIGTERM'])
+			await vi.advanceTimersByTimeAsync(2000)
+			await stopPromise
+
+			expect(child.killSignals).toEqual(['SIGTERM', 'SIGKILL'])
+			expect(supervisor.status()).toBe('idle')
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it('treats signal exit during requested shutdown as idle', async () => {

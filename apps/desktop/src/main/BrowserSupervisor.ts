@@ -24,8 +24,14 @@ export interface BrowserSupervisorDeps {
 	focusExisting?: (binary: string, argv: string[]) => void | Promise<void>
 }
 
+export interface BrowserLaunchOptions {
+	startUrl?: string
+}
+
 type StatusListener = (status: BrowserStatus) => void
 type ProfileStatusListener = (profileId: string, status: BrowserStatus) => void
+const GRACEFUL_SHUTDOWN_MS = 2000
+const FORCE_SHUTDOWN_MS = 5000
 
 interface BrowserInstance {
 	child: BrowserProcessLike
@@ -47,7 +53,7 @@ export class BrowserSupervisor {
 		this.focusExisting = deps.focusExisting ?? defaultFocusExisting
 	}
 
-	async launch(profileId = 'default'): Promise<void> {
+	async launch(profileId = 'default', options: BrowserLaunchOptions = {}): Promise<void> {
 		const status = this.profileStatus(profileId)
 		if (status === 'launching') return
 
@@ -62,7 +68,7 @@ export class BrowserSupervisor {
 		const argv = buildArgv({
 			userDataDir,
 			extensionDir: this.deps.resources.extensionDir(),
-			startUrl: 'chrome://newtab',
+			startUrl: options.startUrl ?? 'chrome://newtab',
 		})
 
 		this.setProfileStatus(profileId, 'launching')
@@ -97,17 +103,41 @@ export class BrowserSupervisor {
 
 		await new Promise<void>((resolve) => {
 			let settled = false
+			let forceTimer: NodeJS.Timeout | undefined
+			let timeoutTimer: NodeJS.Timeout | undefined
 			const settle = () => {
 				if (settled) return
 				settled = true
-				clearTimeout(timer)
+				clearTimeout(forceTimer)
+				clearTimeout(timeoutTimer)
 				resolve()
 			}
-			const timer = setTimeout(settle, 2000)
+			const forceShutdown = () => {
+				const latest = this.instances.get(profileId)
+				if (latest?.child !== current.child) {
+					settle()
+					return
+				}
+				this.deps.logger.log('BrowserSupervisor', 'warn', `force stopping profile ${profileId}`)
+				current.child.kill('SIGKILL')
+			}
+			forceTimer = setTimeout(forceShutdown, GRACEFUL_SHUTDOWN_MS)
+			timeoutTimer = setTimeout(() => {
+				const latest = this.instances.get(profileId)
+				if (latest?.child === current.child) {
+					this.instances.delete(profileId)
+					this.setProfileStatus(profileId, 'error')
+				}
+				settle()
+			}, FORCE_SHUTDOWN_MS)
 
 			current.child.on('exit', settle)
 			current.shutdownRequested = true
-			current.child.kill()
+			if (!current.child.kill('SIGTERM')) {
+				this.instances.delete(profileId)
+				this.setProfileStatus(profileId, 'idle')
+				settle()
+			}
 		})
 	}
 

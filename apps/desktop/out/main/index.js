@@ -927,6 +927,8 @@ function buildArgv(opts) {
   }
   return argv;
 }
+const GRACEFUL_SHUTDOWN_MS = 2e3;
+const FORCE_SHUTDOWN_MS = 5e3;
 class BrowserSupervisor {
   constructor(deps) {
     this.deps = deps;
@@ -937,7 +939,7 @@ class BrowserSupervisor {
     this.spawnBrowser = deps.spawnBrowser ?? defaultSpawnBrowser;
     this.focusExisting = deps.focusExisting ?? defaultFocusExisting;
   }
-  async launch(profileId = "default") {
+  async launch(profileId = "default", options = {}) {
     const status = this.profileStatus(profileId);
     if (status === "launching") return;
     const current = this.instances.get(profileId);
@@ -950,7 +952,7 @@ class BrowserSupervisor {
     const argv = buildArgv({
       userDataDir,
       extensionDir: this.deps.resources.extensionDir(),
-      startUrl: "chrome://newtab"
+      startUrl: options.startUrl ?? "chrome://newtab"
     });
     this.setProfileStatus(profileId, "launching");
     this.deps.logger.log("BrowserSupervisor", "info", `launching profile ${profileId}`);
@@ -980,16 +982,40 @@ class BrowserSupervisor {
     this.deps.logger.log("BrowserSupervisor", "info", `stopping profile ${profileId}`);
     await new Promise((resolve) => {
       let settled = false;
+      let forceTimer;
+      let timeoutTimer;
       const settle = () => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        clearTimeout(forceTimer);
+        clearTimeout(timeoutTimer);
         resolve();
       };
-      const timer = setTimeout(settle, 2e3);
+      const forceShutdown = () => {
+        const latest = this.instances.get(profileId);
+        if (latest?.child !== current.child) {
+          settle();
+          return;
+        }
+        this.deps.logger.log("BrowserSupervisor", "warn", `force stopping profile ${profileId}`);
+        current.child.kill("SIGKILL");
+      };
+      forceTimer = setTimeout(forceShutdown, GRACEFUL_SHUTDOWN_MS);
+      timeoutTimer = setTimeout(() => {
+        const latest = this.instances.get(profileId);
+        if (latest?.child === current.child) {
+          this.instances.delete(profileId);
+          this.setProfileStatus(profileId, "error");
+        }
+        settle();
+      }, FORCE_SHUTDOWN_MS);
       current.child.on("exit", settle);
       current.shutdownRequested = true;
-      current.child.kill();
+      if (!current.child.kill("SIGTERM")) {
+        this.instances.delete(profileId);
+        this.setProfileStatus(profileId, "idle");
+        settle();
+      }
     });
   }
   status() {
@@ -1080,7 +1106,9 @@ function defaultFocusExisting(binary, argv) {
 function registerDesktopBridge(options) {
   options.ipcMain.handle("browser:launch", async () => {
     try {
-      await options.supervisor.launch();
+      await options.supervisor.launch("default", {
+        startUrl: await launcherStartUrl(options.settingsStore)
+      });
       return { ok: true };
     } catch (error) {
       return { ok: false, error: toUserSafeMessage(error) };
@@ -1157,7 +1185,9 @@ function registerDesktopBridge(options) {
     "browser:launchProfile",
     async (_event, profileId) => {
       try {
-        await options.supervisor.launch(profileId);
+        await options.supervisor.launch(profileId, {
+          startUrl: await launcherStartUrl(options.settingsStore)
+        });
         await options.profileStore.touch(profileId);
         return { ok: true };
       } catch (error) {
@@ -1183,6 +1213,9 @@ function registerDesktopBridge(options) {
       extension: readExtensionVersion(options.resources.extensionDir())
     };
   });
+  options.ipcMain.handle("app:getShellInfo", async () => {
+    return options.getShellInfo();
+  });
   options.ipcMain.handle("app:openLogs", async () => {
     try {
       await options.openLogs();
@@ -1190,6 +1223,18 @@ function registerDesktopBridge(options) {
     } catch (error) {
       return { ok: false, error: toUserSafeMessage(error) };
     }
+  });
+  options.ipcMain.handle("app:minimizeWindow", async () => {
+    options.minimizeWindow();
+    return { ok: true };
+  });
+  options.ipcMain.handle("app:toggleMaximizeWindow", async () => {
+    options.toggleMaximizeWindow();
+    return { ok: true };
+  });
+  options.ipcMain.handle("app:requestClose", async () => {
+    options.requestClose();
+    return { ok: true };
   });
   options.ipcMain.handle("logs:query", async (_event, filter) => {
     return options.logStore.query(asRecord$1(filter));
@@ -1233,6 +1278,10 @@ function registerDesktopBridge(options) {
     unsubscribeStatus();
     unsubscribeProfileStatus();
   };
+}
+async function launcherStartUrl(settingsStore) {
+  const startUrl = (await settingsStore.get()).launch.startUrl.trim();
+  return startUrl.length > 0 ? startUrl : void 0;
 }
 function readExtensionVersion(extensionDir) {
   try {
@@ -1314,6 +1363,11 @@ class LauncherLogStore {
       const raw = JSON.parse(await fs$1.readFile(this.filePath, "utf8"));
       return Array.isArray(raw.entries) ? raw.entries : [];
     } catch (error) {
+      if (error instanceof SyntaxError) {
+        await this.quarantineCorruptFile();
+        await this.writeEntries([]);
+        return [];
+      }
       if (!isMissingFile$2(error)) {
         throw error;
       }
@@ -1323,6 +1377,15 @@ class LauncherLogStore {
   async writeEntries(entries) {
     await fs$1.writeFile(this.filePath, `${JSON.stringify({ entries }, null, 2)}
 `, "utf8");
+  }
+  async quarantineCorruptFile() {
+    try {
+      await fs$1.rename(this.filePath, `${this.filePath}.corrupt-${Date.now()}`);
+    } catch (error) {
+      if (!isMissingFile$2(error)) {
+        throw error;
+      }
+    }
   }
 }
 function sanitizeLogData(value) {
@@ -1702,6 +1765,14 @@ async function handleBrowserRunningClose(deps) {
   if (status === "idle" || status === "error") {
     return "allow";
   }
+  const exitWithBrowsers = await deps.exitWithBrowsers?.() ?? "ask";
+  if (exitWithBrowsers === "launcherOnly") {
+    return "allow";
+  }
+  if (exitWithBrowsers === "closeBrowsers") {
+    await deps.requestShutdown();
+    return "allow";
+  }
   const { response } = await deps.showMessageBox();
   if (response === 1) {
     await deps.requestShutdown();
@@ -1713,6 +1784,14 @@ async function startMainBootstrap() {
   await electron.app.whenReady();
   const paths = new AppPaths(electron.app.getPath("userData"));
   await paths.ensure();
+  const iconPath = path.join(__dirname, "../../resources/icon.png");
+  electron.app.setName("问学");
+  if (process.platform === "win32") {
+    electron.app.setAppUserModelId("com.wenxue.launcher");
+  }
+  if (process.platform === "darwin") {
+    electron.app.dock?.setIcon(iconPath);
+  }
   const resources = createBrowserResources({
     repoRoot: resolveRepoRoot(electron.app.getAppPath()),
     isPackaged: electron.app.isPackaged,
@@ -1737,6 +1816,12 @@ async function startMainBootstrap() {
     tokenUsageStore,
     resources,
     getAppVersion: () => electron.app.getVersion(),
+    getShellInfo: () => ({
+      platform: process.platform,
+      frameless: process.platform !== "darwin",
+      hasSystemTrafficLights: process.platform === "darwin",
+      isMaximized: currentWindow?.isMaximized() ?? false
+    }),
     openLogs: async () => {
       const message = await electron.shell.openPath(paths.logsDir());
       if (message.length > 0) {
@@ -1744,11 +1829,21 @@ async function startMainBootstrap() {
       }
     },
     openPath: (targetPath) => electron.shell.openPath(targetPath),
+    minimizeWindow: () => currentWindow?.minimize(),
+    toggleMaximizeWindow: () => {
+      if (!currentWindow) return;
+      if (currentWindow.isMaximized()) {
+        currentWindow.unmaximize();
+      } else {
+        currentWindow.maximize();
+      }
+    },
+    requestClose: () => currentWindow?.close(),
     sendStatus: (status) => currentWindow?.webContents.send("browser:status-changed", status),
     sendProfileStatus: (payload) => currentWindow?.webContents.send("browser:profile-status-changed", payload)
   });
   const createWindow = () => {
-    currentWindow = createControlWindow(electron, supervisor);
+    currentWindow = createControlWindow(electron, supervisor, settingsStore, iconPath);
     currentWindow.on("closed", () => {
       if (currentWindow?.isDestroyed()) {
         currentWindow = void 0;
@@ -1780,11 +1875,11 @@ function resolveRepoRoot(start) {
     current = parent;
   }
 }
-function createControlWindow(electron, supervisor) {
+function createControlWindow(electron, supervisor, settingsStore, iconPath) {
   const win = new electron.BrowserWindow(
     buildControlWindowOptions({
       platform: process.platform,
-      iconPath: path.join(__dirname, "../../resources/icon.png"),
+      iconPath,
       preloadPath: path.join(__dirname, "../preload/index.js")
     })
   );
@@ -1796,6 +1891,7 @@ function createControlWindow(electron, supervisor) {
     event.preventDefault();
     void handleBrowserRunningClose({
       status: () => supervisor.status(),
+      exitWithBrowsers: async () => (await settingsStore.get()).behavior.exitWithBrowsers,
       showMessageBox: () => electron.dialog.showMessageBox(win, {
         type: "question",
         title: "浏览器仍在运行",
@@ -1822,18 +1918,17 @@ function createControlWindow(electron, supervisor) {
 }
 function buildControlWindowOptions(input) {
   return {
+    title: "问学",
     width: 1120,
     height: 720,
     minWidth: 920,
     minHeight: 600,
     resizable: true,
     maximizable: true,
+    frame: input.platform === "darwin",
+    autoHideMenuBar: true,
+    trafficLightPosition: input.platform === "darwin" ? { x: 18, y: 18 } : void 0,
     titleBarStyle: input.platform === "darwin" ? "hiddenInset" : "hidden",
-    titleBarOverlay: input.platform === "win32" ? {
-      color: "#FAFAFA",
-      symbolColor: "#060606",
-      height: 32
-    } : void 0,
     icon: input.iconPath,
     webPreferences: {
       preload: input.preloadPath,

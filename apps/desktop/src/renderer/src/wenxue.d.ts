@@ -28,6 +28,13 @@ export interface AppVersions {
 	extension: string
 }
 
+export interface AppShellInfo {
+	platform: string
+	frameless: boolean
+	hasSystemTrafficLights: boolean
+	isMaximized: boolean
+}
+
 export interface LauncherLogEntry {
 	id: number
 	ts: number
@@ -153,7 +160,11 @@ declare global {
 			}
 			app: {
 				getVersions(): Promise<AppVersions>
+				getShellInfo(): Promise<AppShellInfo>
 				openLogs(): Promise<OpenLogsResult>
+				minimizeWindow(): Promise<LaunchResult>
+				toggleMaximizeWindow(): Promise<LaunchResult>
+				requestClose(): Promise<LaunchResult>
 			}
 		}
 	}

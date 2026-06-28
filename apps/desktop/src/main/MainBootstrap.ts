@@ -12,16 +12,18 @@ import { createBrowserResources } from './BrowserResources'
 import { BrowserSupervisor, type BrowserStatus } from './BrowserSupervisor'
 import { registerDesktopBridge } from './DesktopBridge'
 import { LauncherLogStore } from './LauncherLogStore'
-import { LauncherSettingsStore } from './LauncherSettingsStore'
+import { LauncherSettingsStore, type LauncherSettings } from './LauncherSettingsStore'
 import { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import { ProfileStore } from './ProfileStore'
 import { TokenUsageStore } from './TokenUsageStore'
 
 type ElectronModule = typeof import('electron')
 export type CloseDecision = 'allow' | 'prevented'
+type ExitWithBrowsers = LauncherSettings['behavior']['exitWithBrowsers']
 
 export interface ClosePromptDeps {
 	status: () => BrowserStatus
+	exitWithBrowsers?: () => Promise<ExitWithBrowsers> | ExitWithBrowsers
 	showMessageBox: () => Promise<{ response: number }>
 	requestShutdown: () => Promise<void>
 }
@@ -29,6 +31,15 @@ export interface ClosePromptDeps {
 export async function handleBrowserRunningClose(deps: ClosePromptDeps): Promise<CloseDecision> {
 	const status = deps.status()
 	if (status === 'idle' || status === 'error') {
+		return 'allow'
+	}
+
+	const exitWithBrowsers = (await deps.exitWithBrowsers?.()) ?? 'ask'
+	if (exitWithBrowsers === 'launcherOnly') {
+		return 'allow'
+	}
+	if (exitWithBrowsers === 'closeBrowsers') {
+		await deps.requestShutdown()
 		return 'allow'
 	}
 
@@ -46,6 +57,14 @@ export async function startMainBootstrap(): Promise<void> {
 
 	const paths = new AppPaths(electron.app.getPath('userData'))
 	await paths.ensure()
+	const iconPath = path.join(__dirname, '../../resources/icon.png')
+	electron.app.setName('问学')
+	if (process.platform === 'win32') {
+		electron.app.setAppUserModelId('com.wenxue.launcher')
+	}
+	if (process.platform === 'darwin') {
+		electron.app.dock?.setIcon(iconPath)
+	}
 
 	const resources = createBrowserResources({
 		repoRoot: resolveRepoRoot(electron.app.getAppPath()),
@@ -72,6 +91,12 @@ export async function startMainBootstrap(): Promise<void> {
 		tokenUsageStore,
 		resources,
 		getAppVersion: () => electron.app.getVersion(),
+		getShellInfo: () => ({
+			platform: process.platform,
+			frameless: process.platform !== 'darwin',
+			hasSystemTrafficLights: process.platform === 'darwin',
+			isMaximized: currentWindow?.isMaximized() ?? false,
+		}),
 		openLogs: async () => {
 			const message = await electron.shell.openPath(paths.logsDir())
 			if (message.length > 0) {
@@ -79,13 +104,23 @@ export async function startMainBootstrap(): Promise<void> {
 			}
 		},
 		openPath: (targetPath) => electron.shell.openPath(targetPath),
+		minimizeWindow: () => currentWindow?.minimize(),
+		toggleMaximizeWindow: () => {
+			if (!currentWindow) return
+			if (currentWindow.isMaximized()) {
+				currentWindow.unmaximize()
+			} else {
+				currentWindow.maximize()
+			}
+		},
+		requestClose: () => currentWindow?.close(),
 		sendStatus: (status) => currentWindow?.webContents.send('browser:status-changed', status),
 		sendProfileStatus: (payload) =>
 			currentWindow?.webContents.send('browser:profile-status-changed', payload),
 	})
 
 	const createWindow = () => {
-		currentWindow = createControlWindow(electron, supervisor)
+		currentWindow = createControlWindow(electron, supervisor, settingsStore, iconPath)
 		currentWindow.on('closed', () => {
 			if (currentWindow?.isDestroyed()) {
 				currentWindow = undefined
@@ -126,11 +161,13 @@ export function resolveRepoRoot(start: string): string {
 function createControlWindow(
 	electron: ElectronModule,
 	supervisor: BrowserSupervisor,
+	settingsStore: LauncherSettingsStore,
+	iconPath: string,
 ): BrowserWindow {
 	const win = new electron.BrowserWindow(
 		buildControlWindowOptions({
 			platform: process.platform,
-			iconPath: path.join(__dirname, '../../resources/icon.png'),
+			iconPath,
 			preloadPath: path.join(__dirname, '../preload/index.js'),
 		}),
 	)
@@ -144,6 +181,7 @@ function createControlWindow(
 		event.preventDefault()
 		void handleBrowserRunningClose({
 			status: () => supervisor.status(),
+			exitWithBrowsers: async () => (await settingsStore.get()).behavior.exitWithBrowsers,
 			showMessageBox: () =>
 				electron.dialog.showMessageBox(win, {
 					type: 'question',
@@ -178,21 +216,17 @@ export function buildControlWindowOptions(input: {
 	preloadPath: string
 }): BrowserWindowConstructorOptions {
 	return {
+		title: '问学',
 		width: 1120,
 		height: 720,
 		minWidth: 920,
 		minHeight: 600,
 		resizable: true,
 		maximizable: true,
+		frame: input.platform === 'darwin',
+		autoHideMenuBar: true,
+		trafficLightPosition: input.platform === 'darwin' ? { x: 18, y: 18 } : undefined,
 		titleBarStyle: input.platform === 'darwin' ? 'hiddenInset' : 'hidden',
-		titleBarOverlay:
-			input.platform === 'win32'
-				? {
-						color: '#FAFAFA',
-						symbolColor: '#060606',
-						height: 32,
-					}
-				: undefined,
 		icon: input.iconPath,
 		webPreferences: {
 			preload: input.preloadPath,
