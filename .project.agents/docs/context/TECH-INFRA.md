@@ -82,7 +82,7 @@ vendor 原则：
 | 打包 | electron-builder（macOS dmg / Windows nsis） | 配置入库 |
 | 浏览器 | Chrome for Testing，**单一版本全平台统一**，版本号记录于 `apps/desktop/browser.lock.json` | Demo 锁定一个 Stable 版本；升级 = 改 lock + 跑冒烟 |
 | 插件 | WXT 0.20 + React 19 + Tailwind 4 + shadcn（沿用上游） | 跟随 vendor 快照 |
-| LLM 接入 | OpenAI-compatible REST（上游 `@page-agent/llms`） | 默认 baseURL `https://dashscope.aliyuncs.com/compatible-mode/v1`，默认 model `qwen3.5-plus` |
+| LLM 接入 | OpenAI-compatible REST（上游 `@page-agent/llms`） | 内置模型 M3 起经 CloudBase 网关，默认文本 `qwen-plus`、默认视觉 `qwen3.7-plus`；自定义 BYO-Key 模型仍直连 |
 | 测试 | vitest（沿用上游各包测试）+ 桌面端 CDP 冒烟脚本 | CI 必跑 |
 
 ## 4. 桌面端（Electron）设计
@@ -169,7 +169,7 @@ extraResources:
 |---|---|---|
 | 1 | 品牌化 | 名称/图标/`_locales`（zh_CN、en）/侧边栏标题 → 问学 WenXue · ask for everything |
 | 2 | 固定插件 ID | manifest 增加 `key` 字段（自生成 RSA 公钥），保证未打包加载时 ID 稳定，存储与权限跨版本不漂移 |
-| 3 | 默认模型预置 | 配置面板默认值：百炼 baseURL + `qwen3.5-plus`，Key 留空待填 |
+| 3 | 默认模型预置 | 配置面板默认值：内置文本 `qwen-plus` + 内置视觉 `qwen3.7-plus`，经 CloudBase Gateway 使用产品用户 access token；自定义模型仍由用户填写 baseURL/API Key |
 | 4 | 权限审计 | 收敛 `host_permissions` 与可选权限到 Demo 必需集合；逐项记录保留理由 |
 | 5 | 页面级 API（`window.PAGE_AGENT_EXT`） | 上游的 token 鉴权对外 API，Demo 不需要 → 默认关闭（编译开关保留，正式版再评估） |
 | 6 | 遥测确认 | 审计上游是否有任何外发统计/Demo LLM 端点残留，全部移除或指向空实现 |
@@ -189,11 +189,25 @@ extraResources:
 | 对话 UI、Agent 循环、DOM 操作、任务历史 | ✅ 唯一归属 | — | — |
 | LLM 调用 | ✅ Demo 直连厂商 API；M2 起调自家网关 | 永不经手对话内容 | ✅ OpenAI-compatible 透传网关 |
 | CfT 版本/进程/画像管理、插件注入 | — | ✅ 唯一归属 | — |
-| 登录、订阅、计费、用量展示 | 仅消费会话 token | ✅ UI 壳 | ✅ 鉴权、计量、账单 |
-| 密钥 | Demo：用户 Key 存 `chrome.storage.local` | M2：保管会话 token 并下发 | M2：厂商 Key 仅存服务端 |
+| 登录、订阅、计费、用量展示 | 仅消费产品用户 access token | ✅ 产品用户登录、会话持久化、tokens UI 优先读云端 summary | ✅ 鉴权、计量、当前用户 summary；订阅账单后置 |
+| 密钥 | Demo：用户 Key 存 `chrome.storage.local`；内置模型 M3 起仅存 access token | M2：保管 CloudBase refresh/access token；只向插件交接 access token | M2：厂商 Key 仅存服务端 |
 | 升级通道 | 随 App 发版 | electron-updater（M3 启用） | 独立部署 |
 
-**M2 网关切换设计**：插件的 LLM 客户端只认 `baseURL + 鉴权头`。切换到计费网关时，仅需把默认 baseURL 指向 `gateway.wenxue.app/v1`、把 API Key 字段换成会话 token——Agent 核心零改动。这是"直连优先"决策的可演进性依据。
+**M2 网关切换设计（2026-06-28 提前执行）**：插件的 LLM 客户端只认 `baseURL + 鉴权头`。切换到计费网关时，仅需把默认 baseURL 指向 CloudBase LLM Gateway、把 API Key 字段换成会话 token——Agent 核心零改动。这是"直连优先"决策的可演进性依据。M0 先做端到端薄切片：扩展/脚本 → CloudBase Run Function mode `wenxue-llm-gateway` → DashScope SSE，必须验证流式末块 usage 非 0 与延迟基线。M3 真实验证发现 `qwen3.7-max` 会拒绝 Agent 默认的 `tool_choice=required/object`，因此内置文本默认改为已验证支持 tools 的 `qwen-plus`。
+
+### 7.1 CloudBase LLM Gateway（M0–M5）
+
+- 运行形态：CloudBase Run Function 模式，服务名 `wenxue-llm-gateway`，环境 `wenxue-d8gz76tacc3659f05`（ap-shanghai）。
+- 入口：OpenAI-compatible `POST /v1/chat/completions`；M4 起同服务暴露 `GET /v1/usage/summary` 供启动器 tokens 页读取当前用户计量。
+- 鉴权：请求 `Authorization: Bearer <CloudBase access_token>`；网关通过 CloudBase Auth HTTP API `/auth/v1/token/introspect` 校验 active token 并解析 `sub` 为 uid。
+- 上游：`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`；DashScope Key 只来自 CloudBase Run 环境变量 `DASHSCOPE_API_KEY`。
+- 流式计量：当请求 `stream=true` 时，网关必须注入 `stream_options: { include_usage: true }`，否则 DashScope 流式响应不返回 usage。
+- 计量：M0 捕获 usage 与端到端延迟；M1 后写 `token_usage`，记录只含 uid、model、tokens、latency、createdAt；M4 的 `usage-summary` target 实时读取当前 uid 记录并返回脱敏 `TokenUsageSummary`（recent id 不含 uid）。
+- 访问：M0/M1 部署 `OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.5`、`Mem:1`；公开多用户前必须补限流。
+- 启动器登录：M2 使用 CloudBase Auth HTTP API 登录已注册产品用户，并通过 `/auth/v1/user/me` 强制校验 `type=external`；内部/企业成员不得作为产品用户会话。
+- 会话交接：M2 使用一次性 localhost 页面 + `externally_connectable` 把 access token 交给插件 background；不交接 refresh token，不经远端服务，不向 Agent 发送控制指令。
+- 切换纪律：M3 已把内置模型运行时配置切到网关，`apiKey` 字段只注入插件侧 CloudBase access token；M5 已删除本地百炼 Key 与本地直连兜底开关，旧 DashScope 直连 baseURL 仅用于自动迁移到网关默认配置。
+- 用量展示：M4 新增桌面 `UsageCloudClient`，通过 `LauncherAuthSession.getHandoffSession()` 取得产品用户 access token 调 `GET /v1/usage/summary`；成功后按 uid 写 `<userData>/token-usage-summary-cache.json`，失败时 `tokens:getSummary` 回退本地 `TokenUsageStore`。
 
 ## 8. 构建、CI 与分发
 
@@ -225,13 +239,14 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 | CfT 启动失败（二进制缺失/被杀毒拦截） | spawn `error` 事件 | UI 明确报错 + 指引（日志路径、重装提示） |
 | CfT 运行中崩溃 | 非 0 退出码 | 系统通知 + 一键重启；日志留档 |
 | 插件未加载 | 冒烟测试期 CDP 校验；运行期用户反馈 | 属发布门禁问题，不做运行时自动修复 |
-| LLM 401/限流/超时 | 插件内（上游已有处理） | 侧边栏内联错误与重试引导 |
+| LLM 401/限流/超时 | 插件内（上游已有处理）/ CloudBase LLM Gateway | 侧边栏内联错误与重试引导；网关记录无敏感信息的状态码与延迟 |
 | 页面不可操作（sandbox/CSP/canvas/验证码） | Agent 自报告；`execute_javascript` 超时或错误 | 提示人工接管，任务可完成后继续或暂停并保留上下文 |
 | 日志 | `<userData>/logs/` 滚动文件 | Demo 不上报云端；M1 评估接入上报 |
 
 ## 10. 安全与隐私基线
 
-- API Key 与对话数据仅存于本机浏览器画像（`chrome.storage.local` / IndexedDB），问学侧（Demo 期）无任何服务器接触用户数据；
+- 内置模型提示词/对话经 CloudBase LLM Gateway 转发百炼；网关不持久化正文，只记录 uid 维度 token usage；自定义 BYO-Key 模型仍直连用户配置的 baseURL；
+- 百炼 API Key 仅存 CloudBase Run 环境变量，永不下发到插件/桌面/打包产物/本地配置；
 - Electron 渲染层全沙箱（contextIsolation + sandbox），IPC 面最小化且必须登记于 `ARCHITECTURE.md §3.2`；
 - CfT 日常启动不开远程调试端口/管道；
 - 插件权限最小化（改造清单 #4），页面级 API 默认关闭（#5）；
@@ -253,7 +268,8 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 |---|---|---|
 | 1 | 浏览器内核 = Chrome for Testing，打包内置 | 品牌版 Chrome：137+ 已移除 `--load-extension`；首启下载：被否（要求离线可用、首启零等待）；Playwright Chromium：无增益多一层依赖 |
 | 2 | 插件 = fork page-agent extension 整包 | npm 依赖自建插件壳：多 1–2 周；完全自研：Demo 周期不可接受 |
-| 3 | LLM = 插件直连，默认百炼 qwen3.5-plus | 本地代理/云网关：Demo 不需要，演进路径已留（§7） |
+| 3 | Demo 初期 LLM = 插件直连；2026-06-28 起提前执行 CloudBase LLM Gateway，M3 默认文本 `qwen-plus`、视觉 `qwen3.7-plus`，M5 删除内置本地 Key 与 fallback | 本地代理：不满足服务端密钥托管与计量；直接删除本地 Key：切换风险过高，所以先 M3 切流验证，再 M5 删除 |
+| 7 | CloudBase LLM Gateway = CloudBase Run Function mode + DashScope OpenAI-compatible 透传 | 云函数：SSE 长连接与服务形态不如 Function mode 云托管；容器模式：M0 过重 |
 | 4 | 单 pnpm monorepo，vendor 上游 | 双仓库 fork 跟踪：小团队跨仓成本高于上游同步收益 |
 | 5 | 浏览器进程不内嵌 Electron | Electron 扩展 API 子集跑不动 MV3 sidePanel 插件 |
 | 6 | App 退出不强杀浏览器 | 保护用户未保存的页面工作 |
@@ -264,5 +280,5 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 |---|---|
 | M0 Demo | 本文档全部内容 |
 | M1 | 多 profile 实例管理、CfT 升级机制、崩溃恢复、日志上报 |
-| M2 | LLM 网关（OpenAI-compatible 透传 + 鉴权计量）、账户服务、插件 token 化、App↔插件本地 WS hub（复用上游模式） |
+| M2 | LLM 网关（OpenAI-compatible 透传 + 鉴权计量）、账户服务、插件 token 化、一次性 localhost 会话交接；后续如需 Agent 控制再接 App↔插件本地 WS hub |
 | M3 | macOS 重签 + 公证流水线、Windows 签名、electron-updater 接入、官网分发 |

@@ -3,10 +3,17 @@ import path from 'node:path'
 import type { BrowserProfileStore } from './BrowserProfileStore'
 import type { BrowserResources } from './BrowserResources'
 import type { BrowserStatus, BrowserSupervisor } from './BrowserSupervisor'
+import type { ExtensionSessionHandoff } from './ExtensionSessionHandoff'
+import type {
+	AuthLoginInput,
+	LauncherAuthSession,
+	PublicCloudAuthSession,
+} from './LauncherAuthSession'
 import type { LauncherLogStore } from './LauncherLogStore'
 import type { DeepPartial, LauncherSettings, LauncherSettingsStore } from './LauncherSettingsStore'
 import type { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import type { TokenUsageStore } from './TokenUsageStore'
+import type { UsageCloudClient } from './UsageCloudClient'
 
 export interface IpcMainLike {
 	handle(channel: string, handler: (...args: unknown[]) => unknown): void
@@ -32,6 +39,10 @@ export interface LaunchResult {
 
 export type OpenLogsResult = LaunchResult
 
+export interface AuthSessionResult extends LaunchResult {
+	session?: PublicCloudAuthSession | null
+}
+
 export interface DesktopBridgeOptions {
 	ipcMain: IpcMainLike
 	supervisor: Pick<
@@ -46,6 +57,9 @@ export interface DesktopBridgeOptions {
 	settingsStore: Pick<LauncherSettingsStore, 'get' | 'update'>
 	telemetryIngest: Pick<LauncherTelemetryIngest, 'ingest'>
 	tokenUsageStore: Pick<TokenUsageStore, 'summary'>
+	usageCloudClient: Pick<UsageCloudClient, 'summary'>
+	authSession: Pick<LauncherAuthSession, 'login' | 'logout' | 'getSession' | 'getHandoffSession'>
+	extensionSessionHandoff: Pick<ExtensionSessionHandoff, 'run'>
 	resources: BrowserResources
 	getAppVersion: () => string
 	getShellInfo: () => AppShellInfo
@@ -97,11 +111,17 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		'browser:renameProfile',
 		async (
 			_event: unknown,
-			profileId: string,
-			displayName: string,
+			profileId: unknown,
+			displayName: unknown,
 		): Promise<ProfileMutationResult> => {
 			try {
-				return { ok: true, profile: await options.profileStore.rename(profileId, displayName) }
+				return {
+					ok: true,
+					profile: await options.profileStore.rename(
+						requireStringArg(profileId, 'profileId'),
+						requireStringArg(displayName, 'displayName'),
+					),
+				}
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
 			}
@@ -110,9 +130,12 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 
 	options.ipcMain.handle(
 		'browser:duplicateProfile',
-		async (_event: unknown, profileId: string): Promise<ProfileMutationResult> => {
+		async (_event: unknown, profileId: unknown): Promise<ProfileMutationResult> => {
 			try {
-				return { ok: true, profile: await options.profileStore.duplicate(profileId) }
+				return {
+					ok: true,
+					profile: await options.profileStore.duplicate(requireStringArg(profileId, 'profileId')),
+				}
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
 			}
@@ -121,9 +144,12 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 
 	options.ipcMain.handle(
 		'browser:removeProfile',
-		async (_event: unknown, profileId: string): Promise<ProfileMutationResult> => {
+		async (_event: unknown, profileId: unknown): Promise<ProfileMutationResult> => {
 			try {
-				return { ok: true, profile: await options.profileStore.remove(profileId) }
+				return {
+					ok: true,
+					profile: await options.profileStore.remove(requireStringArg(profileId, 'profileId')),
+				}
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
 			}
@@ -132,11 +158,14 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 
 	options.ipcMain.handle(
 		'browser:openProfileFolder',
-		async (_event: unknown, profileId: string): Promise<LaunchResult> => {
+		async (_event: unknown, profileId: unknown): Promise<LaunchResult> => {
 			try {
-				const profile = (await options.profileStore.list()).find((item) => item.id === profileId)
+				const requestedProfileId = requireStringArg(profileId, 'profileId')
+				const profile = (await options.profileStore.list()).find(
+					(item) => item.id === requestedProfileId,
+				)
 				if (!profile) {
-					throw new Error(`Unknown browser profile: ${profileId}`)
+					throw new Error(`Unknown browser profile: ${requestedProfileId}`)
 				}
 				const message = await options.openPath(profile.userDataDir)
 				if (message.length > 0) {
@@ -151,12 +180,13 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 
 	options.ipcMain.handle(
 		'browser:launchProfile',
-		async (_event: unknown, profileId: string): Promise<LaunchResult> => {
+		async (_event: unknown, profileId: unknown): Promise<LaunchResult> => {
 			try {
-				await options.supervisor.launch(profileId, {
+				const requestedProfileId = requireStringArg(profileId, 'profileId')
+				await options.supervisor.launch(requestedProfileId, {
 					startUrl: await launcherStartUrl(options.settingsStore),
 				})
-				await options.profileStore.touch(profileId)
+				await options.profileStore.touch(requestedProfileId)
 				return { ok: true }
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -166,9 +196,9 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 
 	options.ipcMain.handle(
 		'browser:stopProfile',
-		async (_event: unknown, profileId: string): Promise<LaunchResult> => {
+		async (_event: unknown, profileId: unknown): Promise<LaunchResult> => {
 			try {
-				await options.supervisor.stop(profileId)
+				await options.supervisor.stop(requireStringArg(profileId, 'profileId'))
 				return { ok: true }
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -231,12 +261,9 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 
 	options.ipcMain.handle(
 		'settings:update',
-		async (
-			_event: unknown,
-			patch: DeepPartial<LauncherSettings>,
-		): Promise<SettingsMutationResult> => {
+		async (_event: unknown, patch: unknown): Promise<SettingsMutationResult> => {
 			try {
-				return { ok: true, settings: await options.settingsStore.update(patch) }
+				return { ok: true, settings: await options.settingsStore.update(asSettingsPatch(patch)) }
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
 			}
@@ -244,8 +271,56 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	)
 
 	options.ipcMain.handle('tokens:getSummary', async () => {
-		return options.tokenUsageStore.summary()
+		try {
+			return await options.usageCloudClient.summary()
+		} catch {
+			return options.tokenUsageStore.summary()
+		}
 	})
+
+	options.ipcMain.handle(
+		'auth:login',
+		async (_event: unknown, input?: unknown): Promise<AuthSessionResult> => {
+			try {
+				return { ok: true, session: await options.authSession.login(asAuthLoginInput(input)) }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
+
+	options.ipcMain.handle('auth:getSession', async (): Promise<AuthSessionResult> => {
+		try {
+			return { ok: true, session: await options.authSession.getSession() }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
+	})
+
+	options.ipcMain.handle('auth:logout', async (): Promise<LaunchResult> => {
+		try {
+			await options.authSession.logout()
+			return { ok: true }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
+	})
+
+	options.ipcMain.handle(
+		'auth:handoffToExtension',
+		async (_event: unknown, profileId?: unknown): Promise<LaunchResult> => {
+			try {
+				const handoffSession = await options.authSession.getHandoffSession()
+				const targetProfileId = typeof profileId === 'string' && profileId ? profileId : 'default'
+				const result = await options.extensionSessionHandoff.run(handoffSession, async (url) => {
+					await options.supervisor.launch(targetProfileId, { startUrl: url })
+				})
+				return result.ok ? { ok: true } : { ok: false, error: result.error }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
 
 	options.ipcMain.handle('telemetry:ingest', async (_event: unknown, payload?: unknown) => {
 		try {
@@ -308,4 +383,26 @@ function toUserSafeMessage(error: unknown): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
 	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+}
+
+function asAuthLoginInput(value: unknown): AuthLoginInput {
+	if (!value || typeof value !== 'object') {
+		return { username: '', password: '' }
+	}
+	const record = value as Record<string, unknown>
+	return {
+		username: typeof record.username === 'string' ? record.username : '',
+		password: typeof record.password === 'string' ? record.password : '',
+	}
+}
+
+function asSettingsPatch(value: unknown): DeepPartial<LauncherSettings> {
+	return asRecord(value) as DeepPartial<LauncherSettings>
+}
+
+function requireStringArg(value: unknown, label: string): string {
+	if (typeof value !== 'string' || value.length === 0) {
+		throw new Error(`Invalid ${label}`)
+	}
+	return value
 }

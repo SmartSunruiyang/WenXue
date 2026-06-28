@@ -12568,7 +12568,7 @@ const createLucideIcon = (iconName, iconNode) => {
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$n = [
+const __iconNode$p = [
   [
     "path",
     {
@@ -12577,23 +12577,46 @@ const __iconNode$n = [
     }
   ]
 ];
-const Activity = createLucideIcon("activity", __iconNode$n);
+const Activity = createLucideIcon("activity", __iconNode$p);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$m = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
-const Check = createLucideIcon("check", __iconNode$m);
+const __iconNode$o = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
+const Check = createLucideIcon("check", __iconNode$o);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$l = [["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]];
-const ChevronDown = createLucideIcon("chevron-down", __iconNode$l);
+const __iconNode$n = [["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]];
+const ChevronDown = createLucideIcon("chevron-down", __iconNode$n);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$m = [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8", key: "1h4pet" }],
+  ["path", { d: "M12 18V6", key: "zqpxq5" }]
+];
+const CircleDollarSign = createLucideIcon("circle-dollar-sign", __iconNode$m);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$l = [
+  ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2", key: "17jyea" }],
+  ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2", key: "zix9uf" }]
+];
+const Copy = createLucideIcon("copy", __iconNode$l);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12601,11 +12624,11 @@ const ChevronDown = createLucideIcon("chevron-down", __iconNode$l);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$k = [
-  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
-  ["path", { d: "M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8", key: "1h4pet" }],
-  ["path", { d: "M12 18V6", key: "zqpxq5" }]
+  ["path", { d: "M12 15V3", key: "m9g1x1" }],
+  ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
+  ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
 ];
-const CircleDollarSign = createLucideIcon("circle-dollar-sign", __iconNode$k);
+const Download = createLucideIcon("download", __iconNode$k);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12613,29 +12636,6 @@ const CircleDollarSign = createLucideIcon("circle-dollar-sign", __iconNode$k);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$j = [
-  ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2", key: "17jyea" }],
-  ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2", key: "zix9uf" }]
-];
-const Copy = createLucideIcon("copy", __iconNode$j);
-/**
- * @license lucide-react v1.17.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */
-const __iconNode$i = [
-  ["path", { d: "M12 15V3", key: "m9g1x1" }],
-  ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
-  ["path", { d: "m7 10 5 5 5-5", key: "brsn70" }]
-];
-const Download = createLucideIcon("download", __iconNode$i);
-/**
- * @license lucide-react v1.17.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */
-const __iconNode$h = [
   ["path", { d: "M21.54 15H17a2 2 0 0 0-2 2v4.54", key: "1djwo0" }],
   [
     "path",
@@ -12647,28 +12647,28 @@ const __iconNode$h = [
   ["path", { d: "M11 21.95V18a2 2 0 0 0-2-2a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05", key: "14pb5j" }],
   ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }]
 ];
-const Earth = createLucideIcon("earth", __iconNode$h);
+const Earth = createLucideIcon("earth", __iconNode$j);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$g = [
+const __iconNode$i = [
   ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }],
   ["path", { d: "M3 7V5a2 2 0 0 1 2-2h2", key: "aa7l1z" }],
   ["path", { d: "M17 3h2a2 2 0 0 1 2 2v2", key: "4qcy5o" }],
   ["path", { d: "M21 17v2a2 2 0 0 1-2 2h-2", key: "6vwrx8" }],
   ["path", { d: "M7 21H5a2 2 0 0 1-2-2v-2", key: "ioqczr" }]
 ];
-const Focus = createLucideIcon("focus", __iconNode$g);
+const Focus = createLucideIcon("focus", __iconNode$i);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$f = [
+const __iconNode$h = [
   [
     "path",
     {
@@ -12677,7 +12677,27 @@ const __iconNode$f = [
     }
   ]
 ];
-const FolderOpen = createLucideIcon("folder-open", __iconNode$f);
+const FolderOpen = createLucideIcon("folder-open", __iconNode$h);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$g = [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "M12 16v-4", key: "1dtifu" }],
+  ["path", { d: "M12 8h.01", key: "e9boi3" }]
+];
+const Info = createLucideIcon("info", __iconNode$g);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$f = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
+const LoaderCircle = createLucideIcon("loader-circle", __iconNode$f);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12685,19 +12705,23 @@ const FolderOpen = createLucideIcon("folder-open", __iconNode$f);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$e = [
-  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
-  ["path", { d: "M12 16v-4", key: "1dtifu" }],
-  ["path", { d: "M12 8h.01", key: "e9boi3" }]
+  ["path", { d: "m10 17 5-5-5-5", key: "1bsop3" }],
+  ["path", { d: "M15 12H3", key: "6jk70r" }],
+  ["path", { d: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4", key: "u53s6r" }]
 ];
-const Info = createLucideIcon("info", __iconNode$e);
+const LogIn = createLucideIcon("log-in", __iconNode$e);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$d = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
-const LoaderCircle = createLucideIcon("loader-circle", __iconNode$d);
+const __iconNode$d = [
+  ["path", { d: "m16 17 5-5-5-5", key: "1bji2h" }],
+  ["path", { d: "M21 12H9", key: "dn1m92" }],
+  ["path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", key: "1uf3rs" }]
+];
+const LogOut = createLucideIcon("log-out", __iconNode$d);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12705,32 +12729,31 @@ const LoaderCircle = createLucideIcon("loader-circle", __iconNode$d);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$c = [
-  ["path", { d: "m16 17 5-5-5-5", key: "1bji2h" }],
-  ["path", { d: "M21 12H9", key: "dn1m92" }],
-  ["path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", key: "1uf3rs" }]
-];
-const LogOut = createLucideIcon("log-out", __iconNode$c);
-/**
- * @license lucide-react v1.17.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */
-const __iconNode$b = [
   ["path", { d: "M15 3h6v6", key: "1q9fwt" }],
   ["path", { d: "m21 3-7 7", key: "1l2asr" }],
   ["path", { d: "m3 21 7-7", key: "tjx5ai" }],
   ["path", { d: "M9 21H3v-6", key: "wtvkvv" }]
 ];
-const Maximize2 = createLucideIcon("maximize-2", __iconNode$b);
+const Maximize2 = createLucideIcon("maximize-2", __iconNode$c);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
-const __iconNode$a = [["path", { d: "M5 12h14", key: "1ays0h" }]];
-const Minus = createLucideIcon("minus", __iconNode$a);
+const __iconNode$b = [["path", { d: "M5 12h14", key: "1ays0h" }]];
+const Minus = createLucideIcon("minus", __iconNode$b);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$a = [
+  ["rect", { x: "14", y: "3", width: "5", height: "18", rx: "1", key: "kaeet6" }],
+  ["rect", { x: "5", y: "3", width: "5", height: "18", rx: "1", key: "1wsw3u" }]
+];
+const Pause = createLucideIcon("pause", __iconNode$a);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12738,10 +12761,16 @@ const Minus = createLucideIcon("minus", __iconNode$a);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$9 = [
-  ["rect", { x: "14", y: "3", width: "5", height: "18", rx: "1", key: "kaeet6" }],
-  ["rect", { x: "5", y: "3", width: "5", height: "18", rx: "1", key: "1wsw3u" }]
+  [
+    "path",
+    {
+      d: "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",
+      key: "1a8usu"
+    }
+  ],
+  ["path", { d: "m15 5 4 4", key: "1mk7zo" }]
 ];
-const Pause = createLucideIcon("pause", __iconNode$9);
+const Pencil = createLucideIcon("pencil", __iconNode$9);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12752,13 +12781,12 @@ const __iconNode$8 = [
   [
     "path",
     {
-      d: "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",
-      key: "1a8usu"
+      d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z",
+      key: "10ikf1"
     }
-  ],
-  ["path", { d: "m15 5 4 4", key: "1mk7zo" }]
+  ]
 ];
-const Pencil = createLucideIcon("pencil", __iconNode$8);
+const Play = createLucideIcon("play", __iconNode$8);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12766,15 +12794,10 @@ const Pencil = createLucideIcon("pencil", __iconNode$8);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$7 = [
-  [
-    "path",
-    {
-      d: "M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z",
-      key: "10ikf1"
-    }
-  ]
+  ["path", { d: "M5 12h14", key: "1ays0h" }],
+  ["path", { d: "M12 5v14", key: "s699le" }]
 ];
-const Play = createLucideIcon("play", __iconNode$7);
+const Plus = createLucideIcon("plus", __iconNode$7);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12782,17 +12805,6 @@ const Play = createLucideIcon("play", __iconNode$7);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$6 = [
-  ["path", { d: "M5 12h14", key: "1ays0h" }],
-  ["path", { d: "M12 5v14", key: "s699le" }]
-];
-const Plus = createLucideIcon("plus", __iconNode$6);
-/**
- * @license lucide-react v1.17.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */
-const __iconNode$5 = [
   ["path", { d: "M15 12h-5", key: "r7krc0" }],
   ["path", { d: "M15 8h-5", key: "1khuty" }],
   ["path", { d: "M19 17V5a2 2 0 0 0-2-2H4", key: "zz82l3" }],
@@ -12804,7 +12816,18 @@ const __iconNode$5 = [
     }
   ]
 ];
-const ScrollText = createLucideIcon("scroll-text", __iconNode$5);
+const ScrollText = createLucideIcon("scroll-text", __iconNode$6);
+/**
+ * @license lucide-react v1.17.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const __iconNode$5 = [
+  ["path", { d: "m21 21-4.34-4.34", key: "14j7rj" }],
+  ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
+];
+const Search = createLucideIcon("search", __iconNode$5);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12812,10 +12835,16 @@ const ScrollText = createLucideIcon("scroll-text", __iconNode$5);
  * See the LICENSE file in the root directory of this source tree.
  */
 const __iconNode$4 = [
-  ["path", { d: "m21 21-4.34-4.34", key: "14j7rj" }],
-  ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
+  [
+    "path",
+    {
+      d: "M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915",
+      key: "1i5ecw"
+    }
+  ],
+  ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
 ];
-const Search = createLucideIcon("search", __iconNode$4);
+const Settings = createLucideIcon("settings", __iconNode$4);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12826,13 +12855,13 @@ const __iconNode$3 = [
   [
     "path",
     {
-      d: "M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915",
-      key: "1i5ecw"
+      d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+      key: "oel41y"
     }
   ],
-  ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
+  ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
 ];
-const Settings = createLucideIcon("settings", __iconNode$3);
+const ShieldCheck = createLucideIcon("shield-check", __iconNode$3);
 /**
  * @license lucide-react v1.17.0 - ISC
  *
@@ -12946,6 +12975,7 @@ function App() {
   const [logs, setLogs] = reactExports.useState([]);
   const [settings, setSettings] = reactExports.useState(defaultSettings);
   const [tokens, setTokens] = reactExports.useState(emptyTokenSummary);
+  const [authSession, setAuthSession] = reactExports.useState(null);
   const [versions, setVersions] = reactExports.useState({
     app: "unknown",
     browser: "unknown",
@@ -12960,6 +12990,9 @@ function App() {
   const [logQuery, setLogQuery] = reactExports.useState("");
   const [logLevels, setLogLevels] = reactExports.useState(["info", "warn", "error"]);
   const [activeLogSources, setActiveLogSources] = reactExports.useState(logSources);
+  const [authUsername, setAuthUsername] = reactExports.useState("");
+  const [authPassword, setAuthPassword] = reactExports.useState("");
+  const [authBusy, setAuthBusy] = reactExports.useState(false);
   const [followLogs, setFollowLogs] = reactExports.useState(true);
   const [avatarOpen, setAvatarOpen] = reactExports.useState(false);
   const [savedTick, setSavedTick] = reactExports.useState(false);
@@ -12988,6 +13021,7 @@ function App() {
         nextLogs,
         nextSettings,
         nextTokens,
+        nextAuth,
         nextVersions,
         nextShellInfo
       ] = await Promise.all([
@@ -12996,6 +13030,7 @@ function App() {
         window.wenxue.logs.query({ limit: 600 }),
         window.wenxue.settings.get(),
         window.wenxue.tokens.getSummary(),
+        window.wenxue.auth.getSession(),
         window.wenxue.app.getVersions(),
         window.wenxue.app.getShellInfo()
       ]);
@@ -13005,6 +13040,7 @@ function App() {
       setLogs(nextLogs.sort((a, b) => a.ts - b.ts));
       setSettings(nextSettings);
       setTokens(nextTokens);
+      if (nextAuth.ok) setAuthSession(nextAuth.session ?? null);
       setVersions(nextVersions);
       setShellInfo(nextShellInfo);
     };
@@ -13148,6 +13184,47 @@ function App() {
     }
     setLogs([]);
   }, []);
+  const loginCloudUser = reactExports.useCallback(async () => {
+    setAuthBusy(true);
+    try {
+      const result = await window.wenxue.auth.login({
+        username: authUsername,
+        password: authPassword
+      });
+      if (!result.ok || !result.session) {
+        setMessage(result.error ?? "产品用户登录失败");
+        return;
+      }
+      setAuthSession(result.session);
+      setAuthPassword("");
+      setMessage("产品用户已登录");
+    } finally {
+      setAuthBusy(false);
+    }
+  }, [authPassword, authUsername]);
+  const logoutCloudUser = reactExports.useCallback(async () => {
+    const result = await window.wenxue.auth.logout();
+    if (!result.ok) {
+      setMessage(result.error ?? "退出登录失败");
+      return;
+    }
+    setAuthSession(null);
+    setAuthPassword("");
+    setMessage("已退出产品用户");
+  }, []);
+  const handoffCloudSession = reactExports.useCallback(async () => {
+    setAuthBusy(true);
+    try {
+      const result = await window.wenxue.auth.handoffToExtension();
+      if (!result.ok) {
+        setMessage(result.error ?? "会话交接失败");
+        return;
+      }
+      setMessage("会话已交接到问学插件");
+    } finally {
+      setAuthBusy(false);
+    }
+  }, []);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: `app-shell ${shellInfo.frameless ? "app-shell--frameless" : ""}`, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "aside",
@@ -13219,18 +13296,27 @@ function App() {
         BrowserPage,
         {
           addProfile,
+          authBusy,
+          authPassword,
+          authSession,
+          authUsername,
           commitRename,
           draftName,
           duplicateProfile,
           editingId,
+          handoffCloudSession,
           launchProfile,
           launchSelected,
+          loginCloudUser,
+          logoutCloudUser,
           openProfileFolder,
           profileSort,
           profiles: visibleProfiles,
           query,
           removeProfile,
           selectedIds,
+          setAuthPassword,
+          setAuthUsername,
           setDraftName,
           setEditingId,
           setProfileSort,
@@ -13441,6 +13527,20 @@ function BrowserPage(props) {
         ] })
       ] })
     ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      CloudAccountPanel,
+      {
+        busy: props.authBusy,
+        onHandoff: props.handoffCloudSession,
+        onLogin: props.loginCloudUser,
+        onLogout: props.logoutCloudUser,
+        password: props.authPassword,
+        session: props.authSession,
+        setPassword: props.setAuthPassword,
+        setUsername: props.setAuthUsername,
+        username: props.authUsername
+      }
+    ),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "metric-row", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(MetricCard, { label: "浏览器画像", value: props.profiles.length.toString() }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(MetricCard, { label: "运行中", value: runningCount.toString(), tone: "green" }),
@@ -13503,6 +13603,90 @@ function BrowserPage(props) {
       ),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "soft-button", onClick: () => props.setSelectedIds([]), type: "button", children: "取消选择" })
     ] }) : null
+  ] });
+}
+function CloudAccountPanel({
+  busy,
+  onHandoff,
+  onLogin,
+  onLogout,
+  password,
+  session,
+  setPassword,
+  setUsername,
+  username
+}) {
+  if (session) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "cloud-account-panel cloud-account-panel--signed-in", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "cloud-account-panel__identity", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cloud-account-panel__icon", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ShieldCheck, { size: 18 }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: session.username || session.name || "产品用户" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono-text", children: session.uid })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "cloud-account-panel__meta", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: session.region }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: formatExpiry(session.expiresAt) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "cloud-account-panel__actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: "primary-button",
+            disabled: busy,
+            onClick: () => void onHandoff(),
+            type: "button",
+            children: [
+              busy ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "spin", size: 15 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(ShieldCheck, { size: 15 }),
+              "交接到插件"
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "soft-button", disabled: busy, onClick: () => void onLogout(), type: "button", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(LogOut, { size: 15 }),
+          "退出登录"
+        ] })
+      ] })
+    ] });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "cloud-account-panel", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "cloud-account-panel__identity", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cloud-account-panel__icon", children: /* @__PURE__ */ jsxRuntimeExports.jsx(LogIn, { size: 18 }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "产品用户登录" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "CloudBase 注册用户" })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "cloud-account-panel__form", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "input",
+        {
+          autoComplete: "username",
+          onChange: (event) => setUsername(event.target.value),
+          placeholder: "用户名",
+          type: "text",
+          value: username
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "input",
+        {
+          autoComplete: "current-password",
+          onChange: (event) => setPassword(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === "Enter") void onLogin();
+          },
+          placeholder: "密码",
+          type: "password",
+          value: password
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "primary-button", disabled: busy, onClick: () => void onLogin(), type: "button", children: [
+        busy ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "spin", size: 15 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(LogIn, { size: 15 }),
+        "登录"
+      ] })
+    ] })
   ] });
 }
 function MetricCard({
@@ -14225,7 +14409,7 @@ function EmptyState({
   title
 }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "empty-state", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "empty-state__mark", children: "问" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "empty-state__mark", children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "logo.png", alt: "" }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: title }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "primary-button", onClick: action, type: "button", children: [
@@ -14265,6 +14449,12 @@ function formatTime(ts) {
 }
 function formatNumber(value) {
   return new Intl.NumberFormat("zh-CN").format(value);
+}
+function formatExpiry(expiresAt) {
+  const diff = expiresAt - Date.now();
+  if (diff <= 0) return "已过期";
+  if (diff < 36e5) return `${Math.max(1, Math.floor(diff / 6e4))} 分钟后过期`;
+  return `${Math.floor(diff / 36e5)} 小时后过期`;
 }
 function exportLauncherLogs(logs, format) {
   if (logs.length === 0) return;

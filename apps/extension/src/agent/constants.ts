@@ -1,9 +1,13 @@
 import type { LLMConfig } from '@page-agent/llms'
 
-// Default LLM — Alibaba Cloud Bailian (DashScope)
-export const DEMO_MODEL = 'qwen3.7-max'
-export const DEMO_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-export const DEMO_API_KEY = 'sk-a9ac41248a5a4d21b070faf475d0007f'
+export const WENXUE_GATEWAY_BASE_URL =
+	'https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com'
+export const WENXUE_GATEWAY_OPENAI_BASE_URL = `${WENXUE_GATEWAY_BASE_URL}/v1`
+
+// Default built-in LLM — WenXue CloudBase LLM Gateway.
+export const DEMO_MODEL = 'qwen-plus'
+export const DEMO_BASE_URL = WENXUE_GATEWAY_OPENAI_BASE_URL
+export const DEMO_API_KEY = ''
 
 export const DEMO_CONFIG: LLMConfig = {
 	baseURL: DEMO_BASE_URL,
@@ -11,7 +15,7 @@ export const DEMO_CONFIG: LLMConfig = {
 	apiKey: DEMO_API_KEY,
 }
 
-// Default vision / multimodal model — same DashScope endpoint + demo key
+// Default vision / multimodal model — same gateway endpoint + runtime auth token.
 export const DEMO_VISION_MODEL = 'qwen3.7-plus'
 
 export const DEMO_VISION_CONFIG: LLMConfig = {
@@ -20,8 +24,11 @@ export const DEMO_VISION_CONFIG: LLMConfig = {
 	apiKey: DEMO_API_KEY,
 }
 
-/** Legacy testing endpoints that should be auto-migrated to DEMO_BASE_URL */
+const LEGACY_DASHSCOPE_OPENAI_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+
+/** Legacy direct/testing endpoints that should be auto-migrated to DEMO_BASE_URL */
 export const LEGACY_TESTING_ENDPOINTS = [
+	LEGACY_DASHSCOPE_OPENAI_BASE_URL,
 	'https://hwcxiuzfylggtcktqgij.supabase.co/functions/v1/llm-testing-proxy',
 ]
 

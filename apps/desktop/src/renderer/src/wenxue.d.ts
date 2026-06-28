@@ -35,6 +35,21 @@ export interface AppShellInfo {
 	isMaximized: boolean
 }
 
+export interface PublicCloudAuthSession {
+	uid: string
+	username?: string
+	name?: string
+	type: 'external'
+	expiresAt: number
+	envId: string
+	region: string
+	gatewayBaseUrl: string
+}
+
+export interface AuthSessionResult extends LaunchResult {
+	session?: PublicCloudAuthSession | null
+}
+
 export interface LauncherLogEntry {
 	id: number
 	ts: number
@@ -157,6 +172,12 @@ declare global {
 			}
 			tokens: {
 				getSummary(): Promise<TokenUsageSummary>
+			}
+			auth: {
+				login(input: { username: string; password: string }): Promise<AuthSessionResult>
+				getSession(): Promise<AuthSessionResult>
+				logout(): Promise<LaunchResult>
+				handoffToExtension(profileId?: string): Promise<LaunchResult>
 			}
 			app: {
 				getVersions(): Promise<AppVersions>

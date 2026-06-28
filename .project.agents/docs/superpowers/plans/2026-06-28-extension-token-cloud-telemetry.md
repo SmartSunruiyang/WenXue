@@ -1,5 +1,7 @@
 # 扩展 Token 用量上云 + CloudBase 登录 — 实施计划（里程碑级）
 
+> ⚠️ **已废弃 / SUPERSEDED（2026-06-28）**：被 [cloudbase-llm-gateway.md](./2026-06-28-cloudbase-llm-gateway.md) 取代（用户改为自建 LLM 网关，服务端计量）。本计划仅留作历史。
+
 > **For agentic workers:** 关联设计：[../specs/2026-06-28-extension-token-cloud-telemetry-design.md](../specs/2026-06-28-extension-token-cloud-telemetry-design.md)。本计划为**里程碑级**：每个里程碑在执行时（X/Y 锁定 + CloudBase env 就绪后）再用 `superpowers:subagent-driven-development` 展开为 TDD 逐步任务，并按 `SELF_CONSTRAINTS §B6` 写执行日志。Steps 用 `- [ ]` 跟踪。
 
 **Goal:** 让启动器 tokens 页显示**按登录用户**归属的扩展 token 消耗——扩展统计单次用量、上报到 CloudBase、启动器从云端读；并引入 CloudBase Auth 登录。

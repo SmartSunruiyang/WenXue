@@ -74,7 +74,7 @@ export default defineConfig({
 			default_path: 'sidepanel/index.html',
 		},
 		externally_connectable: {
-			matches: ['http://localhost/*'],
+			matches: ['http://localhost/*', 'http://127.0.0.1/*'],
 		},
 	},
 })

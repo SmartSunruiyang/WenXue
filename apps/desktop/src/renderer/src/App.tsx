@@ -11,6 +11,7 @@ import {
 	Globe2,
 	Info,
 	LoaderCircle,
+	LogIn,
 	LogOut,
 	Maximize2,
 	Minus,
@@ -21,6 +22,7 @@ import {
 	ScrollText,
 	Search,
 	Settings,
+	ShieldCheck,
 	Square,
 	Trash2,
 	X,
@@ -36,6 +38,7 @@ import type {
 	LauncherSettings,
 	LauncherSettingsPatch,
 	LogLevel,
+	PublicCloudAuthSession,
 	TokenUsageBucket,
 	TokenUsageSummary,
 } from './wenxue'
@@ -131,6 +134,7 @@ export default function App() {
 	const [logs, setLogs] = useState<LauncherLogEntry[]>([])
 	const [settings, setSettings] = useState<LauncherSettings>(defaultSettings)
 	const [tokens, setTokens] = useState<TokenUsageSummary>(emptyTokenSummary)
+	const [authSession, setAuthSession] = useState<PublicCloudAuthSession | null>(null)
 	const [versions, setVersions] = useState<AppVersions>({
 		app: 'unknown',
 		browser: 'unknown',
@@ -145,6 +149,9 @@ export default function App() {
 	const [logQuery, setLogQuery] = useState('')
 	const [logLevels, setLogLevels] = useState<LogLevel[]>(['info', 'warn', 'error'])
 	const [activeLogSources, setActiveLogSources] = useState<LogSource[]>(logSources)
+	const [authUsername, setAuthUsername] = useState('')
+	const [authPassword, setAuthPassword] = useState('')
+	const [authBusy, setAuthBusy] = useState(false)
 	const [followLogs, setFollowLogs] = useState(true)
 	const [avatarOpen, setAvatarOpen] = useState(false)
 	const [savedTick, setSavedTick] = useState(false)
@@ -177,6 +184,7 @@ export default function App() {
 				nextLogs,
 				nextSettings,
 				nextTokens,
+				nextAuth,
 				nextVersions,
 				nextShellInfo,
 			] = await Promise.all([
@@ -185,6 +193,7 @@ export default function App() {
 				window.wenxue.logs.query({ limit: 600 }),
 				window.wenxue.settings.get(),
 				window.wenxue.tokens.getSummary(),
+				window.wenxue.auth.getSession(),
 				window.wenxue.app.getVersions(),
 				window.wenxue.app.getShellInfo(),
 			])
@@ -194,6 +203,7 @@ export default function App() {
 			setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
 			setSettings(nextSettings)
 			setTokens(nextTokens)
+			if (nextAuth.ok) setAuthSession(nextAuth.session ?? null)
 			setVersions(nextVersions)
 			setShellInfo(nextShellInfo)
 		}
@@ -367,6 +377,50 @@ export default function App() {
 		setLogs([])
 	}, [])
 
+	const loginCloudUser = useCallback(async () => {
+		setAuthBusy(true)
+		try {
+			const result = await window.wenxue.auth.login({
+				username: authUsername,
+				password: authPassword,
+			})
+			if (!result.ok || !result.session) {
+				setMessage(result.error ?? '产品用户登录失败')
+				return
+			}
+			setAuthSession(result.session)
+			setAuthPassword('')
+			setMessage('产品用户已登录')
+		} finally {
+			setAuthBusy(false)
+		}
+	}, [authPassword, authUsername])
+
+	const logoutCloudUser = useCallback(async () => {
+		const result = await window.wenxue.auth.logout()
+		if (!result.ok) {
+			setMessage(result.error ?? '退出登录失败')
+			return
+		}
+		setAuthSession(null)
+		setAuthPassword('')
+		setMessage('已退出产品用户')
+	}, [])
+
+	const handoffCloudSession = useCallback(async () => {
+		setAuthBusy(true)
+		try {
+			const result = await window.wenxue.auth.handoffToExtension()
+			if (!result.ok) {
+				setMessage(result.error ?? '会话交接失败')
+				return
+			}
+			setMessage('会话已交接到问学插件')
+		} finally {
+			setAuthBusy(false)
+		}
+	}, [])
+
 	return (
 		<main className={`app-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
 			<aside
@@ -431,18 +485,27 @@ export default function App() {
 				{route === 'browsers' ? (
 					<BrowserPage
 						addProfile={addProfile}
+						authBusy={authBusy}
+						authPassword={authPassword}
+						authSession={authSession}
+						authUsername={authUsername}
 						commitRename={commitRename}
 						draftName={draftName}
 						duplicateProfile={duplicateProfile}
 						editingId={editingId}
+						handoffCloudSession={handoffCloudSession}
 						launchProfile={launchProfile}
 						launchSelected={launchSelected}
+						loginCloudUser={loginCloudUser}
+						logoutCloudUser={logoutCloudUser}
 						openProfileFolder={openProfileFolder}
 						profileSort={profileSort}
 						profiles={visibleProfiles}
 						query={query}
 						removeProfile={removeProfile}
 						selectedIds={selectedIds}
+						setAuthPassword={setAuthPassword}
+						setAuthUsername={setAuthUsername}
 						setDraftName={setDraftName}
 						setEditingId={setEditingId}
 						setProfileSort={setProfileSort}
@@ -601,18 +664,27 @@ function AvatarMenu({
 
 interface BrowserPageProps {
 	addProfile: () => void
+	authBusy: boolean
+	authPassword: string
+	authSession: PublicCloudAuthSession | null
+	authUsername: string
 	commitRename: (profileId: string) => void
 	draftName: string
 	duplicateProfile: (profileId: string) => Promise<void>
 	editingId: string | null
+	handoffCloudSession: () => Promise<void>
 	launchProfile: (profileId: string) => Promise<void>
 	launchSelected: () => Promise<void>
+	loginCloudUser: () => Promise<void>
+	logoutCloudUser: () => Promise<void>
 	openProfileFolder: (profileId: string) => Promise<void>
 	profileSort: ProfileSortMode
 	profiles: BrowserProfile[]
 	query: string
 	removeProfile: (profileId: string) => Promise<void>
 	selectedIds: string[]
+	setAuthPassword: (password: string) => void
+	setAuthUsername: (username: string) => void
 	setDraftName: (name: string) => void
 	setEditingId: (profileId: string | null) => void
 	setProfileSort: (mode: ProfileSortMode) => void
@@ -684,6 +756,18 @@ function BrowserPage(props: BrowserPageProps) {
 				</div>
 			</header>
 
+			<CloudAccountPanel
+				busy={props.authBusy}
+				onHandoff={props.handoffCloudSession}
+				onLogin={props.loginCloudUser}
+				onLogout={props.logoutCloudUser}
+				password={props.authPassword}
+				session={props.authSession}
+				setPassword={props.setAuthPassword}
+				setUsername={props.setAuthUsername}
+				username={props.authUsername}
+			/>
+
 			<div className="metric-row">
 				<MetricCard label="浏览器画像" value={props.profiles.length.toString()} />
 				<MetricCard label="运行中" value={runningCount.toString()} tone="green" />
@@ -744,6 +828,100 @@ function BrowserPage(props: BrowserPageProps) {
 				</div>
 			) : null}
 		</div>
+	)
+}
+
+function CloudAccountPanel({
+	busy,
+	onHandoff,
+	onLogin,
+	onLogout,
+	password,
+	session,
+	setPassword,
+	setUsername,
+	username,
+}: {
+	busy: boolean
+	onHandoff: () => Promise<void>
+	onLogin: () => Promise<void>
+	onLogout: () => Promise<void>
+	password: string
+	session: PublicCloudAuthSession | null
+	setPassword: (password: string) => void
+	setUsername: (username: string) => void
+	username: string
+}) {
+	if (session) {
+		return (
+			<section className="cloud-account-panel cloud-account-panel--signed-in">
+				<div className="cloud-account-panel__identity">
+					<div className="cloud-account-panel__icon">
+						<ShieldCheck size={18} />
+					</div>
+					<div>
+						<strong>{session.username || session.name || '产品用户'}</strong>
+						<span className="mono-text">{session.uid}</span>
+					</div>
+				</div>
+				<div className="cloud-account-panel__meta">
+					<span>{session.region}</span>
+					<span>{formatExpiry(session.expiresAt)}</span>
+				</div>
+				<div className="cloud-account-panel__actions">
+					<button
+						className="primary-button"
+						disabled={busy}
+						onClick={() => void onHandoff()}
+						type="button"
+					>
+						{busy ? <LoaderCircle className="spin" size={15} /> : <ShieldCheck size={15} />}
+						交接到插件
+					</button>
+					<button className="soft-button" disabled={busy} onClick={() => void onLogout()} type="button">
+						<LogOut size={15} />
+						退出登录
+					</button>
+				</div>
+			</section>
+		)
+	}
+
+	return (
+		<section className="cloud-account-panel">
+			<div className="cloud-account-panel__identity">
+				<div className="cloud-account-panel__icon">
+					<LogIn size={18} />
+				</div>
+				<div>
+					<strong>产品用户登录</strong>
+					<span>CloudBase 注册用户</span>
+				</div>
+			</div>
+			<div className="cloud-account-panel__form">
+				<input
+					autoComplete="username"
+					onChange={(event) => setUsername(event.target.value)}
+					placeholder="用户名"
+					type="text"
+					value={username}
+				/>
+				<input
+					autoComplete="current-password"
+					onChange={(event) => setPassword(event.target.value)}
+					onKeyDown={(event) => {
+						if (event.key === 'Enter') void onLogin()
+					}}
+					placeholder="密码"
+					type="password"
+					value={password}
+				/>
+				<button className="primary-button" disabled={busy} onClick={() => void onLogin()} type="button">
+					{busy ? <LoaderCircle className="spin" size={15} /> : <LogIn size={15} />}
+					登录
+				</button>
+			</div>
+		</section>
 	)
 }
 
@@ -1528,7 +1706,9 @@ function EmptyState({
 }) {
 	return (
 		<section className="empty-state">
-			<div className="empty-state__mark">问</div>
+			<div className="empty-state__mark">
+				<img src="logo.png" alt="" />
+			</div>
 			<h2>{title}</h2>
 			<p>{children}</p>
 			<button className="primary-button" onClick={action} type="button">
@@ -1578,6 +1758,13 @@ function formatTime(ts: number): string {
 
 function formatNumber(value: number): string {
 	return new Intl.NumberFormat('zh-CN').format(value)
+}
+
+function formatExpiry(expiresAt: number): string {
+	const diff = expiresAt - Date.now()
+	if (diff <= 0) return '已过期'
+	if (diff < 3_600_000) return `${Math.max(1, Math.floor(diff / 60_000))} 分钟后过期`
+	return `${Math.floor(diff / 3_600_000)} 小时后过期`
 }
 
 function exportLauncherLogs(

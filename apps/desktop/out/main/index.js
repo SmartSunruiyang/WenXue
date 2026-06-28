@@ -30,13 +30,14 @@ const childProcess = require("node:child_process");
 require("node:events");
 const os = require("node:os");
 require("node:readline");
-require("node:http");
+const http = require("node:http");
 require("node:https");
 require("node:url");
 const node_util = require("node:util");
 require("node:assert");
 require("node:stream");
 require("node:process");
+const node_crypto = require("node:crypto");
 function createAppLogger(paths, launcherLogStore) {
   log.transports.file.resolvePathFn = () => path.join(paths.logsDir(), "main.log");
   return {
@@ -178,7 +179,7 @@ class BrowserProfileStore {
         return raw.profiles.map((profile) => ({ ...profile }));
       }
     } catch (error) {
-      if (!isMissingFile$3(error)) {
+      if (!isMissingFile$5(error)) {
         throw error;
       }
     }
@@ -205,7 +206,7 @@ function createProfileId() {
 function defaultDisplayName(index) {
   return `浏览器 ${index + 1}`;
 }
-function isMissingFile$3(error) {
+function isMissingFile$5(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 /**
@@ -1103,6 +1104,466 @@ function defaultFocusExisting(binary, argv) {
   const process2 = childProcess.spawn(binary, argv, { detached: true, stdio: "ignore" });
   process2.unref();
 }
+const WENXUE_EXTENSION_ID = "akldabonmimlicnjlflnapfeklbfemhj";
+const DEFAULT_TIMEOUT_MS = 15e3;
+const MAX_COMPLETE_BODY_BYTES = 4096;
+class ExtensionSessionHandoff {
+  constructor(options = {}) {
+    this.extensionId = options.extensionId ?? WENXUE_EXTENSION_ID;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.listenHost = options.listenHost ?? "127.0.0.1";
+    this.publicHost = options.publicHost ?? this.listenHost;
+    this.createHttpServer = options.createHttpServer ?? http.createServer;
+  }
+  async run(session, openUrl) {
+    const nonce = node_crypto.randomUUID();
+    const basePath = `/wenxue-auth-handoff/${nonce}`;
+    let complete = () => void 0;
+    const completion = new Promise((resolve) => {
+      complete = resolve;
+    });
+    const server = this.createHttpServer((request, response) => {
+      this.handleRequest({ request, response, basePath, session, complete });
+    });
+    await listen(server, this.listenHost);
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      await close(server);
+      throw new Error("无法创建本机会话交接服务");
+    }
+    const url = `http://${this.publicHost}:${address.port}${basePath}`;
+    try {
+      await openUrl(url);
+      return await withTimeout(completion, this.timeoutMs);
+    } finally {
+      await close(server);
+    }
+  }
+  handleRequest(input) {
+    const url = new URL(input.request.url ?? "/", "http://localhost");
+    if (input.request.method === "GET" && url.pathname === input.basePath) {
+      writeHtml(input.response, renderHandoffPage(input.session, this.extensionId));
+      return;
+    }
+    if (input.request.method === "POST" && url.pathname === `${input.basePath}/complete`) {
+      void readRequestBody(input.request).then((body) => {
+        const payload = parseCompletionPayload(body);
+        input.complete(payload);
+        writeJson(input.response, payload);
+      });
+      return;
+    }
+    if (url.pathname === "/favicon.ico") {
+      input.response.writeHead(204);
+      input.response.end();
+      return;
+    }
+    input.response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    input.response.end("Not found");
+  }
+}
+function renderHandoffPage(session, extensionId) {
+  const message = JSON.stringify({
+    type: "WENXUE_AUTH_SESSION",
+    session
+  });
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>问学会话交接</title>
+<style>
+body{margin:0;display:grid;min-height:100vh;place-items:center;background:#fff;color:#111;font:14px system-ui,-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+main{display:grid;gap:10px;text-align:center}
+strong{font-size:18px}
+span{color:#666}
+</style>
+</head>
+<body>
+<main>
+<strong id="title">正在连接问学插件</strong>
+<span id="detail">请保持此标签页打开。</span>
+</main>
+<script>
+const message = ${message};
+const title = document.getElementById('title');
+const detail = document.getElementById('detail');
+function finish(payload) {
+  fetch(location.pathname + '/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).catch(() => {});
+}
+if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+  title.textContent = '无法连接问学插件';
+  detail.textContent = '当前浏览器未开放外部扩展消息。';
+  finish({ ok: false, error: 'chrome.runtime.sendMessage unavailable' });
+} else {
+  chrome.runtime.sendMessage(${JSON.stringify(extensionId)}, message, (response) => {
+    const lastError = chrome.runtime.lastError && chrome.runtime.lastError.message;
+    if (lastError || !response || response.ok !== true) {
+      title.textContent = '会话交接失败';
+      detail.textContent = lastError || (response && response.error) || '问学插件未返回成功状态。';
+      finish({ ok: false, error: detail.textContent });
+      return;
+    }
+    title.textContent = '会话已交接';
+    detail.textContent = '可以关闭此标签页并继续使用问学。';
+    finish({ ok: true });
+  });
+}
+<\/script>
+</body>
+</html>`;
+}
+function writeHtml(response, html) {
+  response.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store"
+  });
+  response.end(html);
+}
+function writeJson(response, payload) {
+  response.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store"
+  });
+  response.end(JSON.stringify(payload));
+}
+async function listen(server, host) {
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, host, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+}
+async function close(server) {
+  await new Promise((resolve) => {
+    server.close(() => resolve());
+  });
+}
+async function withTimeout(promise, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("问学插件会话交接超时"));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function readRequestBody(request) {
+  let body = "";
+  for await (const chunk of request) {
+    body += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+    if (body.length > MAX_COMPLETE_BODY_BYTES) break;
+  }
+  return body;
+}
+function parseCompletionPayload(body) {
+  try {
+    const parsed = JSON.parse(body);
+    if (isRecord$2(parsed) && parsed.ok === true) return { ok: true };
+    if (isRecord$2(parsed) && parsed.ok === false) {
+      return {
+        ok: false,
+        error: typeof parsed.error === "string" ? parsed.error : "问学插件会话交接失败"
+      };
+    }
+  } catch {
+    return { ok: false, error: "问学插件会话交接响应格式异常" };
+  }
+  return { ok: false, error: "问学插件会话交接响应格式异常" };
+}
+function isRecord$2(value) {
+  return typeof value === "object" && value !== null;
+}
+const WENXUE_CLOUDBASE_ENV_ID = "wenxue-d8gz76tacc3659f05";
+const WENXUE_CLOUDBASE_REGION = "ap-shanghai";
+const WENXUE_GATEWAY_BASE_URL = "https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com";
+const AUTH_SESSION_FILE = "cloud-auth-session.json";
+const AUTH_DEVICE_FILE = "cloud-auth-device.json";
+const TOKEN_REFRESH_MARGIN_MS = 6e4;
+class LauncherAuthSession {
+  constructor(paths, options = {}) {
+    this.cachedSession = null;
+    this.cachedDeviceId = null;
+    this.envId = options.envId ?? WENXUE_CLOUDBASE_ENV_ID;
+    this.region = options.region ?? WENXUE_CLOUDBASE_REGION;
+    this.gatewayBaseUrl = options.gatewayBaseUrl ?? WENXUE_GATEWAY_BASE_URL;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.now = options.now ?? Date.now;
+    this.sessionFile = paths.dataFile(AUTH_SESSION_FILE);
+    this.deviceFile = paths.dataFile(AUTH_DEVICE_FILE);
+  }
+  async login(input) {
+    const username = input.username.trim();
+    if (!username || !input.password) {
+      throw new Error("请输入产品用户账号和密码");
+    }
+    const token = await this.postToken("/auth/v1/signin", {
+      username,
+      password: input.password
+    });
+    const session = await this.buildSessionFromToken(token);
+    await this.saveSession(session);
+    return toPublicSession(session);
+  }
+  async getSession() {
+    const session = await this.getCurrentSession();
+    return session ? toPublicSession(session) : null;
+  }
+  async getHandoffSession() {
+    const session = await this.getCurrentSession();
+    if (!session) {
+      throw new Error("请先登录产品用户");
+    }
+    return {
+      ...toPublicSession(session),
+      accessToken: session.accessToken
+    };
+  }
+  async logout() {
+    this.cachedSession = null;
+    await fs$1.writeFile(this.sessionFile, "{}\n", "utf8");
+  }
+  async getCurrentSession() {
+    const session = this.cachedSession ?? await this.readPersistedSession();
+    if (!session) return null;
+    if (session.expiresAt - TOKEN_REFRESH_MARGIN_MS <= this.now()) {
+      if (!session.refreshToken) {
+        this.cachedSession = null;
+        return null;
+      }
+      return this.refreshSession(session.refreshToken);
+    }
+    this.cachedSession = session;
+    return session;
+  }
+  async refreshSession(refreshToken) {
+    try {
+      const token = await this.postToken("/auth/v1/token", {
+        grant_type: "refresh_token",
+        refresh_token: refreshToken
+      });
+      const session = await this.buildSessionFromToken(token);
+      await this.saveSession(session);
+      return session;
+    } catch {
+      this.cachedSession = null;
+      await fs$1.writeFile(this.sessionFile, "{}\n", "utf8");
+      return null;
+    }
+  }
+  async buildSessionFromToken(token) {
+    const profile = await this.fetchUserProfile(token.accessToken);
+    if (profile.type !== "external") {
+      throw new Error("当前账号不是产品注册用户，请使用 CloudBase 外部注册用户登录");
+    }
+    if (profile.sub !== token.sub) {
+      throw new Error("登录会话用户与用户信息不一致，请重新登录");
+    }
+    const issuedAt = this.now();
+    return {
+      uid: token.sub,
+      username: profile.username,
+      name: profile.name,
+      type: "external",
+      accessToken: token.accessToken,
+      refreshToken: token.refreshToken,
+      expiresAt: issuedAt + token.expiresIn * 1e3,
+      issuedAt,
+      envId: this.envId,
+      region: this.region,
+      gatewayBaseUrl: this.gatewayBaseUrl
+    };
+  }
+  async postToken(pathname, body) {
+    const deviceId = await this.getDeviceId();
+    const response = await this.fetchImpl(this.authUrl(pathname), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-device-id": deviceId
+      },
+      body: JSON.stringify(body)
+    });
+    const payload = await parseJsonResponse$1(response);
+    if (!response.ok) {
+      throw new Error(errorMessageFromPayload$1(payload, "CloudBase 登录失败"));
+    }
+    return parseTokenResponse(payload);
+  }
+  async fetchUserProfile(accessToken) {
+    const deviceId = await this.getDeviceId();
+    const response = await this.fetchImpl(this.authUrl("/auth/v1/user/me"), {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "x-device-id": deviceId
+      }
+    });
+    const payload = await parseJsonResponse$1(response);
+    if (!response.ok) {
+      throw new Error(errorMessageFromPayload$1(payload, "CloudBase 用户信息获取失败"));
+    }
+    return parseUserProfile(payload);
+  }
+  authUrl(pathname) {
+    const url = new URL(pathname, `https://${this.envId}.api.tcloudbasegateway.com`);
+    url.searchParams.set("client_id", this.envId);
+    return url.toString();
+  }
+  async getDeviceId() {
+    if (this.cachedDeviceId) return this.cachedDeviceId;
+    try {
+      const parsed = JSON.parse(await fs$1.readFile(this.deviceFile, "utf8"));
+      const persisted = parsePersistedDevice(parsed);
+      if (persisted) {
+        this.cachedDeviceId = persisted.deviceId;
+        return persisted.deviceId;
+      }
+    } catch (error) {
+      if (!isMissingFile$4(error)) {
+        throw error;
+      }
+    }
+    const deviceId = `wenxue-${node_crypto.randomUUID()}`;
+    this.cachedDeviceId = deviceId;
+    await fs$1.writeFile(this.deviceFile, `${JSON.stringify({ deviceId }, null, 2)}
+`, "utf8");
+    return deviceId;
+  }
+  async readPersistedSession() {
+    try {
+      const parsed = JSON.parse(await fs$1.readFile(this.sessionFile, "utf8"));
+      return parsePersistedSession(parsed, {
+        envId: this.envId,
+        region: this.region,
+        gatewayBaseUrl: this.gatewayBaseUrl
+      });
+    } catch (error) {
+      if (!isMissingFile$4(error)) {
+        throw error;
+      }
+      return null;
+    }
+  }
+  async saveSession(session) {
+    this.cachedSession = session;
+    await fs$1.writeFile(this.sessionFile, `${JSON.stringify(session, null, 2)}
+`, "utf8");
+  }
+}
+function toPublicSession(session) {
+  return {
+    uid: session.uid,
+    username: session.username,
+    name: session.name,
+    type: session.type,
+    expiresAt: session.expiresAt,
+    envId: session.envId,
+    region: session.region,
+    gatewayBaseUrl: session.gatewayBaseUrl
+  };
+}
+async function parseJsonResponse$1(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+function parseTokenResponse(value) {
+  if (!isRecord$1(value)) {
+    throw new Error("CloudBase 登录响应格式异常");
+  }
+  const accessToken = value.access_token;
+  const expiresIn = value.expires_in;
+  const sub = value.sub;
+  if (typeof accessToken !== "string" || accessToken.length === 0) {
+    throw new Error("CloudBase 登录响应缺少 access_token");
+  }
+  if (typeof expiresIn !== "number" || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    throw new Error("CloudBase 登录响应缺少 expires_in");
+  }
+  if (typeof sub !== "string" || sub.length === 0) {
+    throw new Error("CloudBase 登录响应缺少 uid");
+  }
+  return {
+    accessToken,
+    refreshToken: typeof value.refresh_token === "string" ? value.refresh_token : void 0,
+    expiresIn,
+    sub
+  };
+}
+function parseUserProfile(value) {
+  if (!isRecord$1(value)) {
+    throw new Error("CloudBase 用户信息响应格式异常");
+  }
+  const sub = value.sub;
+  if (typeof sub !== "string" || sub.length === 0) {
+    throw new Error("CloudBase 用户信息缺少 uid");
+  }
+  return {
+    sub,
+    username: typeof value.username === "string" ? value.username : void 0,
+    name: typeof value.name === "string" ? value.name : void 0,
+    type: typeof value.type === "string" ? value.type : void 0
+  };
+}
+function parsePersistedDevice(value) {
+  if (!isRecord$1(value) || typeof value.deviceId !== "string" || value.deviceId.length === 0) {
+    return null;
+  }
+  return { deviceId: value.deviceId };
+}
+function parsePersistedSession(value, defaults) {
+  if (!isRecord$1(value)) return null;
+  if (typeof value.uid !== "string" || typeof value.accessToken !== "string" || typeof value.expiresAt !== "number" || typeof value.issuedAt !== "number" || value.type !== "external") {
+    return null;
+  }
+  return {
+    uid: value.uid,
+    username: typeof value.username === "string" ? value.username : void 0,
+    name: typeof value.name === "string" ? value.name : void 0,
+    type: "external",
+    accessToken: value.accessToken,
+    refreshToken: typeof value.refreshToken === "string" ? value.refreshToken : void 0,
+    expiresAt: value.expiresAt,
+    issuedAt: value.issuedAt,
+    envId: typeof value.envId === "string" ? value.envId : defaults.envId,
+    region: typeof value.region === "string" ? value.region : defaults.region,
+    gatewayBaseUrl: typeof value.gatewayBaseUrl === "string" ? value.gatewayBaseUrl : defaults.gatewayBaseUrl
+  };
+}
+function errorMessageFromPayload$1(value, fallback) {
+  if (!isRecord$1(value)) return fallback;
+  if (typeof value.error_description === "string" && value.error_description.length > 0) {
+    return value.error_description;
+  }
+  if (typeof value.error === "string" && value.error.length > 0) {
+    return value.error;
+  }
+  return fallback;
+}
+function isRecord$1(value) {
+  return typeof value === "object" && value !== null;
+}
+function isMissingFile$4(error) {
+  return isRecord$1(error) && error.code === "ENOENT";
+}
 function registerDesktopBridge(options) {
   options.ipcMain.handle("browser:launch", async () => {
     try {
@@ -1137,7 +1598,13 @@ function registerDesktopBridge(options) {
     "browser:renameProfile",
     async (_event, profileId, displayName) => {
       try {
-        return { ok: true, profile: await options.profileStore.rename(profileId, displayName) };
+        return {
+          ok: true,
+          profile: await options.profileStore.rename(
+            requireStringArg(profileId, "profileId"),
+            requireStringArg(displayName, "displayName")
+          )
+        };
       } catch (error) {
         return { ok: false, error: toUserSafeMessage(error) };
       }
@@ -1147,7 +1614,10 @@ function registerDesktopBridge(options) {
     "browser:duplicateProfile",
     async (_event, profileId) => {
       try {
-        return { ok: true, profile: await options.profileStore.duplicate(profileId) };
+        return {
+          ok: true,
+          profile: await options.profileStore.duplicate(requireStringArg(profileId, "profileId"))
+        };
       } catch (error) {
         return { ok: false, error: toUserSafeMessage(error) };
       }
@@ -1157,7 +1627,10 @@ function registerDesktopBridge(options) {
     "browser:removeProfile",
     async (_event, profileId) => {
       try {
-        return { ok: true, profile: await options.profileStore.remove(profileId) };
+        return {
+          ok: true,
+          profile: await options.profileStore.remove(requireStringArg(profileId, "profileId"))
+        };
       } catch (error) {
         return { ok: false, error: toUserSafeMessage(error) };
       }
@@ -1167,9 +1640,12 @@ function registerDesktopBridge(options) {
     "browser:openProfileFolder",
     async (_event, profileId) => {
       try {
-        const profile = (await options.profileStore.list()).find((item) => item.id === profileId);
+        const requestedProfileId = requireStringArg(profileId, "profileId");
+        const profile = (await options.profileStore.list()).find(
+          (item) => item.id === requestedProfileId
+        );
         if (!profile) {
-          throw new Error(`Unknown browser profile: ${profileId}`);
+          throw new Error(`Unknown browser profile: ${requestedProfileId}`);
         }
         const message = await options.openPath(profile.userDataDir);
         if (message.length > 0) {
@@ -1185,10 +1661,11 @@ function registerDesktopBridge(options) {
     "browser:launchProfile",
     async (_event, profileId) => {
       try {
-        await options.supervisor.launch(profileId, {
+        const requestedProfileId = requireStringArg(profileId, "profileId");
+        await options.supervisor.launch(requestedProfileId, {
           startUrl: await launcherStartUrl(options.settingsStore)
         });
-        await options.profileStore.touch(profileId);
+        await options.profileStore.touch(requestedProfileId);
         return { ok: true };
       } catch (error) {
         return { ok: false, error: toUserSafeMessage(error) };
@@ -1199,7 +1676,7 @@ function registerDesktopBridge(options) {
     "browser:stopProfile",
     async (_event, profileId) => {
       try {
-        await options.supervisor.stop(profileId);
+        await options.supervisor.stop(requireStringArg(profileId, "profileId"));
         return { ok: true };
       } catch (error) {
         return { ok: false, error: toUserSafeMessage(error) };
@@ -1254,15 +1731,59 @@ function registerDesktopBridge(options) {
     "settings:update",
     async (_event, patch) => {
       try {
-        return { ok: true, settings: await options.settingsStore.update(patch) };
+        return { ok: true, settings: await options.settingsStore.update(asSettingsPatch(patch)) };
       } catch (error) {
         return { ok: false, error: toUserSafeMessage(error) };
       }
     }
   );
   options.ipcMain.handle("tokens:getSummary", async () => {
-    return options.tokenUsageStore.summary();
+    try {
+      return await options.usageCloudClient.summary();
+    } catch {
+      return options.tokenUsageStore.summary();
+    }
   });
+  options.ipcMain.handle(
+    "auth:login",
+    async (_event, input) => {
+      try {
+        return { ok: true, session: await options.authSession.login(asAuthLoginInput(input)) };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
+  options.ipcMain.handle("auth:getSession", async () => {
+    try {
+      return { ok: true, session: await options.authSession.getSession() };
+    } catch (error) {
+      return { ok: false, error: toUserSafeMessage(error) };
+    }
+  });
+  options.ipcMain.handle("auth:logout", async () => {
+    try {
+      await options.authSession.logout();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: toUserSafeMessage(error) };
+    }
+  });
+  options.ipcMain.handle(
+    "auth:handoffToExtension",
+    async (_event, profileId) => {
+      try {
+        const handoffSession = await options.authSession.getHandoffSession();
+        const targetProfileId = typeof profileId === "string" && profileId ? profileId : "default";
+        const result = await options.extensionSessionHandoff.run(handoffSession, async (url) => {
+          await options.supervisor.launch(targetProfileId, { startUrl: url });
+        });
+        return result.ok ? { ok: true } : { ok: false, error: result.error };
+      } catch (error) {
+        return { ok: false, error: toUserSafeMessage(error) };
+      }
+    }
+  );
   options.ipcMain.handle("telemetry:ingest", async (_event, payload) => {
     try {
       return { ok: true, result: await options.telemetryIngest.ingest(payload) };
@@ -1306,6 +1827,25 @@ function toUserSafeMessage(error) {
 }
 function asRecord$1(value) {
   return value && typeof value === "object" ? value : {};
+}
+function asAuthLoginInput(value) {
+  if (!value || typeof value !== "object") {
+    return { username: "", password: "" };
+  }
+  const record = value;
+  return {
+    username: typeof record.username === "string" ? record.username : "",
+    password: typeof record.password === "string" ? record.password : ""
+  };
+}
+function asSettingsPatch(value) {
+  return asRecord$1(value);
+}
+function requireStringArg(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Invalid ${label}`);
+  }
+  return value;
 }
 const LEVEL_ORDER = ["debug", "info", "warn", "error"];
 const SENSITIVE_LOG_KEYS = /* @__PURE__ */ new Set([
@@ -1368,7 +1908,7 @@ class LauncherLogStore {
         await this.writeEntries([]);
         return [];
       }
-      if (!isMissingFile$2(error)) {
+      if (!isMissingFile$3(error)) {
         throw error;
       }
       return [];
@@ -1382,7 +1922,7 @@ class LauncherLogStore {
     try {
       await fs$1.rename(this.filePath, `${this.filePath}.corrupt-${Date.now()}`);
     } catch (error) {
-      if (!isMissingFile$2(error)) {
+      if (!isMissingFile$3(error)) {
         throw error;
       }
     }
@@ -1408,7 +1948,7 @@ function sanitizeLogData(value) {
 function isSensitiveLogKey(key) {
   return SENSITIVE_LOG_KEYS.has(key.toLowerCase().replace(/[-_\s]/g, ""));
 }
-function isMissingFile$2(error) {
+function isMissingFile$3(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 const DEFAULT_LAUNCHER_SETTINGS = {
@@ -1451,7 +1991,7 @@ class LauncherSettingsStore {
       const raw = JSON.parse(await fs$1.readFile(this.filePath, "utf8"));
       return mergeSettings(DEFAULT_LAUNCHER_SETTINGS, raw);
     } catch (error) {
-      if (!isMissingFile$1(error)) {
+      if (!isMissingFile$2(error)) {
         throw error;
       }
       return structuredClone(DEFAULT_LAUNCHER_SETTINGS);
@@ -1472,7 +2012,7 @@ function mergeSettings(base, patch) {
     localUser: { ...base.localUser, ...patch.localUser }
   };
 }
-function isMissingFile$1(error) {
+function isMissingFile$2(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 const LOG_LEVELS = ["debug", "info", "warn", "error"];
@@ -1709,7 +2249,7 @@ class TokenUsageStore {
       const raw = JSON.parse(await fs$1.readFile(this.filePath, "utf8"));
       return Array.isArray(raw.records) ? raw.records : [];
     } catch (error) {
-      if (!isMissingFile(error)) {
+      if (!isMissingFile$1(error)) {
         throw error;
       }
       return [];
@@ -1757,8 +2297,163 @@ function sanitizeRecord(record) {
 function roundCurrency(value) {
   return Math.round(value * 1e4) / 1e4;
 }
-function isMissingFile(error) {
+function isMissingFile$1(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+const USAGE_CACHE_FILE = "token-usage-summary-cache.json";
+class UsageCloudClient {
+  constructor(paths, authSession, options = {}) {
+    this.authSession = authSession;
+    this.cacheFile = paths.dataFile(USAGE_CACHE_FILE);
+    this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+  async summary() {
+    const session = await this.authSession.getHandoffSession();
+    try {
+      const response = await this.fetchImpl(
+        new URL("/v1/usage/summary", withTrailingSlash(session.gatewayBaseUrl)).toString(),
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${session.accessToken}`
+          }
+        }
+      );
+      const payload = await parseJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(errorMessageFromPayload(payload, `CloudBase 用量读取失败（${response.status}）`));
+      }
+      const summary = parseTokenUsageSummary(payload);
+      await fs$1.writeFile(
+        this.cacheFile,
+        `${JSON.stringify({ uid: session.uid, summary }, null, 2)}
+`,
+        "utf8"
+      );
+      return summary;
+    } catch (error) {
+      const cached = await this.readCachedSummary(session.uid);
+      if (cached) {
+        return cached;
+      }
+      throw error;
+    }
+  }
+  async readCachedSummary(uid) {
+    try {
+      const cache = parseUsageCloudCache(JSON.parse(await fs$1.readFile(this.cacheFile, "utf8")));
+      return cache?.uid === uid ? cache.summary : null;
+    } catch (error) {
+      if (!isMissingFile(error)) {
+        throw error;
+      }
+      return null;
+    }
+  }
+}
+async function parseJsonResponse(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+function parseUsageCloudCache(value) {
+  if (!isRecord(value) || typeof value.uid !== "string") {
+    return null;
+  }
+  return {
+    uid: value.uid,
+    summary: parseTokenUsageSummary(value.summary)
+  };
+}
+function parseTokenUsageSummary(value) {
+  if (!isRecord(value)) {
+    throw new Error("CloudBase 用量响应格式异常");
+  }
+  return {
+    totalInputTokens: readNumberOrThrow(value.totalInputTokens, "totalInputTokens"),
+    totalOutputTokens: readNumberOrThrow(value.totalOutputTokens, "totalOutputTokens"),
+    totalTokens: readNumberOrThrow(value.totalTokens, "totalTokens"),
+    estimatedCostCny: readNumberOrThrow(value.estimatedCostCny, "estimatedCostCny"),
+    byBrowser: readBucketArray(value.byBrowser, "byBrowser"),
+    byModel: readBucketArray(value.byModel, "byModel"),
+    daily: readBucketArray(value.daily, "daily"),
+    recent: readRecordArray(value.recent, "recent")
+  };
+}
+function readBucketArray(value, label) {
+  if (!Array.isArray(value)) {
+    throw new Error(`CloudBase 用量响应缺少 ${label}`);
+  }
+  return value.map(readBucket);
+}
+function readBucket(value) {
+  if (!isRecord(value)) {
+    throw new Error("CloudBase 用量分组格式异常");
+  }
+  return {
+    key: readStringOrThrow(value.key, "bucket.key"),
+    label: readStringOrThrow(value.label, "bucket.label"),
+    inputTokens: readNumberOrThrow(value.inputTokens, "bucket.inputTokens"),
+    outputTokens: readNumberOrThrow(value.outputTokens, "bucket.outputTokens"),
+    totalTokens: readNumberOrThrow(value.totalTokens, "bucket.totalTokens"),
+    estimatedCostCny: readNumberOrThrow(value.estimatedCostCny, "bucket.estimatedCostCny")
+  };
+}
+function readRecordArray(value, label) {
+  if (!Array.isArray(value)) {
+    throw new Error(`CloudBase 用量响应缺少 ${label}`);
+  }
+  return value.map(readRecord);
+}
+function readRecord(value) {
+  if (!isRecord(value)) {
+    throw new Error("CloudBase 用量明细格式异常");
+  }
+  return {
+    id: readStringOrThrow(value.id, "record.id"),
+    ts: readNumberOrThrow(value.ts, "record.ts"),
+    browserId: readStringOrThrow(value.browserId, "record.browserId"),
+    model: readStringOrThrow(value.model, "record.model"),
+    inputTokens: readNumberOrThrow(value.inputTokens, "record.inputTokens"),
+    outputTokens: readNumberOrThrow(value.outputTokens, "record.outputTokens"),
+    totalTokens: readNumberOrThrow(value.totalTokens, "record.totalTokens"),
+    estimatedCostCny: readNumberOrThrow(value.estimatedCostCny, "record.estimatedCostCny")
+  };
+}
+function readNumberOrThrow(value, label) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`CloudBase 用量响应缺少 ${label}`);
+  }
+  return value;
+}
+function readStringOrThrow(value, label) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`CloudBase 用量响应缺少 ${label}`);
+  }
+  return value;
+}
+function withTrailingSlash(value) {
+  return value.endsWith("/") ? value : `${value}/`;
+}
+function errorMessageFromPayload(value, fallback) {
+  if (!isRecord(value)) return fallback;
+  if (isRecord(value.error) && typeof value.error.message === "string") {
+    return value.error.message;
+  }
+  if (typeof value.message === "string") {
+    return value.message;
+  }
+  return fallback;
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function isMissingFile(error) {
+  return isRecord(error) && error.code === "ENOENT";
 }
 async function handleBrowserRunningClose(deps) {
   const status = deps.status();
@@ -1803,6 +2498,9 @@ async function startMainBootstrap() {
   const logStore = new LauncherLogStore(paths, settingsStore);
   const tokenUsageStore = new TokenUsageStore(paths);
   const telemetryIngest = new LauncherTelemetryIngest(logStore, tokenUsageStore);
+  const authSession = new LauncherAuthSession(paths);
+  const usageCloudClient = new UsageCloudClient(paths, authSession);
+  const extensionSessionHandoff = new ExtensionSessionHandoff();
   const logger = createAppLogger(paths, logStore);
   const supervisor = new BrowserSupervisor({ resources, profiles, logger });
   let currentWindow;
@@ -1814,6 +2512,9 @@ async function startMainBootstrap() {
     settingsStore,
     telemetryIngest,
     tokenUsageStore,
+    usageCloudClient,
+    authSession,
+    extensionSessionHandoff,
     resources,
     getAppVersion: () => electron.app.getVersion(),
     getShellInfo: () => ({

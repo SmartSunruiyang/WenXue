@@ -19,6 +19,7 @@
 | M2        | 浏览器供应链与桌面底层模块                           | `fetch-browser` 拉到 CfT；底层模块单测全绿                 |
 | M3        | 启动链路打通                                         | 点「启动浏览器」→ CfT 带插件拉起，状态机全程正确           |
 | M3.5      | 启动器 App 化重构                                    | 无边框白色 App 工作台可管理多画像、查看日志、tokens 与设置 |
+| M4.5      | CloudBase LLM Gateway M0 Spike                      | 真实流式网关调用 usage 非 0，并记录延迟基线                |
 | M4        | 品牌化与默认配置                                     | 全新 profile 首启只填 Key，示例页全链路任务成功            |
 | M5        | 打包分发与冒烟                                       | 双端安装包在干净机器通过 PRD F1–F4 验收                    |
 
@@ -64,11 +65,31 @@
 - [x] 日志页支持查询、筛选、清空与保留策略 UI；tokens 页支持总览、聚合与空状态
 - **验收**：`pnpm -F desktop test` 与 `pnpm -F desktop build` 通过；dev 窗口在桌面与窄视口无明显重叠、遮挡或横向溢出。
 
+### M4.5 — CloudBase LLM Gateway M0 Spike（2026-06-28 提前插入；全计划网关门）
+
+- [x] 绑定 CloudBase env `wenxue-d8gz76tacc3659f05`（ap-shanghai）并确认 MCP 可用
+- [x] 新增 `apps/llm-gateway` CloudBase Run 网关雏形（container-backed functions-framework）
+- [x] 真实流式请求打通：CloudBase access_token → 网关 → DashScope → SSE 回传
+- [x] 验证末块 usage 非 0、记录端到端延迟基线（2026-06-28：1075ms，34 tokens）
+- **验收**：流式 + 鉴权 + usage 非 0 + 延迟基线全部 OK；否则停在 M0 门，不进入后续 M1+。
+
+> 该 spike 只验证网关可行性；M1+ 未放行前不切扩展内置模型、不删除本地百炼 Key。
+
+#### M4.5 后续 — 网关硬化与产品用户登录（2026-06-28）
+
+- [x] M1 网关硬化：文本/视觉/工具透传、usage 写 `token_usage`、无正文落库、缺失/无效 token 拒绝、PUBLIC + `MinNum≥1` 部署
+- [x] M2 启动器 CloudBase Auth：仅允许产品侧外部用户（`type=external`）登录；新增 `LauncherAuthSession`、auth IPC/preload、登录面板
+- [x] M2 会话交接：启动器经一次性 localhost `externally_connectable` 页面把 access token 交给插件 background，插件保存 `WenXueCloudAuthSession`
+- [x] M3 内置模型切网关：默认文本 `qwen-plus`、视觉 `qwen3.7-plus` 经 CloudBase Gateway 使用产品用户 access token
+- [x] M4 tokens 页读网关计量：CloudBase Run 006 暴露 `GET /v1/usage/summary`，启动器 `UsageCloudClient` 云优先读取并按 uid 缓存，本地用量作为失败兜底
+- [x] M5 内置模型删除本地 Key：移除本地直连兜底开关与内置百炼 Key，网关成为内置模型唯一路径；自定义 BYO-Key 不受影响
+- **验收**：真实外部用户登录成功；CfT + 构建后插件 handoff smoke 返回 `{ ok: true }`；`pnpm -F desktop test`、`pnpm -F desktop build`、`pnpm -F extension test`、`pnpm -F extension build` 通过。
+
 ### M4 — 品牌化与默认配置（依赖 M3）
 
 - [ ] 插件品牌化：名称 / 图标 / `_locales`（zh_CN、en）→ 问学 WenXue · ask for everything
 - [ ] manifest 增加 `key` 固定插件 ID
-- [ ] 默认预置百炼 `https://dashscope.aliyuncs.com/compatible-mode/v1` + `qwen3.5-plus`，Key 留空待填
+- [x] 默认内置模型切为 CloudBase Gateway：文本 `qwen-plus`、视觉 `qwen3.7-plus`，自定义模型仍保留厂商 URL/API Key 配置
 - [ ] 权限收敛到 Demo 必需集合并登记保留理由；页面级 API（`window.PAGE_AGENT_EXT`）编译开关默认关；审计并移除上游遥测/Demo LLM 残留
 - **验收**：删除画像目录后全新首启 → 仅填 API Key → 在示例 research 页与示例答题页各完成一次全链路任务（PRD F3/F4 验收标准）。
 

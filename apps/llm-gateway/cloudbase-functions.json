@@ -1,0 +1,19 @@
+{
+	"functionsRoot": "./src",
+	"functions": [
+		{
+			"name": "chat-completions",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "main",
+			"triggerPath": "/v1/chat/completions"
+		},
+		{
+			"name": "usage-summary",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "usageSummary",
+			"triggerPath": "/v1/usage/summary"
+		}
+	]
+}

@@ -21,6 +21,7 @@ import {
 	resolveSelectedLLMConfig,
 	resolveVisionLLMConfig,
 } from '@/lib/modelConfig'
+import { loadRuntimeAgentModels, type RuntimeAgentModels } from '@/lib/runtimeModelConfig'
 import { MultiPageAgent } from './MultiPageAgent'
 
 /** Language preference: undefined means follow system */
@@ -444,18 +445,23 @@ export function createRestoredAgentConversationState({
 	}
 }
 
-export function createAgentForConfig(config: ExtConfig): MultiPageAgent {
+export function createAgentForConfig(
+	config: ExtConfig,
+	runtimeModels?: RuntimeAgentModels,
+): MultiPageAgent {
 	const customModels = config.customModels ?? []
 	// 系统级文本 + 视觉模型；学习通流水线跟随这两个系统模型。
-	const chaoxingModels = {
-		text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
-		vision: resolveVisionLLMConfig(config.visionModelId, customModels),
-	}
+	const chaoxingModels =
+		runtimeModels?.chaoxingModels ?? {
+			text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
+			vision: resolveVisionLLMConfig(config.visionModelId, customModels),
+		}
+	const activeModel = runtimeModels?.active ?? config
 
 	return new MultiPageAgent({
-		baseURL: config.baseURL,
-		model: config.model,
-		apiKey: config.apiKey,
+		baseURL: activeModel.baseURL,
+		model: activeModel.model,
+		apiKey: activeModel.apiKey,
 		language: config.language,
 		experimentalLlmsTxt: config.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
@@ -475,14 +481,14 @@ export async function initializeAgentSession<TConfig>({
 }: {
 	signal: AbortSignal
 	loadConfig: () => Promise<TConfig>
-	createAgent: (config: TConfig) => AgentSessionAgent
+	createAgent: (config: TConfig) => AgentSessionAgent | Promise<AgentSessionAgent>
 	bindAgent: (agent: AgentSessionAgent) => void
 	setConfig: (config: TConfig) => void
 }): Promise<void> {
 	const loadedConfig = await loadConfig()
 	if (signal.aborted) return
 
-	const agent = createAgent(loadedConfig)
+	const agent = await createAgent(loadedConfig)
 	if (signal.aborted) {
 		agent.dispose()
 		return
@@ -500,6 +506,7 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 	const [takeoverRequest, setTakeoverRequest] = useState<UserTakeoverRequest | null>(null)
 	const [config, setConfig] = useState<ExtConfig | null>(null)
 	const sessionControllerRef = useRef<AgentSessionController | null>(null)
+	const runtimeModelsRef = useRef<RuntimeAgentModels | null>(null)
 	const mountedRef = useRef(false)
 	const initialLoadAbortRef = useRef<AbortController | null>(null)
 	if (!sessionControllerRef.current) {
@@ -520,7 +527,11 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 		initializeAgentSession({
 			signal: abortController.signal,
 			loadConfig: () => loadStoredConfig(),
-			createAgent: createAgentForConfig,
+			createAgent: async (loadedConfig) => {
+				const runtimeModels = await loadRuntimeAgentModels(loadedConfig)
+				runtimeModelsRef.current = runtimeModels
+				return createAgentForConfig(loadedConfig, runtimeModels)
+			},
 			bindAgent: (agent) => sessionController.bind(agent, { enableUserTakeover }),
 			setConfig,
 		}).catch((error) => {
@@ -565,9 +576,12 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 	const resetConversation = useCallback(() => {
 		if (sessionController.isTaskActive()) {
 			if (!config) return false
-			return sessionController.resetActiveConversation(createAgentForConfig(config), {
-				enableUserTakeover,
-			})
+			return sessionController.resetActiveConversation(
+				createAgentForConfig(config, runtimeModelsRef.current ?? undefined),
+				{
+					enableUserTakeover,
+				},
+			)
 		}
 
 		sessionController.cancelUserTakeover()
@@ -598,7 +612,9 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 						throw createTakeoverAbortError('Agent session has been disposed.')
 					}
 
-					const replacement = createAgentForConfig(savedConfig)
+					const runtimeModels = await loadRuntimeAgentModels(savedConfig)
+					runtimeModelsRef.current = runtimeModels
+					const replacement = createAgentForConfig(savedConfig, runtimeModels)
 					if (!mountedRef.current) {
 						replacement.dispose()
 						throw createTakeoverAbortError('Agent session has been disposed.')

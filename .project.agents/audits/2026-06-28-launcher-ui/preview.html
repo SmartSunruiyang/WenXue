@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>WenXue Launcher Audit Preview</title>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script type="module">
+			const now = Date.now()
+			const profiles = [
+				{
+					id: 'research_main',
+					displayName: '研究资料',
+					type: 'persistent',
+					colorKey: 'blue',
+					createdAt: now - 1000 * 60 * 60 * 24 * 16,
+					lastUsedAt: now - 1000 * 60 * 8,
+					userDataDir: '/Users/outas/Library/Application Support/WenXue/profiles/research_main',
+				},
+				{
+					id: 'chaoxing_class',
+					displayName: '学习通课堂',
+					type: 'persistent',
+					colorKey: 'green',
+					createdAt: now - 1000 * 60 * 60 * 24 * 8,
+					lastUsedAt: now - 1000 * 60 * 60 * 4,
+					userDataDir: '/Users/outas/Library/Application Support/WenXue/profiles/chaoxing_class',
+				},
+				{
+					id: 'ops_console',
+					displayName: '运营后台',
+					type: 'persistent',
+					colorKey: 'coral',
+					createdAt: now - 1000 * 60 * 60 * 24 * 3,
+					lastUsedAt: null,
+					userDataDir: '/Users/outas/Library/Application Support/WenXue/profiles/ops_console',
+				},
+			]
+			let statuses = {
+				research_main: 'running',
+				chaoxing_class: 'idle',
+				ops_console: 'error',
+			}
+			const logs = [
+				{
+					id: 1,
+					ts: now - 1000 * 60 * 7,
+					level: 'info',
+					source: 'system',
+					context: 'background',
+					browserId: 'research_main',
+					message: '浏览器画像已启动',
+					data: { argv: ['--load-extension', '--user-data-dir'] },
+				},
+				{
+					id: 2,
+					ts: now - 1000 * 60 * 5,
+					level: 'info',
+					source: 'agent',
+					context: 'sidepanel',
+					browserId: 'research_main',
+					message: 'Agent 开始执行网页 research 任务',
+					data: { taskId: 'task_93', step: 'read_page' },
+				},
+				{
+					id: 3,
+					ts: now - 1000 * 60 * 3,
+					level: 'warn',
+					source: 'llm',
+					context: 'background',
+					browserId: 'research_main',
+					message: 'LLM 请求重试 1 次后恢复',
+					data: { model: 'qwen3.5-plus', latencyMs: 1680 },
+				},
+				{
+					id: 4,
+					ts: now - 1000 * 45,
+					level: 'error',
+					source: 'tabs',
+					context: 'background',
+					browserId: 'ops_console',
+					message: '浏览器进程异常退出',
+					data: { code: 11, signal: null },
+				},
+			]
+			const settings = {
+				launch: {
+					windowWidth: 1280,
+					windowHeight: 820,
+					startUrl: 'chrome://newtab',
+					concurrencyLimit: 3,
+					staggerMs: 400,
+					profileType: 'persistent',
+					proxyMode: 'none',
+					language: 'zh-CN',
+					zoom: 100,
+				},
+				behavior: {
+					closeAction: 'ask',
+					exitWithBrowsers: 'ask',
+					openAtLogin: false,
+					downloadDir: '',
+				},
+				logs: {
+					retentionDays: 3,
+					maxEntries: 5000,
+					minLevel: 'info',
+					captureLlmRequests: true,
+					captureLlmResponses: false,
+					defaultExportFormat: 'json',
+				},
+				localUser: {
+					displayName: '本地用户',
+					colorKey: 'purple',
+				},
+			}
+			const tokens = {
+				totalInputTokens: 87420,
+				totalOutputTokens: 21380,
+				totalTokens: 108800,
+				estimatedCostCny: 7.8421,
+				byBrowser: [
+					{
+						key: 'research_main',
+						label: '研究资料',
+						inputTokens: 54820,
+						outputTokens: 13200,
+						totalTokens: 68020,
+						estimatedCostCny: 4.81,
+					},
+					{
+						key: 'chaoxing_class',
+						label: '学习通课堂',
+						inputTokens: 32600,
+						outputTokens: 8180,
+						totalTokens: 40780,
+						estimatedCostCny: 3.03,
+					},
+				],
+				byModel: [
+					{
+						key: 'qwen3.5-plus',
+						label: 'qwen3.5-plus',
+						inputTokens: 73820,
+						outputTokens: 18040,
+						totalTokens: 91860,
+						estimatedCostCny: 6.51,
+					},
+					{
+						key: 'deepseek-chat',
+						label: 'deepseek-chat',
+						inputTokens: 13600,
+						outputTokens: 3340,
+						totalTokens: 16940,
+						estimatedCostCny: 1.33,
+					},
+				],
+				daily: [
+					{
+						key: '2026-06-26',
+						label: '06-26',
+						inputTokens: 18000,
+						outputTokens: 5200,
+						totalTokens: 23200,
+						estimatedCostCny: 1.65,
+					},
+					{
+						key: '2026-06-27',
+						label: '06-27',
+						inputTokens: 29420,
+						outputTokens: 6580,
+						totalTokens: 36000,
+						estimatedCostCny: 2.51,
+					},
+					{
+						key: '2026-06-28',
+						label: '06-28',
+						inputTokens: 40000,
+						outputTokens: 9600,
+						totalTokens: 49600,
+						estimatedCostCny: 3.68,
+					},
+				],
+				recent: [
+					{
+						id: 'usage_1',
+						ts: now - 1000 * 60 * 4,
+						browserId: 'research_main',
+						model: 'qwen3.5-plus',
+						inputTokens: 6420,
+						outputTokens: 1800,
+						totalTokens: 8220,
+						estimatedCostCny: 0.58,
+					},
+					{
+						id: 'usage_2',
+						ts: now - 1000 * 60 * 25,
+						browserId: 'chaoxing_class',
+						model: 'deepseek-chat',
+						inputTokens: 3800,
+						outputTokens: 940,
+						totalTokens: 4740,
+						estimatedCostCny: 0.37,
+					},
+				],
+			}
+
+			globalThis.wenxue = {
+				browser: {
+					launch: async () => ({ ok: true }),
+					launchProfile: async (profileId) => {
+						statuses = { ...statuses, [profileId]: 'running' }
+						return { ok: true }
+					},
+					stopProfile: async (profileId) => {
+						statuses = { ...statuses, [profileId]: 'idle' }
+						return { ok: true }
+					},
+					listProfiles: async () => profiles,
+					addProfile: async () => ({ ok: true, profile: profiles[0] }),
+					renameProfile: async (profileId, displayName) => ({
+						ok: true,
+						profile: profiles.find((profile) => profile.id === profileId) ?? {
+							...profiles[0],
+							displayName,
+						},
+					}),
+					duplicateProfile: async () => ({ ok: true, profile: profiles[1] }),
+					removeProfile: async () => ({ ok: true, profile: profiles[2] }),
+					openProfileFolder: async () => ({ ok: true }),
+					getStatus: async () => 'running',
+					getStatuses: async () => statuses,
+					onStatusChange: () => () => undefined,
+					onProfileStatusChange: () => () => undefined,
+				},
+				logs: {
+					query: async () => logs,
+					clear: async () => ({ ok: true }),
+				},
+				settings: {
+					get: async () => settings,
+					update: async (patch) => ({
+						ok: true,
+						settings: {
+							...settings,
+							launch: { ...settings.launch, ...(patch.launch ?? {}) },
+							behavior: { ...settings.behavior, ...(patch.behavior ?? {}) },
+							logs: { ...settings.logs, ...(patch.logs ?? {}) },
+							localUser: { ...settings.localUser, ...(patch.localUser ?? {}) },
+						},
+					}),
+				},
+				tokens: {
+					getSummary: async () => tokens,
+				},
+				app: {
+					getVersions: async () => ({
+						app: '0.0.0',
+						browser: '138.0.7204.0',
+						extension: '0.0.1',
+					}),
+					getShellInfo: async () => ({
+						platform: 'darwin',
+						frameless: false,
+						hasSystemTrafficLights: true,
+						isMaximized: false,
+					}),
+					openLogs: async () => ({ ok: true }),
+					minimizeWindow: async () => ({ ok: true }),
+					toggleMaximizeWindow: async () => ({ ok: true }),
+					requestClose: async () => ({ ok: true }),
+				},
+			}
+			await import('/src/main.tsx')
+		</script>
+	</body>
+</html>

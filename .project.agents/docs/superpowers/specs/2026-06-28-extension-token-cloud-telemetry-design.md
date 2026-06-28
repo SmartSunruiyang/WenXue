@@ -1,7 +1,9 @@
 # 扩展 Token 用量上云 + CloudBase 账户登录 — 设计
 
+> ⚠️ **已废弃 / SUPERSEDED（2026-06-28）**：用户改为"全量大改动 = 自建 CloudBase LLM 网关"，网关服务端计量 token（权威/计费级），取代本"扩展自报遥测"方案。本文档仅留作历史。现行设计见 [cloudbase-llm-gateway-design.md](./2026-06-28-cloudbase-llm-gateway-design.md)。存活下来的部分（CloudBase 登录、tokens 页从云读）已并入新设计。
+
 - 日期：2026-06-28
-- 状态：草案（待用户复审）
+- 状态：已废弃（被 LLM 网关设计取代）
 - 关联：上游 `PRD.md` / `ARCHITECTURE.md` / `TECH-INFRA.md`（本设计需同步修订，见 §9）
 
 ## 1. 背景与问题
