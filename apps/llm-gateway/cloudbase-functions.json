@@ -14,6 +14,13 @@
 			"source": "index.mjs",
 			"target": "usageSummary",
 			"triggerPath": "/v1/usage/summary"
+		},
+		{
+			"name": "launcher-register",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "launcherRegister",
+			"triggerPath": "/v1/auth/register"
 		}
 	]
 }

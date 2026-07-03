@@ -36,10 +36,9 @@ electron.contextBridge.exposeInMainWorld("wenxue", {
     getSummary: () => electron.ipcRenderer.invoke("tokens:getSummary")
   },
   auth: {
-    login: (input) => electron.ipcRenderer.invoke("auth:login", input),
+    setSession: (session) => electron.ipcRenderer.invoke("auth:setSession", session),
     getSession: () => electron.ipcRenderer.invoke("auth:getSession"),
-    logout: () => electron.ipcRenderer.invoke("auth:logout"),
-    handoffToExtension: (profileId) => electron.ipcRenderer.invoke("auth:handoffToExtension", profileId)
+    clearSession: () => electron.ipcRenderer.invoke("auth:clearSession")
   },
   app: {
     getVersions: () => electron.ipcRenderer.invoke("app:getVersions"),

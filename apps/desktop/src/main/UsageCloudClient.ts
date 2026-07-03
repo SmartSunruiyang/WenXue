@@ -1,45 +1,55 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import type { AppPaths } from './AppPaths'
-import type { LauncherAuthSession } from './LauncherAuthSession'
 import type { TokenUsageBucket, TokenUsageRecord, TokenUsageSummary } from './TokenUsageStore'
+import type { UserSessionStore } from './UserSessionStore'
 
 const USAGE_CACHE_FILE = 'token-usage-summary-cache.json'
+const DEFAULT_REQUEST_TIMEOUT_MS = 5_000
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 export interface UsageCloudClientOptions {
 	fetchImpl?: FetchLike
+	timeoutMs?: number
 }
 
 interface UsageCloudCache {
-	uid: string
+	userId: string
 	summary: TokenUsageSummary
 }
 
 export class UsageCloudClient {
 	private readonly cacheFile: string
 	private readonly fetchImpl: FetchLike
+	private readonly timeoutMs: number
 
 	constructor(
 		paths: AppPaths,
-		private readonly authSession: Pick<LauncherAuthSession, 'getHandoffSession'>,
+		private readonly userSessionStore: Pick<UserSessionStore, 'requireSession'>,
 		options: UsageCloudClientOptions = {},
 	) {
 		this.cacheFile = paths.dataFile(USAGE_CACHE_FILE)
 		this.fetchImpl = options.fetchImpl ?? fetch
+		this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
 	}
 
 	async summary(): Promise<TokenUsageSummary> {
-		const session = await this.authSession.getHandoffSession()
+		const userSession = this.userSessionStore.requireSession()
 		try {
-			const response = await this.fetchImpl(
-				new URL('/v1/usage/summary', withTrailingSlash(session.gatewayBaseUrl)).toString(),
-				{
-					method: 'GET',
-					headers: {
-						Authorization: `Bearer ${session.accessToken}`,
+			const abortController = new AbortController()
+			const response = await withTimeout(
+				this.fetchImpl(
+					new URL('/v1/usage/summary', withTrailingSlash(userSession.gatewayBaseUrl)).toString(),
+					{
+						method: 'GET',
+						headers: {
+							Authorization: `Bearer ${userSession.accessToken}`,
+						},
+						signal: abortController.signal,
 					},
-				},
+				),
+				this.timeoutMs,
+				abortController,
 			)
 			const payload = await parseJsonResponse(response)
 			if (!response.ok) {
@@ -48,12 +58,12 @@ export class UsageCloudClient {
 			const summary = parseTokenUsageSummary(payload)
 			await writeFile(
 				this.cacheFile,
-				`${JSON.stringify({ uid: session.uid, summary }, null, 2)}\n`,
+				`${JSON.stringify({ userId: userSession.userId, summary }, null, 2)}\n`,
 				'utf8',
 			)
 			return summary
 		} catch (error) {
-			const cached = await this.readCachedSummary(session.uid)
+			const cached = await this.readCachedSummary(userSession.userId)
 			if (cached) {
 				return cached
 			}
@@ -61,10 +71,10 @@ export class UsageCloudClient {
 		}
 	}
 
-	private async readCachedSummary(uid: string): Promise<TokenUsageSummary | null> {
+	private async readCachedSummary(userId: string): Promise<TokenUsageSummary | null> {
 		try {
 			const cache = parseUsageCloudCache(JSON.parse(await readFile(this.cacheFile, 'utf8')))
-			return cache?.uid === uid ? cache.summary : null
+			return cache?.userId === userId ? cache.summary : null
 		} catch (error) {
 			if (!isMissingFile(error)) {
 				throw error
@@ -72,6 +82,29 @@ export class UsageCloudClient {
 			return null
 		}
 	}
+}
+
+function withTimeout<T>(
+	promise: Promise<T>,
+	timeoutMs: number,
+	abortController: AbortController,
+): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			abortController.abort()
+			reject(new Error('CloudBase 用量读取超时'))
+		}, timeoutMs)
+		promise.then(
+			(value) => {
+				clearTimeout(timer)
+				resolve(value)
+			},
+			(error: unknown) => {
+				clearTimeout(timer)
+				reject(error)
+			},
+		)
+	})
 }
 
 async function parseJsonResponse(response: Response): Promise<unknown> {
@@ -85,11 +118,11 @@ async function parseJsonResponse(response: Response): Promise<unknown> {
 }
 
 function parseUsageCloudCache(value: unknown): UsageCloudCache | null {
-	if (!isRecord(value) || typeof value.uid !== 'string') {
+	if (!isRecord(value) || typeof value.userId !== 'string') {
 		return null
 	}
 	return {
-		uid: value.uid,
+		userId: value.userId,
 		summary: parseTokenUsageSummary(value.summary),
 	}
 }

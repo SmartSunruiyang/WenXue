@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { DEMO_CONFIG, DEMO_VISION_CONFIG } from '@/agent/constants'
 import {
 	BUILT_IN_MODEL_ID,
+	BUILT_IN_MODEL_LABEL,
 	BUILT_IN_VISION_MODEL_ID,
 	type CustomModelConfig,
 	normalizeVisionModelId,
@@ -26,6 +27,16 @@ const customModels: CustomModelConfig[] = [
 		model: 'qwen-vl-max',
 	},
 ]
+
+describe('built-in text model', () => {
+	it('uses qwen3.7-max as the default main model', () => {
+		expect(BUILT_IN_MODEL_ID).toBe('builtin:qwen3.7-max')
+		expect(BUILT_IN_MODEL_LABEL).toContain('qwen3.7-max')
+		expect(resolveSelectedLLMConfig(undefined, customModels)).toMatchObject({
+			model: 'qwen3.7-max',
+		})
+	})
+})
 
 describe('normalizeVisionModelId', () => {
 	it('defaults to the built-in vision model when unset', () => {

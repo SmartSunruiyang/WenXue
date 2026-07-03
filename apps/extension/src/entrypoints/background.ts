@@ -2,10 +2,10 @@ import { handleChaoxingControlMessage } from '@/agent/chaoxing/bridge.background
 import { handlePageControlMessage } from '@/agent/RemotePageController.background'
 import { handleTabControlMessage, setupTabEventsPort } from '@/agent/TabsController.background'
 import {
-	clearExtensionCloudAuthSession,
-	loadExtensionCloudAuthSession,
-	saveExtensionCloudAuthSession,
-} from '@/lib/cloudAuthSession'
+	clearExtensionUserSession,
+	loadExtensionUserSession,
+	saveExtensionUserSession,
+} from '@/lib/userSession'
 import { handleLogControlMessage } from '@/lib/log.background'
 import { configureLogger } from '@/lib/logger'
 import { purge } from '@/lib/logStore'
@@ -33,15 +33,6 @@ export default defineBackground(() => {
 
 	setupTabEventsPort()
 
-	// generate user auth token
-
-	chrome.storage.local.get('PageAgentExtUserAuthToken').then((result) => {
-		if (result.PageAgentExtUserAuthToken) return
-
-		const userAuthToken = crypto.randomUUID()
-		chrome.storage.local.set({ PageAgentExtUserAuthToken: userAuthToken })
-	})
-
 	// message proxy
 
 	chrome.runtime.onMessage.addListener((message, sender, sendResponse): true | undefined => {
@@ -53,23 +44,23 @@ export default defineBackground(() => {
 			return handleChaoxingControlMessage(message, sender, sendResponse)
 		} else if (message.type?.startsWith('LOG_')) {
 			return handleLogControlMessage(message, sender, sendResponse)
-		} else if (message.type === 'WENXUE_GET_AUTH_SESSION') {
-			loadExtensionCloudAuthSession(chrome.storage.local).then(
+		} else if (message.type === 'WENXUE_GET_USER_SESSION') {
+			loadExtensionUserSession(chrome.storage.local).then(
 				(session) => sendResponse({ ok: true, session }),
 				(error: unknown) =>
 					sendResponse({
 						ok: false,
-						error: error instanceof Error ? error.message : 'Failed to load auth session',
+						error: error instanceof Error ? error.message : 'Failed to load user session',
 					}),
 			)
 			return true
-		} else if (message.type === 'WENXUE_CLEAR_AUTH_SESSION') {
-			clearExtensionCloudAuthSession(chrome.storage.local).then(
+		} else if (message.type === 'WENXUE_CLEAR_USER_SESSION') {
+			clearExtensionUserSession(chrome.storage.local).then(
 				() => sendResponse({ ok: true }),
 				(error: unknown) =>
 					sendResponse({
 						ok: false,
-						error: error instanceof Error ? error.message : 'Failed to clear auth session',
+						error: error instanceof Error ? error.message : 'Failed to clear user session',
 					}),
 			)
 			return true
@@ -89,17 +80,17 @@ export default defineBackground(() => {
 			})
 			return true
 		}
-		if (message.type === 'WENXUE_AUTH_SESSION') {
+		if (message.type === 'WENXUE_USER_SESSION') {
 			if (!isLocalhostExternalSender(sender)) {
 				sendResponse({ ok: false, error: 'Unauthorized sender' })
 				return
 			}
-			saveExtensionCloudAuthSession(chrome.storage.local, message.session).then(
-				(session) => sendResponse({ ok: true, uid: session.uid }),
+			saveExtensionUserSession(chrome.storage.local, message.session).then(
+				(session) => sendResponse({ ok: true, userId: session.userId }),
 				(error: unknown) =>
 					sendResponse({
 						ok: false,
-						error: error instanceof Error ? error.message : 'Invalid auth session',
+						error: error instanceof Error ? error.message : 'Invalid user session',
 					}),
 			)
 			return true

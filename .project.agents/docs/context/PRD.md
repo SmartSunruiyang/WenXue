@@ -35,20 +35,21 @@
 
 ## 4. 产品形态
 
-问学产品由桌面运行时、浏览器插件与对外官网组成。运行时由两个进程组成：
+问学产品由桌面运行时、浏览器插件、CloudBase 后端、后台管理与对外官网组成。运行时由两个进程组成：
 
 ```mermaid
 flowchart LR
     A["问学桌面端<br/>(Electron 控制台)"] -- "spawn + 注入插件" --> B["问学浏览器<br/>(Chrome for Testing)"]
     B --- C["问学插件<br/>(侧边栏 AI 助手)"]
-    C -- "OpenAI-compatible API<br/>内置模型" --> G["CloudBase LLM Gateway<br/>鉴权 + 密钥托管 + 计量"]
+    C -- "OpenAI-compatible API<br/>内置模型" --> G["CloudBase LLM Gateway<br/>用户 session 鉴权 + 密钥托管 + 计量"]
     G -- "OpenAI-compatible 透传" --> D["LLM 服务<br/>(默认 Qwen / 阿里云百炼)"]
     C -- "OpenAI-compatible API<br/>自定义 BYO-Key" --> E["用户自定义 LLM 服务"]
 ```
 
-- **问学桌面端**：小而精的控制台窗口。Demo 阶段仅承担"启动/监控浏览器"职责；它是未来账户、订阅计费、多开管理、用量面板的宿主。
+- **问学桌面端**：小而精的控制台窗口。Demo 阶段承担账号登录/注册、"启动/监控浏览器"、多开管理与用量面板职责。
 - **问学浏览器**：完整的现代浏览器（Chrome for Testing 内核），问学插件以"原生预装"形态存在。
 - **问学插件**：浏览器侧边栏中的对话面板与 Agent 执行引擎，承载全部"智能"。基于开源项目 [alibaba/page-agent](https://github.com/alibaba/page-agent)（MIT）fork 改造。
+- **问学后台管理**：公网可访问的内部管理后台。管理员只能通过 CloudBase Auth 的内部用户名/密码账号登录；后台提供 tokens 看板与用户启用/禁用，不接受机器 token 登录。
 - **问学官网**：对外产品门户，承载认知、演示、下载与文档入口。本期首页采用白色极简官网形态：首屏为全屏 DotField 背景、中间定位文案与「下载问学 / 看演示」两个动作；主标题具备 React Bits VariableProximity 风格的鼠标邻近字重 hover 效果；顶部参考 React Bits 官网 `ln-navbar` 形态实现固定导航，默认态为接近全宽的透明任务栏（无边框、无底色，仅展示放大的透明 slogan、Docs、下载与 GitHub），滚动后收束成悬浮胶囊；左侧使用透明 slogan 无底图并在右侧仅保留 Docs 入口，右侧动作保留下载与 GitHub，舍弃中英切换入口；文档采用参考 page-agent 文档站的两栏 README 阅读布局，每个板块映射到独立 hash 子页（如 `#docs/customer-start`），左侧固定大目录用于切换板块，中间只渲染当前板块的 README 式正文，不设置右侧本页章节目录，内容覆盖客户快速上手、从工具栏进入问学、固定到浏览器工具栏、常见任务教程、开发者接入示例、故障排查、能力边界与待补截图/动画占位；下滑后用大号浏览器 hero 演示真实浏览器中呼出问学插件、固定到顶部并输入任务；页面信息密度保持低，不堆叠功能网格与合规宣传条。
 
 ## 5. Demo 范围（P0 功能）
@@ -103,7 +104,7 @@ flowchart LR
 
 - 用户故事：作为用户，我可以直接使用内置默认模型；高级用户可以添加多个 OpenAI-compatible 自定义模型，并在需要时切换默认模型。
 - 需求点：
-  - 默认文本模型为内置 `qwen-plus`，默认视觉模型为内置 `qwen3.7-plus`，作为默认模型下拉菜单的首批内置选项；
+  - 默认文本模型为内置 `qwen3.7-max`，默认视觉模型为内置 `qwen3.7-plus`，作为默认模型下拉菜单的首批内置选项；
   - options 设置页提供自定义模型列表：点击加号弹出添加对话框，填写厂商、URL、API Key、模型名；每个自定义模型单独保存自己的 API Key；
   - 内置厂商预设先包含 DeepSeek 与千问；选择厂商后自动填入对应 OpenAI-compatible URL，用户仍可手动修改；厂商选择最下方提供「自定义厂商」，用户可自行填写厂商名称与 URL；
   - 厂商选择项与自定义模型列表需展示厂商标识；自定义厂商用用户输入名称生成本地标识；
@@ -112,7 +113,7 @@ flowchart LR
   - 侧边栏输入框底部提供模型快捷切换下拉（内置默认模型 + 已添加的自定义模型 + 「管理模型」入口），切换即时生效并持久化，任务执行中禁用切换；
   - 侧边栏右上角提供三点菜单，包含设置入口与语言快捷入口；设置入口打开插件 options 设置页；
   - 自定义 BYO-Key 模型的 Key 仅存于本机浏览器画像内（`chrome.storage.local`），不经任何问学侧服务器；
-  - 内置默认模型不在本机保存百炼 Key，扩展用 CloudBase 会话 token 调网关；M5 起本地直连兜底开关已删除，网关是内置模型唯一路径。
+  - 内置默认模型不在本机保存百炼 Key，扩展使用启动器登录后交接的 CloudBase 用户 session 调网关；插件启动不因 session 缺失阻断，用户发送后直接进入聊天 UI，如 session 过期、缺失或用户无权限，则在聊天中展示「登录已过期/无权限，请回到桌面端登录或重新启动浏览器」提示；本地直连兜底开关已删除，网关是内置模型唯一路径。
 - 验收标准：填入有效 Key 后首条任务即可执行；填入无效 Key 时给出可理解的错误提示。
 
 ### F5 新标签引导页（增强）
@@ -140,26 +141,39 @@ flowchart LR
 
 ### F8 Tokens 消耗统计
 
-- 用户故事：作为问学用户，我想在启动器看到本机 tokens 消耗趋势、模型分布与画像归因，以便控制成本。
+- 用户故事：作为问学用户，我想在启动器看到当前账号的 tokens 消耗趋势、模型分布与画像归因，以便控制成本。
 - 需求点：
   - 启动器提供 tokens 统计页，展示总输入 tokens、总输出 tokens、总 tokens、估算人民币成本；
   - 支持按浏览器画像、模型、日期聚合；展示最近调用明细；
-  - 登录产品用户后，统计数据优先来自 CloudBase LLM Gateway 的当前用户计量汇总；未登录、断网或云端不可用时回退已脱敏本地日志遥测 / 离线缓存；
-  - 云端 summary 不返回 uid，所有统计记录均不包含提示词正文、API Key 或敏感头；
+  - 用户登录后，统计数据优先来自 CloudBase LLM Gateway 的当前用户计量汇总；断网或云端不可用时回退已脱敏本地日志遥测 / 离线缓存；
+  - 云端 summary 不返回 uid，所有统计记录均不包含提示词正文、API Key、access token、refresh token 或敏感头；
   - 无数据时显示空状态与下一步说明。
 - 验收标准：无数据、单日数据、多画像/云端数据均能正确渲染；聚合总数等于明细求和；云端不可用时仍可显示同用户离线缓存或本地兜底；成本估算规则在 UI 中可解释。
 
-### F9 CloudBase 产品用户登录与网关会话
+### F9 用户账号与网关会话
 
-- 用户故事：作为问学产品用户，我在启动器登录自己的 CloudBase 注册用户后，问学插件可使用同一会话 token 调用内置模型网关。
+- 用户故事：作为问学用户，我先用用户 id + 密码登录桌面端，登录成功后即可启动浏览器并使用内置模型。
 - 需求点：
-  - 登录身份必须是 CloudBase Auth 产品侧注册/外部用户（`type=external`），不是企业成员或管理侧账号；
-  - 启动器提供用户名密码登录、当前会话展示、登出与交接到插件入口；
-  - 启动器本地可保存 CloudBase 会话 token，但不保存厂商 API Key，不把 refresh token 交给渲染层或插件；
-  - 会话交接只通过一次性 localhost `externally_connectable` 页面把 access token 交给插件 background；
-  - 插件保存 access token 后仅用于内置模型网关鉴权，自定义 BYO-Key 模型仍保持本机直连；
-  - 内置文本默认模型使用已验证支持 Agent tools/tool_choice 的 `qwen-plus`，视觉默认模型使用 `qwen3.7-plus`。
-- 验收标准：真实 CloudBase 外部产品用户可登录登出；交接后插件可取得有效 access token；内部/企业成员身份被拒绝。
+  - 桌面端提供独立登录页与注册页；账号标识为用户 id，认证方式为密码，不使用验证码、短信、邮箱 OTP 或匿名登录入口；
+  - 注册入口在创建 CloudBase Auth externalUser 成功后，同步创建同 uid 的 `user_accounts` 记录并置为 `status=active`，使新用户注册登录后可直接使用插件内置模型；后台管理仍可随后禁用该用户；
+  - 未登录时只能访问登录/注册入口，不进入主工作台，不能启动/聚焦浏览器画像，不能读取云端 tokens summary；
+  - 登录成功后，桌面端把当前 CloudBase session 同步给主进程；主进程在启动或聚焦目标浏览器画像时，通过一次性 localhost `externally_connectable` 页面把 `userId`、`accessToken`、`refreshToken`、`expiresAt` 与网关地址交给插件 background；
+  - 插件保存用户 session 后仅用于内置模型网关鉴权，并负责在 access token 过期前/过期后用 refresh token 刷新；自定义 BYO-Key 模型仍保持本机直连；
+  - CloudBase LLM Gateway 收到 `Authorization: Bearer <CloudBase accessToken>` 后 introspect CloudBase Auth token，解析用户 id，再查询 `user_accounts`；仅 `status=active` 放行调用百炼，`status=disabled` 或无记录返回无权限；
+  - tokens 计量继续写 CloudBase `token_usage`，其中 `uid` 为 CloudBase 用户 id，不再是 machine id。
+- 验收标准：干净安装首启进入登录页；注册/登录使用用户 id + 密码；登录成功后进入主工作台并可启动浏览器；浏览器启动后插件自动收到用户 session；桌面端、插件 options、IPC 与网关代码中不再出现 `wxm_` 生成、展示、复制、手动同步、`machine_accounts`、`machineId` 或 `tokenHash` 作为鉴权路径。
+
+### F10 后台管理系统
+
+- 用户故事：作为内部管理员，我可以通过公网后台查看用户 tokens 用量、识别异常用户，并按用户启用/禁用内置模型访问。
+- 需求点：
+  - 后台前端公网可访问，但只允许 CloudBase Auth 内部用户名/密码账号登录；不提供注册、匿名登录、手机号验证码、机器 token 登录或第三方 OAuth；
+  - 后台 API 在服务端校验 CloudBase Auth session，并继续查询 `admin_users` 角色；非登录、非内部账号、禁用账号均不得访问管理数据；
+  - 网关不再自动创建机器记录；用户访问由后台管理的 `user_accounts` 控制，`status=active` 才能调用内置模型；
+  - 后台 tokens 看板展示全局输入 tokens、输出 tokens、总 tokens、模型分布、日期趋势、用户分布与最近调用；所有记录不得包含提示词正文、响应正文、API Key、Authorization/Bearer、access token 或 refresh token；
+  - 后台用户列表支持按状态筛选、查看 user id、首次/最近出现时间、累计 tokens，并允许管理员启用/禁用用户、填写备注；
+  - 每次用户状态调整写 `user_permission_audit`，记录管理员 uid、用户、旧值、新值、原因与时间。
+- 验收标准：内部账号密码登录后可进入后台；未登录或非管理员请求后台 API 被拒绝；后台禁用用户后，该用户再调用内置模型时网关在请求 DashScope 前返回 403；tokens 看板聚合总数等于明细求和。
 
 ## 6. Demo 端到端链路
 
@@ -173,6 +187,7 @@ sequenceDiagram
 
     U->>App: 双击启动
     App->>App: 自检 CfT 与插件资源
+    App->>App: 校验 CloudBase 用户 session
     U->>App: 点击「启动浏览器」
     App->>Br: spawn(--user-data-dir, --load-extension)
     Br-->>App: 进程运行中(监听退出)
@@ -181,7 +196,7 @@ sequenceDiagram
     U->>Ext: 「把这页的单选题逐题作答」
     loop Agent 循环
         Ext->>Ext: DOM 序列化(纯文本)
-        Ext->>LLM: 上下文 + 工具定义（内置模型经网关透传）
+        Ext->>LLM: 上下文 + 工具定义（内置模型经用户 session 网关透传）
         LLM-->>Ext: 下一步动作
         Ext->>Br: 执行(点击/输入/滚动/切Tab)
     end
@@ -220,7 +235,7 @@ sequenceDiagram
 | --------------- | ------------------------------------------------------------------------------- |
 | M0（本期 Demo） | F1–F7 全链路跑通，双端可演示                                                    |
 | M1 稳定性与多开 | 多 profile 并行实例、崩溃恢复、插件本地日志体验增强、浏览器版本升级机制         |
-| M2 商业化地基   | 账户登录、云端 LLM 网关（密钥托管 + 计量）、插件经会话 token 调用网关；订阅计费后置 |
+| M2 商业化地基   | 用户账号登录、云端 LLM 网关（密钥托管 + 用户鉴权 + 计量）、插件经用户 session 调用网关、后台 tokens 看板与用户状态；订阅计费后置 |
 | M3 分发成熟     | 代码签名与公证、自动更新、官网下载链路                                          |
 
 ## 9. 成功指标（Demo 级）

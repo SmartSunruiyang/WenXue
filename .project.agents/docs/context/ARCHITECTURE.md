@@ -15,15 +15,18 @@
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | BrowserProfile           | id（目录名）、displayName、type、colorKey、createdAt、lastUsedAt、userDataDir                                                                                                             | 1:1 → 画像目录；1:0/1 → 运行中的浏览器实例（瞬态）     | 是：元数据 `<userData>/browsers.json` + 磁盘目录 `<userData>/profiles/<id>`                                |
 | BrowserRuntimeDescriptor | version、platform、binaryPath                                                                                                                                                             | 被 LaunchConfig / 版本查询消费                         | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更                                           |
-| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage、logRetentionDays、logMaxEntries | 被 Agent 循环、插件 UI 与 Logging 消费                 | 是：`chrome.storage.local`；自定义 BYO-Key 模型 Key 仅本机，内置模型只存网关 baseURL / 空 apiKey，运行时注入 CloudBase access token；不再保留内置本地直连兜底 |
+| ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage、logRetentionDays、logMaxEntries | 被 Agent 循环、插件 UI 与 Logging 消费                 | 是：`chrome.storage.local`；自定义 BYO-Key 模型 Key 仅本机，内置模型只存网关 baseURL / 空 apiKey，运行时注入插件侧用户 access token；不再保留内置本地直连兜底 |
 | AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                                                            | 1:N → AgentActivity                                    | 是：插件 IndexedDB，用户可删                                                                               |
 | AgentActivity            | taskId、type、payload、ts                                                                                                                                                                 | 属于 AgentTask                                         | 是：插件 IndexedDB，随任务删除                                                                             |
 | QuickLink                | id、title、url、icon?                                                                                                                                                                     | 属于 NewTabHome 仪表盘                                 | 是：chrome.storage.local（newtabQuickLinks，仅本机，I2）                                                   |
 | LogEntry                 | id、ts、level、source、context、browserId、message、data?                                                                                                                                 | 由插件各运行时产生，由 Logging / LauncherLogStore 管理 | 插件侧 IndexedDB + 启动器侧 `<userData>/launcher-logs.json`；按保留天数与条数上限自动清理，用户可导出/清空 |
 | LauncherSettings         | launch、behavior、logs、kernel、本地资料等设置组                                                                                                                                          | 被启动器 UI、BrowserSupervisor、LauncherLogStore 消费  | 是：`<userData>/settings.json`，即时保存                                                                   |
-| TokenUsageRecord         | id、ts、browserId?、uid?、model、inputTokens、outputTokens、totalTokens、estimatedCostCny?、latencyMs?                                                                                    | 由已脱敏日志遥测或 CloudBase LLM Gateway 计量生成       | 本地缓存：`<userData>/token-usage.json`；云端权威：`token_usage`；均不包含提示词正文、API Key 或敏感头      |
-| CloudAuthSession         | uid、accessToken、refreshToken?、expiresAt                                                                                                                                               | 启动器登录后交接扩展；扩展用 accessToken 调网关        | 是：CloudBase Auth 会话；本地仅保存会话 token，不保存厂商 Key                                              |
+| TokenUsageRecord         | id、ts、browserId?、uid?、model、inputTokens、outputTokens、totalTokens、estimatedCostCny?、latencyMs?                                                                                    | 由已脱敏日志遥测或 CloudBase LLM Gateway 计量生成       | 本地缓存：`<userData>/token-usage.json`；云端权威：`token_usage`；云端 uid 为 CloudBase 用户 id；均不包含提示词正文、API Key、access token、refresh token 或敏感头 |
+| UserSession              | userId、accessToken、refreshToken、expiresAt、gatewayBaseUrl                                                                                                                            | 桌面登录后同步给主进程并交接扩展；扩展用 access token 调网关并用 refresh token 刷新 | 桌面主进程仅内存持有当前 session；插件 `chrome.storage.local` 的 `WenXueUserSession`；CloudBase Web SDK 负责桌面登录态持久化 |
 | CloudTokenUsage          | _id、ts、uid、model、inputTokens、outputTokens、totalTokens、latencyMs、createdAt                                                                                                        | 由 CloudBase LLM Gateway 从 DashScope usage 生成        | 是：CloudBase NoSQL `token_usage`；PRIVATE；不含正文、Key、Authorization/Bearer                            |
+| UserAccount              | _id/uid、status、firstSeenAt、lastSeenAt、createdAt、updatedAt、note?                                                                                                                    | 由后台管理系统/初始化控制用户是否可调用内置模型        | 是：CloudBase NoSQL `user_accounts`；`status=active` 才放行，`disabled` 禁止调用                            |
+| AdminUser                | _id(uid)、role、status、displayName?、createdAt?、updatedAt?                                                                                                                            | CloudBase Auth 内部账号对应的后台授权记录              | 是：CloudBase NoSQL `admin_users`；只有 active 管理员/查看者可访问 AdminApi                                |
+| UserPermissionAudit      | _id、uid、adminUid、before、after、reason?、createdAt                                                                                                                                    | 由 AdminApi 在用户状态调整时写入                       | 是：CloudBase NoSQL `user_permission_audit`；不含 access token、refresh token、提示词正文或厂商 Key          |
 
 ### 1.2 派生概念（非持久化）
 
@@ -34,8 +37,8 @@
 ### 1.3 不变量（任何模块都必须维护）
 
 - **I1.** 同一画像目录同一时刻至多一个浏览器实例（BrowserSupervisor 状态机为主，CfT ProcessSingleton 兜底）。
-- **I2.** 内置模型的用户提示词/对话经自有 CloudBase LLM Gateway 转发至百炼；网关只透传与计量，不持久化提示词/响应正文。厂商 API Key 仅存网关服务端环境变量，永不下发插件、桌面或打包产物；插件日志仍可在本机 IndexedDB 保存已脱敏的对话与 LLM 请求/响应正文。自定义 BYO-Key 模型维持本机直连。API Key、`Authorization` 头与 `Bearer` 凭据绝不持久化；进入桌面域或云端计量的数据不得包含 API Key、敏感头或提示词正文。
-- **I3.** Demo 阶段桌面域与插件域无运行时控制通信。豁免仅限两类：插件域可通过 Chrome Native Messaging 向桌面域单向发送已脱敏日志 / tokens 遥测；启动器登录后可经一次性 localhost `externally_connectable` 页面向插件域交接 CloudBase access token。桌面域禁止通过这些通道向 Agent 发送控制指令。
+- **I2.** 内置模型的用户提示词/对话经自有 CloudBase LLM Gateway 转发至百炼；网关只透传与计量，不持久化提示词/响应正文。厂商 API Key 仅存网关服务端环境变量，永不下发插件、桌面或打包产物；插件日志仍可在本机 IndexedDB 保存已脱敏的对话与 LLM 请求/响应正文。自定义 BYO-Key 模型维持本机直连。CloudBase 用户 access token 是内置网关凭据，仅允许在一次性 handoff 与网关 `Authorization` 头中使用；refresh token 仅允许用于插件刷新 session。API Key、`Authorization` 头、`Bearer` 凭据、access token 与 refresh token 绝不持久化到日志、tokens 记录或打包产物；进入桌面域、AdminApi 或云端计量的数据不得包含 API Key、敏感头、access token、refresh token 或提示词正文。
+- **I3.** Demo 阶段桌面域与插件域无运行时控制通信。豁免仅限两类：插件域可通过 Chrome Native Messaging 向桌面域单向发送已脱敏日志 / tokens 遥测；启动器可经一次性 localhost `externally_connectable` 页面向插件域交接用户 session。桌面域禁止通过这些通道向 Agent 发送控制指令。
 - **I4.** 插件域只经 OpenAI-compatible HTTP 接口调用 LLM；更换供应商/接入网关只允许改配置（baseURL/key/model），不允许改 Agent 核心代码。
 - **I5.** vendor 的 `@page-agent/*` 四包保持上游包名、目录结构与版权头；任何本地改动必须登记 `UPSTREAM.md`（ROADMAP M1 建立）。
 
@@ -147,30 +150,30 @@
 
 ```
 ## 模块名：UsageCloudClient
-- 职责：用 CloudBase 产品用户 access token 读取 CloudBase LLM Gateway 的 `/v1/usage/summary`，校验 `TokenUsageSummary`，按 uid 写入离线缓存
-- 不负责：不写 `token_usage`；不保存 access token、refresh token、厂商 API Key、uid 或敏感头到渲染层可见数据；不计算订阅/扣费
-- 输入：AppPaths、LauncherAuthSession、CloudBaseLlmGateway
+- 职责：用当前用户 access token 读取 CloudBase LLM Gateway 的 `/v1/usage/summary`，校验 `TokenUsageSummary`，按 userId 写入离线缓存
+- 不负责：不写 `token_usage`；不保存厂商 API Key、access token、refresh token、uid 或敏感头到 summary 数据；不计算订阅/扣费
+- 输入：AppPaths、UserSessionStore、CloudBaseLlmGateway
 - 输出：DesktopBridge 的 `tokens:getSummary`
 - 关键类型/接口：summary() -> Promise<TokenUsageSummary>
-- 持有状态：`<userData>/token-usage-summary-cache.json`（按 uid 绑定的脱敏 summary）
+- 持有状态：`<userData>/token-usage-summary-cache.json`（按 userId 绑定的脱敏 summary）
 ```
 
 ```
-## 模块名：LauncherAuthSession
-- 职责：启动器侧 CloudBase 产品用户登录、refresh、登出、会话持久化；用 `/auth/v1/user/me` 确认 `type=external`
-- 不负责：不创建企业成员；不保存厂商 API Key；不把 refresh token 交给渲染层或插件
-- 输入：AppPaths、CloudBase Auth HTTP API、用户输入的产品用户账号密码
-- 输出：DesktopBridge、ExtensionSessionHandoff 可用的 uid / accessToken / expiresAt
-- 关键类型/接口：login · logout · getSession · getHandoffSession
-- 持有状态：`<userData>/cloud-auth-session.json`、`<userData>/cloud-auth-device.json`
+## 模块名：UserSessionStore
+- 职责：主进程内存持有当前 CloudBase 用户 session，校验必需字段，为浏览器启动、UsageCloudClient 与 handoff 提供 access/refresh token
+- 不负责：不执行 CloudBase 登录/注册；不刷新远端会话；不保存厂商 API Key；不写日志或 tokens 记录
+- 输入：ConsoleUI 经 DesktopBridge 同步的 UserSession
+- 输出：DesktopBridge、UserSessionHandoff、UsageCloudClient 可用的 userId / accessToken / refreshToken / expiresAt / gatewayBaseUrl
+- 关键类型/接口：setSession(session) · current() · requireSession() · clear()
+- 持有状态：仅主进程内存
 ```
 
 ```
-## 模块名：ExtensionSessionHandoff
-- 职责：创建一次性 localhost handoff 页面，把 CloudBase access token 经 `externally_connectable` 交给问学插件 background
-- 不负责：不保存会话；不控制 Agent；不持久化提示词正文、API Key 或 refresh token
-- 输入：LauncherAuthSession 的 handoff session、固定扩展 ID、BrowserSupervisor 打开的 URL
-- 输出：DesktopBridge 的 handoff 成功/失败结果；插件 `WenXueCloudAuthSession`
+## 模块名：UserSessionHandoff
+- 职责：创建一次性 localhost handoff 页面，把用户 session 经 `externally_connectable` 交给问学插件 background
+- 不负责：不执行登录/刷新；不控制 Agent；不持久化提示词正文、API Key、access token 或 refresh token
+- 输入：UserSessionStore 的当前会话、固定扩展 ID、BrowserSupervisor 打开的 URL
+- 输出：DesktopBridge 的 handoff 成功/失败结果；插件 `WenXueUserSession`
 - 关键类型/接口：run(session, openUrl) -> { ok, error? }
 - 持有状态：单次 HTTP server 生命周期内的 nonce 与完成状态
 ```
@@ -201,7 +204,7 @@
 ## 模块名：DesktopBridge
 - 职责：preload contextBridge + IPC 通道注册；渲染层访问主进程的唯一入口
 - 不负责：不含业务逻辑（仅转译与入参校验）；不绕过 I2/I3 直接控制插件域
-- 输入：BrowserSupervisor、BrowserProfileStore、LauncherLogStore、LauncherSettingsStore、LauncherTelemetryIngest、TokenUsageStore、UsageCloudClient、LauncherAuthSession、ExtensionSessionHandoff、BrowserResources
+- 输入：BrowserSupervisor、BrowserProfileStore、LauncherLogStore、LauncherSettingsStore、LauncherTelemetryIngest、TokenUsageStore、UsageCloudClient、UserSessionStore、UserSessionHandoff、BrowserResources
 - 输出：ConsoleUI（window.wenxue.*）
 - 关键类型/接口：见 §3.2 IPC 契约
 - 持有状态：无
@@ -234,12 +237,22 @@
 
 ```
 ## 模块名：CloudBaseLlmGateway
-- 职责：CloudBase Run Function 模式的 OpenAI-compatible 网关；校验 CloudBase 会话 token→uid；为流式 DashScope 请求注入 stream_options.include_usage；透传 SSE；提取 usage 与延迟并生成 uid 维度计量；提供当前用户 `/v1/usage/summary` 脱敏汇总
-- 不负责：不持久化提示词/响应正文；不保存或返回 DashScope Key；不实现订阅/扣费；M4 实时聚合不做 rollup 预计算
-- 输入：插件 OpenAIClient 发来的 `/v1/chat/completions` 请求、UsageCloudClient 发来的 `/v1/usage/summary` 请求、CloudBase access_token、服务端 DASHSCOPE_API_KEY / CLOUDBASE_USAGE_API_KEY 环境变量
-- 输出：DashScope SSE/JSON 原样回传；写 `token_usage`；返回不含 uid/Key/敏感头的 `TokenUsageSummary`
-- 关键类型/接口：buildDashScopeRequest · resolveCloudBaseUser · extractUsageFromSseFrame · buildUsageRecord · handleUsageSummary · readUsageRecords · buildUsageSummary
-- 持有状态：无；部署态环境变量由 CloudBase Run 管理
+- 职责：CloudBase Run Function 模式的 OpenAI-compatible 网关；注册入口创建 CloudBase Auth externalUser 后同步创建 `user_accounts.status=active` 授权记录；introspect CloudBase Auth access token 并解析用户 uid；每次请求读取 `user_accounts` 并在请求 DashScope 前执行 status 鉴权；为流式 DashScope 请求注入 stream_options.include_usage；透传 SSE；提取 usage 与延迟并生成 uid 维度计量；提供当前用户 `/v1/usage/summary` 脱敏汇总
+- 不负责：不持久化提示词/响应正文；不保存或返回 DashScope Key；不实现订阅/扣费；不提供管理员登录或管理 UI；M4 实时聚合不做 rollup 预计算
+- 输入：插件 OpenAIClient 发来的 `/v1/chat/completions` 请求、UsageCloudClient 发来的 `/v1/usage/summary` 请求、桌面注册页发来的 `/v1/auth/register` 请求、CloudBase access token、服务端 DASHSCOPE_API_KEY / CLOUDBASE_USAGE_API_KEY / Tencent Cloud API 凭证环境变量
+- 输出：DashScope SSE/JSON 原样回传；创建 CloudBase Auth 用户并写 `user_accounts`；读取 `user_accounts` 与写 `token_usage`；返回不含 uid/Key/敏感头的 `TokenUsageSummary`
+- 关键类型/接口：handleLauncherRegistration · createCloudBaseExternalUser · buildDashScopeRequest · authorizeUserRequest · resolveCloudBaseUser · readUserAccount · extractUsageFromSseFrame · buildUsageRecord · handleUsageSummary · readUsageRecords · buildUsageSummary
+- 持有状态：无业务授权缓存；部署态环境变量由 CloudBase Run 管理
+```
+
+```
+## 模块名：AdminApi
+- 职责：CloudBase Run Function 模式的后台管理 API；校验 CloudBase Auth 管理员 session；查询 `admin_users` 角色；读取 `token_usage` 聚合 tokens 看板；读取/更新 `user_accounts` 并写 `user_permission_audit`
+- 不负责：不接受用户 access token 以外的管理登录；不转发 LLM；不保存提示词/响应正文；不下发 CloudBase API Key；不渲染后台 UI
+- 输入：AdminConsole 发来的 CloudBase Auth bearer token、服务端 CloudBase 环境变量与 NoSQL 集合
+- 输出：`/admin/v1/me`、`/admin/v1/usage/summary`、`/admin/v1/users`、`/admin/v1/users/status` JSON 响应
+- 关键类型/接口：resolveCloudBaseAdminIdentity · requireAdminUser · buildAdminUsageSummary · handleAdminRequest
+- 持有状态：无；持久状态在 CloudBase NoSQL
 ```
 
 ### 2.3 插件域（apps/extension + packages/\*）
@@ -275,9 +288,9 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：ExtensionSettingsConfig（L4/纯配置）
-- 职责：定义内置模型 ID、厂商预设、自定义厂商与自定义模型结构；归一化 selectedModelId/customModels；将设置页源数据解析为 Agent 可用的 llmConfig；在运行时把内置模型解析为 CloudBase Gateway baseURL + access token；定义并归一化插件日志保留配置
+- 职责：定义内置模型 ID、厂商预设、自定义厂商与自定义模型结构；归一化 selectedModelId/customModels；将设置页源数据解析为 Agent 可用的 llmConfig；在运行时把内置模型解析为 CloudBase Gateway baseURL + 用户 access token；定义并归一化插件日志保留配置
 - 不负责：不读写 chrome.storage；不渲染 UI；不发 LLM 请求
-- 输入：设置页表单值、chrome.storage 中的 ModelConfig、插件侧 `WenXueCloudAuthSession`
+- 输入：设置页表单值、chrome.storage 中的 ModelConfig、插件侧 `WenXueUserSession`
 - 输出：ExtConfig / LLMConfig / RuntimeAgentModels
 - 关键类型/接口：CustomModelConfig · ModelProviderPreset · resolveSelectedLLMConfig · normalizeCustomModels · buildSettingsConfig · buildRuntimeAgentModels · loadRuntimeAgentModels · logRetentionDays · logMaxEntries
 - 持有状态：无（纯函数）
@@ -344,12 +357,26 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：ExtensionEntrypoints（L6/组装根）
-- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由、按 frameId 路由 PAGE_CONTROL、main-world JS 执行通道、`webNavigation` frame 发现、`list_frames` 工具、newtab 页面装配；接收 localhost `WENXUE_AUTH_SESSION` 外部消息并保存插件侧 CloudBase access token
+- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由、按 frameId 路由 PAGE_CONTROL、main-world JS 执行通道、`webNavigation` frame 发现、`list_frames` 工具、newtab 页面装配；接收 localhost `WENXUE_USER_SESSION` 外部消息并保存插件侧用户 session
 - 不负责：业务决策
 - 持有状态：会话级路由表
 ```
 
-### 2.4 官网域（apps/website）
+### 2.4 后台管理域（apps/admin）
+
+后台管理域是公网 Web 前端，只消费 AdminApi 和 CloudBase Web Auth；它不直接访问 CloudBase NoSQL，也不接触用户 access token / refresh token 原文以外的业务凭据。
+
+```
+## 模块名：AdminConsole
+- 职责：内部后台登录页、受保护路由、tokens 看板、用户列表与状态调整表单
+- 不负责：不直接读写 `token_usage` / `user_accounts` / `admin_users`；不持久化管理员密码；不调用 LLM；不接收机器 token 登录
+- 输入：CloudBase Web Auth username/password session、AdminApi JSON 响应
+- 输出：公网后台静态站点；当前由 CloudBase Run 静态容器 `wenxue-admin-web` 提供，避免共享静态托管域返回 attachment 头
+- 关键类型/接口：signInWithPassword · getSession · adminApiFetch · AdminDashboard
+- 持有状态：浏览器 local auth session 与 UI 态
+```
+
+### 2.5 官网域（apps/website）
 
 官网域是静态前端站点，与桌面域、插件域均无运行时依赖边；它只消费公开产品叙事、品牌资产与下载链接。
 
@@ -379,8 +406,8 @@ graph TD
         DesktopBridge --> LauncherTelemetryIngest
         DesktopBridge --> TokenUsageStore
         DesktopBridge --> UsageCloudClient
-        DesktopBridge --> LauncherAuthSession
-        DesktopBridge --> ExtensionSessionHandoff
+        DesktopBridge --> UserSessionStore
+        DesktopBridge --> UserSessionHandoff
         DesktopBridge --> BrowserResources
         BrowserSupervisor --> LaunchConfig
         BrowserSupervisor --> BrowserResources
@@ -394,9 +421,8 @@ graph TD
         LauncherTelemetryIngest --> LauncherLogStore
         LauncherTelemetryIngest --> TokenUsageStore
         TokenUsageStore --> AppPaths
-        UsageCloudClient --> LauncherAuthSession
+        UsageCloudClient --> UserSessionStore
         UsageCloudClient --> AppPaths
-        LauncherAuthSession --> AppPaths
         ProfileStore --> AppPaths
         BrowserResources --> AppPaths
         AppLogger --> AppPaths
@@ -424,18 +450,23 @@ graph TD
         Chaoxing --> Logging
         PA_CORE --> PA_LLMS["@page-agent/llms"]
     end
-    subgraph 云端后端
-        CloudBaseLlmGateway --> CloudBaseAuth["CloudBase Auth HTTP API"]
-        CloudBaseLlmGateway --> DashScope["DashScope OpenAI-compatible API"]
-    end
-    LauncherAuthSession --> CloudBaseAuth
-    UsageCloudClient --> CloudBaseLlmGateway
-    subgraph 官网域
-        WebsiteSite --> WebsiteAssets["透明品牌资产"]
-    end
+	    subgraph 云端后端
+	        CloudBaseLlmGateway --> DashScope["DashScope OpenAI-compatible API"]
+	        CloudBaseLlmGateway --> CloudNoSQL["CloudBase NoSQL"]
+	        AdminApi --> CloudBaseAuth["CloudBase Auth"]
+	        AdminApi --> CloudNoSQL
+	    end
+	    UsageCloudClient --> CloudBaseLlmGateway
+	    subgraph 后台管理域
+	        AdminConsole --> AdminApi
+	        AdminConsole --> CloudBaseWebAuth["CloudBase Web Auth SDK"]
+	    end
+	    subgraph 官网域
+	        WebsiteSite --> WebsiteAssets["透明品牌资产"]
+	    end
 ```
 
-> 桌面域与插件域无运行时控制边（I3）；当前仅允许 auth access token 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`chrome.webNavigation` 是浏览器外部 API，仅供 ExtensionEntrypoints 发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
+> 桌面域与插件域无运行时控制边（I3）；当前仅允许用户 session 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；后台管理域只依赖 CloudBase Web Auth 与 AdminApi，不直接读写 NoSQL；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`chrome.webNavigation` 是浏览器外部 API，仅供 ExtensionEntrypoints 发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
 
 ### 3.1 依赖方向规则
 
@@ -446,7 +477,7 @@ graph TD
 
 ```ts
 // module: DesktopBridge —— IPC 通道（渲染层唯一入口；通道上禁止出现插件域数据，I2/I3）
-//   browser:launch         invoke () => Promise<{ ok: boolean; error?: string }>  // 幂等，保证 I1
+//   browser:launch         invoke () => Promise<{ ok: boolean; error?: string }>  // 需已登录；幂等，保证 I1
 //   browser:getStatus      invoke () => BrowserStatus                             // 'idle'|'launching'|'running'|'error'
 //   browser:getStatuses    invoke () => Record<string, BrowserStatus>
 //   browser:listProfiles   invoke () => Promise<BrowserProfile[]>
@@ -456,6 +487,7 @@ graph TD
 //   browser:removeProfile  invoke (id: string) => Promise<{ ok: boolean; profile?: BrowserProfile; error?: string }>
 //   browser:openProfileFolder invoke (id: string) => Promise<{ ok: boolean; error?: string }>
 //   browser:launchProfile  invoke (id: string) => Promise<{ ok: boolean; error?: string }>
+//                            // 需已登录；启动/聚焦时自动 handoff UserSession 给插件
 //   browser:stopProfile    invoke (id: string) => Promise<{ ok: boolean; error?: string }>
 //   browser:status-changed event  (status: BrowserStatus)                         // main → renderer
 //   browser:profile-status-changed event ({ profileId, status })                   // main → renderer
@@ -472,13 +504,11 @@ graph TD
 //   telemetry:ingest       invoke (payload: unknown) => Promise<{ ok: boolean; result?: { logs: number; tokenUsage: number }; error?: string }>
 //                            // 主进程受控入口；preload 不暴露给 renderer；后续 Native Messaging host 复用同一校验逻辑
 //   tokens:getSummary      invoke () => Promise<TokenUsageSummary>
-//                            // 优先读 CloudBaseLlmGateway `/v1/usage/summary`；失败时回退本地 TokenUsageStore
-//   auth:login             invoke ({ username, password }) => Promise<{ ok: boolean; session?: PublicCloudAuthSession; error?: string }>
-//                            // 仅接受 CloudBase `type=external` 产品用户；不把 refresh token 返回渲染层
-//   auth:getSession        invoke () => Promise<{ ok: boolean; session?: PublicCloudAuthSession | null; error?: string }>
-//   auth:logout            invoke () => Promise<{ ok: boolean; error?: string }>
-//   auth:handoffToExtension invoke (profileId?: string) => Promise<{ ok: boolean; error?: string }>
-//                            // 启动一次性 localhost 页面，经 externally_connectable 只交接 access token
+//                            // 需已登录；优先读 CloudBaseLlmGateway `/v1/usage/summary`；失败时回退本地 TokenUsageStore
+//   auth:setSession        invoke (session: UserSession) => Promise<{ ok: boolean; session?: PublicUserSession; error?: string }>
+//   auth:getSession        invoke () => Promise<{ ok: boolean; session?: PublicUserSession; error?: string }>
+//   auth:clearSession      invoke () => Promise<{ ok: boolean; error?: string }>
+//                            // Main 仅内存持有 session；renderer 通过 CloudBase Web SDK 登录/注册/刷新
 
 // module: BrowserSupervisor
 //   launch(profileId = 'default', opts?: { startUrl?: string }): Promise<void>
@@ -555,16 +585,35 @@ graph TD
 
 // module: CloudBaseLlmGateway —— CloudBase Run Function mode
 //   POST /v1/chat/completions
-//     headers.Authorization = Bearer <CloudBase access_token>
+//     headers.Authorization = Bearer <CloudBase accessToken>
 //     body = OpenAI-compatible chat completion payload
 //     stream=true 时必须向 DashScope 注入 stream_options.include_usage=true
+//     请求 DashScope 前必须 introspect CloudBase Auth token，并读取 user_accounts 检查 status=active
 //     response = DashScope SSE/JSON passthrough
 //     usage record = { uid, model, inputTokens, outputTokens, totalTokens, latencyMs, createdAt }
-//     usage record 禁止包含 prompt/content/API Key/Authorization/Bearer
+//     usage record 禁止包含 prompt/content/API Key/Authorization/Bearer/accessToken/refreshToken
 //   GET /v1/usage/summary
-//     headers.Authorization = Bearer <CloudBase access_token>
+//     headers.Authorization = Bearer <CloudBase accessToken>
 //     response = TokenUsageSummary（browserId 固定 cloud；recent.id 不含 uid）
-//     response 禁止包含 uid/prompt/content/API Key/Authorization/Bearer
+//     response 禁止包含 uid/prompt/content/API Key/Authorization/Bearer/accessToken/refreshToken
+//
+// module: AdminApi —— CloudBase Run Function mode
+//   所有 /admin/v1/* 请求：
+//     headers.Authorization = Bearer <CloudBase Auth access_token>
+//     服务端先 introspect CloudBase Auth token，再读取 admin_users[_id=uid]
+//     仅 status=active 的 admin/viewer 可读取；只有 role=admin 可改用户状态
+//   GET /admin/v1/me
+//     response = { uid, role, displayName? }
+//   GET /admin/v1/usage/summary
+//     response = { totals, byDay, byModel, byUser, recent, userStatus }
+//     response 禁止包含 uid 原文以外的敏感头、prompt/content/API Key/Authorization/Bearer/accessToken/refreshToken
+//   GET /admin/v1/users
+//     query.status? = active|disabled · query.q? = uid 片段 · query.limit?
+//     response = { users: UserAccountView[] }
+//   PATCH /admin/v1/users/status
+//     body = { uid, status?, note?, reason? }
+//     response = { user: UserAccountView }
+//     side effect = update user_accounts + insert user_permission_audit
 ```
 
 ## 4. 持久化与边界
@@ -577,18 +626,21 @@ graph TD
 | 运行日志                                      | `<userData>/logs/`                                                                       | AppLogger                                              | 不含 Key/对话内容（I2）；主进程系统事件同时镜像到启动器日志                                                                                                |
 | 启动器日志                                    | `<userData>/launcher-logs.json`                                                          | LauncherLogStore / AppLogger / LauncherTelemetryIngest | 仅保存已脱敏日志；支持 browserId 归类、保留裁剪、清空与导出；桌面侧二次清洗敏感键但保留 token 计数字段；坏 JSON 自动隔离为 `.corrupt-<timestamp>` 后重建空文件 |
 | tokens 用量                                   | `<userData>/token-usage.json`                                                            | TokenUsageStore / LauncherTelemetryIngest              | 仅保存 tokens 数量、模型、画像、时间与估算成本；不含提示词正文或敏感头                                                                                     |
-| 云端 tokens summary 缓存                       | `<userData>/token-usage-summary-cache.json`                                               | UsageCloudClient                                       | 按 uid 绑定；只保存已脱敏 `TokenUsageSummary`，不保存 access token、refresh token、uid 到 summary、正文或敏感头                                            |
+| 云端 tokens summary 缓存                       | `<userData>/token-usage-summary-cache.json`                                               | UsageCloudClient                                       | 按 userId 绑定；只保存已脱敏 `TokenUsageSummary`，不保存 access token、refresh token、uid 到 summary、正文或敏感头                                      |
 | ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`                                                                   | SidepanelApp options 设置页与语言快捷入口              | 自定义 BYO-Key 不出本机；内置模型只保存网关 baseURL 与空 apiKey，不保存百炼 Key；`selectedModelId` + `customModels[]` 为设置页源数据；历史 `WenXueUseLocalBuiltinLlmFallback` 标志被运行时忽略          |
-| CloudBase access token                         | CloudBase Auth 会话；启动器登录后交接扩展                                                | LauncherAuthSession（M2）/ ExtensionSessionHandoff（M2）/ ExtensionEntrypoints（M2+） | 仅作为调网关凭据；不得写入日志、tokens 记录或打包产物；refresh token 不交给插件                                                                             |
+| 用户 session                                  | 主进程内存；插件 `chrome.storage.local` 的 `WenXueUserSession`                            | ConsoleUI / UserSessionStore / UserSessionHandoff / ExtensionEntrypoints | 仅作为调网关凭据；不得在桌面设置页展示/复制 token；不得写入日志、tokens 记录或打包产物；refresh token 仅用于插件刷新 session                                   |
 | DashScope API Key                              | CloudBase Run 环境变量 `DASHSCOPE_API_KEY`                                               | CloudBaseLlmGateway                                   | 仅服务端读取；不得返回给客户端、写入日志、写入仓库或本地配置                                                                                               |
-| 云端 tokens 计量                               | CloudBase NoSQL `token_usage`                                                            | CloudBaseLlmGateway / usage-summary target             | 原始计量仅 uid、模型、tokens、时间、延迟；summary 返回前移除 uid；不含正文、Key、Authorization/Bearer                                                       |
+| 云端 tokens 计量                               | CloudBase NoSQL `token_usage`                                                            | CloudBaseLlmGateway / usage-summary target             | 原始计量仅用户 uid、模型、tokens、时间、延迟；summary 返回前移除 uid；不含正文、Key、Authorization/Bearer/accessToken/refreshToken                           |
+| 用户账号权限                                  | CloudBase NoSQL `user_accounts`                                                          | AdminApi / 内部初始化                                  | 网关只读取 status；只有 active 可调用内置模型；AdminApi 可改 status/note                                                                                      |
+| 后台管理员授权                                | CloudBase NoSQL `admin_users`                                                            | 手动初始化 / AdminApi 读取                              | `_id` 等于 CloudBase Auth uid；只有 active admin/viewer 可访问 AdminApi；不保存密码，密码由 CloudBase Auth 管理                                               |
+| 用户权限审计                                  | CloudBase NoSQL `user_permission_audit`                                                   | AdminApi                                               | 每次状态调整写 before/after/adminUid/reason/createdAt；不含提示词正文、access token、refresh token、API Key 或敏感头                                        |
 | 任务历史                                      | 插件 IndexedDB `page-agent-ext` v3：`sessions`（`id`、`conversationId`、`createdAt`、`updatedAt`，索引 `by-created` / `by-conversation`） | SidepanelApp                          | 不出本机；同一会话多轮续接按 `conversationId` upsert 为一条记录；用户可清空                                                                                 |
 | 插件日志                                      | IndexedDB `page-agent-ext` v3：`logs`（`id` 自增，`by-ts` 索引）；与 `sessions` 同库 | 仅 background Logging 写；启动器日志页接管查看入口     | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；可通过单向遥测进入桌面域 |
 | 快捷入口与 onboarding 标志                    | chrome.storage.local                                                                     | NewTabHome                                             | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                                                                          |
 | browser.lock.json                             | 仓库 `apps/desktop/`                                                                     | 开发者（升级 CfT 时）                                  | 构建期消费，运行期只读                                                                                                                                     |
 | 官网演示 UI 状态                              | 浏览器内存                                                                               | WebsiteSite                                            | 仅本页交互演示，不持久化、不出网                                                                                                                           |
 
-出网边界：内置模型路径为插件域 → CloudBaseLlmGateway → DashScope；自定义 BYO-Key 路径仍为插件域 → 用户配置的 LLM baseURL（HTTPS）。桌面域仅在登录/用量读取里访问 CloudBase；CfT 自身的浏览流量属用户行为，不在系统边界内。
+出网边界：内置模型路径为插件域 → CloudBaseLlmGateway → DashScope；自定义 BYO-Key 路径仍为插件域 → 用户配置的 LLM baseURL（HTTPS）。桌面域仅在用量读取里访问 CloudBaseLlmGateway；后台管理域仅访问 CloudBase Web Auth 与 AdminApi；CfT 自身的浏览流量属用户行为，不在系统边界内。
 
 ## 5. 测试边界
 
@@ -596,9 +648,10 @@ graph TD
 - **vendor 四包**：上游测试套件随包保留，`pnpm -r test` 必绿；对 vendor 的本地补丁必须配套回归测试。`@page-agent/core` 的续接/压缩补丁需覆盖 `user_message`、`followUp`、历史投影、摘要降级、`recall_steps`、硬阈值淘汰与恢复历史后续接。
 - **SidepanelApp 会话续接**：`useAgent` 覆盖 execute/followUp/restoreConversation 的状态同步，`db` 覆盖 v1/v2→v3 迁移与 `conversationId` upsert，`ContextBanner` 覆盖近溢出判定与横幅文案。
 - **启动器 App 化新增单测**：BrowserProfileStore 持久化与目录对齐；BrowserSupervisor 多画像并行与同画像 I1；DesktopBridge 新 IPC 契约；LauncherTelemetryIngest 日志/tokens 导入与二次清洗；窗口外壳选项纯函数。
-- **UsageCloudClient**：覆盖产品用户 access token 读取云端 summary、按 uid 写离线缓存、云端失败时读同 uid 缓存、无缓存/响应格式异常时上抛供 DesktopBridge 本地兜底。
+- **UserSessionStore / UserSessionHandoff / UsageCloudClient**：覆盖 session 字段校验、未登录拒绝启动/云端 summary、按 userId 读取与缓存云端 summary、云端失败时读同 userId 缓存、一次性 localhost handoff 成功/失败与重复完成保护。
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1/v2→v3 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
-- **CloudBaseLlmGateway**：TDD 覆盖 token 缺失拒绝、CloudBase token introspect→uid、流式请求注入 `stream_options.include_usage`、SSE 末块 usage 解析、计量记录无正文/Key/敏感头。
+- **CloudBaseLlmGateway**：TDD 覆盖 token 缺失拒绝、CloudBase access token introspection、无 user_accounts/disabled 时请求 DashScope 前拒绝、active 用户放行、流式请求注入 `stream_options.include_usage`、SSE 末块 usage 解析、计量记录无正文/Key/敏感头。
+- **AdminApi / AdminConsole**：AdminApi 覆盖未登录/非 admin_users/禁用账号拒绝、viewer 只读、admin 可调整用户状态、tokens 聚合总数等于明细求和、响应不含敏感字段；AdminConsole 至少通过 `tsc --noEmit` 与 `vite build`，登录页/看板/用户状态表单需手动或浏览器 smoke 验证。
 - **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。
 - **仅手动**：ConsoleUI、SidepanelApp 的视觉与交互（按 `UIUX.md` 与 PRD 验收标准）。
@@ -611,7 +664,7 @@ WenXue/
 │   ├── desktop/                     # 桌面域
 │   │   ├── src/main/                # AppPaths · AppLogger · BrowserResources · LaunchConfig
 │   │   │                            #   · ProfileStore · BrowserProfileStore · LauncherSettingsStore
-│   │   │                            #   · LauncherLogStore · LauncherTelemetryIngest · TokenUsageStore · UsageCloudClient · BrowserSupervisor · MainBootstrap
+│   │   │                            #   · LauncherLogStore · LauncherTelemetryIngest · TokenUsageStore · UsageCloudClient · UserSessionStore · UserSessionHandoff · BrowserSupervisor · MainBootstrap
 │   │   ├── src/preload/             # DesktopBridge（preload 侧）
 │   │   ├── src/renderer/            # ConsoleUI（含 strings.ts 文案）
 │   │   ├── scripts/                 # fetch-browser.ts / smoke-launch.ts（构建工具，非运行时模块）
@@ -630,14 +683,22 @@ WenXue/
 │           ├── logStore.ts          # background IndexedDB 读写与 retention
 │           ├── log.background.ts    # LOG_APPEND/QUERY/EXPORT/CLEAR 分派
 │           ├── loggingFetch.ts      # LLM fetch 请求/响应正文捕获
-│           ├── cloudAuthSession.ts  # 插件侧 CloudBase access token 会话存储（external 产品用户）
-│           ├── runtimeModelConfig.ts # 内置模型运行时解析：gateway token 注入；旧 fallback 标志忽略
+│           ├── userSession.ts       # 插件侧用户 session 存储与刷新
+│           ├── runtimeModelConfig.ts # 内置模型运行时解析：gateway 用户 access token 注入；旧 fallback 标志忽略
 │           └── db.ts                # page-agent-ext v3：sessions/by-conversation + logs/by-ts
-│   ├── llm-gateway/                 # 云端后端：CloudBaseLlmGateway（CloudBase Run Function mode）
-│   │   ├── cloudbase-functions.json # /v1/chat/completions 函数型云托管入口
-│   │   ├── src/                     # 网关纯逻辑与 Function mode main
-│   │   └── scripts/                 # M0 真实流式验证脚本
-│   └── website/                     # 官网域：WebsiteSite（DotField 首页、浏览器 hero、下载 CTA、三栏文档页）
+	│   ├── llm-gateway/                 # 云端后端：CloudBaseLlmGateway（CloudBase Run Function mode）
+	│   │   ├── cloudbase-functions.json # /v1/chat/completions 函数型云托管入口
+	│   │   ├── src/                     # 网关纯逻辑与 Function mode main
+	│   │   └── scripts/                 # M0 真实流式验证脚本
+	│   ├── admin-api/                   # 云端后端：AdminApi（CloudBase Run Function mode）
+	│   │   ├── cloudbase-functions.json # /admin/v1/* 管理入口
+	│   │   └── src/                     # 管理 API 纯逻辑、CloudBase store 与 Function mode target
+	│   ├── admin/                       # 后台管理域：AdminConsole（CloudBase Web Auth + tokens 看板）
+	│   │   ├── Dockerfile               # 静态 dist 的 CloudBase Run 容器入口
+	│   │   ├── server.mjs               # 极小静态文件服务器，SPA fallback 到 index.html
+	│   │   ├── src/
+	│   │   └── public/
+	│   └── website/                     # 官网域：WebsiteSite（DotField 首页、浏览器 hero、下载 CTA、三栏文档页）
 │       ├── src/
 │       │   ├── App.tsx
 │       │   ├── DotField.tsx

@@ -6,13 +6,13 @@ import type { BrowserProfile, BrowserProfileStore } from './BrowserProfileStore'
 import type { BrowserResources } from './BrowserResources'
 import type { BrowserStatus } from './BrowserSupervisor'
 import { registerDesktopBridge, type IpcMainLike } from './DesktopBridge'
-import type { ExtensionSessionHandoff } from './ExtensionSessionHandoff'
-import type { LauncherAuthSession } from './LauncherAuthSession'
 import type { LauncherLogStore } from './LauncherLogStore'
 import type { LauncherSettingsStore } from './LauncherSettingsStore'
 import type { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import type { TokenUsageStore } from './TokenUsageStore'
 import type { UsageCloudClient } from './UsageCloudClient'
+import type { UserSessionHandoff } from './UserSessionHandoff'
+import type { UserSession, UserSessionStore } from './UserSessionStore'
 
 class FakeIpcMain implements IpcMainLike {
 	handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -44,41 +44,32 @@ function createBridgeHarness() {
 	const minimizeWindow = vi.fn()
 	const toggleMaximizeWindow = vi.fn()
 	const requestClose = vi.fn()
-	const authLogin = vi.fn(async () => ({
-		uid: '2071249607247777793',
-		username: 'product-user',
-		type: 'external' as const,
-		expiresAt: 100_000,
-		envId: 'wenxue-d8gz76tacc3659f05',
-		region: 'ap-shanghai',
+	const sampleSession: UserSession = {
+		userId: 'user_123',
+		accessToken: 'user-access-token',
+		refreshToken: 'user-refresh-token',
+		expiresAt: 1782663600000,
 		gatewayBaseUrl: 'https://gateway.example',
+	}
+	const publicSession = {
+		userId: sampleSession.userId,
+		expiresAt: sampleSession.expiresAt,
+		gatewayBaseUrl: sampleSession.gatewayBaseUrl,
+	}
+	const userSessionSet = vi.fn((session: UserSession) => ({
+		userId: session.userId,
+		expiresAt: session.expiresAt,
+		gatewayBaseUrl: session.gatewayBaseUrl,
 	}))
-	const authLogout = vi.fn(async () => undefined)
-	const authGetSession = vi.fn(async () => ({
-		uid: '2071249607247777793',
-		username: 'product-user',
-		type: 'external' as const,
-		expiresAt: 100_000,
-		envId: 'wenxue-d8gz76tacc3659f05',
-		region: 'ap-shanghai',
-		gatewayBaseUrl: 'https://gateway.example',
-	}))
-	const authGetHandoffSession = vi.fn(async () => ({
-		uid: '2071249607247777793',
-		username: 'product-user',
-		type: 'external' as const,
-		accessToken: 'access-token',
-		expiresAt: 100_000,
-		envId: 'wenxue-d8gz76tacc3659f05',
-		region: 'ap-shanghai',
-		gatewayBaseUrl: 'https://gateway.example',
-	}))
-	const handoffRun = vi.fn(
+	const userSessionCurrent = vi.fn(() => publicSession)
+	const userSessionRequire = vi.fn(() => sampleSession)
+	const userSessionClear = vi.fn()
+	const userSessionHandoffRun = vi.fn(
 		async (
-			_session: Awaited<ReturnType<typeof authGetHandoffSession>>,
+			_session: UserSession,
 			openUrl: (url: string) => Promise<void>,
 		) => {
-			await openUrl('http://127.0.0.1:1234/wenxue-auth-handoff/test')
+			await openUrl('http://127.0.0.1:1234/wenxue-user-session-handoff/test')
 			return { ok: true }
 		},
 	)
@@ -195,15 +186,15 @@ function createBridgeHarness() {
 	const telemetryIngest = {
 		ingest: vi.fn(async () => ({ logs: 1, tokenUsage: 1 })),
 	} as unknown as LauncherTelemetryIngest
-	const authSession = {
-		login: authLogin,
-		logout: authLogout,
-		getSession: authGetSession,
-		getHandoffSession: authGetHandoffSession,
-	} as unknown as LauncherAuthSession
-	const extensionSessionHandoff = {
-		run: handoffRun,
-	} as unknown as ExtensionSessionHandoff
+	const userSessionStore = {
+		setSession: userSessionSet,
+		current: userSessionCurrent,
+		requireSession: userSessionRequire,
+		clear: userSessionClear,
+	} as unknown as UserSessionStore
+	const userSessionHandoff = {
+		run: userSessionHandoffRun,
+	} as unknown as UserSessionHandoff
 	const resources: BrowserResources = {
 		browserBinary: () => '/browsers/cft',
 		extensionDir: () => tempDir,
@@ -219,8 +210,8 @@ function createBridgeHarness() {
 		telemetryIngest,
 		tokenUsageStore,
 		usageCloudClient,
-		authSession,
-		extensionSessionHandoff,
+		userSessionStore,
+		userSessionHandoff,
 		resources,
 		getAppVersion: () => '0.0.0',
 		getShellInfo: () => ({
@@ -253,13 +244,14 @@ function createBridgeHarness() {
 		telemetryIngest,
 		tokenUsageStore,
 		usageCloudClient,
-		authSession,
-		extensionSessionHandoff,
-		authLogin,
-		authLogout,
-		authGetSession,
-		authGetHandoffSession,
-		handoffRun,
+		userSessionStore,
+		userSessionHandoff,
+		sampleSession,
+		userSessionSet,
+		userSessionCurrent,
+		userSessionRequire,
+		userSessionClear,
+		userSessionHandoffRun,
 		sendStatus,
 		sendProfileStatus,
 		unsubscribe,
@@ -286,10 +278,6 @@ describe('registerDesktopBridge', () => {
 				'app:openLogs',
 				'app:requestClose',
 				'app:toggleMaximizeWindow',
-				'auth:getSession',
-				'auth:handoffToExtension',
-				'auth:login',
-				'auth:logout',
 				'browser:addProfile',
 				'browser:duplicateProfile',
 				'browser:getStatus',
@@ -303,6 +291,9 @@ describe('registerDesktopBridge', () => {
 				'browser:stopProfile',
 				'logs:clear',
 				'logs:query',
+				'auth:clearSession',
+				'auth:getSession',
+				'auth:setSession',
 				'settings:get',
 				'settings:update',
 				'telemetry:ingest',
@@ -331,7 +322,8 @@ describe('registerDesktopBridge', () => {
 	})
 
 	it('lists creates renames duplicates removes opens launches and stops browser profiles', async () => {
-		const { ipcMain, launch, openPath, stop, profileStore } = createBridgeHarness()
+		const { ipcMain, launch, openPath, stop, profileStore, userSessionHandoffRun } =
+			createBridgeHarness()
 
 		await expect(ipcMain.handlers.get('browser:listProfiles')?.()).resolves.toEqual([
 			expect.objectContaining({ id: 'research', displayName: '资料采集' }),
@@ -373,8 +365,12 @@ describe('registerDesktopBridge', () => {
 		expect(profileStore.touch).toHaveBeenCalledWith('research')
 		expect(openPath).toHaveBeenCalledWith('/profiles/research')
 		expect(launch).toHaveBeenCalledWith('research', {
-			startUrl: 'https://example.test/start',
+			startUrl: 'http://127.0.0.1:1234/wenxue-user-session-handoff/test',
 		})
+		expect(userSessionHandoffRun).toHaveBeenCalledWith(
+			expect.objectContaining({ userId: 'user_123' }),
+			expect.any(Function),
+		)
 		expect(stop).toHaveBeenCalledWith('research')
 	})
 
@@ -449,46 +445,36 @@ describe('registerDesktopBridge', () => {
 		expect(tokenUsageStore.summary).toHaveBeenCalledOnce()
 	})
 
-	it('logs in product users and hands the access token to the extension', async () => {
-		const {
-			ipcMain,
-			launch,
-			authLogin,
-			authLogout,
-			authGetSession,
-			authGetHandoffSession,
-			handoffRun,
-		} = createBridgeHarness()
+	it('sets returns and clears the current user session', async () => {
+		const { ipcMain, sampleSession, userSessionSet, userSessionCurrent, userSessionClear } =
+			createBridgeHarness()
 
-		await expect(
-			ipcMain.handlers.get('auth:login')?.({}, { username: 'product-user', password: 'pw' }),
-		).resolves.toEqual({
+		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
 			ok: true,
-			session: expect.objectContaining({
-				uid: '2071249607247777793',
-				type: 'external',
-			}),
+			session: expect.objectContaining({ userId: 'user_123' }),
 		})
 		await expect(ipcMain.handlers.get('auth:getSession')?.()).resolves.toEqual({
 			ok: true,
-			session: expect.objectContaining({ username: 'product-user' }),
+			session: expect.objectContaining({ userId: 'user_123' }),
 		})
-		await expect(ipcMain.handlers.get('auth:handoffToExtension')?.({}, 'research')).resolves.toEqual({
-			ok: true,
-		})
-		await expect(ipcMain.handlers.get('auth:logout')?.()).resolves.toEqual({ ok: true })
+		await expect(ipcMain.handlers.get('auth:clearSession')?.()).resolves.toEqual({ ok: true })
 
-		expect(authLogin).toHaveBeenCalledWith({ username: 'product-user', password: 'pw' })
-		expect(authGetSession).toHaveBeenCalledOnce()
-		expect(authGetHandoffSession).toHaveBeenCalledOnce()
-		expect(handoffRun).toHaveBeenCalledWith(
-			expect.objectContaining({ accessToken: 'access-token' }),
-			expect.any(Function),
-		)
-		expect(launch).toHaveBeenCalledWith('research', {
-			startUrl: 'http://127.0.0.1:1234/wenxue-auth-handoff/test',
+		expect(userSessionSet).toHaveBeenCalledWith(sampleSession)
+		expect(userSessionCurrent).toHaveBeenCalledOnce()
+		expect(userSessionClear).toHaveBeenCalledOnce()
+	})
+
+	it('rejects browser launch when no user session is synced', async () => {
+		const { ipcMain, launch, userSessionRequire } = createBridgeHarness()
+		userSessionRequire.mockImplementationOnce(() => {
+			throw new Error('请先登录问学账号')
 		})
-		expect(authLogout).toHaveBeenCalledOnce()
+
+		await expect(ipcMain.handlers.get('browser:launchProfile')?.({}, 'research')).resolves.toEqual({
+			ok: false,
+			error: '请先登录问学账号',
+		})
+		expect(launch).not.toHaveBeenCalled()
 	})
 
 	it('opens logs with success and failure payloads', async () => {
@@ -527,8 +513,8 @@ describe('registerDesktopBridge', () => {
 			telemetryIngest: harness.telemetryIngest,
 			tokenUsageStore: harness.tokenUsageStore,
 			usageCloudClient: harness.usageCloudClient,
-			authSession: harness.authSession,
-			extensionSessionHandoff: harness.extensionSessionHandoff,
+			userSessionStore: harness.userSessionStore,
+			userSessionHandoff: harness.userSessionHandoff,
 			resources: {
 				browserBinary: () => '/browsers/cft',
 				extensionDir: () => tempDir,

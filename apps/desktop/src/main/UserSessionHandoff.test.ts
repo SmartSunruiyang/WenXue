@@ -1,38 +1,37 @@
 import { request } from 'node:http'
 import { describe, expect, it } from 'vitest'
-import { ExtensionSessionHandoff } from './ExtensionSessionHandoff'
-import type { ExtensionHandoffAuthSession } from './LauncherAuthSession'
+import { UserSessionHandoff } from './UserSessionHandoff'
+import type { UserSession } from './UserSessionStore'
 
-const sampleSession: ExtensionHandoffAuthSession = {
-	uid: '2071249607247777793',
-	username: 'product-user',
-	type: 'external',
+const sampleSession: UserSession = {
+	userId: 'user_123',
 	accessToken: 'access-token',
-	expiresAt: 100_000,
-	envId: 'wenxue-d8gz76tacc3659f05',
-	region: 'ap-shanghai',
+	refreshToken: 'refresh-token',
+	expiresAt: 1782663600000,
 	gatewayBaseUrl: 'https://gateway.example',
 }
 
-describe('ExtensionSessionHandoff', () => {
+describe('UserSessionHandoff', () => {
 	it('serves a one-shot localhost page and resolves completion', async () => {
-		const handoff = new ExtensionSessionHandoff({ timeoutMs: 1000 })
+		const handoff = new UserSessionHandoff({ timeoutMs: 1000 })
 		let openedUrl = ''
 
 		const result = await handoff.run(sampleSession, async (url) => {
 			openedUrl = url
 			const html = await get(url)
-			expect(html).toContain('WENXUE_AUTH_SESSION')
+			expect(html).toContain('WENXUE_USER_SESSION')
+			expect(html).toContain('access-token')
+			expect(html).toContain('refresh-token')
 			expect(html).toContain('akldabonmimlicnjlflnapfeklbfemhj')
 			await post(`${url}/complete`, { ok: true })
 		})
 
-		expect(openedUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/wenxue-auth-handoff\//)
+		expect(openedUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/wenxue-user-session-handoff\//)
 		expect(result).toEqual({ ok: true })
 	})
 
 	it('returns extension errors from the complete callback', async () => {
-		const handoff = new ExtensionSessionHandoff({ timeoutMs: 1000 })
+		const handoff = new UserSessionHandoff({ timeoutMs: 1000 })
 
 		const result = await handoff.run(sampleSession, async (url) => {
 			await post(`${url}/complete`, { ok: false, error: 'no extension' })

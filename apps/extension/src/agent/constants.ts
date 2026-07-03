@@ -5,7 +5,7 @@ export const WENXUE_GATEWAY_BASE_URL =
 export const WENXUE_GATEWAY_OPENAI_BASE_URL = `${WENXUE_GATEWAY_BASE_URL}/v1`
 
 // Default built-in LLM — WenXue CloudBase LLM Gateway.
-export const DEMO_MODEL = 'qwen-plus'
+export const DEMO_MODEL = 'qwen3.7-max'
 export const DEMO_BASE_URL = WENXUE_GATEWAY_OPENAI_BASE_URL
 export const DEMO_API_KEY = ''
 

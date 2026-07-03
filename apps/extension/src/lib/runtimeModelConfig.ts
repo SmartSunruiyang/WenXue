@@ -3,10 +3,10 @@ import type { LLMConfig } from '@page-agent/llms'
 import { DEMO_CONFIG, DEMO_VISION_CONFIG } from '@/agent/constants'
 import type { ExtConfig } from '@/agent/useAgent'
 import {
-	type CloudAuthStorageArea,
-	type ExtensionCloudAuthSession,
-	loadExtensionCloudAuthSession,
-} from '@/lib/cloudAuthSession'
+	loadExtensionUserSession,
+	type ExtensionUserSession,
+	type UserSessionStorageArea,
+} from '@/lib/userSession'
 import {
 	BUILT_IN_MODEL_ID,
 	BUILT_IN_VISION_MODEL_ID,
@@ -26,7 +26,7 @@ export interface RuntimeAgentModels {
 }
 
 export interface RuntimeAgentModelOptions {
-	session: ExtensionCloudAuthSession | null
+	session: ExtensionUserSession | null
 	now?: () => number
 }
 
@@ -34,9 +34,9 @@ type BuiltInModelId = typeof BUILT_IN_MODEL_ID | typeof BUILT_IN_VISION_MODEL_ID
 
 export async function loadRuntimeAgentModels(
 	config: ExtConfig,
-	storage: CloudAuthStorageArea = chrome.storage.local,
+	storage: UserSessionStorageArea = chrome.storage.local,
 ): Promise<RuntimeAgentModels> {
-	const session = await loadExtensionCloudAuthSession(storage)
+	const session = await loadExtensionUserSession(storage)
 	return buildRuntimeAgentModels(config, {
 		session,
 	})
@@ -88,15 +88,11 @@ function resolveRuntimeBuiltInConfig(
 	options: RuntimeAgentModelOptions,
 ): LLMConfig {
 	const session = options.session
-	const now = options.now?.() ?? Date.now()
-	if (!session || session.expiresAt <= now) {
-		throw new Error('请先在问学启动器登录注册用户，并把会话交接给插件后再使用内置模型。')
-	}
 
 	return {
 		...gatewayConfigForBuiltIn(modelId),
-		baseURL: toOpenAIBaseUrl(session.gatewayBaseUrl),
-		apiKey: session.accessToken,
+		baseURL: toOpenAIBaseUrl(session?.gatewayBaseUrl),
+		apiKey: session?.accessToken ?? '',
 	}
 }
 
@@ -108,7 +104,7 @@ function gatewayConfigForBuiltIn(modelId: BuiltInModelId): LLMConfig {
 	return modelId === BUILT_IN_VISION_MODEL_ID ? DEMO_VISION_CONFIG : DEMO_CONFIG
 }
 
-function toOpenAIBaseUrl(gatewayBaseUrl: string): string {
-	const trimmed = gatewayBaseUrl.replace(/\/+$/, '')
+function toOpenAIBaseUrl(gatewayBaseUrl: string | undefined): string {
+	const trimmed = (gatewayBaseUrl ?? DEMO_CONFIG.baseURL).replace(/\/+$/, '')
 	return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
 }

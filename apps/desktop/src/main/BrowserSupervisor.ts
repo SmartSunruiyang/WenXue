@@ -59,7 +59,14 @@ export class BrowserSupervisor {
 
 		const current = this.instances.get(profileId)
 		if (status === 'running' && current) {
-			await this.focusExisting(current.binary, current.argv)
+			const focusArgv = options.startUrl
+				? buildArgv({
+						userDataDir: await this.deps.profiles.ensureProfile(profileId),
+						extensionDir: this.deps.resources.extensionDir(),
+						startUrl: options.startUrl,
+					})
+				: current.argv
+			await this.focusExisting(current.binary, focusArgv)
 			return
 		}
 

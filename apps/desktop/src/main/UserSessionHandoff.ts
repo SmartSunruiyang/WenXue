@@ -1,13 +1,13 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import type { ExtensionHandoffAuthSession } from './LauncherAuthSession'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { UserSession } from './UserSessionStore'
 
 export const WENXUE_EXTENSION_ID = 'akldabonmimlicnjlflnapfeklbfemhj'
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const MAX_COMPLETE_BODY_BYTES = 4096
 
-export interface ExtensionSessionHandoffOptions {
+export interface UserSessionHandoffOptions {
 	extensionId?: string
 	timeoutMs?: number
 	listenHost?: string
@@ -15,7 +15,7 @@ export interface ExtensionSessionHandoffOptions {
 	createHttpServer?: typeof createServer
 }
 
-export interface ExtensionSessionHandoffResult {
+export interface UserSessionHandoffResult {
 	ok: boolean
 	error?: string
 }
@@ -25,14 +25,14 @@ interface CompletionPayload {
 	error?: string
 }
 
-export class ExtensionSessionHandoff {
+export class UserSessionHandoff {
 	private readonly extensionId: string
 	private readonly timeoutMs: number
 	private readonly listenHost: string
 	private readonly publicHost: string
 	private readonly createHttpServer: typeof createServer
 
-	constructor(options: ExtensionSessionHandoffOptions = {}) {
+	constructor(options: UserSessionHandoffOptions = {}) {
 		this.extensionId = options.extensionId ?? WENXUE_EXTENSION_ID
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
 		this.listenHost = options.listenHost ?? '127.0.0.1'
@@ -41,13 +41,13 @@ export class ExtensionSessionHandoff {
 	}
 
 	async run(
-		session: ExtensionHandoffAuthSession,
+		session: UserSession,
 		openUrl: (url: string) => Promise<void>,
-	): Promise<ExtensionSessionHandoffResult> {
+	): Promise<UserSessionHandoffResult> {
 		const nonce = randomUUID()
-		const basePath = `/wenxue-auth-handoff/${nonce}`
-		let complete: (result: ExtensionSessionHandoffResult) => void = () => undefined
-		const completion = new Promise<ExtensionSessionHandoffResult>((resolve) => {
+		const basePath = `/wenxue-user-session-handoff/${nonce}`
+		let complete: (result: UserSessionHandoffResult) => void = () => undefined
+		const completion = new Promise<UserSessionHandoffResult>((resolve) => {
 			complete = resolve
 		})
 		const server = this.createHttpServer((request, response) => {
@@ -58,7 +58,7 @@ export class ExtensionSessionHandoff {
 		const address = server.address()
 		if (!address || typeof address === 'string') {
 			await close(server)
-			throw new Error('无法创建本机会话交接服务')
+			throw new Error('无法创建用户 session 交接服务')
 		}
 
 		const url = `http://${this.publicHost}:${address.port}${basePath}`
@@ -74,8 +74,8 @@ export class ExtensionSessionHandoff {
 		request: IncomingMessage
 		response: ServerResponse
 		basePath: string
-		session: ExtensionHandoffAuthSession
-		complete: (result: ExtensionSessionHandoffResult) => void
+		session: UserSession
+		complete: (result: UserSessionHandoffResult) => void
 	}): void {
 		const url = new URL(input.request.url ?? '/', 'http://localhost')
 		if (input.request.method === 'GET' && url.pathname === input.basePath) {
@@ -101,9 +101,9 @@ export class ExtensionSessionHandoff {
 	}
 }
 
-function renderHandoffPage(session: ExtensionHandoffAuthSession, extensionId: string): string {
+function renderHandoffPage(session: UserSession, extensionId: string): string {
 	const message = JSON.stringify({
-		type: 'WENXUE_AUTH_SESSION',
+		type: 'WENXUE_USER_SESSION',
 		session,
 	})
 	return `<!doctype html>
@@ -111,7 +111,7 @@ function renderHandoffPage(session: ExtensionHandoffAuthSession, extensionId: st
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>问学会话交接</title>
+<title>问学账号会话交接</title>
 <style>
 body{margin:0;display:grid;min-height:100vh;place-items:center;background:#fff;color:#111;font:14px system-ui,-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
 main{display:grid;gap:10px;text-align:center}
@@ -121,7 +121,7 @@ span{color:#666}
 </head>
 <body>
 <main>
-<strong id="title">正在连接问学插件</strong>
+<strong id="title">正在同步问学账号</strong>
 <span id="detail">请保持此标签页打开。</span>
 </main>
 <script>
@@ -143,12 +143,12 @@ if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
   chrome.runtime.sendMessage(${JSON.stringify(extensionId)}, message, (response) => {
     const lastError = chrome.runtime.lastError && chrome.runtime.lastError.message;
     if (lastError || !response || response.ok !== true) {
-      title.textContent = '会话交接失败';
+      title.textContent = '账号同步失败';
       detail.textContent = lastError || (response && response.error) || '问学插件未返回成功状态。';
       finish({ ok: false, error: detail.textContent });
       return;
     }
-    title.textContent = '会话已交接';
+    title.textContent = '账号已同步';
     detail.textContent = '可以关闭此标签页并继续使用问学。';
     finish({ ok: true });
   });
@@ -197,7 +197,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 			promise,
 			new Promise<T>((_resolve, reject) => {
 				timer = setTimeout(() => {
-					reject(new Error('问学插件会话交接超时'))
+					reject(new Error('问学账号同步超时'))
 				}, timeoutMs)
 			}),
 		])
@@ -222,13 +222,13 @@ function parseCompletionPayload(body: string): CompletionPayload {
 		if (isRecord(parsed) && parsed.ok === false) {
 			return {
 				ok: false,
-				error: typeof parsed.error === 'string' ? parsed.error : '问学插件会话交接失败',
+				error: typeof parsed.error === 'string' ? parsed.error : '问学账号同步失败',
 			}
 		}
 	} catch {
-		return { ok: false, error: '问学插件会话交接响应格式异常' }
+		return { ok: false, error: '问学账号同步响应格式异常' }
 	}
-	return { ok: false, error: '问学插件会话交接响应格式异常' }
+	return { ok: false, error: '问学账号同步响应格式异常' }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

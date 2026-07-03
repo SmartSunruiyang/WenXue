@@ -22,6 +22,7 @@ import {
 	resolveVisionLLMConfig,
 } from '@/lib/modelConfig'
 import { loadRuntimeAgentModels, type RuntimeAgentModels } from '@/lib/runtimeModelConfig'
+import { WENXUE_USER_SESSION_KEY } from '@/lib/userSession'
 import { MultiPageAgent } from './MultiPageAgent'
 
 /** Language preference: undefined means follow system */
@@ -88,6 +89,17 @@ export interface RestorableAgentConversation {
 export interface UseAgentOptions {
 	enableUserTakeover?: boolean
 }
+
+const AGENT_SESSION_RELOAD_STORAGE_KEYS = new Set([
+	WENXUE_USER_SESSION_KEY,
+	'llmConfig',
+	'language',
+	'advancedConfig',
+	'uiLanguage',
+	'selectedModelId',
+	'customModels',
+	'visionModelId',
+])
 
 export interface AgentSessionAgent {
 	status: AgentStatus
@@ -451,11 +463,10 @@ export function createAgentForConfig(
 ): MultiPageAgent {
 	const customModels = config.customModels ?? []
 	// 系统级文本 + 视觉模型；学习通流水线跟随这两个系统模型。
-	const chaoxingModels =
-		runtimeModels?.chaoxingModels ?? {
-			text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
-			vision: resolveVisionLLMConfig(config.visionModelId, customModels),
-		}
+	const chaoxingModels = runtimeModels?.chaoxingModels ?? {
+		text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
+		vision: resolveVisionLLMConfig(config.visionModelId, customModels),
+	}
 	const activeModel = runtimeModels?.active ?? config
 
 	return new MultiPageAgent({
@@ -520,35 +531,82 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 	}
 	const sessionController = sessionControllerRef.current
 
+	const clearVisibleConversation = useCallback(() => {
+		const nextState = createClearedAgentConversationState()
+		setStatus(nextState.status)
+		setHistory(nextState.history)
+		setActivity(nextState.activity)
+		setCurrentTask(nextState.currentTask)
+		setTakeoverRequest(null)
+	}, [])
+
+	const reloadAgentSession = useCallback(
+		async ({ clearExisting = false }: { clearExisting?: boolean } = {}) => {
+			if (sessionController.isTaskActive()) {
+				return
+			}
+			initialLoadAbortRef.current?.abort()
+			const abortController = new AbortController()
+			initialLoadAbortRef.current = abortController
+
+			if (clearExisting) {
+				sessionController.dispose()
+				clearVisibleConversation()
+			}
+
+			try {
+				await initializeAgentSession({
+					signal: abortController.signal,
+					loadConfig: () => loadStoredConfig(),
+					createAgent: async (loadedConfig) => {
+						const runtimeModels = await loadRuntimeAgentModels(loadedConfig)
+						runtimeModelsRef.current = runtimeModels
+						return createAgentForConfig(loadedConfig, runtimeModels)
+					},
+					bindAgent: (agent) => sessionController.bind(agent, { enableUserTakeover }),
+					setConfig,
+				})
+			} catch (error) {
+				if (!abortController.signal.aborted) {
+					console.error('[useAgent] Failed to initialize agent:', error)
+				}
+			} finally {
+				if (initialLoadAbortRef.current === abortController) {
+					initialLoadAbortRef.current = null
+				}
+			}
+		},
+		[clearVisibleConversation, enableUserTakeover, sessionController],
+	)
+
 	useEffect(() => {
 		mountedRef.current = true
-		const abortController = new AbortController()
-		initialLoadAbortRef.current = abortController
-		initializeAgentSession({
-			signal: abortController.signal,
-			loadConfig: () => loadStoredConfig(),
-			createAgent: async (loadedConfig) => {
-				const runtimeModels = await loadRuntimeAgentModels(loadedConfig)
-				runtimeModelsRef.current = runtimeModels
-				return createAgentForConfig(loadedConfig, runtimeModels)
-			},
-			bindAgent: (agent) => sessionController.bind(agent, { enableUserTakeover }),
-			setConfig,
-		}).catch((error) => {
-			if (!abortController.signal.aborted) {
-				console.error('[useAgent] Failed to initialize agent:', error)
+		void reloadAgentSession()
+
+		const handleStorageChange = (
+			changes: Record<string, chrome.storage.StorageChange>,
+			areaName: string,
+		) => {
+			if (
+				areaName !== 'local' ||
+				!Object.keys(changes).some((key) => AGENT_SESSION_RELOAD_STORAGE_KEYS.has(key))
+			) {
+				return
 			}
-		})
+			void reloadAgentSession({
+				clearExisting: WENXUE_USER_SESSION_KEY in changes,
+			})
+		}
+		chrome.storage.onChanged.addListener(handleStorageChange)
 
 		return () => {
 			mountedRef.current = false
-			abortController.abort()
-			if (initialLoadAbortRef.current === abortController) {
-				initialLoadAbortRef.current = null
-			}
+			initialLoadAbortRef.current?.abort()
+			initialLoadAbortRef.current = null
+			chrome.storage.onChanged.removeListener(handleStorageChange)
 			sessionController.dispose()
 		}
-	}, [enableUserTakeover, sessionController])
+	}, [reloadAgentSession, sessionController])
 
 	const execute = useCallback(
 		(task: string) => sessionController.execute(task),

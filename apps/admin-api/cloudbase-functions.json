@@ -1,0 +1,33 @@
+{
+	"functionsRoot": "./src",
+	"functions": [
+		{
+			"name": "admin-me",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "me",
+			"triggerPath": "/admin/v1/me"
+		},
+		{
+			"name": "admin-usage-summary",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "usageSummary",
+			"triggerPath": "/admin/v1/usage/summary"
+		},
+		{
+			"name": "admin-users",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "users",
+			"triggerPath": "/admin/v1/users"
+		},
+		{
+			"name": "admin-user-status",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "userStatus",
+			"triggerPath": "/admin/v1/users/status"
+		}
+	]
+}

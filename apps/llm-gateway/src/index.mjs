@@ -1,6 +1,17 @@
-import { GatewayError, handleChatCompletions, handleUsageSummary } from './gateway.mjs'
+import {
+	GatewayError,
+	handleChatCompletions,
+	handleLauncherRegistration,
+	handleUsageSummary,
+} from './gateway.mjs'
 
 /** @typedef {{ sse: () => { closed: boolean, send: (chunk: string) => unknown, end: () => unknown, on?: (event: 'close', cb: () => void) => unknown }, httpContext?: { headers?: Record<string, string | string[] | undefined> } }} CloudBaseContext */
+
+const CORS_HEADERS = {
+	'access-control-allow-origin': '*',
+	'access-control-allow-methods': 'POST, OPTIONS',
+	'access-control-allow-headers': 'content-type, authorization',
+}
 
 /**
  * @param {unknown} event
@@ -57,6 +68,34 @@ export async function usageSummary(event, context) {
 }
 
 /**
+ * @param {unknown} event
+ * @param {CloudBaseContext} context
+ */
+export async function launcherRegister(event, context) {
+	if (isOptionsRequest(event, context)) {
+		return {
+			statusCode: 204,
+			headers: CORS_HEADERS,
+			body: '',
+		}
+	}
+
+	try {
+		const result = await handleLauncherRegistration({
+			rawBody: readEventBody(event),
+			env: readRuntimeEnv(),
+		})
+		return {
+			statusCode: 201,
+			headers: CORS_HEADERS,
+			body: JSON.stringify(result),
+		}
+	} catch (error) {
+		return errorResponse(error)
+	}
+}
+
+/**
  * @param {unknown} error
  */
 function errorResponse(error) {
@@ -64,6 +103,7 @@ function errorResponse(error) {
 	const message = error instanceof Error ? error.message : 'Unknown gateway error'
 	return {
 		statusCode: status,
+		headers: CORS_HEADERS,
 		body: JSON.stringify({ error: { message, status } }),
 	}
 }
@@ -76,6 +116,23 @@ function readRuntimeEnv() {
 		cloudbaseUsageApiKey: process.env.CLOUDBASE_USAGE_API_KEY ?? '',
 		cloudbaseRegion: process.env.CLOUDBASE_REGION ?? 'ap-shanghai',
 		dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? '',
+		tencentCloudSecretId:
+			process.env.TENCENTCLOUD_SECRETID ??
+			process.env.TENCENTCLOUD_SECRET_ID ??
+			process.env.TENCENT_CLOUD_SECRET_ID ??
+			process.env.TENCENT_SECRET_ID ??
+			'',
+		tencentCloudSecretKey:
+			process.env.TENCENTCLOUD_SECRETKEY ??
+			process.env.TENCENTCLOUD_SECRET_KEY ??
+			process.env.TENCENT_CLOUD_SECRET_KEY ??
+			process.env.TENCENT_SECRET_KEY ??
+			'',
+		tencentCloudToken:
+			process.env.TENCENTCLOUD_SESSIONTOKEN ??
+			process.env.TENCENTCLOUD_SESSION_TOKEN ??
+			process.env.TENCENTCLOUD_TOKEN ??
+			'',
 		requestTimeoutMs: Number(process.env.WENXUE_GATEWAY_TIMEOUT_MS ?? 60_000),
 	}
 }
@@ -122,6 +179,45 @@ function isStreamRequest(rawBody) {
 	} catch {
 		return false
 	}
+}
+
+/**
+ * @param {unknown} event
+ * @param {CloudBaseContext} context
+ */
+function isOptionsRequest(event, context) {
+	const headers = readEventHeaders(event, context)
+	if (readHeader(headers, 'access-control-request-method')) return true
+
+	if (!isRecord(event)) return false
+	const method =
+		readString(event.httpMethod) ??
+		readString(event.method) ??
+		(isRecord(event.requestContext) && isRecord(event.requestContext.http)
+			? readString(event.requestContext.http.method)
+			: null)
+	return method?.toUpperCase() === 'OPTIONS'
+}
+
+/**
+ * @param {Record<string, string | string[] | undefined>} headers
+ * @param {string} name
+ */
+function readHeader(headers, name) {
+	const normalized = name.toLowerCase()
+	for (const [key, value] of Object.entries(headers)) {
+		if (key.toLowerCase() !== normalized) continue
+		if (typeof value === 'string') return value.trim() || null
+		if (Array.isArray(value)) return value[0]?.trim() || null
+	}
+	return null
+}
+
+/**
+ * @param {unknown} value
+ */
+function readString(value) {
+	return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
 }
 
 /**

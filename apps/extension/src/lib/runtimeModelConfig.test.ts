@@ -1,26 +1,28 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { DEMO_CONFIG } from '@/agent/constants'
+import {
+	DEMO_CONFIG,
+	WENXUE_GATEWAY_BASE_URL,
+	WENXUE_GATEWAY_OPENAI_BASE_URL,
+} from '@/agent/constants'
 import type { ExtConfig } from '@/agent/useAgent'
 import {
-	type CloudAuthStorageArea,
-	WENXUE_CLOUD_AUTH_SESSION_KEY,
-	type ExtensionCloudAuthSession,
-} from '@/lib/cloudAuthSession'
+	type ExtensionUserSession,
+	type UserSessionStorageArea,
+	WENXUE_USER_SESSION_KEY,
+} from '@/lib/userSession'
 import { BUILT_IN_MODEL_ID, type CustomModelConfig } from './modelConfig'
 import { buildRuntimeAgentModels, loadRuntimeAgentModels } from './runtimeModelConfig'
 
-const session: ExtensionCloudAuthSession = {
-	uid: '2071249607247777793',
-	type: 'external',
-	accessToken: 'access-token',
-	expiresAt: Date.now() + 120_000,
-	envId: 'wenxue-d8gz76tacc3659f05',
-	region: 'ap-shanghai',
-	gatewayBaseUrl: 'https://gateway.example',
+const session: ExtensionUserSession = {
+	userId: 'user_123',
+	accessToken: 'cloudbase-access-token',
+	refreshToken: 'cloudbase-refresh-token',
+	expiresAt: 1893456000000,
+	gatewayBaseUrl: WENXUE_GATEWAY_BASE_URL,
 }
 
-function createStorage(initial: Record<string, unknown>): CloudAuthStorageArea {
+function createStorage(initial: Record<string, unknown>): UserSessionStorageArea {
 	return {
 		get: vi.fn(async (keys) => {
 			const names = Array.isArray(keys) ? keys : [keys]
@@ -36,7 +38,7 @@ function createStorage(initial: Record<string, unknown>): CloudAuthStorageArea {
 }
 
 describe('runtimeModelConfig', () => {
-	it('uses the CloudBase product-user access token for built-in text and vision models', () => {
+	it('uses the user access token for built-in text and vision models', () => {
 		const models = buildRuntimeAgentModels(
 			{
 				...DEMO_CONFIG,
@@ -47,19 +49,19 @@ describe('runtimeModelConfig', () => {
 		)
 
 		expect(models.active).toMatchObject({
-			baseURL: 'https://gateway.example/v1',
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
 			model: DEMO_CONFIG.model,
-			apiKey: 'access-token',
+			apiKey: 'cloudbase-access-token',
 		})
 		expect(models.chaoxingModels.text).toEqual(models.active)
 		expect(models.chaoxingModels.vision).toMatchObject({
-			baseURL: 'https://gateway.example/v1',
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
 			model: 'qwen3.7-plus',
-			apiKey: 'access-token',
+			apiKey: 'cloudbase-access-token',
 		})
 	})
 
-	it('keeps custom BYO-Key models direct and does not require CloudBase auth', () => {
+	it('keeps custom BYO-Key models direct and does not require a user session', () => {
 		const customModels: CustomModelConfig[] = [
 			{
 				id: 'custom-moonshot',
@@ -92,28 +94,30 @@ describe('runtimeModelConfig', () => {
 		expect(models.chaoxingModels.vision).toEqual(models.active)
 	})
 
-	it('fails closed for built-in models when no valid CloudBase session exists', () => {
-		expect(() =>
-			buildRuntimeAgentModels(
-				{ ...DEMO_CONFIG, selectedModelId: BUILT_IN_MODEL_ID, customModels: [] },
-				{ session: null, now: () => Date.now() },
-			),
-		).toThrow('请先在问学启动器登录注册用户')
+	it('keeps built-in models usable without a user session until the first send', () => {
+		const models = buildRuntimeAgentModels(
+			{ ...DEMO_CONFIG, selectedModelId: BUILT_IN_MODEL_ID, customModels: [] },
+			{ session: null, now: () => Date.now() },
+		)
 
-		expect(() =>
-			buildRuntimeAgentModels(
-				{ ...DEMO_CONFIG, selectedModelId: BUILT_IN_MODEL_ID, customModels: [] },
-				{
-					session: { ...session, expiresAt: Date.now() - 1 },
-					now: () => Date.now(),
-				},
-			),
-		).toThrow('请先在问学启动器登录注册用户')
+		expect(models.active).toMatchObject({
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+			model: DEMO_CONFIG.model,
+			apiKey: '',
+		})
+		expect(models.chaoxingModels.vision).toMatchObject({
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+			model: 'qwen3.7-plus',
+			apiKey: '',
+		})
 	})
 
-	it('loads the persisted CloudBase auth session and ignores obsolete fallback flags', async () => {
+	it('loads the persisted user session and ignores obsolete fallback flags', async () => {
 		const storage = createStorage({
-			[WENXUE_CLOUD_AUTH_SESSION_KEY]: { ...session, gatewayBaseUrl: 'https://gateway.example/v1/' },
+			[WENXUE_USER_SESSION_KEY]: {
+				...session,
+				gatewayBaseUrl: `${WENXUE_GATEWAY_BASE_URL}/v1/`,
+			},
 			WenXueUseLocalBuiltinLlmFallback: true,
 		})
 
@@ -123,8 +127,8 @@ describe('runtimeModelConfig', () => {
 		)
 
 		expect(models.active).toMatchObject({
-			baseURL: 'https://gateway.example/v1',
-			apiKey: 'access-token',
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+			apiKey: 'cloudbase-access-token',
 		})
 	})
 })

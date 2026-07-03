@@ -50,6 +50,7 @@
 		"zod": "^4.4.3"
 	},
 	"dependencies": {
+		"@cloudbase/js-sdk": "^2.30.0",
 		"@page-agent/core": "workspace:*",
 		"@page-agent/llms": "workspace:*",
 		"@page-agent/page-controller": "workspace:*",

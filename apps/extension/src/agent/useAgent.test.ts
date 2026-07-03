@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import type {
 	AgentActivity,
 	AgentStatus,
@@ -6,7 +7,57 @@ import type {
 	UserTakeoverRequest,
 	UserTakeoverResolution,
 } from '@page-agent/core'
-import { describe, expect, it, vi } from 'vitest'
+import React, { act, useEffect } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { WENXUE_GATEWAY_BASE_URL, WENXUE_GATEWAY_OPENAI_BASE_URL } from '@/agent/constants'
+import { WENXUE_USER_SESSION_KEY } from '@/lib/userSession'
+
+const multiPageAgentMockState = vi.hoisted(() => ({
+	instances: [] as Array<{
+		options: Record<string, unknown>
+		dispose: ReturnType<typeof vi.fn>
+	}>,
+}))
+
+vi.mock('./MultiPageAgent', () => {
+	class MockMultiPageAgent extends EventTarget {
+		status = 'idle'
+		task = ''
+		history = []
+		onUserTakeover = undefined
+		execute = vi.fn(async () => ({
+			success: true,
+			data: 'done',
+			history: [],
+			state: 'completed',
+		}))
+		followUp = vi.fn(async () => ({
+			success: true,
+			data: 'done',
+			history: [],
+			state: 'completed',
+		}))
+		restoreConversation = vi.fn()
+		resume = vi.fn(async () => ({
+			success: true,
+			data: 'done',
+			history: [],
+			state: 'completed',
+		}))
+		stop = vi.fn()
+		dispose = vi.fn()
+		pushObservation = vi.fn()
+
+		constructor(readonly options: Record<string, unknown>) {
+			super()
+			multiPageAgentMockState.instances.push(this)
+		}
+	}
+
+	return { MultiPageAgent: MockMultiPageAgent }
+})
 
 import {
 	createAgentSessionController,
@@ -16,6 +67,8 @@ import {
 	hasAgentConversationContent,
 	initializeAgentSession,
 	isAgentTaskActive,
+	useAgent,
+	type UseAgentResult,
 } from './useAgent'
 
 const TAKEOVER_REQUEST: UserTakeoverRequest = {
@@ -109,6 +162,208 @@ function createDeferred<T>() {
 	})
 	return { promise, resolve, reject }
 }
+
+type ChromeStorageChangeListener = (
+	changes: Record<string, chrome.storage.StorageChange>,
+	areaName: string,
+) => void
+
+function createChromeStorageHarness(initial: Record<string, unknown> = {}) {
+	const store = { ...initial }
+	const listeners = new Set<ChromeStorageChangeListener>()
+	const emit = (changes: Record<string, chrome.storage.StorageChange>, areaName = 'local') => {
+		for (const listener of listeners) listener(changes, areaName)
+	}
+	const local = {
+		get: vi.fn(async (keys: string | string[]) => {
+			const names = Array.isArray(keys) ? keys : [keys]
+			return Object.fromEntries(names.map((key) => [key, store[key]]))
+		}),
+		set: vi.fn(async (values: Record<string, unknown>) => {
+			const changes: Record<string, chrome.storage.StorageChange> = {}
+			for (const [key, newValue] of Object.entries(values)) {
+				changes[key] = {
+					oldValue: store[key],
+					newValue,
+				}
+				store[key] = newValue
+			}
+			emit(changes)
+		}),
+		remove: vi.fn(async (key: string) => {
+			const oldValue = store[key]
+			delete store[key]
+			emit({
+				[key]: {
+					oldValue,
+					newValue: undefined,
+				},
+			})
+		}),
+	}
+	const chromeHarness = {
+		storage: {
+			local,
+			onChanged: {
+				addListener: vi.fn((listener: ChromeStorageChangeListener) => {
+					listeners.add(listener)
+				}),
+				removeListener: vi.fn((listener: ChromeStorageChangeListener) => {
+					listeners.delete(listener)
+				}),
+			},
+		},
+	}
+
+	return {
+		chrome: chromeHarness as unknown as typeof chrome,
+		store,
+		emit,
+		listenerCount: () => listeners.size,
+	}
+}
+
+function AgentProbe({ onRender }: { onRender: (result: UseAgentResult) => void }) {
+	const result = useAgent()
+	useEffect(() => {
+		onRender(result)
+	}, [onRender, result])
+	return null
+}
+
+async function renderAgentProbe(onRender: (result: UseAgentResult) => void) {
+	const container = document.createElement('div')
+	document.body.append(container)
+	const root: Root = createRoot(container)
+	await act(async () => {
+		root.render(React.createElement(AgentProbe, { onRender }))
+	})
+	return {
+		unmount: async () => {
+			await act(async () => {
+				root.unmount()
+			})
+			container.remove()
+		},
+	}
+}
+
+const USER_ACCESS_TOKEN = 'cloudbase-access-token'
+
+const originalChrome = (globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome
+
+beforeEach(() => {
+	multiPageAgentMockState.instances.length = 0
+})
+
+afterEach(() => {
+	;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = originalChrome
+	document.body.innerHTML = ''
+	vi.restoreAllMocks()
+})
+
+describe('useAgent user session reload', () => {
+	it('initializes the built-in agent without a token so the first send can show auth errors in chat', async () => {
+		const storage = createChromeStorageHarness()
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const renders: UseAgentResult[] = []
+
+		const probe = await renderAgentProbe((result) => {
+			renders.push(result)
+		})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		expect(multiPageAgentMockState.instances[0].options).toMatchObject({
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+			apiKey: '',
+			model: 'qwen3.7-max',
+		})
+		expect(renders.at(-1)?.config).toMatchObject({
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+			selectedModelId: 'builtin:qwen3.7-max',
+		})
+		expect(storage.chrome.storage.onChanged.addListener).toHaveBeenCalledTimes(1)
+		expect(storage.listenerCount()).toBe(1)
+
+		await probe.unmount()
+		expect(storage.chrome.storage.onChanged.removeListener).toHaveBeenCalledTimes(1)
+		expect(storage.listenerCount()).toBe(0)
+	})
+
+	it('rebuilds the built-in agent after the desktop handoff stores a user session', async () => {
+		const storage = createChromeStorageHarness()
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const renders: UseAgentResult[] = []
+
+		const probe = await renderAgentProbe((result) => {
+			renders.push(result)
+		})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+
+		await act(async () => {
+			await storage.chrome.storage.local.set({
+				[WENXUE_USER_SESSION_KEY]: {
+					userId: 'user_123',
+					accessToken: USER_ACCESS_TOKEN,
+					refreshToken: 'cloudbase-refresh-token',
+					expiresAt: 1893456000000,
+					gatewayBaseUrl: WENXUE_GATEWAY_BASE_URL,
+				},
+			})
+		})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(2))
+		expect(multiPageAgentMockState.instances[1].options).toMatchObject({
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+			apiKey: USER_ACCESS_TOKEN,
+			model: 'qwen3.7-max',
+		})
+		expect(renders.at(-1)?.config).toMatchObject({
+			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+			selectedModelId: 'builtin:qwen3.7-max',
+		})
+
+		await probe.unmount()
+		expect(storage.chrome.storage.onChanged.removeListener).toHaveBeenCalledTimes(1)
+		expect(storage.listenerCount()).toBe(0)
+	})
+
+	it('reloads the agent when options changes the selected model', async () => {
+		const storage = createChromeStorageHarness({
+			customModels: [
+				{
+					id: 'model-deepseek',
+					provider: 'deepseek',
+					baseURL: 'https://api.deepseek.com',
+					apiKey: 'sk-deepseek',
+					model: 'deepseek-chat',
+				},
+			],
+		})
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const renders: UseAgentResult[] = []
+
+		const probe = await renderAgentProbe((result) => {
+			renders.push(result)
+		})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		await act(async () => {
+			await storage.chrome.storage.local.set({ selectedModelId: 'model-deepseek' })
+		})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(2))
+		expect(multiPageAgentMockState.instances[1].options).toMatchObject({
+			baseURL: 'https://api.deepseek.com',
+			apiKey: 'sk-deepseek',
+			model: 'deepseek-chat',
+		})
+		expect(renders.at(-1)?.config?.selectedModelId).toBe('model-deepseek')
+
+		await probe.unmount()
+	})
+})
 
 describe('agent conversation state helpers', () => {
 	it('detects whether the current conversation has visible content', () => {
@@ -621,7 +876,9 @@ describe('agent session controller', () => {
 		await expect(controller.submitActiveTaskMessage('验证码已经处理好了')).resolves.toBeUndefined()
 
 		await expect(resolution).resolves.toBe('completed')
-		expect(agent.pushObservation).toHaveBeenCalledWith(expect.stringContaining('验证码已经处理好了'))
+		expect(agent.pushObservation).toHaveBeenCalledWith(
+			expect.stringContaining('验证码已经处理好了'),
+		)
 		expect(agent.stop).not.toHaveBeenCalled()
 		expect(agent.dispose).not.toHaveBeenCalled()
 		expect(state.currentTask).toBe('Waiting task')

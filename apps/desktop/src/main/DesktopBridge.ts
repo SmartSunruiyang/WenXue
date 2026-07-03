@@ -3,17 +3,13 @@ import path from 'node:path'
 import type { BrowserProfileStore } from './BrowserProfileStore'
 import type { BrowserResources } from './BrowserResources'
 import type { BrowserStatus, BrowserSupervisor } from './BrowserSupervisor'
-import type { ExtensionSessionHandoff } from './ExtensionSessionHandoff'
-import type {
-	AuthLoginInput,
-	LauncherAuthSession,
-	PublicCloudAuthSession,
-} from './LauncherAuthSession'
 import type { LauncherLogStore } from './LauncherLogStore'
 import type { DeepPartial, LauncherSettings, LauncherSettingsStore } from './LauncherSettingsStore'
 import type { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import type { TokenUsageStore } from './TokenUsageStore'
 import type { UsageCloudClient } from './UsageCloudClient'
+import type { UserSessionHandoff } from './UserSessionHandoff'
+import type { PublicUserSession, UserSession, UserSessionStore } from './UserSessionStore'
 
 export interface IpcMainLike {
 	handle(channel: string, handler: (...args: unknown[]) => unknown): void
@@ -39,8 +35,8 @@ export interface LaunchResult {
 
 export type OpenLogsResult = LaunchResult
 
-export interface AuthSessionResult extends LaunchResult {
-	session?: PublicCloudAuthSession | null
+export interface UserSessionResult extends LaunchResult {
+	session?: PublicUserSession
 }
 
 export interface DesktopBridgeOptions {
@@ -58,8 +54,8 @@ export interface DesktopBridgeOptions {
 	telemetryIngest: Pick<LauncherTelemetryIngest, 'ingest'>
 	tokenUsageStore: Pick<TokenUsageStore, 'summary'>
 	usageCloudClient: Pick<UsageCloudClient, 'summary'>
-	authSession: Pick<LauncherAuthSession, 'login' | 'logout' | 'getSession' | 'getHandoffSession'>
-	extensionSessionHandoff: Pick<ExtensionSessionHandoff, 'run'>
+	userSessionStore: Pick<UserSessionStore, 'setSession' | 'current' | 'requireSession' | 'clear'>
+	userSessionHandoff: Pick<UserSessionHandoff, 'run'>
 	resources: BrowserResources
 	getAppVersion: () => string
 	getShellInfo: () => AppShellInfo
@@ -75,9 +71,7 @@ export interface DesktopBridgeOptions {
 export function registerDesktopBridge(options: DesktopBridgeOptions): () => void {
 	options.ipcMain.handle('browser:launch', async (): Promise<LaunchResult> => {
 		try {
-			await options.supervisor.launch('default', {
-				startUrl: await launcherStartUrl(options.settingsStore),
-			})
+			await launchProfileWithUserSession(options, 'default')
 			return { ok: true }
 		} catch (error) {
 			return { ok: false, error: toUserSafeMessage(error) }
@@ -183,9 +177,7 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		async (_event: unknown, profileId: unknown): Promise<LaunchResult> => {
 			try {
 				const requestedProfileId = requireStringArg(profileId, 'profileId')
-				await options.supervisor.launch(requestedProfileId, {
-					startUrl: await launcherStartUrl(options.settingsStore),
-				})
+				await launchProfileWithUserSession(options, requestedProfileId)
 				await options.profileStore.touch(requestedProfileId)
 				return { ok: true }
 			} catch (error) {
@@ -279,48 +271,28 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	})
 
 	options.ipcMain.handle(
-		'auth:login',
-		async (_event: unknown, input?: unknown): Promise<AuthSessionResult> => {
+		'auth:setSession',
+		async (_event: unknown, session: unknown): Promise<UserSessionResult> => {
 			try {
-				return { ok: true, session: await options.authSession.login(asAuthLoginInput(input)) }
+				return { ok: true, session: options.userSessionStore.setSession(session) }
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
 			}
 		},
 	)
 
-	options.ipcMain.handle('auth:getSession', async (): Promise<AuthSessionResult> => {
+	options.ipcMain.handle('auth:getSession', async (): Promise<UserSessionResult> => {
 		try {
-			return { ok: true, session: await options.authSession.getSession() }
+			return { ok: true, session: options.userSessionStore.current() ?? undefined }
 		} catch (error) {
 			return { ok: false, error: toUserSafeMessage(error) }
 		}
 	})
 
-	options.ipcMain.handle('auth:logout', async (): Promise<LaunchResult> => {
-		try {
-			await options.authSession.logout()
-			return { ok: true }
-		} catch (error) {
-			return { ok: false, error: toUserSafeMessage(error) }
-		}
+	options.ipcMain.handle('auth:clearSession', async (): Promise<LaunchResult> => {
+		options.userSessionStore.clear()
+		return { ok: true }
 	})
-
-	options.ipcMain.handle(
-		'auth:handoffToExtension',
-		async (_event: unknown, profileId?: unknown): Promise<LaunchResult> => {
-			try {
-				const handoffSession = await options.authSession.getHandoffSession()
-				const targetProfileId = typeof profileId === 'string' && profileId ? profileId : 'default'
-				const result = await options.extensionSessionHandoff.run(handoffSession, async (url) => {
-					await options.supervisor.launch(targetProfileId, { startUrl: url })
-				})
-				return result.ok ? { ok: true } : { ok: false, error: result.error }
-			} catch (error) {
-				return { ok: false, error: toUserSafeMessage(error) }
-			}
-		},
-	)
 
 	options.ipcMain.handle('telemetry:ingest', async (_event: unknown, payload?: unknown) => {
 		try {
@@ -338,6 +310,19 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	return () => {
 		unsubscribeStatus()
 		unsubscribeProfileStatus()
+	}
+}
+
+async function launchProfileWithUserSession(
+	options: DesktopBridgeOptions,
+	profileId: string,
+): Promise<void> {
+	const session = options.userSessionStore.requireSession()
+	const result = await options.userSessionHandoff.run(session, async (url) => {
+		await options.supervisor.launch(profileId, { startUrl: url })
+	})
+	if (!result.ok) {
+		throw new Error(result.error ?? '问学账号同步失败')
 	}
 }
 
@@ -383,17 +368,6 @@ function toUserSafeMessage(error: unknown): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
 	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
-}
-
-function asAuthLoginInput(value: unknown): AuthLoginInput {
-	if (!value || typeof value !== 'object') {
-		return { username: '', password: '' }
-	}
-	const record = value as Record<string, unknown>
-	return {
-		username: typeof record.username === 'string' ? record.username : '',
-		password: typeof record.password === 'string' ? record.password : '',
-	}
 }
 
 function asSettingsPatch(value: unknown): DeepPartial<LauncherSettings> {

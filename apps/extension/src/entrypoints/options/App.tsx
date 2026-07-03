@@ -22,7 +22,7 @@ export function resolveActiveSettingsSection({
 	scrollY,
 	documentHeight,
 }: ActiveSectionInput): SettingsSectionId {
-	const lastSection = SETTINGS_SECTIONS.at(-1)?.id ?? 'account'
+	const lastSection = SETTINGS_SECTIONS.at(-1)?.id ?? 'model'
 	const lastSectionTop = sectionTops.at(-1)?.[1]
 	if (
 		lastSectionTop !== undefined &&
@@ -46,7 +46,7 @@ export function resolveActiveSettingsSection({
 export default function App() {
 	const { t } = useI18n()
 	const [config, setConfig] = useState<ExtConfig | null>(null)
-	const [activeSection, setActiveSection] = useState<SettingsSectionId>('account')
+	const [activeSection, setActiveSection] = useState<SettingsSectionId>('model')
 	const [saved, setSaved] = useState(false)
 
 	useEffect(() => {

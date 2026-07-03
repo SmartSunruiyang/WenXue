@@ -3,9 +3,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppPaths } from './AppPaths'
-import type { LauncherAuthSession } from './LauncherAuthSession'
 import type { TokenUsageSummary } from './TokenUsageStore'
 import { UsageCloudClient } from './UsageCloudClient'
+import type { UserSessionStore } from './UserSessionStore'
 
 let userDataDir: string
 let paths: AppPaths
@@ -21,9 +21,9 @@ afterEach(async () => {
 })
 
 describe('UsageCloudClient', () => {
-	it('fetches cloud summary with the product user access token and caches it', async () => {
+	it('fetches cloud summary with the user access token and caches it by user id', async () => {
 		const calls: Array<{ url: string; authorization: string | null }> = []
-		const client = new UsageCloudClient(paths, createAuthSession(), {
+		const client = new UsageCloudClient(paths, createUserSessionStore(), {
 			fetchImpl: async (url, init) => {
 				const headers = new Headers(init?.headers)
 				calls.push({ url, authorization: headers.get('authorization') })
@@ -36,25 +36,25 @@ describe('UsageCloudClient', () => {
 		expect(calls).toEqual([
 			{
 				url: 'https://gateway.example/v1/usage/summary',
-				authorization: 'Bearer product-access-token',
+				authorization: 'Bearer user-access-token',
 			},
 		])
 		const cache = JSON.parse(
 			await readFile(paths.dataFile('token-usage-summary-cache.json'), 'utf8'),
 		) as unknown
 		expect(cache).toEqual({
-			uid: 'uid-product',
+			userId: 'user_123',
 			summary: sampleSummary(),
 		})
 	})
 
 	it('returns the same user cache when the cloud request fails', async () => {
-		const warmClient = new UsageCloudClient(paths, createAuthSession(), {
+		const warmClient = new UsageCloudClient(paths, createUserSessionStore(), {
 			fetchImpl: async () => Response.json(sampleSummary()),
 		})
 		await warmClient.summary()
 
-		const offlineClient = new UsageCloudClient(paths, createAuthSession(), {
+		const offlineClient = new UsageCloudClient(paths, createUserSessionStore(), {
 			fetchImpl: async () => {
 				throw new Error('offline')
 			},
@@ -64,24 +64,39 @@ describe('UsageCloudClient', () => {
 	})
 
 	it('rejects invalid summaries when no cache exists', async () => {
-		const client = new UsageCloudClient(paths, createAuthSession(), {
+		const client = new UsageCloudClient(paths, createUserSessionStore(), {
 			fetchImpl: async () => Response.json({ totalTokens: 'bad' }),
 		})
 
 		await expect(client.summary()).rejects.toThrow('CloudBase 用量响应缺少')
 	})
+
+	it('rejects with a timeout when the cloud request never settles', async () => {
+		vi.useFakeTimers()
+		try {
+			const client = new UsageCloudClient(paths, createUserSessionStore(), {
+				fetchImpl: () => new Promise<Response>(() => undefined),
+				timeoutMs: 1000,
+			})
+
+			const summary = client.summary()
+			const expectation = expect(summary).rejects.toThrow('CloudBase 用量读取超时')
+			await vi.advanceTimersByTimeAsync(1000)
+
+			await expectation
+		} finally {
+			vi.useRealTimers()
+		}
+	})
 })
 
-function createAuthSession(): Pick<LauncherAuthSession, 'getHandoffSession'> {
+function createUserSessionStore(): Pick<UserSessionStore, 'requireSession'> {
 	return {
-		getHandoffSession: vi.fn(async () => ({
-			uid: 'uid-product',
-			username: 'product-user',
-			type: 'external' as const,
-			accessToken: 'product-access-token',
-			expiresAt: 1782660000000,
-			envId: 'wenxue-d8gz76tacc3659f05',
-			region: 'ap-shanghai',
+		requireSession: vi.fn(() => ({
+			userId: 'user_123',
+			accessToken: 'user-access-token',
+			refreshToken: 'user-refresh-token',
+			expiresAt: 1782663600000,
 			gatewayBaseUrl: 'https://gateway.example',
 		})),
 	}

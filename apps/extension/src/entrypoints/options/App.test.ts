@@ -9,7 +9,6 @@ describe('options navigation', () => {
 		expect(
 			resolveActiveSettingsSection({
 				sectionTops: [
-					['account', -420],
 					['model', -80],
 					['language', 240],
 					['advanced', 620],
@@ -27,7 +26,6 @@ describe('options navigation', () => {
 		expect(
 			resolveActiveSettingsSection({
 				sectionTops: [
-					['account', -1700],
 					['model', -1300],
 					['language', -900],
 					['advanced', -520],

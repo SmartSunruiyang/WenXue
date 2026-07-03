@@ -40,12 +40,9 @@ contextBridge.exposeInMainWorld('wenxue', {
 		getSummary: () => ipcRenderer.invoke('tokens:getSummary'),
 	},
 	auth: {
-		login: (input: { username: string; password: string }) =>
-			ipcRenderer.invoke('auth:login', input),
+		setSession: (session: unknown) => ipcRenderer.invoke('auth:setSession', session),
 		getSession: () => ipcRenderer.invoke('auth:getSession'),
-		logout: () => ipcRenderer.invoke('auth:logout'),
-		handoffToExtension: (profileId?: string) =>
-			ipcRenderer.invoke('auth:handoffToExtension', profileId),
+		clearSession: () => ipcRenderer.invoke('auth:clearSession'),
 	},
 	app: {
 		getVersions: () => ipcRenderer.invoke('app:getVersions'),

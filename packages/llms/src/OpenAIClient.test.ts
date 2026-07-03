@@ -205,11 +205,28 @@ describe('OpenAIClient.invoke — HTTP errors', () => {
 	it('falls back to statusText when body has no error.message', async () => {
 		const { client, fetchMock } = makeClient()
 		fetchMock.mockResolvedValue(
-			new Response('not json', { status: 500, statusText: 'Internal Boom' })
+			new Response('not json', { status: 500, statusText: 'Internal Boom' }),
 		)
 		await expect(client.invoke([], tools, signal)).rejects.toMatchObject({
 			type: InvokeErrorTypes.SERVER_ERROR,
 			message: expect.stringContaining('Internal Boom'),
+		})
+	})
+
+	it('maps CloudBase function error envelopes to HTTP errors before schema validation', async () => {
+		const { client, fetchMock } = makeClient()
+		fetchMock.mockResolvedValue(
+			jsonResponse({
+				statusCode: 401,
+				body: JSON.stringify({ error: { message: 'Missing bearer token', status: 401 } }),
+			}),
+		)
+
+		await expect(client.invoke([], tools, signal)).rejects.toMatchObject({
+			name: 'InvokeError',
+			type: InvokeErrorTypes.AUTH_ERROR,
+			retryable: false,
+			message: expect.stringContaining('问学账号'),
 		})
 	})
 })
@@ -222,7 +239,7 @@ describe('OpenAIClient.invoke — response anomalies', () => {
 	it('throws CONTEXT_LENGTH on finish_reason="length"', async () => {
 		const { client, fetchMock } = makeClient()
 		fetchMock.mockResolvedValue(
-			jsonResponse({ choices: [{ finish_reason: 'length', message: {} }] })
+			jsonResponse({ choices: [{ finish_reason: 'length', message: {} }] }),
 		)
 		await expect(client.invoke([], tools, signal)).rejects.toMatchObject({
 			type: InvokeErrorTypes.CONTEXT_LENGTH,
@@ -232,7 +249,7 @@ describe('OpenAIClient.invoke — response anomalies', () => {
 	it('throws CONTENT_FILTER on finish_reason="content_filter"', async () => {
 		const { client, fetchMock } = makeClient()
 		fetchMock.mockResolvedValue(
-			jsonResponse({ choices: [{ finish_reason: 'content_filter', message: {} }] })
+			jsonResponse({ choices: [{ finish_reason: 'content_filter', message: {} }] }),
 		)
 		await expect(client.invoke([], tools, signal)).rejects.toMatchObject({
 			type: InvokeErrorTypes.CONTENT_FILTER,
@@ -250,7 +267,7 @@ describe('OpenAIClient.invoke — response anomalies', () => {
 	it('throws NO_TOOL_CALL when message has no tool_calls', async () => {
 		const { client, fetchMock } = makeClient()
 		fetchMock.mockResolvedValue(
-			jsonResponse({ choices: [{ finish_reason: 'tool_calls', message: {} }] })
+			jsonResponse({ choices: [{ finish_reason: 'tool_calls', message: {} }] }),
 		)
 		await expect(client.invoke([], tools, signal)).rejects.toMatchObject({
 			type: InvokeErrorTypes.NO_TOOL_CALL,

@@ -23,7 +23,7 @@ export class OpenAIClient implements LLMClient {
 		messages: Message[],
 		tools: Record<string, Tool>,
 		abortSignal?: AbortSignal,
-		options?: InvokeOptions
+		options?: InvokeOptions,
 	): Promise<InvokeResult> {
 		abortSignal?.throwIfAborted()
 
@@ -54,7 +54,7 @@ export class OpenAIClient implements LLMClient {
 			throw new InvokeError(
 				InvokeErrorTypes.CONFIG_ERROR,
 				`transformRequestBody failed: ${(error as Error).message}`,
-				error
+				error,
 			)
 		}
 		const finalRequestBody = transformedBody ?? requestBody
@@ -79,58 +79,42 @@ export class OpenAIClient implements LLMClient {
 
 		// 3. Handle HTTP errors
 		if (!response.ok) {
-			let errorData: any
+			let errorData: unknown
 			try {
 				errorData = await response.json()
 			} catch (error) {
-				if ((error as any)?.name === 'AbortError') throw error
+				if (isAbortError(error)) throw error
 			}
-			const errorMessage = errorData?.error?.message || response.statusText
-
-			if (response.status === 401 || response.status === 403) {
-				throw new InvokeError(
-					InvokeErrorTypes.AUTH_ERROR,
-					`Authentication failed: ${errorMessage}`,
-					errorData
-				)
-			}
-			if (response.status === 429) {
-				throw new InvokeError(
-					InvokeErrorTypes.RATE_LIMIT,
-					`Rate limit exceeded: ${errorMessage}`,
-					errorData
-				)
-			}
-			if (response.status >= 500) {
-				throw new InvokeError(
-					InvokeErrorTypes.SERVER_ERROR,
-					`Server error: ${errorMessage}`,
-					errorData
-				)
-			}
-			throw new InvokeError(
-				InvokeErrorTypes.UNKNOWN,
-				`HTTP ${response.status}: ${errorMessage}`,
-				errorData
+			throw createHttpInvokeError(
+				response.status,
+				readApiErrorMessage(errorData) || response.statusText,
+				errorData,
 			)
 		}
 
 		// 4. Parse and validate response
-		let data: any
+		let data: unknown
 		try {
 			data = await response.json()
 		} catch (error) {
-			if ((error as any)?.name === 'AbortError') throw error
+			if (isAbortError(error)) throw error
 			throw new InvokeError(
 				InvokeErrorTypes.INVALID_RESPONSE,
 				'Response body is not valid JSON',
-				error
+				error,
 			)
 		}
+		throwIfCloudBaseErrorEnvelope(data)
 
-		const choice = data.choices?.[0]
+		if (!isRecord(data) || !Array.isArray(data.choices)) {
+			throw new InvokeError(InvokeErrorTypes.INVALID_SCHEMA, 'No choices in response', data)
+		}
+		const choice = data.choices[0] as unknown
 		if (!choice) {
 			throw new InvokeError(InvokeErrorTypes.INVALID_SCHEMA, 'No choices in response', data)
+		}
+		if (!isRecord(choice)) {
+			throw new InvokeError(InvokeErrorTypes.INVALID_SCHEMA, 'Choice is not an object', data)
 		}
 
 		// Check finish_reason
@@ -144,36 +128,55 @@ export class OpenAIClient implements LLMClient {
 					InvokeErrorTypes.CONTEXT_LENGTH,
 					'Response truncated: max tokens reached',
 					undefined,
-					data
+					data,
 				)
 			case 'content_filter':
 				throw new InvokeError(
 					InvokeErrorTypes.CONTENT_FILTER,
 					'Content filtered by safety system',
 					undefined,
-					data
+					data,
 				)
 			default:
 				throw new InvokeError(
 					InvokeErrorTypes.INVALID_SCHEMA,
 					`Unexpected finish_reason: ${choice.finish_reason}`,
 					undefined,
-					data
+					data,
 				)
 		}
 
 		// Apply normalizeResponse if provided (for fixing format issues automatically)
 		const normalizedData = options?.normalizeResponse ? options.normalizeResponse(data) : data
-		const normalizedChoice = (normalizedData as any).choices?.[0]
+		const normalizedChoice = isRecord(normalizedData)
+			? Array.isArray(normalizedData.choices)
+				? normalizedData.choices[0]
+				: undefined
+			: undefined
+		if (!isRecord(normalizedChoice)) {
+			throw new InvokeError(
+				InvokeErrorTypes.INVALID_SCHEMA,
+				'Normalized choice is not an object',
+				undefined,
+				data,
+			)
+		}
 
 		// Get tool name from response
-		const toolCallName = normalizedChoice?.message?.tool_calls?.[0]?.function?.name
+		const normalizedMessage = readRecord(normalizedChoice.message)
+		const normalizedToolCalls = Array.isArray(normalizedMessage?.tool_calls)
+			? normalizedMessage.tool_calls
+			: []
+		const normalizedToolCall = readRecord(normalizedToolCalls[0])
+		const normalizedFunction = readRecord(normalizedToolCall?.function)
+		const toolCallName =
+			typeof normalizedFunction?.name === 'string' ? normalizedFunction.name : undefined
 		if (!toolCallName) {
 			throw new InvokeError(
 				InvokeErrorTypes.NO_TOOL_CALL,
 				'No tool call found in response',
 				undefined,
-				data
+				data,
 			)
 		}
 
@@ -183,18 +186,19 @@ export class OpenAIClient implements LLMClient {
 				InvokeErrorTypes.UNKNOWN,
 				`Tool "${toolCallName}" not found in tools`,
 				undefined,
-				data
+				data,
 			)
 		}
 
 		// Extract and parse tool arguments
-		const argString = normalizedChoice.message?.tool_calls?.[0]?.function?.arguments
+		const argString =
+			typeof normalizedFunction?.arguments === 'string' ? normalizedFunction.arguments : undefined
 		if (!argString) {
 			throw new InvokeError(
 				InvokeErrorTypes.INVALID_TOOL_ARGS,
 				'No tool call arguments found',
 				undefined,
-				data
+				data,
 			)
 		}
 
@@ -206,7 +210,7 @@ export class OpenAIClient implements LLMClient {
 				InvokeErrorTypes.INVALID_TOOL_ARGS,
 				'Failed to parse tool arguments as JSON',
 				error,
-				data
+				data,
 			)
 		}
 
@@ -218,7 +222,7 @@ export class OpenAIClient implements LLMClient {
 				InvokeErrorTypes.INVALID_TOOL_ARGS,
 				'Tool arguments validation failed',
 				validation.error,
-				data
+				data,
 			)
 		}
 		const toolInput = validation.data
@@ -233,7 +237,7 @@ export class OpenAIClient implements LLMClient {
 				InvokeErrorTypes.TOOL_EXECUTION_ERROR,
 				`Tool execution failed: ${(error as Error)?.message}`,
 				error,
-				data
+				data,
 			)
 		}
 
@@ -245,14 +249,91 @@ export class OpenAIClient implements LLMClient {
 			},
 			toolResult,
 			usage: {
-				promptTokens: data.usage?.prompt_tokens ?? 0,
-				completionTokens: data.usage?.completion_tokens ?? 0,
-				totalTokens: data.usage?.total_tokens ?? 0,
-				cachedTokens: data.usage?.prompt_tokens_details?.cached_tokens,
-				reasoningTokens: data.usage?.completion_tokens_details?.reasoning_tokens,
+				promptTokens: readNumber(readRecord(data.usage)?.prompt_tokens) ?? 0,
+				completionTokens: readNumber(readRecord(data.usage)?.completion_tokens) ?? 0,
+				totalTokens: readNumber(readRecord(data.usage)?.total_tokens) ?? 0,
+				cachedTokens: readNumber(
+					readRecord(readRecord(data.usage)?.prompt_tokens_details)?.cached_tokens,
+				),
+				reasoningTokens: readNumber(
+					readRecord(readRecord(data.usage)?.completion_tokens_details)?.reasoning_tokens,
+				),
 			},
 			rawResponse: data,
 			rawRequest: finalRequestBody,
 		}
 	}
+}
+
+function throwIfCloudBaseErrorEnvelope(data: unknown): void {
+	const envelope = readRecord(data)
+	if (!envelope) return
+	const statusCode = readNumber(envelope.statusCode)
+	if (!statusCode || statusCode < 400) return
+
+	const rawBody = typeof envelope.body === 'string' ? envelope.body : undefined
+	const parsedBody = rawBody ? parseJson(rawBody) : envelope.body
+	const fallbackMessage = statusCode === 401 ? 'Missing bearer token' : `HTTP ${statusCode}`
+	const message = normalizeAuthMessage(
+		statusCode,
+		readApiErrorMessage(parsedBody) || fallbackMessage,
+	)
+	throw createHttpInvokeError(statusCode, message, data)
+}
+
+function createHttpInvokeError(status: number, message: string, rawError: unknown): InvokeError {
+	if (status === 401 || status === 403) {
+		return new InvokeError(
+			InvokeErrorTypes.AUTH_ERROR,
+			`Authentication failed: ${normalizeAuthMessage(status, message)}`,
+			rawError,
+		)
+	}
+	if (status === 429) {
+		return new InvokeError(InvokeErrorTypes.RATE_LIMIT, `Rate limit exceeded: ${message}`, rawError)
+	}
+	if (status >= 500) {
+		return new InvokeError(InvokeErrorTypes.SERVER_ERROR, `Server error: ${message}`, rawError)
+	}
+	return new InvokeError(InvokeErrorTypes.UNKNOWN, `HTTP ${status}: ${message}`, rawError)
+}
+
+function normalizeAuthMessage(status: number, message: string): string {
+	if (status === 401 && /missing bearer token/i.test(message)) {
+		return '无权限：请先在问学启动器登录问学账号并重新启动浏览器。'
+	}
+	return message
+}
+
+function readApiErrorMessage(value: unknown): string | undefined {
+	const record = readRecord(value)
+	if (!record) return undefined
+	const error = readRecord(record.error)
+	if (typeof error?.message === 'string') return error.message
+	if (typeof record.message === 'string') return record.message
+	return undefined
+}
+
+function parseJson(text: string): unknown {
+	try {
+		return JSON.parse(text)
+	} catch {
+		return text
+	}
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+	return isRecord(value) ? value : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function readNumber(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function isAbortError(error: unknown): boolean {
+	return isRecord(error) && error.name === 'AbortError'
 }

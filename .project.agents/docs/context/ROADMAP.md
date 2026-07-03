@@ -20,6 +20,7 @@
 | M3        | 启动链路打通                                         | 点「启动浏览器」→ CfT 带插件拉起，状态机全程正确           |
 | M3.5      | 启动器 App 化重构                                    | 无边框白色 App 工作台可管理多画像、查看日志、tokens 与设置 |
 | M4.5      | CloudBase LLM Gateway M0 Spike                      | 真实流式网关调用 usage 非 0，并记录延迟基线                |
+| M4.6      | 后台管理系统                                         | 内部账号密码登录后台，可查看 tokens 看板并调整用户状态     |
 | M4        | 品牌化与默认配置                                     | 全新 profile 首启只填 Key，示例页全链路任务成功            |
 | M5        | 打包分发与冒烟                                       | 双端安装包在干净机器通过 PRD F1–F4 验收                    |
 
@@ -75,21 +76,29 @@
 
 > 该 spike 只验证网关可行性；M1+ 未放行前不切扩展内置模型、不删除本地百炼 Key。
 
-#### M4.5 后续 — 网关硬化与产品用户登录（2026-06-28）
+#### M4.5 后续 — 网关硬化与用户 session（2026-07-02 重构）
 
 - [x] M1 网关硬化：文本/视觉/工具透传、usage 写 `token_usage`、无正文落库、缺失/无效 token 拒绝、PUBLIC + `MinNum≥1` 部署
-- [x] M2 启动器 CloudBase Auth：仅允许产品侧外部用户（`type=external`）登录；新增 `LauncherAuthSession`、auth IPC/preload、登录面板
-- [x] M2 会话交接：启动器经一次性 localhost `externally_connectable` 页面把 access token 交给插件 background，插件保存 `WenXueCloudAuthSession`
-- [x] M3 内置模型切网关：默认文本 `qwen-plus`、视觉 `qwen3.7-plus` 经 CloudBase Gateway 使用产品用户 access token
-- [x] M4 tokens 页读网关计量：CloudBase Run 006 暴露 `GET /v1/usage/summary`，启动器 `UsageCloudClient` 云优先读取并按 uid 缓存，本地用量作为失败兜底
+- [ ] M2 启动器用户账号：恢复 CloudBase Auth 用户 id + 密码登录/注册；删除 `MachineTokenStore`、机器 token IPC/preload 与设置页 token 展示
+- [ ] M2 session 交接：启动器经一次性 localhost `externally_connectable` 页面把 CloudBase 用户 session 交给插件 background，插件保存 `WenXueUserSession`
+- [ ] M3 内置模型切网关：默认文本 `qwen3.7-max`、视觉 `qwen3.7-plus` 经 CloudBase Gateway 使用用户 session
+- [ ] M4 tokens 页读网关计量：CloudBase Run 暴露 `GET /v1/usage/summary`，启动器 `UsageCloudClient` 云优先读取并按 userId 缓存，本地用量作为失败兜底
 - [x] M5 内置模型删除本地 Key：移除本地直连兜底开关与内置百炼 Key，网关成为内置模型唯一路径；自定义 BYO-Key 不受影响
-- **验收**：真实外部用户登录成功；CfT + 构建后插件 handoff smoke 返回 `{ ok: true }`；`pnpm -F desktop test`、`pnpm -F desktop build`、`pnpm -F extension test`、`pnpm -F extension build` 通过。
+- **验收**：干净启动进入账号登录页；用户 id + 密码登录/注册后才能进入工作台；CfT + 构建后插件 user-session handoff smoke 返回 `{ ok: true }`；`pnpm -F desktop test`、`pnpm -F desktop build`、`pnpm -F extension test`、`pnpm -F extension build` 通过。
+
+### M4.6 — 后台管理系统（依赖 M4.5）
+
+- [ ] `CloudBaseLlmGateway` 在请求 DashScope 前 introspect CloudBase access token，并执行 `user_accounts.status` 鉴权
+- [ ] `apps/admin-api` 入位：CloudBase Auth bearer introspection、`admin_users` 角色校验、tokens summary、users 查询、status patch 与 audit 写入
+- [ ] `apps/admin` 入位：内部用户名/密码登录、受保护后台壳、tokens 看板、用户启用/禁用
+- [ ] CloudBase Auth 前置要求：启用 username/password provider，创建内部管理员账号，并在 `admin_users` 以 CloudBase Auth uid 登记 active admin；普通用户状态由 `user_accounts` 控制
+- **验收**：未登录/非管理员后台 API 均拒绝；后台看板聚合正确；后台禁用用户后该用户网关调用在 DashScope 前返回 403；`pnpm -F admin-api test`、`pnpm -F admin-api typecheck`、`pnpm -F admin build` 通过。
 
 ### M4 — 品牌化与默认配置（依赖 M3）
 
 - [ ] 插件品牌化：名称 / 图标 / `_locales`（zh_CN、en）→ 问学 WenXue · ask for everything
 - [ ] manifest 增加 `key` 固定插件 ID
-- [x] 默认内置模型切为 CloudBase Gateway：文本 `qwen-plus`、视觉 `qwen3.7-plus`，自定义模型仍保留厂商 URL/API Key 配置
+- [ ] 默认内置模型切为 CloudBase Gateway：文本 `qwen3.7-max`、视觉 `qwen3.7-plus`，经用户 session 鉴权；自定义模型仍保留厂商 URL/API Key 配置
 - [ ] 权限收敛到 Demo 必需集合并登记保留理由；页面级 API（`window.PAGE_AGENT_EXT`）编译开关默认关；审计并移除上游遥测/Demo LLM 残留
 - **验收**：删除画像目录后全新首启 → 仅填 API Key → 在示例 research 页与示例答题页各完成一次全链路任务（PRD F3/F4 验收标准）。
 

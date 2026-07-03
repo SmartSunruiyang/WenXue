@@ -1,13 +1,20 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 
 export const DASHSCOPE_CHAT_COMPLETIONS_URL =
 	'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
+const TOKEN_USAGE_COLLECTION = 'token_usage'
+const USER_ACCOUNTS_COLLECTION = 'user_accounts'
+const TENCENTCLOUD_TCB_ENDPOINT = 'https://tcb.tencentcloudapi.com'
+const TENCENTCLOUD_TCB_SERVICE = 'tcb'
+const TENCENTCLOUD_TCB_VERSION = '2018-06-08'
 
 /** @typedef {{ inputTokens: number, outputTokens: number, totalTokens: number }} TokenUsage */
-/** @typedef {{ uid: string }} CloudBaseUser */
+/** @typedef {{ uid: string }} GatewayUser */
 /** @typedef {{ [key: string]: unknown }} JsonRecord */
 /** @typedef {{ _id: string, ts: number, uid: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number, requestId: string, createdAt: string }} CloudUsageRecord */
+/** @typedef {{ _id: string, uid: string, status: 'active' | 'disabled', createdAt: string, updatedAt: string, note?: string }} UserAccount */
+/** @typedef {{ cloudbaseEnvId: string, cloudbaseRegion?: string, cloudbaseUsageApiKey?: string, tencentCloudSecretId?: string, tencentCloudSecretKey?: string, tencentCloudToken?: string, requestTimeoutMs?: number }} LauncherRegistrationEnv */
 
 export class GatewayError extends Error {
 	/**
@@ -18,6 +25,271 @@ export class GatewayError extends Error {
 		super(message)
 		this.name = 'GatewayError'
 		this.status = status
+	}
+}
+
+export function clearAuthorizationCache() {
+	// Kept as a compatibility hook for tests and warm instances. User status is checked per request.
+}
+
+/**
+ * @param {{
+ *   rawBody: string,
+ *   env: LauncherRegistrationEnv,
+ *   fetchImpl?: typeof fetch,
+ *   now?: () => number,
+ * }} input
+ */
+export async function handleLauncherRegistration(input) {
+	const body = parseLauncherRegistrationBody(input.rawBody)
+	const created = await createCloudBaseExternalUser({
+		username: body.username,
+		password: body.password,
+		env: input.env,
+		fetchImpl: input.fetchImpl,
+		now: input.now,
+	})
+	await createActiveUserAccount({
+		uid: created.uid,
+		envId: input.env.cloudbaseEnvId,
+		apiKey: input.env.cloudbaseUsageApiKey ?? '',
+		fetchImpl: input.fetchImpl,
+		timeoutMs: input.env.requestTimeoutMs,
+		now: input.now,
+	})
+	return {
+		ok: true,
+		userId: created.uid,
+		username: body.username,
+	}
+}
+
+/**
+ * @param {{
+ *   username: string,
+ *   password: string,
+ *   env: LauncherRegistrationEnv,
+ *   fetchImpl?: typeof fetch,
+ *   now?: () => number,
+ * }} input
+ */
+export async function createCloudBaseExternalUser(input) {
+	const secretId = readString(input.env.tencentCloudSecretId)
+	const secretKey = readString(input.env.tencentCloudSecretKey)
+	if (!secretId || !secretKey) {
+		throw new GatewayError('CloudBase 注册服务未配置 Tencent Cloud API 凭证', 500)
+	}
+
+	const request = buildTencentCloudSignedRequest({
+		secretId,
+		secretKey,
+		token: readString(input.env.tencentCloudToken) ?? undefined,
+		region: input.env.cloudbaseRegion ?? 'ap-shanghai',
+		action: 'CreateUser',
+		payload: {
+			EnvId: input.env.cloudbaseEnvId,
+			Name: input.username,
+			NickName: input.username,
+			Password: input.password,
+			Type: 'externalUser',
+			Description: 'WenXue launcher user',
+			UserStatus: 'ACTIVE',
+		},
+		now: input.now,
+	})
+	const response = await fetchWithTimeout(
+		input.fetchImpl ?? fetch,
+		TENCENTCLOUD_TCB_ENDPOINT,
+		request,
+		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+	)
+	const payload = /** @type {unknown} */ (await safeJson(response))
+	const responseBody = isRecord(payload) && isRecord(payload.Response) ? payload.Response : null
+	const apiError = responseBody && isRecord(responseBody.Error) ? responseBody.Error : null
+	if (!response.ok || apiError) {
+		throw createCloudBaseUserCreationError(response, apiError, payload)
+	}
+	const uid = readCloudBaseUserId(responseBody)
+	if (uid) return { uid }
+
+	const lookedUpUid = await lookupCloudBaseExternalUserUid({
+		username: input.username,
+		env: input.env,
+		fetchImpl: input.fetchImpl,
+		now: input.now,
+	})
+	if (!lookedUpUid) {
+		throw new GatewayError('CloudBase 创建用户成功但未返回用户 id', 502)
+	}
+	return { uid: lookedUpUid }
+}
+
+/**
+ * @param {{
+ *   username: string,
+ *   env: LauncherRegistrationEnv,
+ *   fetchImpl?: typeof fetch,
+ *   now?: () => number,
+ * }} input
+ */
+async function lookupCloudBaseExternalUserUid(input) {
+	const secretId = readString(input.env.tencentCloudSecretId)
+	const secretKey = readString(input.env.tencentCloudSecretKey)
+	if (!secretId || !secretKey) {
+		throw new GatewayError('CloudBase 注册服务未配置 Tencent Cloud API 凭证', 500)
+	}
+
+	const request = buildTencentCloudSignedRequest({
+		secretId,
+		secretKey,
+		token: readString(input.env.tencentCloudToken) ?? undefined,
+		region: input.env.cloudbaseRegion ?? 'ap-shanghai',
+		action: 'DescribeUserList',
+		payload: {
+			EnvId: input.env.cloudbaseEnvId,
+			Name: input.username,
+			PageNo: 1,
+			PageSize: 10,
+		},
+		now: input.now,
+	})
+	const response = await fetchWithTimeout(
+		input.fetchImpl ?? fetch,
+		TENCENTCLOUD_TCB_ENDPOINT,
+		request,
+		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+	)
+	const payload = /** @type {unknown} */ (await safeJson(response))
+	const responseBody = isRecord(payload) && isRecord(payload.Response) ? payload.Response : null
+	const apiError = responseBody && isRecord(responseBody.Error) ? responseBody.Error : null
+	if (!response.ok || apiError) {
+		throw createCloudBaseUserLookupError(response, apiError, payload)
+	}
+
+	const data =
+		responseBody && isRecord(responseBody.Data)
+			? responseBody.Data
+			: isRecord(payload) && isRecord(payload.Data)
+				? payload.Data
+				: null
+	const list = data && Array.isArray(data.UserList) ? data.UserList : []
+	for (const item of list) {
+		if (!isRecord(item)) continue
+		const name = readString(item.Name)
+		if (name && name !== input.username) continue
+		const uid = readCloudBaseUserId(item)
+		if (uid) return uid
+	}
+	return null
+}
+
+/**
+ * @param {{
+ *   uid: string,
+ *   envId: string,
+ *   apiKey: string,
+ *   fetchImpl?: typeof fetch,
+ *   timeoutMs?: number,
+ *   now?: () => number,
+ * }} input
+ */
+async function createActiveUserAccount(input) {
+	if (!input.apiKey) {
+		throw new GatewayError('CLOUDBASE_USAGE_API_KEY is not configured', 500)
+	}
+	const timestamp = new Date(input.now ? input.now() : Date.now()).toISOString()
+	const record = {
+		_id: input.uid,
+		uid: input.uid,
+		status: 'active',
+		firstSeenAt: timestamp,
+		lastSeenAt: timestamp,
+		createdAt: timestamp,
+		updatedAt: timestamp,
+	}
+	const response = await fetchWithTimeout(
+		input.fetchImpl ?? fetch,
+		collectionDocumentsUrl(input.envId, USER_ACCOUNTS_COLLECTION),
+		{
+			method: 'POST',
+			headers: {
+				authorization: `Bearer ${input.apiKey}`,
+				'content-type': 'application/json',
+			},
+			body: JSON.stringify({ data: [record] }),
+		},
+		input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+	)
+	if (!response.ok && response.status !== 409) {
+		throw new GatewayError(`CloudBase user account create failed with ${response.status}`, 502)
+	}
+}
+
+/**
+ * @param {{
+ *   secretId: string,
+ *   secretKey: string,
+ *   token?: string,
+ *   region: string,
+ *   action: string,
+ *   payload: JsonRecord,
+ *   now?: () => number,
+ * }} input
+ * @returns {RequestInit}
+ */
+export function buildTencentCloudSignedRequest(input) {
+	const endpoint = new URL(TENCENTCLOUD_TCB_ENDPOINT)
+	const payload = JSON.stringify(input.payload)
+	const timestamp = Math.floor((input.now?.() ?? Date.now()) / 1000)
+	const date = new Date(timestamp * 1000).toISOString().slice(0, 10)
+	const contentType = 'application/json; charset=utf-8'
+	const canonicalHeaders = `content-type:${contentType}\nhost:${endpoint.host}\n`
+	const signedHeaders = 'content-type;host'
+	const hashedPayload = sha256Hex(payload)
+	const canonicalRequest = [
+		'POST',
+		'/',
+		'',
+		canonicalHeaders,
+		signedHeaders,
+		hashedPayload,
+	].join('\n')
+	const credentialScope = `${date}/${TENCENTCLOUD_TCB_SERVICE}/tc3_request`
+	const stringToSign = [
+		'TC3-HMAC-SHA256',
+		String(timestamp),
+		credentialScope,
+		sha256Hex(canonicalRequest),
+	].join('\n')
+	const secretDate = hmacSha256(`TC3${input.secretKey}`, date)
+	const secretService = hmacSha256(secretDate, TENCENTCLOUD_TCB_SERVICE)
+	const secretSigning = hmacSha256(secretService, 'tc3_request')
+	const signature = hmacSha256(secretSigning, stringToSign).toString('hex')
+	const authorization = [
+		'TC3-HMAC-SHA256',
+		`Credential=${input.secretId}/${credentialScope}`,
+		`SignedHeaders=${signedHeaders}`,
+		`Signature=${signature}`,
+	]
+	const authorizationHeader = `${authorization[0]} ${authorization.slice(1).join(', ')}`
+
+	/** @type {Record<string, string>} */
+	const headers = {
+		authorization: authorizationHeader,
+		'content-type': contentType,
+		host: endpoint.host,
+		'x-tc-action': input.action,
+		'x-tc-region': input.region,
+		'x-tc-timestamp': String(timestamp),
+		'x-tc-version': TENCENTCLOUD_TCB_VERSION,
+	}
+	if (input.token) {
+		headers['x-tc-token'] = input.token
+	}
+	return {
+		method: 'POST',
+		headers,
+		body: payload,
 	}
 }
 
@@ -79,9 +351,7 @@ export async function writeUsageRecord(input) {
 		throw new GatewayError('CLOUDBASE_USAGE_API_KEY is not configured', 500)
 	}
 	assertUsageRecordSafe(input.record)
-	const url = new URL(
-		`https://${input.envId}.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)/collections/token_usage/documents`,
-	)
+	const url = collectionDocumentsUrl(input.envId, TOKEN_USAGE_COLLECTION)
 	const response = await fetchWithTimeout(
 		input.fetchImpl ?? fetch,
 		url,
@@ -116,9 +386,7 @@ export async function readUsageRecords(input) {
 	if (!input.apiKey) {
 		throw new GatewayError('CLOUDBASE_USAGE_API_KEY is not configured', 500)
 	}
-	const url = new URL(
-		`https://${input.envId}.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)/collections/token_usage/documents`,
-	)
+	const url = collectionDocumentsUrl(input.envId, TOKEN_USAGE_COLLECTION)
 	url.searchParams.set('query', JSON.stringify({ uid: input.uid }))
 	url.searchParams.set('order', JSON.stringify([{ field: 'ts', direction: 'desc' }]))
 	url.searchParams.set('limit', String(input.limit ?? 500))
@@ -161,7 +429,9 @@ export function buildUsageSummary(records) {
 		estimatedCostCny: roundCurrency(sumTokenRecords(safeRecords, 'estimatedCostCny')),
 		byBrowser: bucketTokenRecords(safeRecords, (record) => record.browserId),
 		byModel: bucketTokenRecords(safeRecords, (record) => record.model),
-		daily: bucketTokenRecords(safeRecords, (record) => new Date(record.ts).toISOString().slice(0, 10)),
+		daily: bucketTokenRecords(safeRecords, (record) =>
+			new Date(record.ts).toISOString().slice(0, 10),
+		),
 		recent: safeRecords.slice(0, 20),
 	}
 }
@@ -223,7 +493,17 @@ export function buildUsageRecord(input) {
  */
 export function assertUsageRecordSafe(record) {
 	const text = JSON.stringify(record).toLowerCase()
-	const forbidden = ['prompt', 'content', 'authorization', 'bearer', 'api_key', 'apikey', 'sk-']
+	const forbidden = [
+		'prompt',
+		'content',
+		'authorization',
+		'bearer',
+		'api_key',
+		'apikey',
+		'refresh_token',
+		'refreshtoken',
+		'sk-',
+	]
 	for (const word of forbidden) {
 		if (text.includes(word)) {
 			throw new GatewayError(`Usage record contains forbidden field: ${word}`, 500)
@@ -234,40 +514,113 @@ export function assertUsageRecordSafe(record) {
 /**
  * @param {{
  *   headers: Headers | Record<string, string | string[] | undefined>,
- *   envId: string,
- *   clientId: string,
- *   clientSecret?: string,
+ *   env: { cloudbaseEnvId: string, cloudbaseClientId: string, requestTimeoutMs?: number },
  *   fetchImpl?: typeof fetch,
  * }} input
- * @returns {Promise<CloudBaseUser>}
+ * @returns {Promise<GatewayUser>}
  */
 export async function resolveCloudBaseUser(input) {
 	const token = extractBearerToken(input.headers)
 	if (!token) {
-		throw new GatewayError('Missing bearer token', 401)
+		throw new GatewayError('登录已过期/无权限，请回到桌面端登录或重新启动浏览器。', 401)
 	}
-	const url = new URL(`https://${input.envId}.api.tcloudbasegateway.com/auth/v1/token/introspect`)
-	url.searchParams.set('client_id', input.clientId)
-	const response = await (input.fetchImpl ?? fetch)(url, {
-		method: 'GET',
-		headers: {
-			authorization: `Bearer ${token}`,
-			'x-device-id': 'wenxue-llm-gateway',
-			'x-request-id': randomUUID(),
+	const url = new URL(
+		`https://${input.env.cloudbaseEnvId}.api.tcloudbasegateway.com/auth/v1/token/introspect`,
+	)
+	url.searchParams.set('client_id', input.env.cloudbaseClientId)
+	const response = await fetchWithTimeout(
+		input.fetchImpl ?? fetch,
+		url,
+		{
+			method: 'GET',
+			headers: {
+				authorization: `Bearer ${token}`,
+				'x-device-id': 'wenxue-llm-gateway',
+				'x-request-id': randomUUID(),
+			},
 		},
-	})
+		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+	)
 	if (!response.ok) {
-		throw new GatewayError('CloudBase token introspection failed', 401)
+		throw new GatewayError('登录已过期/无权限，请回到桌面端登录或重新启动浏览器。', 401)
 	}
-	const payload = await response.json()
+	const payload = /** @type {unknown} */ (await response.json())
 	if (!isRecord(payload) || payload.active === false) {
-		throw new GatewayError('CloudBase token is inactive', 401)
+		throw new GatewayError('登录已过期/无权限，请回到桌面端登录或重新启动浏览器。', 401)
 	}
 	const uid = readString(payload.sub) ?? readString(payload.uid)
 	if (!uid) {
-		throw new GatewayError('CloudBase token has no uid', 401)
+		throw new GatewayError('登录已过期/无权限，请回到桌面端登录或重新启动浏览器。', 401)
 	}
 	return { uid }
+}
+
+/**
+ * @param {{
+ *   headers: Headers | Record<string, string | string[] | undefined>,
+ *   env: { cloudbaseEnvId: string, cloudbaseClientId: string, cloudbaseUsageApiKey: string, requestTimeoutMs?: number },
+ *   fetchImpl?: typeof fetch,
+ * }} input
+ * @returns {Promise<GatewayUser>}
+ */
+export async function authorizeUserRequest(input) {
+	const user = await resolveCloudBaseUser(input)
+	const account = await readUserAccount({
+		uid: user.uid,
+		envId: input.env.cloudbaseEnvId,
+		apiKey: input.env.cloudbaseUsageApiKey,
+		fetchImpl: input.fetchImpl,
+		timeoutMs: input.env.requestTimeoutMs,
+	})
+	if (account.status !== 'active') {
+		throw new GatewayError('无权限：当前用户未启用或已被禁用。', 403)
+	}
+	return user
+}
+
+/**
+ * @param {{
+ *   uid: string,
+ *   envId: string,
+ *   apiKey: string,
+ *   fetchImpl?: typeof fetch,
+ *   timeoutMs?: number,
+ * }} input
+ * @returns {Promise<UserAccount>}
+ */
+async function readUserAccount(input) {
+	if (!input.apiKey) {
+		throw new GatewayError('CLOUDBASE_USAGE_API_KEY is not configured', 500)
+	}
+	const url = collectionDocumentsUrl(input.envId, USER_ACCOUNTS_COLLECTION)
+	url.searchParams.set('query', JSON.stringify({ _id: input.uid }))
+	url.searchParams.set('limit', '1')
+	const response = await fetchWithTimeout(
+		input.fetchImpl ?? fetch,
+		url,
+		{
+			method: 'GET',
+			headers: {
+				authorization: `Bearer ${input.apiKey}`,
+			},
+		},
+		input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+	)
+	if (!response.ok) {
+		throw new GatewayError(`CloudBase user account query failed with ${response.status}`, 502)
+	}
+	const payload = /** @type {unknown} */ (await response.json())
+	const list =
+		isRecord(payload) && Array.isArray(payload.list)
+			? payload.list
+			: isRecord(payload) && Array.isArray(payload.data)
+				? payload.data
+				: []
+	const account = normalizeUserAccount(list[0])
+	if (!account) {
+		throw new GatewayError('无权限：当前用户未启用或已被禁用。', 403)
+	}
+	return account
 }
 
 /**
@@ -298,11 +651,9 @@ export async function handleChatCompletions(input) {
 	const startedAt = now()
 	const requestId = randomUUID()
 	const body = parseRequestBody(input.rawBody)
-	const user = await resolveCloudBaseUser({
+	const user = await authorizeUserRequest({
 		headers: input.headers,
-		envId: input.env.cloudbaseEnvId,
-		clientId: input.env.cloudbaseClientId,
-		clientSecret: input.env.cloudbaseClientSecret,
+		env: input.env,
 		fetchImpl: input.fetchImpl,
 	})
 	const dashScopeRequest = buildDashScopeRequest(body, input.env.dashscopeApiKey)
@@ -333,14 +684,14 @@ export async function handleChatCompletions(input) {
 			now,
 			requestId,
 		})
-		await writeUsageRecord({
+		const usagePersisted = await tryWriteUsageRecord({
 			record: usageRecord,
 			envId: input.env.cloudbaseEnvId,
 			apiKey: input.env.cloudbaseUsageApiKey,
 			fetchImpl: input.fetchImpl,
 			timeoutMs: input.env.requestTimeoutMs,
 		})
-		return { usageRecord, usagePersisted: true, upstreamStatus: upstream.status }
+		return { usageRecord, usagePersisted, upstreamStatus: upstream.status }
 	}
 
 	const payload = await upstream.json()
@@ -352,14 +703,31 @@ export async function handleChatCompletions(input) {
 		now,
 		requestId,
 	})
-	await writeUsageRecord({
+	const usagePersisted = await tryWriteUsageRecord({
 		record: usageRecord,
 		envId: input.env.cloudbaseEnvId,
 		apiKey: input.env.cloudbaseUsageApiKey,
 		fetchImpl: input.fetchImpl,
 		timeoutMs: input.env.requestTimeoutMs,
 	})
-	return { responseBody: payload, usageRecord, usagePersisted: true, upstreamStatus: upstream.status }
+	return { responseBody: payload, usageRecord, usagePersisted, upstreamStatus: upstream.status }
+}
+
+/**
+ * @param {Parameters<typeof writeUsageRecord>[0]} input
+ * @returns {Promise<boolean>}
+ */
+async function tryWriteUsageRecord(input) {
+	try {
+		await writeUsageRecord(input)
+		return true
+	} catch (error) {
+		console.warn(
+			'wenxue llm gateway usage persistence failed',
+			error instanceof Error ? error.message : 'unknown error',
+		)
+		return false
+	}
 }
 
 /**
@@ -378,11 +746,9 @@ export async function handleChatCompletions(input) {
  * }} input
  */
 export async function handleUsageSummary(input) {
-	const user = await resolveCloudBaseUser({
+	const user = await authorizeUserRequest({
 		headers: input.headers,
-		envId: input.env.cloudbaseEnvId,
-		clientId: input.env.cloudbaseClientId,
-		clientSecret: input.env.cloudbaseClientSecret,
+		env: input.env,
 		fetchImpl: input.fetchImpl,
 	})
 	const records = await readUsageRecords({
@@ -480,6 +846,20 @@ function buildMeasuredUsageRecord(input) {
 
 /**
  * @param {string} rawBody
+ * @returns {{ username: string, password: string }}
+ */
+function parseLauncherRegistrationBody(rawBody) {
+	const body = parseRequestBody(rawBody)
+	const username = readTrimmedString(body.username)
+	const password = readTrimmedString(body.password)
+	if (!username || !password) {
+		throw new GatewayError('用户名和密码不能为空', 400)
+	}
+	return { username, password }
+}
+
+/**
+ * @param {string} rawBody
  * @returns {JsonRecord}
  */
 function parseRequestBody(rawBody) {
@@ -511,11 +891,129 @@ function readHeader(headers, name) {
 }
 
 /**
+ * @param {string} envId
+ * @param {string} collectionName
+ */
+function collectionDocumentsUrl(envId, collectionName) {
+	return new URL(
+		`https://${envId}.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)/collections/${collectionName}/documents`,
+	)
+}
+
+/**
+ * @param {Response} response
+ * @param {JsonRecord | null} apiError
+ * @param {unknown} payload
+ */
+function createCloudBaseUserCreationError(response, apiError, payload) {
+	const code = apiError
+		? readString(apiError.Code) ?? readString(apiError.code) ?? readString(apiError.errorCode)
+		: null
+	const message = apiError
+		? readString(apiError.Message) ?? readString(apiError.message)
+		: readTencentCloudPayloadMessage(payload)
+	const text = `${code ?? ''} ${message ?? ''}`.toLowerCase()
+	if (/already|exist|duplicate|resourceinuse|conflict/.test(text)) {
+		return new GatewayError('用户名已存在', 409)
+	}
+	if (/quota|limit|insufficient|exceed|exceeded|配额|上限/.test(text)) {
+		return new GatewayError('CloudBase 用户配额已满，无法创建新账号', 507)
+	}
+	const status = response.ok ? 502 : response.status
+	const suffix = message ? `：${message}` : response.ok ? '' : ` (${response.status})`
+	return new GatewayError(`CloudBase 创建用户失败${suffix}`, status)
+}
+
+/**
+ * @param {Response} response
+ * @param {JsonRecord | null} apiError
+ * @param {unknown} payload
+ */
+function createCloudBaseUserLookupError(response, apiError, payload) {
+	const message = apiError
+		? readString(apiError.Message) ?? readString(apiError.message)
+		: readTencentCloudPayloadMessage(payload)
+	const status = response.ok ? 502 : response.status
+	const suffix = message ? `：${message}` : response.ok ? '' : ` (${response.status})`
+	return new GatewayError(`CloudBase 用户查询失败${suffix}`, status)
+}
+
+/**
+ * @param {unknown} payload
+ */
+function readTencentCloudPayloadMessage(payload) {
+	if (!isRecord(payload)) return null
+	if (isRecord(payload.error)) {
+		return readString(payload.error.message) ?? readString(payload.error.Message)
+	}
+	if (isRecord(payload.Response) && isRecord(payload.Response.Error)) {
+		return readString(payload.Response.Error.Message) ?? readString(payload.Response.Error.message)
+	}
+	return readString(payload.message) ?? readString(payload.Message)
+}
+
+/**
+ * @param {Response} response
+ */
+async function safeJson(response) {
+	const text = await response.text()
+	if (!text) return null
+	try {
+		return JSON.parse(text)
+	} catch {
+		return { message: text }
+	}
+}
+
+/**
+ * @param {string} value
+ */
+function sha256Hex(value) {
+	return createHash('sha256').update(value, 'utf8').digest('hex')
+}
+
+/**
+ * @param {string | Buffer} key
+ * @param {string} value
+ */
+function hmacSha256(key, value) {
+	return createHmac('sha256', key).update(value, 'utf8').digest()
+}
+
+/**
  * @param {unknown} value
  * @returns {value is JsonRecord}
  */
 function isRecord(value) {
 	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * @param {unknown} value
+ * @returns {UserAccount | null}
+ */
+function normalizeUserAccount(value) {
+	if (!isRecord(value)) {
+		return null
+	}
+	const id = readString(value._id) ?? readString(value.uid)
+	const uid = readString(value.uid) ?? id
+	const status =
+		value.status === 'disabled' ? 'disabled' : value.status === 'active' ? 'active' : null
+	const createdAt = readString(value.createdAt) ?? ''
+	const updatedAt = readString(value.updatedAt) ?? ''
+	const note = readString(value.note) ?? undefined
+	if (!id || !uid || !status) {
+		return null
+	}
+	return {
+		_id: id,
+		uid,
+		status,
+		createdAt,
+		updatedAt,
+		note,
+	}
 }
 
 /**
@@ -543,6 +1041,30 @@ function readString(value) {
 }
 
 /**
+ * @param {JsonRecord | null} value
+ */
+function readCloudBaseUserId(value) {
+	if (!value) return null
+	return (
+		readString(value.Uid) ??
+		readString(value.UserId) ??
+		readString(value.uid) ??
+		readString(value.userId)
+	)
+}
+
+/**
+ * @param {unknown} value
+ */
+function readTrimmedString(value) {
+	if (typeof value !== 'string') {
+		return null
+	}
+	const trimmed = value.trim()
+	return trimmed.length > 0 ? trimmed : null
+}
+
+/**
  * @param {unknown} value
  * @returns {CloudUsageRecord | null}
  */
@@ -559,7 +1081,8 @@ function normalizeCloudUsageRecord(value) {
 	const latencyMs = readEjsonNumber(value.latencyMs) ?? 0
 	const ts = readEjsonNumber(value.ts)
 	const requestId = readString(value.requestId) ?? ''
-	const createdAt = readString(value.createdAt) ?? (typeof ts === 'number' ? new Date(ts).toISOString() : '')
+	const createdAt =
+		readString(value.createdAt) ?? (typeof ts === 'number' ? new Date(ts).toISOString() : '')
 	if (
 		!id ||
 		!uid ||
@@ -620,16 +1143,14 @@ function bucketTokenRecords(records, keyOf) {
 	const buckets = new Map()
 	for (const record of records) {
 		const key = keyOf(record)
-		const current =
-			buckets.get(key) ??
-			{
-				key,
-				label: key,
-				inputTokens: 0,
-				outputTokens: 0,
-				totalTokens: 0,
-				estimatedCostCny: 0,
-			}
+		const current = buckets.get(key) ?? {
+			key,
+			label: key,
+			inputTokens: 0,
+			outputTokens: 0,
+			totalTokens: 0,
+			estimatedCostCny: 0,
+		}
 		current.inputTokens += record.inputTokens
 		current.outputTokens += record.outputTokens
 		current.totalTokens += record.totalTokens

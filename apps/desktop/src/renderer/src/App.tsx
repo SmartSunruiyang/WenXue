@@ -22,13 +22,23 @@ import {
 	ScrollText,
 	Search,
 	Settings,
-	ShieldCheck,
 	Square,
 	Trash2,
+	UserPlus,
 	X,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+	getLauncherSession,
+	readCloudBaseErrorMessage,
+	registerLauncher,
+	signInLauncher,
+	signOutLauncher,
+	toPublicUser,
+	type LauncherAuthSession,
+	type LauncherPublicUser,
+} from './cloudbase'
 import type {
 	AppShellInfo,
 	AppVersions,
@@ -38,7 +48,6 @@ import type {
 	LauncherSettings,
 	LauncherSettingsPatch,
 	LogLevel,
-	PublicCloudAuthSession,
 	TokenUsageBucket,
 	TokenUsageSummary,
 } from './wenxue'
@@ -129,12 +138,13 @@ const defaultShellInfo: AppShellInfo = {
 
 export default function App() {
 	const [route, setRoute] = useState<RouteId>('browsers')
+	const [authReady, setAuthReady] = useState(false)
+	const [authUser, setAuthUser] = useState<LauncherPublicUser | null>(null)
 	const [profiles, setProfiles] = useState<BrowserProfile[]>([])
 	const [statuses, setStatuses] = useState<Record<string, BrowserStatus>>({})
 	const [logs, setLogs] = useState<LauncherLogEntry[]>([])
 	const [settings, setSettings] = useState<LauncherSettings>(defaultSettings)
 	const [tokens, setTokens] = useState<TokenUsageSummary>(emptyTokenSummary)
-	const [authSession, setAuthSession] = useState<PublicCloudAuthSession | null>(null)
 	const [versions, setVersions] = useState<AppVersions>({
 		app: 'unknown',
 		browser: 'unknown',
@@ -149,9 +159,6 @@ export default function App() {
 	const [logQuery, setLogQuery] = useState('')
 	const [logLevels, setLogLevels] = useState<LogLevel[]>(['info', 'warn', 'error'])
 	const [activeLogSources, setActiveLogSources] = useState<LogSource[]>(logSources)
-	const [authUsername, setAuthUsername] = useState('')
-	const [authPassword, setAuthPassword] = useState('')
-	const [authBusy, setAuthBusy] = useState(false)
 	const [followLogs, setFollowLogs] = useState(true)
 	const [avatarOpen, setAvatarOpen] = useState(false)
 	const [savedTick, setSavedTick] = useState(false)
@@ -175,41 +182,54 @@ export default function App() {
 		setTokens(await window.wenxue.tokens.getSummary())
 	}, [])
 
+	const loadWorkspaceData = useCallback(async () => {
+		const [
+			nextProfiles,
+			nextStatuses,
+			nextLogs,
+			nextSettings,
+			nextTokens,
+			nextVersions,
+			nextShellInfo,
+		] = await Promise.all([
+			window.wenxue.browser.listProfiles(),
+			window.wenxue.browser.getStatuses(),
+			window.wenxue.logs.query({ limit: 600 }),
+			window.wenxue.settings.get(),
+			window.wenxue.tokens.getSummary(),
+			window.wenxue.app.getVersions(),
+			window.wenxue.app.getShellInfo(),
+		])
+		setProfiles(nextProfiles)
+		setStatuses(nextStatuses)
+		setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
+		setSettings(nextSettings)
+		setTokens(nextTokens)
+		setVersions(nextVersions)
+		setShellInfo(nextShellInfo)
+	}, [])
+
 	useEffect(() => {
 		let mounted = true
 		const load = async () => {
-			const [
-				nextProfiles,
-				nextStatuses,
-				nextLogs,
-				nextSettings,
-				nextTokens,
-				nextAuth,
-				nextVersions,
-				nextShellInfo,
-			] = await Promise.all([
-				window.wenxue.browser.listProfiles(),
-				window.wenxue.browser.getStatuses(),
-				window.wenxue.logs.query({ limit: 600 }),
-				window.wenxue.settings.get(),
-				window.wenxue.tokens.getSummary(),
-				window.wenxue.auth.getSession(),
-				window.wenxue.app.getVersions(),
-				window.wenxue.app.getShellInfo(),
-			])
+			const session = await getLauncherSession()
 			if (!mounted) return
-			setProfiles(nextProfiles)
-			setStatuses(nextStatuses)
-			setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
-			setSettings(nextSettings)
-			setTokens(nextTokens)
-			if (nextAuth.ok) setAuthSession(nextAuth.session ?? null)
-			setVersions(nextVersions)
-			setShellInfo(nextShellInfo)
+			if (!session) {
+				setAuthReady(true)
+				return
+			}
+			const synced = await window.wenxue.auth.setSession(session)
+			if (!synced.ok) {
+				throw new Error(synced.error ?? '账号 session 同步失败')
+			}
+			setAuthUser(toPublicUser(session))
+			await loadWorkspaceData()
+			if (mounted) setAuthReady(true)
 		}
 
 		void load().catch((error: unknown) => {
-			setMessage(error instanceof Error ? error.message : '启动器数据加载失败')
+			setMessage(readCloudBaseErrorMessage(error, '启动器数据加载失败'))
+			setAuthReady(true)
 		})
 
 		const unsubscribeProfile = window.wenxue.browser.onProfileStatusChange((payload) => {
@@ -224,7 +244,7 @@ export default function App() {
 			unsubscribeProfile()
 			window.clearInterval(logTimer)
 		}
-	}, [followLogs, refreshLogs])
+	}, [followLogs, loadWorkspaceData, refreshLogs])
 
 	const visibleProfiles = useMemo(() => {
 		const text = query.trim().toLowerCase()
@@ -377,49 +397,73 @@ export default function App() {
 		setLogs([])
 	}, [])
 
-	const loginCloudUser = useCallback(async () => {
-		setAuthBusy(true)
-		try {
-			const result = await window.wenxue.auth.login({
-				username: authUsername,
-				password: authPassword,
-			})
-			if (!result.ok || !result.session) {
-				setMessage(result.error ?? '产品用户登录失败')
-				return
-			}
-			setAuthSession(result.session)
-			setAuthPassword('')
-			setMessage('产品用户已登录')
-		} finally {
-			setAuthBusy(false)
-		}
-	}, [authPassword, authUsername])
-
-	const logoutCloudUser = useCallback(async () => {
-		const result = await window.wenxue.auth.logout()
-		if (!result.ok) {
-			setMessage(result.error ?? '退出登录失败')
-			return
-		}
-		setAuthSession(null)
-		setAuthPassword('')
-		setMessage('已退出产品用户')
-	}, [])
-
-	const handoffCloudSession = useCallback(async () => {
-		setAuthBusy(true)
-		try {
-			const result = await window.wenxue.auth.handoffToExtension()
+	const syncSignedInSession = useCallback(
+		async (session: LauncherAuthSession) => {
+			const result = await window.wenxue.auth.setSession(session)
 			if (!result.ok) {
-				setMessage(result.error ?? '会话交接失败')
-				return
+				throw new Error(result.error ?? '账号 session 同步失败')
 			}
-			setMessage('会话已交接到问学插件')
-		} finally {
-			setAuthBusy(false)
-		}
+			setAuthUser(toPublicUser(session))
+			await loadWorkspaceData()
+		},
+		[loadWorkspaceData],
+	)
+
+	const handleLogin = useCallback(
+		async (username: string, password: string) => {
+			const session = await signInLauncher(username, password)
+			await syncSignedInSession(session)
+			setMessage(null)
+		},
+		[syncSignedInSession],
+	)
+
+	const handleRegister = useCallback(
+		async (username: string, password: string) => {
+			const session = await registerLauncher(username, password)
+			await syncSignedInSession(session)
+			setMessage(null)
+		},
+		[syncSignedInSession],
+	)
+
+	const handleLogout = useCallback(async () => {
+		await signOutLauncher()
+		await window.wenxue.auth.clearSession()
+		setAuthUser(null)
+		setProfiles([])
+		setStatuses({})
+		setLogs([])
+		setTokens(emptyTokenSummary)
+		setRoute('browsers')
+		setAvatarOpen(false)
 	}, [])
+
+	if (!authReady) {
+		return (
+			<main className={`auth-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
+				<div className="top-drag-zone drag-region" />
+				<WindowControls shellInfo={shellInfo} setShellInfo={setShellInfo} />
+				<div className="auth-loading">
+					<LoaderCircle className="spin" size={18} />
+					<span>正在检查登录状态</span>
+				</div>
+			</main>
+		)
+	}
+
+	if (!authUser) {
+		return (
+			<AuthScreen
+				error={message}
+				onLogin={handleLogin}
+				onRegister={handleRegister}
+				shellInfo={shellInfo}
+				setMessage={setMessage}
+				setShellInfo={setShellInfo}
+			/>
+		)
+	}
 
 	return (
 		<main className={`app-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
@@ -465,7 +509,9 @@ export default function App() {
 						setAvatarOpen={setAvatarOpen}
 						setRoute={setRoute}
 						settings={settings}
+						user={authUser}
 						versions={versions}
+						onLogout={handleLogout}
 					/>
 				) : null}
 			</aside>
@@ -485,27 +531,18 @@ export default function App() {
 				{route === 'browsers' ? (
 					<BrowserPage
 						addProfile={addProfile}
-						authBusy={authBusy}
-						authPassword={authPassword}
-						authSession={authSession}
-						authUsername={authUsername}
 						commitRename={commitRename}
 						draftName={draftName}
 						duplicateProfile={duplicateProfile}
 						editingId={editingId}
-						handoffCloudSession={handoffCloudSession}
 						launchProfile={launchProfile}
 						launchSelected={launchSelected}
-						loginCloudUser={loginCloudUser}
-						logoutCloudUser={logoutCloudUser}
 						openProfileFolder={openProfileFolder}
 						profileSort={profileSort}
 						profiles={visibleProfiles}
 						query={query}
 						removeProfile={removeProfile}
 						selectedIds={selectedIds}
-						setAuthPassword={setAuthPassword}
-						setAuthUsername={setAuthUsername}
 						setDraftName={setDraftName}
 						setEditingId={setEditingId}
 						setProfileSort={setProfileSort}
@@ -612,15 +649,166 @@ function RailButton({ active, children, icon: Icon, label, onClick }: RailButton
 	)
 }
 
+function AuthScreen({
+	error,
+	onLogin,
+	onRegister,
+	shellInfo,
+	setMessage,
+	setShellInfo,
+}: {
+	error: string | null
+	onLogin: (username: string, password: string) => Promise<void>
+	onRegister: (username: string, password: string) => Promise<void>
+	shellInfo: AppShellInfo
+	setMessage: (message: string | null) => void
+	setShellInfo: (info: AppShellInfo) => void
+}) {
+	const [mode, setMode] = useState<'login' | 'register'>('login')
+	const [username, setUsername] = useState('')
+	const [password, setPassword] = useState('')
+	const [confirmPassword, setConfirmPassword] = useState('')
+	const [busy, setBusy] = useState(false)
+	const [localError, setLocalError] = useState<string | null>(null)
+	const isRegister = mode === 'register'
+
+	const submit = async () => {
+		const nextUsername = username.trim()
+		setLocalError(null)
+		setMessage(null)
+		if (!nextUsername || !password) {
+			setLocalError('请输入用户 id 和密码')
+			return
+		}
+		if (isRegister && password !== confirmPassword) {
+			setLocalError('两次输入的密码不一致')
+			return
+		}
+		setBusy(true)
+		try {
+			if (isRegister) {
+				await onRegister(nextUsername, password)
+			} else {
+				await onLogin(nextUsername, password)
+			}
+		} catch (nextError) {
+			setLocalError(readCloudBaseErrorMessage(nextError, '账号操作失败'))
+		} finally {
+			setBusy(false)
+		}
+	}
+
+	return (
+		<main className={`auth-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
+			<div className="top-drag-zone drag-region" />
+			<WindowControls shellInfo={shellInfo} setShellInfo={setShellInfo} />
+			<section className="auth-card no-drag">
+				<div className="auth-brand">
+					<img src="logo.png" alt="" />
+					<div>
+						<strong>问学</strong>
+						<span>ask for everything</span>
+					</div>
+				</div>
+				<div className="auth-card__head">
+					<h1>{isRegister ? '注册账号' : '登录账号'}</h1>
+					<p>
+						{isRegister ? '使用用户 id 和密码创建问学账号。' : '登录后才能进入工作台并启动浏览器。'}
+					</p>
+				</div>
+				<div className="segmented-control auth-card__modes" aria-label="账号入口">
+					<button
+						className={!isRegister ? 'segmented-control__active' : ''}
+						onClick={() => {
+							setMode('login')
+							setLocalError(null)
+						}}
+						type="button"
+					>
+						<LogIn size={15} />
+						登录
+					</button>
+					<button
+						className={isRegister ? 'segmented-control__active' : ''}
+						onClick={() => {
+							setMode('register')
+							setLocalError(null)
+						}}
+						type="button"
+					>
+						<UserPlus size={15} />
+						注册
+					</button>
+				</div>
+				<label className="auth-field">
+					<span>用户 id</span>
+					<input
+						autoComplete="username"
+						onChange={(event) => setUsername(event.target.value)}
+						type="text"
+						value={username}
+					/>
+				</label>
+				<label className="auth-field">
+					<span>密码</span>
+					<input
+						autoComplete={isRegister ? 'new-password' : 'current-password'}
+						onChange={(event) => setPassword(event.target.value)}
+						onKeyDown={(event) => {
+							if (event.key === 'Enter') void submit()
+						}}
+						type="password"
+						value={password}
+					/>
+				</label>
+				{isRegister ? (
+					<label className="auth-field">
+						<span>确认密码</span>
+						<input
+							autoComplete="new-password"
+							onChange={(event) => setConfirmPassword(event.target.value)}
+							onKeyDown={(event) => {
+								if (event.key === 'Enter') void submit()
+							}}
+							type="password"
+							value={confirmPassword}
+						/>
+					</label>
+				) : null}
+				{localError || error ? <div className="auth-alert">{localError ?? error}</div> : null}
+				<button
+					className="primary-button auth-submit"
+					disabled={busy || !username.trim() || !password || (isRegister && !confirmPassword)}
+					onClick={() => void submit()}
+					type="button"
+				>
+					{busy ? (
+						<LoaderCircle className="spin" size={16} />
+					) : isRegister ? (
+						<UserPlus size={16} />
+					) : (
+						<LogIn size={16} />
+					)}
+					{busy ? '处理中' : isRegister ? '注册并登录' : '登录'}
+				</button>
+			</section>
+		</main>
+	)
+}
+
 function AvatarMenu({
+	onLogout,
 	setAvatarOpen,
 	setRoute,
 	settings,
+	user,
 	versions,
 }: {
+	onLogout: () => Promise<void>
 	setAvatarOpen: (open: boolean) => void
 	setRoute: (route: RouteId) => void
 	settings: LauncherSettings
+	user: LauncherPublicUser
 	versions: AppVersions
 }) {
 	return (
@@ -630,8 +818,8 @@ function AvatarMenu({
 					<img src="logo.png" alt="" />
 				</div>
 				<div>
-					<strong>{settings.localUser.displayName || '本地用户'}</strong>
-					<span>ask for everything</span>
+					<strong>{user.username ?? settings.localUser.displayName ?? user.userId}</strong>
+					<span>{user.userId}</span>
 				</div>
 			</div>
 			<button
@@ -654,9 +842,9 @@ function AvatarMenu({
 				<Info size={15} />
 				关于 {versions.app}
 			</button>
-			<button onClick={() => void window.wenxue.app.requestClose()} type="button">
+			<button onClick={() => void onLogout()} type="button">
 				<LogOut size={15} />
-				退出
+				退出登录
 			</button>
 		</div>
 	)
@@ -664,27 +852,18 @@ function AvatarMenu({
 
 interface BrowserPageProps {
 	addProfile: () => void
-	authBusy: boolean
-	authPassword: string
-	authSession: PublicCloudAuthSession | null
-	authUsername: string
 	commitRename: (profileId: string) => void
 	draftName: string
 	duplicateProfile: (profileId: string) => Promise<void>
 	editingId: string | null
-	handoffCloudSession: () => Promise<void>
 	launchProfile: (profileId: string) => Promise<void>
 	launchSelected: () => Promise<void>
-	loginCloudUser: () => Promise<void>
-	logoutCloudUser: () => Promise<void>
 	openProfileFolder: (profileId: string) => Promise<void>
 	profileSort: ProfileSortMode
 	profiles: BrowserProfile[]
 	query: string
 	removeProfile: (profileId: string) => Promise<void>
 	selectedIds: string[]
-	setAuthPassword: (password: string) => void
-	setAuthUsername: (username: string) => void
 	setDraftName: (name: string) => void
 	setEditingId: (profileId: string | null) => void
 	setProfileSort: (mode: ProfileSortMode) => void
@@ -756,18 +935,6 @@ function BrowserPage(props: BrowserPageProps) {
 				</div>
 			</header>
 
-			<CloudAccountPanel
-				busy={props.authBusy}
-				onHandoff={props.handoffCloudSession}
-				onLogin={props.loginCloudUser}
-				onLogout={props.logoutCloudUser}
-				password={props.authPassword}
-				session={props.authSession}
-				setPassword={props.setAuthPassword}
-				setUsername={props.setAuthUsername}
-				username={props.authUsername}
-			/>
-
 			<div className="metric-row">
 				<MetricCard label="浏览器画像" value={props.profiles.length.toString()} />
 				<MetricCard label="运行中" value={runningCount.toString()} tone="green" />
@@ -828,100 +995,6 @@ function BrowserPage(props: BrowserPageProps) {
 				</div>
 			) : null}
 		</div>
-	)
-}
-
-function CloudAccountPanel({
-	busy,
-	onHandoff,
-	onLogin,
-	onLogout,
-	password,
-	session,
-	setPassword,
-	setUsername,
-	username,
-}: {
-	busy: boolean
-	onHandoff: () => Promise<void>
-	onLogin: () => Promise<void>
-	onLogout: () => Promise<void>
-	password: string
-	session: PublicCloudAuthSession | null
-	setPassword: (password: string) => void
-	setUsername: (username: string) => void
-	username: string
-}) {
-	if (session) {
-		return (
-			<section className="cloud-account-panel cloud-account-panel--signed-in">
-				<div className="cloud-account-panel__identity">
-					<div className="cloud-account-panel__icon">
-						<ShieldCheck size={18} />
-					</div>
-					<div>
-						<strong>{session.username || session.name || '产品用户'}</strong>
-						<span className="mono-text">{session.uid}</span>
-					</div>
-				</div>
-				<div className="cloud-account-panel__meta">
-					<span>{session.region}</span>
-					<span>{formatExpiry(session.expiresAt)}</span>
-				</div>
-				<div className="cloud-account-panel__actions">
-					<button
-						className="primary-button"
-						disabled={busy}
-						onClick={() => void onHandoff()}
-						type="button"
-					>
-						{busy ? <LoaderCircle className="spin" size={15} /> : <ShieldCheck size={15} />}
-						交接到插件
-					</button>
-					<button className="soft-button" disabled={busy} onClick={() => void onLogout()} type="button">
-						<LogOut size={15} />
-						退出登录
-					</button>
-				</div>
-			</section>
-		)
-	}
-
-	return (
-		<section className="cloud-account-panel">
-			<div className="cloud-account-panel__identity">
-				<div className="cloud-account-panel__icon">
-					<LogIn size={18} />
-				</div>
-				<div>
-					<strong>产品用户登录</strong>
-					<span>CloudBase 注册用户</span>
-				</div>
-			</div>
-			<div className="cloud-account-panel__form">
-				<input
-					autoComplete="username"
-					onChange={(event) => setUsername(event.target.value)}
-					placeholder="用户名"
-					type="text"
-					value={username}
-				/>
-				<input
-					autoComplete="current-password"
-					onChange={(event) => setPassword(event.target.value)}
-					onKeyDown={(event) => {
-						if (event.key === 'Enter') void onLogin()
-					}}
-					placeholder="密码"
-					type="password"
-					value={password}
-				/>
-				<button className="primary-button" disabled={busy} onClick={() => void onLogin()} type="button">
-					{busy ? <LoaderCircle className="spin" size={15} /> : <LogIn size={15} />}
-					登录
-				</button>
-			</div>
-		</section>
 	)
 }
 
@@ -1756,15 +1829,18 @@ function formatTime(ts: number): string {
 	}).format(ts)
 }
 
-function formatNumber(value: number): string {
-	return new Intl.NumberFormat('zh-CN').format(value)
+function formatDate(ts: number): string {
+	return new Intl.DateTimeFormat('zh-CN', {
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+	}).format(ts)
 }
 
-function formatExpiry(expiresAt: number): string {
-	const diff = expiresAt - Date.now()
-	if (diff <= 0) return '已过期'
-	if (diff < 3_600_000) return `${Math.max(1, Math.floor(diff / 60_000))} 分钟后过期`
-	return `${Math.floor(diff / 3_600_000)} 小时后过期`
+function formatNumber(value: number): string {
+	return new Intl.NumberFormat('zh-CN').format(value)
 }
 
 function exportLauncherLogs(

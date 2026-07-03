@@ -1,5 +1,4 @@
 import {
-	Copy,
 	CornerUpLeft,
 	Eye,
 	EyeOff,
@@ -40,11 +39,6 @@ import { buildSettingsConfig, settingsConfigKey } from '@/lib/settingsConfig'
 import { cn } from '@/lib/utils'
 
 export const SETTINGS_SECTIONS = [
-	{
-		id: 'account',
-		labelKey: 'settingsSectionAccount',
-		descriptionKey: 'settingsSectionAccountDesc',
-	},
 	{
 		id: 'model',
 		labelKey: 'settingsSectionModel',
@@ -156,9 +150,6 @@ export function SettingsForm({
 	const [logRetentionDays, setLogRetentionDays] = useState(config?.logRetentionDays ?? 3)
 	const [logMaxEntries, setLogMaxEntries] = useState(config?.logMaxEntries ?? 5000)
 	const [advancedOpen, setAdvancedOpen] = useState(mode === 'page')
-	const [userAuthToken, setUserAuthToken] = useState('')
-	const [copied, setCopied] = useState(false)
-	const [showToken, setShowToken] = useState(false)
 	const [modelDialogOpen, setModelDialogOpen] = useState(false)
 	const [modelDialogClosing, setModelDialogClosing] = useState(false)
 	const [draftProvider, setDraftProvider] = useState<ModelProvider>('deepseek')
@@ -219,36 +210,6 @@ export function SettingsForm({
 		setDisableNamedToolChoice(nextDisableNamedToolChoice)
 		setReady(true)
 	}, [config])
-
-	useEffect(() => {
-		let interval: NodeJS.Timeout | null = null
-
-		const fetchToken = async () => {
-			const result = await chrome.storage.local.get('PageAgentExtUserAuthToken')
-			const token = result.PageAgentExtUserAuthToken
-			if (typeof token === 'string' && token) {
-				setUserAuthToken(token)
-				if (interval) {
-					clearInterval(interval)
-					interval = null
-				}
-			}
-		}
-
-		fetchToken()
-		interval = setInterval(fetchToken, 1000)
-
-		return () => {
-			if (interval) clearInterval(interval)
-		}
-	}, [])
-
-	const handleCopyToken = async () => {
-		if (!userAuthToken) return
-		await navigator.clipboard.writeText(userAuthToken)
-		setCopied(true)
-		setTimeout(() => setCopied(false), 2000)
-	}
 
 	const resetModelDraft = useCallback(() => {
 		const preset = getModelProviderPreset('deepseek') ?? MODEL_PROVIDER_PRESETS[0]
@@ -456,58 +417,6 @@ export function SettingsForm({
 					)}
 				</div>
 			)}
-
-			<SettingsSection
-				id="account"
-				title={t('settingsSectionAccount')}
-				description={t('settingsSectionAccountDesc')}
-				mode={mode}
-			>
-				<div className="flex flex-col gap-2 rounded-md border bg-muted/25 p-4">
-					<label htmlFor="user-auth-token" className="text-sm font-medium">
-						{t('userAuthToken')}
-					</label>
-					<p className="mb-1 text-xs leading-5 text-muted-foreground">{t('userAuthTokenDesc')}</p>
-					<div className="flex items-center gap-2">
-						<Input
-							id="user-auth-token"
-							readOnly
-							value={
-								userAuthToken
-									? showToken
-										? userAuthToken
-										: `${userAuthToken.slice(0, 4)}${'•'.repeat(userAuthToken.length - 8)}${userAuthToken.slice(-4)}`
-									: t('loading')
-							}
-							className="h-9 bg-background font-mono text-xs"
-						/>
-						<Button
-							variant="outline"
-							size="icon"
-							className="h-9 w-9 shrink-0 cursor-pointer"
-							onClick={() => setShowToken(!showToken)}
-							disabled={!userAuthToken}
-							aria-label={showToken ? t('hideToken') : t('showToken')}
-							aria-pressed={showToken}
-						>
-							{showToken ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-						</Button>
-						<Button
-							variant="outline"
-							size="icon"
-							className="h-9 w-9 shrink-0 cursor-pointer"
-							onClick={handleCopyToken}
-							disabled={!userAuthToken}
-							aria-label={t('copyToken')}
-						>
-							{copied ? <span className="">✓</span> : <Copy className="size-3" />}
-						</Button>
-						<span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-							{copied ? t('tokenCopied') : ''}
-						</span>
-					</div>
-				</div>
-			</SettingsSection>
 
 			<SettingsSection
 				id="model"

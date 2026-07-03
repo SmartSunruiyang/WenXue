@@ -10,8 +10,6 @@ import { AppPaths } from './AppPaths'
 import { BrowserProfileStore } from './BrowserProfileStore'
 import { createBrowserResources } from './BrowserResources'
 import { BrowserSupervisor, type BrowserStatus } from './BrowserSupervisor'
-import { ExtensionSessionHandoff } from './ExtensionSessionHandoff'
-import { LauncherAuthSession } from './LauncherAuthSession'
 import { registerDesktopBridge } from './DesktopBridge'
 import { LauncherLogStore } from './LauncherLogStore'
 import { LauncherSettingsStore, type LauncherSettings } from './LauncherSettingsStore'
@@ -19,6 +17,8 @@ import { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import { ProfileStore } from './ProfileStore'
 import { TokenUsageStore } from './TokenUsageStore'
 import { UsageCloudClient } from './UsageCloudClient'
+import { UserSessionHandoff } from './UserSessionHandoff'
+import { UserSessionStore } from './UserSessionStore'
 
 type ElectronModule = typeof import('electron')
 export type CloseDecision = 'allow' | 'prevented'
@@ -80,9 +80,9 @@ export async function startMainBootstrap(): Promise<void> {
 	const logStore = new LauncherLogStore(paths, settingsStore)
 	const tokenUsageStore = new TokenUsageStore(paths)
 	const telemetryIngest = new LauncherTelemetryIngest(logStore, tokenUsageStore)
-	const authSession = new LauncherAuthSession(paths)
-	const usageCloudClient = new UsageCloudClient(paths, authSession)
-	const extensionSessionHandoff = new ExtensionSessionHandoff()
+	const userSessionStore = new UserSessionStore()
+	const usageCloudClient = new UsageCloudClient(paths, userSessionStore)
+	const userSessionHandoff = new UserSessionHandoff()
 	const logger = createAppLogger(paths, logStore)
 	const supervisor = new BrowserSupervisor({ resources, profiles, logger })
 	let currentWindow: BrowserWindow | undefined
@@ -96,8 +96,8 @@ export async function startMainBootstrap(): Promise<void> {
 		telemetryIngest,
 		tokenUsageStore,
 		usageCloudClient,
-		authSession,
-		extensionSessionHandoff,
+		userSessionStore,
+		userSessionHandoff,
 		resources,
 		getAppVersion: () => electron.app.getVersion(),
 		getShellInfo: () => ({

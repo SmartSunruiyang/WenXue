@@ -7,6 +7,7 @@ import type {
 	ObservationEvent,
 	RetryEvent,
 	UserTakeoverEvent,
+	UserMessageEvent,
 	UserTakeoverRequest,
 } from '@page-agent/core'
 import { Check, ChevronRight, CircleAlert, CirclePause, Hand, Play, X } from 'lucide-react'
@@ -26,6 +27,7 @@ const RAW_LINE_COUNT = 12
 // ---- Event stream → conversation flow items (UIUX §6) ----
 
 type FlowItem =
+	| { kind: 'user-message'; event: UserMessageEvent }
 	| { kind: 'step'; event: AgentStepEvent }
 	| { kind: 'observation'; event: ObservationEvent }
 	| { kind: 'retry'; event: RetryEvent; cause?: AgentErrorEvent }
@@ -38,7 +40,9 @@ function toFlowItems(events: readonly HistoricalEvent[]): FlowItem[] {
 	const items: FlowItem[] = []
 	for (let i = 0; i < events.length; i++) {
 		const event = events[i]
-		if (event.type === 'step') {
+		if (event.type === 'user_message') {
+			items.push({ kind: 'user-message', event })
+		} else if (event.type === 'step') {
 			if (event.action?.name === 'done') {
 				const input = event.action.input as { text?: string; success?: boolean } | undefined
 				items.push({
@@ -112,8 +116,12 @@ export function Conversation({
 	status?: AgentStatus
 }) {
 	const { t } = useI18n()
-	const blocks = toBlocks(toFlowItems(events))
-	const shouldShowWaiting = running && !activity && Boolean(task) && blocks.length === 0
+	const items = toFlowItems(events)
+	const blocks = toBlocks(items)
+	const hasAgentOutput = items.some((item) => item.kind !== 'user-message')
+	const lastUserMessage = findLastUserMessage(events)
+	const shouldShowTaskFallback = Boolean(task) && lastUserMessage !== task
+	const shouldShowWaiting = running && !activity && Boolean(task) && !hasAgentOutput
 	const pausedTakeover = status === 'paused' ? findLatestPausedTakeover(events) : null
 	const shouldShowActivity = activity && !(activity.type === 'waiting_for_user' && takeoverRequest)
 	const isLive = running || status === 'waiting_for_user'
@@ -123,7 +131,7 @@ export function Conversation({
 			className="w-full min-w-0 max-w-full overflow-x-hidden space-y-5 pb-1"
 			aria-live={isLive ? 'polite' : undefined}
 		>
-			{task && <UserMessage text={task} />}
+			{shouldShowTaskFallback && <UserMessage text={task} />}
 
 			{blocks.map((block, index) =>
 				'trace' in block ? (
@@ -150,6 +158,7 @@ export function Conversation({
 }
 
 function SingleBlock({ item }: { item: FlowItem }) {
+	if (item.kind === 'user-message') return <UserMessage text={item.event.content} />
 	if (item.kind === 'result')
 		return <ResultBlock success={item.success} text={item.text} event={item.event} />
 	if (item.kind === 'error') return <ErrorCallout event={item.event} />
@@ -352,6 +361,14 @@ function findLatestPausedTakeover(events: readonly HistoricalEvent[]): UserTakeo
 	for (let index = events.length - 1; index >= 0; index--) {
 		const event = events[index]
 		if (event.type === 'user_takeover' && event.status === 'paused') return event
+	}
+	return null
+}
+
+function findLastUserMessage(events: readonly HistoricalEvent[]): string | null {
+	for (let index = events.length - 1; index >= 0; index--) {
+		const event = events[index]
+		if (event.type === 'user_message') return event.content
 	}
 	return null
 }

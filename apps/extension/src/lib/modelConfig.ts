@@ -2,7 +2,7 @@ import type { LLMConfig } from '@page-agent/llms'
 
 import { DEMO_CONFIG, DEMO_MODEL, DEMO_VISION_CONFIG, DEMO_VISION_MODEL } from '@/agent/constants'
 
-export const BUILT_IN_MODEL_ID = 'builtin:qwen-plus'
+export const BUILT_IN_MODEL_ID = 'builtin:qwen3.7-max'
 export const BUILT_IN_MODEL_LABEL = `问学默认 · ${DEMO_MODEL}`
 
 export const BUILT_IN_VISION_MODEL_ID = 'builtin:qwen3.7-plus'

@@ -1,4 +1,9 @@
-import type { AgentActivity, UserTakeoverEvent, UserTakeoverRequest } from '@page-agent/core'
+import type {
+	AgentActivity,
+	HistoricalEvent,
+	UserTakeoverEvent,
+	UserTakeoverRequest,
+} from '@page-agent/core'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -24,7 +29,7 @@ const LOGIN_REQUEST: UserTakeoverRequest = {
 
 function renderConversation(
 	props: Partial<Parameters<typeof Conversation>[0]> & {
-		events?: UserTakeoverEvent[]
+		events?: HistoricalEvent[]
 	} = {},
 ) {
 	return renderToStaticMarkup(
@@ -37,6 +42,23 @@ function renderConversation(
 }
 
 describe('Conversation takeover UI', () => {
+	it('renders continued user turns as separate bubbles without duplicating the current task', () => {
+		const html = renderConversation({
+			task: '继续追问',
+			events: [
+				{ type: 'user_message', content: '第一轮问题' },
+				{ type: 'observation', content: '已阅读页面' },
+				{ type: 'user_message', content: '继续追问' },
+			],
+		})
+
+		expect(html).toContain('第一轮问题')
+		expect(html).toContain('继续追问')
+		expect(html.match(/继续追问/g)).toHaveLength(1)
+		expect(html.indexOf('第一轮问题')).toBeLessThan(html.indexOf('已阅读页面'))
+		expect(html.indexOf('已阅读页面')).toBeLessThan(html.indexOf('继续追问'))
+	})
+
 	it('connects complete and pause actions to the supplied callbacks', () => {
 		const complete = vi.fn()
 		const pause = vi.fn()

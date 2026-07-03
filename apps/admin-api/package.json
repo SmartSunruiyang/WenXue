@@ -1,0 +1,19 @@
+{
+	"name": "admin-api",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"main": "src/index.mjs",
+	"scripts": {
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@cloudbase/functions-framework": "^1.18.2"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"typescript": "^5.7.0",
+		"vitest": "^2.1.0"
+	}
+}
