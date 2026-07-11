@@ -1,0 +1,8 @@
+mac:
+  icon: resources/app-icon-macos.icns
+
+dmg:
+  icon: resources/app-icon-macos.icns
+
+win:
+  icon: resources/app-icon-windows.ico

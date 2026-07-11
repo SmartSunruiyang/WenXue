@@ -1,5 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildControlWindowOptions, handleBrowserRunningClose } from './MainBootstrap'
+import {
+	buildControlWindowOptions,
+	desktopIconFile,
+	handleBrowserRunningClose,
+} from './MainBootstrap'
+
+describe('desktopIconFile', () => {
+	it('selects native icon assets for macOS and Windows', () => {
+		expect(desktopIconFile('darwin')).toBe('app-icon-macos-1024.png')
+		expect(desktopIconFile('win32')).toBe('app-icon-windows.ico')
+	})
+
+	it('uses the PNG fallback on other platforms', () => {
+		expect(desktopIconFile('linux')).toBe('app-icon-windows-256.png')
+	})
+})
 
 describe('buildControlWindowOptions', () => {
 	it('uses the redesigned borderless app window size and macOS title controls', () => {
@@ -23,6 +38,7 @@ describe('buildControlWindowOptions', () => {
 			trafficLightPosition: { x: 18, y: 18 },
 		})
 		expect(options.titleBarOverlay).toBeUndefined()
+		expect(options.icon).toBe('/icon.png')
 	})
 
 	it('uses title bar overlay safe area on Windows', () => {
@@ -37,6 +53,16 @@ describe('buildControlWindowOptions', () => {
 		expect(options.autoHideMenuBar).toBe(true)
 		expect(options.titleBarOverlay).toBeUndefined()
 		expect(options.title).toBe('问学')
+		expect(options.icon).toBe('/icon.png')
+	})
+
+	it('lets packaged apps use the bundle or executable icon', () => {
+		const options = buildControlWindowOptions({
+			platform: 'win32',
+			preloadPath: '/preload.js',
+		})
+
+		expect(options.icon).toBeUndefined()
 	})
 })
 

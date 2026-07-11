@@ -24,6 +24,12 @@ type ElectronModule = typeof import('electron')
 export type CloseDecision = 'allow' | 'prevented'
 type ExitWithBrowsers = LauncherSettings['behavior']['exitWithBrowsers']
 
+const DESKTOP_ICON_FILES: Record<'darwin' | 'win32' | 'fallback', string> = {
+	darwin: 'app-icon-macos-1024.png',
+	win32: 'app-icon-windows.ico',
+	fallback: 'app-icon-windows-256.png',
+}
+
 export interface ClosePromptDeps {
 	status: () => BrowserStatus
 	exitWithBrowsers?: () => Promise<ExitWithBrowsers> | ExitWithBrowsers
@@ -60,12 +66,14 @@ export async function startMainBootstrap(): Promise<void> {
 
 	const paths = new AppPaths(electron.app.getPath('userData'))
 	await paths.ensure()
-	const iconPath = path.join(__dirname, '../../resources/icon.png')
+	const iconPath = electron.app.isPackaged
+		? undefined
+		: path.join(__dirname, '../../resources', desktopIconFile(process.platform))
 	electron.app.setName('问学')
 	if (process.platform === 'win32') {
 		electron.app.setAppUserModelId('com.wenxue.launcher')
 	}
-	if (process.platform === 'darwin') {
+	if (process.platform === 'darwin' && iconPath) {
 		electron.app.dock?.setIcon(iconPath)
 	}
 
@@ -171,7 +179,7 @@ function createControlWindow(
 	electron: ElectronModule,
 	supervisor: BrowserSupervisor,
 	settingsStore: LauncherSettingsStore,
-	iconPath: string,
+	iconPath: string | undefined,
 ): BrowserWindow {
 	const win = new electron.BrowserWindow(
 		buildControlWindowOptions({
@@ -221,7 +229,7 @@ function createControlWindow(
 
 export function buildControlWindowOptions(input: {
 	platform: NodeJS.Platform
-	iconPath: string
+	iconPath?: string
 	preloadPath: string
 }): BrowserWindowConstructorOptions {
 	return {
@@ -236,7 +244,7 @@ export function buildControlWindowOptions(input: {
 		autoHideMenuBar: true,
 		trafficLightPosition: input.platform === 'darwin' ? { x: 18, y: 18 } : undefined,
 		titleBarStyle: input.platform === 'darwin' ? 'hiddenInset' : 'hidden',
-		icon: input.iconPath,
+		...(input.iconPath ? { icon: input.iconPath } : {}),
 		webPreferences: {
 			preload: input.preloadPath,
 			contextIsolation: true,
@@ -244,4 +252,11 @@ export function buildControlWindowOptions(input: {
 			sandbox: true,
 		},
 	}
+}
+
+export function desktopIconFile(platform: NodeJS.Platform): string {
+	if (platform === 'darwin' || platform === 'win32') {
+		return DESKTOP_ICON_FILES[platform]
+	}
+	return DESKTOP_ICON_FILES.fallback
 }
