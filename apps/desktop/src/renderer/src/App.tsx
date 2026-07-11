@@ -15,10 +15,12 @@ import {
 	LogOut,
 	Maximize2,
 	Minus,
+	MoreHorizontal,
 	Pause,
 	Pencil,
 	Play,
 	Plus,
+	RefreshCw,
 	ScrollText,
 	Search,
 	Settings,
@@ -27,8 +29,9 @@ import {
 	UserPlus,
 	X,
 } from 'lucide-react'
-import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
 	getLauncherSession,
 	readCloudBaseErrorMessage,
@@ -39,6 +42,7 @@ import {
 	type LauncherAuthSession,
 	type LauncherPublicUser,
 } from './cloudbase'
+import { strings } from './strings'
 import type {
 	AppShellInfo,
 	AppVersions,
@@ -52,6 +56,8 @@ import type {
 	TokenUsageSummary,
 } from './wenxue'
 
+const isMacPlatform = navigator.userAgent.includes('Macintosh')
+
 type RouteId = 'browsers' | 'logs' | 'tokens' | 'settings'
 type SettingsSectionId = 'launch' | 'behavior' | 'logs' | 'kernel' | 'about'
 type ProfileSortMode = 'recent' | 'name' | 'status'
@@ -63,7 +69,7 @@ const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
 ]
 
 const settingsSections: Array<{ id: SettingsSectionId; label: string }> = [
-	{ id: 'launch', label: '启动默认值' },
+	{ id: 'launch', label: '批量启动' },
 	{ id: 'behavior', label: '启动器行为' },
 	{ id: 'logs', label: '日志' },
 	{ id: 'kernel', label: '浏览器内核' },
@@ -130,14 +136,15 @@ const emptyTokenSummary: TokenUsageSummary = {
 }
 
 const defaultShellInfo: AppShellInfo = {
-	platform: 'darwin',
-	frameless: false,
-	hasSystemTrafficLights: true,
+	platform: isMacPlatform ? 'darwin' : 'win32',
+	frameless: !isMacPlatform,
+	hasSystemTrafficLights: isMacPlatform,
 	isMaximized: false,
 }
 
 export default function App() {
 	const [route, setRoute] = useState<RouteId>('browsers')
+	const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('launch')
 	const [authReady, setAuthReady] = useState(false)
 	const [authUser, setAuthUser] = useState<LauncherPublicUser | null>(null)
 	const [profiles, setProfiles] = useState<BrowserProfile[]>([])
@@ -161,8 +168,40 @@ export default function App() {
 	const [activeLogSources, setActiveLogSources] = useState<LogSource[]>(logSources)
 	const [followLogs, setFollowLogs] = useState(true)
 	const [avatarOpen, setAvatarOpen] = useState(false)
+	const [addingProfile, setAddingProfile] = useState(false)
+	const [batchLaunching, setBatchLaunching] = useState(false)
+	const [logsMutating, setLogsMutating] = useState(false)
+	const [pendingProfileIds, setPendingProfileIds] = useState<string[]>([])
+	const [logoutBusy, setLogoutBusy] = useState(false)
+	const [savingSettings, setSavingSettings] = useState(false)
+	const [tokensLoading, setTokensLoading] = useState(false)
 	const [savedTick, setSavedTick] = useState(false)
 	const [message, setMessage] = useState<string | null>(null)
+	const avatarButtonRef = useRef<HTMLButtonElement>(null)
+	const addingProfileRef = useRef(false)
+	const batchLaunchingRef = useRef(false)
+	const logoutBusyRef = useRef(false)
+	const logRefreshErrorRef = useRef<string | null>(null)
+	const logsMutationBusyRef = useRef(false)
+	const pendingProfileActionsRef = useRef(new Set<string>())
+	const settingsErrorRef = useRef<string | null>(null)
+	const settingsQueueRef = useRef<Promise<void>>(Promise.resolve())
+	const settingsPendingRef = useRef(0)
+	const savedTimerRef = useRef<number | null>(null)
+	const tokenRequestIdRef = useRef(0)
+	const workspaceGenerationRef = useRef(0)
+
+	const beginProfileAction = useCallback((profileId: string) => {
+		if (logoutBusyRef.current || pendingProfileActionsRef.current.has(profileId)) return false
+		pendingProfileActionsRef.current.add(profileId)
+		setPendingProfileIds(Array.from(pendingProfileActionsRef.current))
+		return true
+	}, [])
+
+	const endProfileAction = useCallback((profileId: string) => {
+		pendingProfileActionsRef.current.delete(profileId)
+		setPendingProfileIds(Array.from(pendingProfileActionsRef.current))
+	}, [])
 
 	const refreshProfiles = useCallback(async () => {
 		const [nextProfiles, nextStatuses] = await Promise.all([
@@ -174,46 +213,83 @@ export default function App() {
 	}, [])
 
 	const refreshLogs = useCallback(async () => {
-		const nextLogs = await window.wenxue.logs.query({ limit: 600 })
-		setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
+		if (logoutBusyRef.current || logsMutationBusyRef.current) return
+		const generation = workspaceGenerationRef.current
+		try {
+			const nextLogs = await window.wenxue.logs.query({ limit: 600 })
+			if (
+				logoutBusyRef.current ||
+				logsMutationBusyRef.current ||
+				generation !== workspaceGenerationRef.current
+			) {
+				return
+			}
+			setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
+			const previousError = logRefreshErrorRef.current
+			logRefreshErrorRef.current = null
+			if (previousError) {
+				setMessage((current) => (current === previousError ? null : current))
+			}
+		} catch (error) {
+			if (
+				logoutBusyRef.current ||
+				logsMutationBusyRef.current ||
+				generation !== workspaceGenerationRef.current
+			) {
+				return
+			}
+			const nextError = readCloudBaseErrorMessage(error, strings.error.refreshLogs)
+			logRefreshErrorRef.current = nextError
+			setMessage(nextError)
+		}
 	}, [])
 
 	const refreshTokens = useCallback(async () => {
-		setTokens(await window.wenxue.tokens.getSummary())
-	}, [])
+		if (!authUser || logoutBusyRef.current) return
+		const requestId = ++tokenRequestIdRef.current
+		setTokensLoading(true)
+		setMessage(null)
+		try {
+			const nextTokens = await window.wenxue.tokens.getSummary()
+			if (requestId === tokenRequestIdRef.current) setTokens(nextTokens)
+		} catch (error) {
+			if (requestId === tokenRequestIdRef.current) {
+				setMessage(readCloudBaseErrorMessage(error, strings.error.refreshTokens))
+			}
+		} finally {
+			if (requestId === tokenRequestIdRef.current) {
+				setTokensLoading(false)
+			}
+		}
+	}, [authUser])
 
 	const loadWorkspaceData = useCallback(async () => {
-		const [
-			nextProfiles,
-			nextStatuses,
-			nextLogs,
-			nextSettings,
-			nextTokens,
-			nextVersions,
-			nextShellInfo,
-		] = await Promise.all([
-			window.wenxue.browser.listProfiles(),
-			window.wenxue.browser.getStatuses(),
-			window.wenxue.logs.query({ limit: 600 }),
-			window.wenxue.settings.get(),
-			window.wenxue.tokens.getSummary(),
-			window.wenxue.app.getVersions(),
-			window.wenxue.app.getShellInfo(),
-		])
+		const [nextProfiles, nextStatuses, nextLogs, nextSettings, nextTokens, nextVersions] =
+			await Promise.all([
+				window.wenxue.browser.listProfiles(),
+				window.wenxue.browser.getStatuses(),
+				window.wenxue.logs.query({ limit: 600 }),
+				window.wenxue.settings.get(),
+				window.wenxue.tokens.getSummary(),
+				window.wenxue.app.getVersions(),
+			])
 		setProfiles(nextProfiles)
 		setStatuses(nextStatuses)
 		setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
 		setSettings(nextSettings)
 		setTokens(nextTokens)
 		setVersions(nextVersions)
-		setShellInfo(nextShellInfo)
 	}, [])
 
 	useEffect(() => {
 		let mounted = true
 		const load = async () => {
-			const session = await getLauncherSession()
+			const [session, nextShellInfo] = await Promise.all([
+				getLauncherSession(),
+				window.wenxue.app.getShellInfo(),
+			])
 			if (!mounted) return
+			setShellInfo(nextShellInfo)
 			if (!session) {
 				setAuthReady(true)
 				return
@@ -222,9 +298,11 @@ export default function App() {
 			if (!synced.ok) {
 				throw new Error(synced.error ?? '账号 session 同步失败')
 			}
-			setAuthUser(toPublicUser(session))
 			await loadWorkspaceData()
-			if (mounted) setAuthReady(true)
+			if (mounted) {
+				setAuthUser(toPublicUser(session))
+				setAuthReady(true)
+			}
 		}
 
 		void load().catch((error: unknown) => {
@@ -235,16 +313,40 @@ export default function App() {
 		const unsubscribeProfile = window.wenxue.browser.onProfileStatusChange((payload) => {
 			setStatuses((current) => ({ ...current, [payload.profileId]: payload.status }))
 		})
-		const logTimer = window.setInterval(() => {
-			if (followLogs) void refreshLogs()
-		}, 2200)
 
 		return () => {
 			mounted = false
 			unsubscribeProfile()
-			window.clearInterval(logTimer)
 		}
-	}, [followLogs, loadWorkspaceData, refreshLogs])
+	}, [loadWorkspaceData])
+
+	useEffect(() => {
+		if (!authUser || route !== 'logs' || !followLogs) return
+		const logTimer = window.setInterval(() => void refreshLogs(), 2200)
+		return () => window.clearInterval(logTimer)
+	}, [authUser, followLogs, refreshLogs, route])
+
+	useEffect(() => {
+		if (authUser && route === 'tokens') void refreshTokens()
+	}, [authUser, refreshTokens, route])
+
+	useEffect(() => {
+		if (!avatarOpen) return
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key !== 'Escape') return
+			setAvatarOpen(false)
+			avatarButtonRef.current?.focus()
+		}
+		window.addEventListener('keydown', closeOnEscape)
+		return () => window.removeEventListener('keydown', closeOnEscape)
+	}, [avatarOpen])
+
+	useEffect(
+		() => () => {
+			if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current)
+		},
+		[],
+	)
 
 	const visibleProfiles = useMemo(() => {
 		const text = query.trim().toLowerCase()
@@ -276,125 +378,254 @@ export default function App() {
 
 	const launchProfile = useCallback(
 		async (profileId: string) => {
+			if (!beginProfileAction(profileId)) return false
+			setMessage(null)
 			setStatuses((current) => ({ ...current, [profileId]: 'launching' }))
-			const result = await window.wenxue.browser.launchProfile(profileId)
-			if (!result.ok) {
+			try {
+				const result = await window.wenxue.browser.launchProfile(profileId)
+				if (!result.ok) throw new Error(result.error ?? '浏览器启动失败')
+				setStatuses((current) => ({ ...current, [profileId]: 'running' }))
+				try {
+					await refreshProfiles()
+				} catch (error) {
+					setMessage(readCloudBaseErrorMessage(error, strings.error.refreshProfiles))
+				}
+				return true
+			} catch (error) {
 				setStatuses((current) => ({ ...current, [profileId]: 'error' }))
-				setMessage(result.error ?? '浏览器启动失败')
-				return
+				setMessage(readCloudBaseErrorMessage(error, strings.error.launchBrowser))
+				return false
+			} finally {
+				endProfileAction(profileId)
 			}
-			await refreshProfiles()
 		},
-		[refreshProfiles],
+		[beginProfileAction, endProfileAction, refreshProfiles],
 	)
 
-	const stopProfile = useCallback(async (profileId: string) => {
-		const result = await window.wenxue.browser.stopProfile(profileId)
-		if (!result.ok) {
-			setMessage(result.error ?? '浏览器停止失败')
-			return
-		}
-		setStatuses((current) => ({ ...current, [profileId]: 'idle' }))
-	}, [])
+	const stopProfile = useCallback(
+		async (profileId: string) => {
+			if (!beginProfileAction(profileId)) return
+			setMessage(null)
+			try {
+				const result = await window.wenxue.browser.stopProfile(profileId)
+				if (!result.ok) throw new Error(result.error ?? '浏览器停止失败')
+				setStatuses((current) => ({ ...current, [profileId]: 'idle' }))
+			} catch (error) {
+				setMessage(readCloudBaseErrorMessage(error, strings.error.stopBrowser))
+			} finally {
+				endProfileAction(profileId)
+			}
+		},
+		[beginProfileAction, endProfileAction],
+	)
 
 	const addProfile = useCallback(async () => {
-		const result = await window.wenxue.browser.addProfile()
-		if (!result.ok || !result.profile) {
-			setMessage(result.error ?? '无法添加浏览器画像')
-			return
+		if (logoutBusyRef.current || addingProfileRef.current) return
+		addingProfileRef.current = true
+		setAddingProfile(true)
+		setMessage(null)
+		try {
+			const result = await window.wenxue.browser.addProfile()
+			if (!result.ok || !result.profile) throw new Error(result.error ?? '无法添加浏览器画像')
+			setProfiles((current) => [...current, result.profile!])
+			setQuery('')
+			setEditingId(result.profile.id)
+			setDraftName(result.profile.displayName)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.error.addProfile))
+		} finally {
+			addingProfileRef.current = false
+			setAddingProfile(false)
 		}
-		setProfiles((current) => [...current, result.profile!])
-		setEditingId(result.profile.id)
-		setDraftName(result.profile.displayName)
 	}, [])
 
-	const duplicateProfile = useCallback(async (profileId: string) => {
-		const result = await window.wenxue.browser.duplicateProfile(profileId)
-		if (!result.ok || !result.profile) {
-			setMessage(result.error ?? '复制画像失败')
-			return
-		}
-		setProfiles((current) => [...current, result.profile!])
-		setEditingId(result.profile.id)
-		setDraftName(result.profile.displayName)
-	}, [])
+	const duplicateProfile = useCallback(
+		async (profileId: string) => {
+			if (!beginProfileAction(profileId)) return
+			setMessage(null)
+			try {
+				const result = await window.wenxue.browser.duplicateProfile(profileId)
+				if (!result.ok || !result.profile) throw new Error(result.error ?? '复制画像失败')
+				setProfiles((current) => [...current, result.profile!])
+				setQuery('')
+				setEditingId(result.profile.id)
+				setDraftName(result.profile.displayName)
+			} catch (error) {
+				setMessage(readCloudBaseErrorMessage(error, strings.error.duplicateProfile))
+			} finally {
+				endProfileAction(profileId)
+			}
+		},
+		[beginProfileAction, endProfileAction],
+	)
 
-	const removeProfile = useCallback(async (profileId: string) => {
-		if (!window.confirm('删除该浏览器画像？登录态、Cookie 与缓存会一并清除。')) return
-		const result = await window.wenxue.browser.removeProfile(profileId)
-		if (!result.ok) {
-			setMessage(result.error ?? '删除画像失败')
-			return
-		}
-		setProfiles((current) => current.filter((profile) => profile.id !== profileId))
-		setSelectedIds((current) => current.filter((id) => id !== profileId))
-		setStatuses((current) => {
-			const next = { ...current }
-			delete next[profileId]
-			return next
-		})
-	}, [])
+	const removeProfile = useCallback(
+		async (profileId: string) => {
+			if (!window.confirm('删除该浏览器画像？登录态、Cookie 与缓存会一并清除。')) return
+			if (!beginProfileAction(profileId)) return
+			setMessage(null)
+			try {
+				const result = await window.wenxue.browser.removeProfile(profileId)
+				if (!result.ok) throw new Error(result.error ?? '删除画像失败')
+				setProfiles((current) => current.filter((profile) => profile.id !== profileId))
+				setSelectedIds((current) => current.filter((id) => id !== profileId))
+				setStatuses((current) => {
+					const next = { ...current }
+					delete next[profileId]
+					return next
+				})
+			} catch (error) {
+				setMessage(readCloudBaseErrorMessage(error, strings.error.removeProfile))
+			} finally {
+				endProfileAction(profileId)
+			}
+		},
+		[beginProfileAction, endProfileAction],
+	)
 
-	const openProfileFolder = useCallback(async (profileId: string) => {
-		const result = await window.wenxue.browser.openProfileFolder(profileId)
-		if (!result.ok) {
-			setMessage(result.error ?? '打开画像目录失败')
-		}
-	}, [])
+	const openProfileFolder = useCallback(
+		async (profileId: string) => {
+			if (!beginProfileAction(profileId)) return
+			setMessage(null)
+			try {
+				const result = await window.wenxue.browser.openProfileFolder(profileId)
+				if (!result.ok) throw new Error(result.error ?? '打开画像目录失败')
+			} catch (error) {
+				setMessage(readCloudBaseErrorMessage(error, strings.error.openProfileFolder))
+			} finally {
+				endProfileAction(profileId)
+			}
+		},
+		[beginProfileAction, endProfileAction],
+	)
 
 	const commitRename = useCallback(
 		async (profileId: string) => {
-			const result = await window.wenxue.browser.renameProfile(profileId, draftName)
-			if (!result.ok || !result.profile) {
-				setMessage(result.error ?? '重命名失败')
+			const nextName = draftName.trim()
+			if (!nextName) {
+				setMessage(strings.error.emptyProfileName)
 				return
 			}
-			setProfiles((current) =>
-				current.map((profile) => (profile.id === profileId ? result.profile! : profile)),
-			)
-			setEditingId(null)
-			setDraftName('')
+			if (!beginProfileAction(profileId)) return
+			setMessage(null)
+			try {
+				const result = await window.wenxue.browser.renameProfile(profileId, nextName)
+				if (!result.ok || !result.profile) throw new Error(result.error ?? '重命名失败')
+				setProfiles((current) =>
+					current.map((profile) => (profile.id === profileId ? result.profile! : profile)),
+				)
+				setEditingId(null)
+				setDraftName('')
+			} catch (error) {
+				setMessage(readCloudBaseErrorMessage(error, strings.error.renameProfile))
+			} finally {
+				endProfileAction(profileId)
+			}
 		},
-		[draftName],
+		[beginProfileAction, draftName, endProfileAction],
 	)
 
 	const launchSelected = useCallback(async () => {
-		const ids = [...selectedIds]
-		const limit = Math.max(1, settings.launch.concurrencyLimit)
-		for (let i = 0; i < ids.length; i += limit) {
-			const batch = ids.slice(i, i + limit)
-			await Promise.all(
-				batch.map(
-					(profileId, index) =>
-						new Promise<void>((resolve) => {
-							window.setTimeout(() => {
-								void launchProfile(profileId).then(resolve)
-							}, index * settings.launch.staggerMs)
-						}),
-				),
-			)
+		if (logoutBusyRef.current || batchLaunchingRef.current) return
+		const visibleIds = new Set(visibleProfiles.map((profile) => profile.id))
+		const ids = selectedIds.filter((id) => visibleIds.has(id))
+		if (ids.length === 0) return
+		batchLaunchingRef.current = true
+		setBatchLaunching(true)
+		setMessage(null)
+		const failedIds = new Set<string>()
+		try {
+			const limit = Math.max(1, settings.launch.concurrencyLimit)
+			for (let i = 0; i < ids.length; i += limit) {
+				const batch = ids.slice(i, i + limit)
+				const outcomes = await Promise.all(
+					batch.map(async (profileId, index) => {
+						await new Promise<void>((resolve) =>
+							window.setTimeout(resolve, index * settings.launch.staggerMs),
+						)
+						return { profileId, launched: await launchProfile(profileId) }
+					}),
+				)
+				for (const outcome of outcomes) {
+					if (!outcome.launched) failedIds.add(outcome.profileId)
+				}
+			}
+			setSelectedIds(Array.from(failedIds))
+			if (failedIds.size > 0) {
+				setMessage(`${failedIds.size} 个画像未能启动，已保留选择。可重试或查看日志。`)
+			}
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.error.batchLaunch))
+		} finally {
+			batchLaunchingRef.current = false
+			setBatchLaunching(false)
 		}
-		setSelectedIds([])
-	}, [launchProfile, selectedIds, settings.launch.concurrencyLimit, settings.launch.staggerMs])
+	}, [
+		launchProfile,
+		selectedIds,
+		settings.launch.concurrencyLimit,
+		settings.launch.staggerMs,
+		visibleProfiles,
+	])
 
-	const updateSettings = useCallback(async (patch: LauncherSettingsPatch) => {
-		const result = await window.wenxue.settings.update(patch)
-		if (!result.ok || !result.settings) {
-			setMessage(result.error ?? '设置保存失败')
-			return
+	const updateSettings = useCallback(async (patch: LauncherSettingsPatch): Promise<boolean> => {
+		if (logoutBusyRef.current) return false
+		const previousError = settingsErrorRef.current
+		settingsErrorRef.current = null
+		if (previousError) {
+			setMessage((current) => (current === previousError ? null : current))
 		}
-		setSettings(result.settings)
-		setSavedTick(true)
-		window.setTimeout(() => setSavedTick(false), 1200)
+		settingsPendingRef.current += 1
+		setSavingSettings(true)
+		setSavedTick(false)
+
+		let saved = false
+		const operation = settingsQueueRef.current.then(async () => {
+			try {
+				const result = await window.wenxue.settings.update(patch)
+				if (!result.ok || !result.settings) throw new Error(result.error ?? '设置保存失败')
+				setSettings(result.settings)
+				const saveError = settingsErrorRef.current
+				settingsErrorRef.current = null
+				if (saveError) setMessage((current) => (current === saveError ? null : current))
+				saved = true
+			} catch (error) {
+				const nextError = readCloudBaseErrorMessage(error, strings.error.saveSettings)
+				settingsErrorRef.current = nextError
+				setMessage(nextError)
+			}
+		})
+		settingsQueueRef.current = operation
+		await operation
+
+		settingsPendingRef.current -= 1
+		if (settingsPendingRef.current === 0) {
+			setSavingSettings(false)
+			if (saved) {
+				setSavedTick(true)
+				if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current)
+				savedTimerRef.current = window.setTimeout(() => setSavedTick(false), 1400)
+			}
+		}
+		return saved
 	}, [])
 
 	const clearLogs = useCallback(async () => {
-		const result = await window.wenxue.logs.clear()
-		if (!result.ok) {
-			setMessage(result.error ?? '清空日志失败')
-			return
+		if (logoutBusyRef.current || logsMutationBusyRef.current) return
+		logsMutationBusyRef.current = true
+		workspaceGenerationRef.current += 1
+		setLogsMutating(true)
+		setMessage(null)
+		try {
+			const result = await window.wenxue.logs.clear()
+			if (!result.ok) throw new Error(result.error ?? '清空日志失败')
+			setLogs([])
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.error.clearLogs))
+		} finally {
+			logsMutationBusyRef.current = false
+			setLogsMutating(false)
 		}
-		setLogs([])
 	}, [])
 
 	const syncSignedInSession = useCallback(
@@ -403,8 +634,8 @@ export default function App() {
 			if (!result.ok) {
 				throw new Error(result.error ?? '账号 session 同步失败')
 			}
-			setAuthUser(toPublicUser(session))
 			await loadWorkspaceData()
+			setAuthUser(toPublicUser(session))
 		},
 		[loadWorkspaceData],
 	)
@@ -428,22 +659,63 @@ export default function App() {
 	)
 
 	const handleLogout = useCallback(async () => {
-		await signOutLauncher()
-		await window.wenxue.auth.clearSession()
-		setAuthUser(null)
-		setProfiles([])
-		setStatuses({})
-		setLogs([])
-		setTokens(emptyTokenSummary)
-		setRoute('browsers')
-		setAvatarOpen(false)
+		if (
+			logoutBusyRef.current ||
+			addingProfileRef.current ||
+			batchLaunchingRef.current ||
+			pendingProfileActionsRef.current.size > 0 ||
+			settingsPendingRef.current > 0 ||
+			logsMutationBusyRef.current
+		) {
+			return
+		}
+		logoutBusyRef.current = true
+		workspaceGenerationRef.current += 1
+		tokenRequestIdRef.current += 1
+		setTokensLoading(false)
+		setLogoutBusy(true)
+		setMessage(null)
+		let signedOut = false
+		try {
+			await signOutLauncher()
+			signedOut = true
+			const result = await window.wenxue.auth.clearSession()
+			if (!result.ok) throw new Error(result.error ?? '主进程 session 清理失败')
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.error.logout))
+		} finally {
+			if (signedOut) {
+				setTokensLoading(false)
+				setAuthUser(null)
+				setProfiles([])
+				setStatuses({})
+				setLogs([])
+				setTokens(emptyTokenSummary)
+				setSettings(defaultSettings)
+				setSelectedIds([])
+				setEditingId(null)
+				setDraftName('')
+				setQuery('')
+				setProfileSort('recent')
+				setLogQuery('')
+				setLogLevels(['info', 'warn', 'error'])
+				setActiveLogSources(logSources)
+				setFollowLogs(true)
+				setSettingsSection('launch')
+				setSavedTick(false)
+				setRoute('browsers')
+				setAvatarOpen(false)
+			}
+			logoutBusyRef.current = false
+			setLogoutBusy(false)
+		}
 	}, [])
 
 	if (!authReady) {
 		return (
 			<main className={`auth-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
 				<div className="top-drag-zone drag-region" />
-				<WindowControls shellInfo={shellInfo} setShellInfo={setShellInfo} />
+				<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
 				<div className="auth-loading">
 					<LoaderCircle className="spin" size={18} />
 					<span>正在检查登录状态</span>
@@ -472,9 +744,12 @@ export default function App() {
 				aria-label="启动器导航"
 			>
 				<button
-					aria-label="本地资料"
+					aria-expanded={avatarOpen}
+					aria-haspopup="menu"
+					aria-label="账号菜单"
 					className="avatar-button no-drag"
 					onClick={() => setAvatarOpen((open) => !open)}
+					ref={avatarButtonRef}
 					type="button"
 				>
 					<img src="logo.png" alt="" />
@@ -484,7 +759,10 @@ export default function App() {
 						active={route === 'browsers'}
 						icon={Globe2}
 						label="浏览器"
-						onClick={() => setRoute('browsers')}
+						onClick={() => {
+							setRoute('browsers')
+							setAvatarOpen(false)
+						}}
 					/>
 					{routeItems.map((item) => (
 						<RailButton
@@ -492,7 +770,10 @@ export default function App() {
 							icon={item.icon}
 							key={item.id}
 							label={item.label}
-							onClick={() => setRoute(item.id)}
+							onClick={() => {
+								setRoute(item.id)
+								setAvatarOpen(false)
+							}}
 						/>
 					))}
 				</nav>
@@ -501,29 +782,45 @@ export default function App() {
 						active={route === 'settings'}
 						icon={Settings}
 						label="设置"
-						onClick={() => setRoute('settings')}
+						onClick={() => {
+							setRoute('settings')
+							setAvatarOpen(false)
+						}}
 					/>
 				</div>
 				{avatarOpen ? (
 					<AvatarMenu
+						logoutBusy={logoutBusy}
 						setAvatarOpen={setAvatarOpen}
 						setRoute={setRoute}
+						setSettingsSection={setSettingsSection}
 						settings={settings}
 						user={authUser}
 						versions={versions}
+						workspaceBusy={
+							addingProfile ||
+							batchLaunching ||
+							pendingProfileIds.length > 0 ||
+							savingSettings ||
+							logsMutating
+						}
 						onLogout={handleLogout}
 					/>
 				) : null}
 			</aside>
 
-			<section className="main-surface">
+			<section
+				aria-busy={logoutBusy}
+				className={`main-surface ${logoutBusy ? 'main-surface--busy' : ''}`}
+				onPointerDown={() => setAvatarOpen(false)}
+			>
 				<div className="top-drag-zone drag-region" />
-				<WindowControls shellInfo={shellInfo} setShellInfo={setShellInfo} />
+				<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
 				{message ? (
-					<div className="toast no-drag">
+					<div aria-live="assertive" className="toast toast--error no-drag" role="alert">
 						<Info size={15} />
 						<span>{message}</span>
-						<button onClick={() => setMessage(null)} type="button">
+						<button aria-label="关闭错误提示" onClick={() => setMessage(null)} type="button">
 							<X size={14} />
 						</button>
 					</div>
@@ -531,6 +828,9 @@ export default function App() {
 				{route === 'browsers' ? (
 					<BrowserPage
 						addProfile={addProfile}
+						addingProfile={addingProfile}
+						allProfiles={profiles}
+						batchLaunching={batchLaunching}
 						commitRename={commitRename}
 						draftName={draftName}
 						duplicateProfile={duplicateProfile}
@@ -540,6 +840,7 @@ export default function App() {
 						openProfileFolder={openProfileFolder}
 						profileSort={profileSort}
 						profiles={visibleProfiles}
+						pendingProfileIds={pendingProfileIds}
 						query={query}
 						removeProfile={removeProfile}
 						selectedIds={selectedIds}
@@ -548,18 +849,20 @@ export default function App() {
 						setProfileSort={setProfileSort}
 						setQuery={setQuery}
 						setSelectedIds={setSelectedIds}
-						settings={settings}
 						statuses={statuses}
 						stopProfile={stopProfile}
+						viewLogs={() => setRoute('logs')}
 					/>
 				) : null}
 				{route === 'logs' ? (
 					<LogsPage
 						clearLogs={clearLogs}
+						clearingLogs={logsMutating}
 						followLogs={followLogs}
 						logLevels={logLevels}
 						logQuery={logQuery}
 						logs={visibleLogs}
+						totalLogCount={logs.length}
 						activeLogSources={activeLogSources}
 						profiles={profiles}
 						settings={settings}
@@ -569,10 +872,16 @@ export default function App() {
 						setLogQuery={setLogQuery}
 					/>
 				) : null}
-				{route === 'tokens' ? <TokensPage summary={tokens} /> : null}
+				{route === 'tokens' ? (
+					<TokensPage loading={tokensLoading} onRefresh={refreshTokens} summary={tokens} />
+				) : null}
 				{route === 'settings' ? (
 					<SettingsPage
 						savedTick={savedTick}
+						saving={savingSettings}
+						section={settingsSection}
+						setMessage={setMessage}
+						setSection={setSettingsSection}
 						settings={settings}
 						updateSettings={updateSettings}
 						versions={versions}
@@ -592,23 +901,40 @@ interface RailButtonProps {
 }
 
 function WindowControls({
+	onError,
 	shellInfo,
 	setShellInfo,
 }: {
+	onError: (message: string) => void
 	shellInfo: AppShellInfo
 	setShellInfo: (info: AppShellInfo) => void
 }) {
 	if (!shellInfo.frameless) return null
 
-	const refreshShellInfo = async () => {
-		setShellInfo(await window.wenxue.app.getShellInfo())
+	const runWindowAction = async (
+		action: () => Promise<{ ok: boolean; error?: string }>,
+		fallback: string,
+		refresh = false,
+	) => {
+		try {
+			const result = await action()
+			if (!result.ok) throw new Error(result.error ?? fallback)
+			if (refresh) setShellInfo(await window.wenxue.app.getShellInfo())
+		} catch (error) {
+			onError(readCloudBaseErrorMessage(error, fallback))
+		}
 	}
 
 	return (
 		<div className="window-controls no-drag" aria-label="窗口控制">
 			<button
 				aria-label="最小化"
-				onClick={() => void window.wenxue.app.minimizeWindow()}
+				onClick={() =>
+					void runWindowAction(
+						() => window.wenxue.app.minimizeWindow(),
+						strings.error.minimizeWindow,
+					)
+				}
 				type="button"
 			>
 				<Minus size={14} />
@@ -616,7 +942,11 @@ function WindowControls({
 			<button
 				aria-label={shellInfo.isMaximized ? '还原窗口' : '最大化'}
 				onClick={() => {
-					void window.wenxue.app.toggleMaximizeWindow().then(refreshShellInfo)
+					void runWindowAction(
+						() => window.wenxue.app.toggleMaximizeWindow(),
+						strings.error.resizeWindow,
+						true,
+					)
 				}}
 				type="button"
 			>
@@ -625,7 +955,9 @@ function WindowControls({
 			<button
 				aria-label="关闭"
 				className="window-controls__close"
-				onClick={() => void window.wenxue.app.requestClose()}
+				onClick={() =>
+					void runWindowAction(() => window.wenxue.app.requestClose(), strings.error.closeWindow)
+				}
 				type="button"
 			>
 				<X size={14} />
@@ -637,6 +969,7 @@ function WindowControls({
 function RailButton({ active, children, icon: Icon, label, onClick }: RailButtonProps) {
 	return (
 		<button
+			aria-current={active ? 'page' : undefined}
 			aria-label={label}
 			className={`rail-button ${active ? 'rail-button--active' : ''}`}
 			onClick={onClick}
@@ -672,7 +1005,9 @@ function AuthScreen({
 	const [localError, setLocalError] = useState<string | null>(null)
 	const isRegister = mode === 'register'
 
-	const submit = async () => {
+	const submit = async (event?: FormEvent<HTMLFormElement>) => {
+		event?.preventDefault()
+		if (busy) return
 		const nextUsername = username.trim()
 		setLocalError(null)
 		setMessage(null)
@@ -701,8 +1036,8 @@ function AuthScreen({
 	return (
 		<main className={`auth-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
 			<div className="top-drag-zone drag-region" />
-			<WindowControls shellInfo={shellInfo} setShellInfo={setShellInfo} />
-			<section className="auth-card no-drag">
+			<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
+			<form aria-busy={busy} className="auth-card no-drag" onSubmit={(event) => void submit(event)}>
 				<div className="auth-brand">
 					<img src="logo.png" alt="" />
 					<div>
@@ -718,7 +1053,9 @@ function AuthScreen({
 				</div>
 				<div className="segmented-control auth-card__modes" aria-label="账号入口">
 					<button
+						aria-pressed={!isRegister}
 						className={!isRegister ? 'segmented-control__active' : ''}
+						disabled={busy}
 						onClick={() => {
 							setMode('login')
 							setLocalError(null)
@@ -729,7 +1066,9 @@ function AuthScreen({
 						登录
 					</button>
 					<button
+						aria-pressed={isRegister}
 						className={isRegister ? 'segmented-control__active' : ''}
+						disabled={busy}
 						onClick={() => {
 							setMode('register')
 							setLocalError(null)
@@ -744,6 +1083,8 @@ function AuthScreen({
 					<span>用户 id</span>
 					<input
 						autoComplete="username"
+						autoFocus
+						disabled={busy}
 						onChange={(event) => setUsername(event.target.value)}
 						type="text"
 						value={username}
@@ -753,10 +1094,8 @@ function AuthScreen({
 					<span>密码</span>
 					<input
 						autoComplete={isRegister ? 'new-password' : 'current-password'}
+						disabled={busy}
 						onChange={(event) => setPassword(event.target.value)}
-						onKeyDown={(event) => {
-							if (event.key === 'Enter') void submit()
-						}}
 						type="password"
 						value={password}
 					/>
@@ -766,21 +1105,22 @@ function AuthScreen({
 						<span>确认密码</span>
 						<input
 							autoComplete="new-password"
+							disabled={busy}
 							onChange={(event) => setConfirmPassword(event.target.value)}
-							onKeyDown={(event) => {
-								if (event.key === 'Enter') void submit()
-							}}
 							type="password"
 							value={confirmPassword}
 						/>
 					</label>
 				) : null}
-				{localError || error ? <div className="auth-alert">{localError ?? error}</div> : null}
+				{localError || error ? (
+					<div className="auth-alert" role="alert">
+						{localError ?? error}
+					</div>
+				) : null}
 				<button
 					className="primary-button auth-submit"
 					disabled={busy || !username.trim() || !password || (isRegister && !confirmPassword)}
-					onClick={() => void submit()}
-					type="button"
+					type="submit"
 				>
 					{busy ? (
 						<LoaderCircle className="spin" size={16} />
@@ -791,28 +1131,57 @@ function AuthScreen({
 					)}
 					{busy ? '处理中' : isRegister ? '注册并登录' : '登录'}
 				</button>
-			</section>
+			</form>
 		</main>
 	)
 }
 
 function AvatarMenu({
+	logoutBusy,
 	onLogout,
 	setAvatarOpen,
 	setRoute,
+	setSettingsSection,
 	settings,
 	user,
 	versions,
+	workspaceBusy,
 }: {
+	logoutBusy: boolean
 	onLogout: () => Promise<void>
 	setAvatarOpen: (open: boolean) => void
 	setRoute: (route: RouteId) => void
+	setSettingsSection: (section: SettingsSectionId) => void
 	settings: LauncherSettings
 	user: LauncherPublicUser
 	versions: AppVersions
+	workspaceBusy: boolean
 }) {
+	const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+		if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+		const items = Array.from(
+			event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
+		)
+		const activeIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+		event.preventDefault()
+		if (event.key === 'Home' || event.key === 'End') {
+			items[event.key === 'Home' ? 0 : items.length - 1]?.focus()
+			return
+		}
+		const direction = event.key === 'ArrowDown' ? 1 : -1
+		items[(activeIndex + direction + items.length) % items.length]?.focus()
+	}
+
 	return (
-		<div className="avatar-menu no-drag">
+		<div
+			aria-label="账号菜单"
+			className="avatar-menu no-drag"
+			onBlur={(event) => {
+				if (!event.currentTarget.contains(event.relatedTarget)) setAvatarOpen(false)
+			}}
+			onKeyDown={handleMenuKeyDown}
+			role="menu"
+		>
 			<div className="avatar-menu__head">
 				<div className="avatar-menu__mark">
 					<img src="logo.png" alt="" />
@@ -823,10 +1192,13 @@ function AvatarMenu({
 				</div>
 			</div>
 			<button
+				autoFocus
 				onClick={() => {
+					setSettingsSection('launch')
 					setRoute('settings')
 					setAvatarOpen(false)
 				}}
+				role="menuitem"
 				type="button"
 			>
 				<Settings size={15} />
@@ -834,33 +1206,45 @@ function AvatarMenu({
 			</button>
 			<button
 				onClick={() => {
+					setSettingsSection('about')
 					setRoute('settings')
 					setAvatarOpen(false)
 				}}
+				role="menuitem"
 				type="button"
 			>
 				<Info size={15} />
 				关于 {versions.app}
 			</button>
-			<button onClick={() => void onLogout()} type="button">
-				<LogOut size={15} />
-				退出登录
+			<button
+				disabled={logoutBusy || workspaceBusy}
+				onClick={() => void onLogout()}
+				role="menuitem"
+				title={workspaceBusy ? '请等待当前操作完成后再退出' : undefined}
+				type="button"
+			>
+				{logoutBusy ? <LoaderCircle className="spin" size={15} /> : <LogOut size={15} />}
+				{logoutBusy ? '正在退出' : '退出登录'}
 			</button>
 		</div>
 	)
 }
 
 interface BrowserPageProps {
-	addProfile: () => void
-	commitRename: (profileId: string) => void
+	addProfile: () => Promise<void>
+	addingProfile: boolean
+	allProfiles: BrowserProfile[]
+	batchLaunching: boolean
+	commitRename: (profileId: string) => Promise<void>
 	draftName: string
 	duplicateProfile: (profileId: string) => Promise<void>
 	editingId: string | null
-	launchProfile: (profileId: string) => Promise<void>
+	launchProfile: (profileId: string) => Promise<boolean>
 	launchSelected: () => Promise<void>
 	openProfileFolder: (profileId: string) => Promise<void>
 	profileSort: ProfileSortMode
 	profiles: BrowserProfile[]
+	pendingProfileIds: string[]
 	query: string
 	removeProfile: (profileId: string) => Promise<void>
 	selectedIds: string[]
@@ -869,25 +1253,22 @@ interface BrowserPageProps {
 	setProfileSort: (mode: ProfileSortMode) => void
 	setQuery: (query: string) => void
 	setSelectedIds: (ids: string[]) => void
-	settings: LauncherSettings
 	statuses: Record<string, BrowserStatus>
 	stopProfile: (profileId: string) => Promise<void>
+	viewLogs: () => void
 }
 
 function BrowserPage(props: BrowserPageProps) {
-	const runningCount = props.profiles.filter(
+	const runningCount = props.allProfiles.filter(
 		(profile) => props.statuses[profile.id] === 'running',
 	).length
-	const launchingCount = props.profiles.filter(
+	const launchingCount = props.allProfiles.filter(
 		(profile) => props.statuses[profile.id] === 'launching',
 	).length
-	const errorCount = props.profiles.filter(
+	const errorCount = props.allProfiles.filter(
 		(profile) => props.statuses[profile.id] === 'error',
 	).length
-	const inspectorProfile =
-		props.profiles.find((profile) => props.selectedIds.includes(profile.id)) ??
-		props.profiles.find((profile) => props.statuses[profile.id] === 'running') ??
-		props.profiles[0]
+	const selectionBusy = props.selectedIds.some((id) => props.pendingProfileIds.includes(id))
 
 	return (
 		<div className="page page--browsers">
@@ -897,81 +1278,105 @@ function BrowserPage(props: BrowserPageProps) {
 					<p>持久画像、多账号隔离与批量启动。</p>
 				</div>
 				<div className="header-actions">
-					<label className="search-field">
+					<label aria-label="搜索浏览器画像" className="search-field">
 						<Search size={16} />
 						<input
-							onChange={(event) => props.setQuery(event.target.value)}
+							disabled={props.batchLaunching}
+							onChange={(event) => {
+								props.setQuery(event.target.value)
+								props.setSelectedIds([])
+							}}
 							placeholder="搜索画像、ID 或目录"
 							value={props.query}
 						/>
 					</label>
 					<div className="segmented-control" aria-label="画像排序">
 						<button
+							aria-pressed={props.profileSort === 'recent'}
 							className={props.profileSort === 'recent' ? 'segmented-control__active' : ''}
+							disabled={props.batchLaunching}
 							onClick={() => props.setProfileSort('recent')}
 							type="button"
 						>
 							最近
 						</button>
 						<button
+							aria-pressed={props.profileSort === 'status'}
 							className={props.profileSort === 'status' ? 'segmented-control__active' : ''}
+							disabled={props.batchLaunching}
 							onClick={() => props.setProfileSort('status')}
 							type="button"
 						>
 							状态
 						</button>
 						<button
+							aria-pressed={props.profileSort === 'name'}
 							className={props.profileSort === 'name' ? 'segmented-control__active' : ''}
+							disabled={props.batchLaunching}
 							onClick={() => props.setProfileSort('name')}
 							type="button"
 						>
 							名称
 						</button>
 					</div>
-					<button className="primary-button" onClick={props.addProfile} type="button">
-						<Plus size={16} />
-						添加浏览器
+					<button
+						className="primary-button"
+						disabled={props.addingProfile || props.batchLaunching}
+						onClick={() => void props.addProfile()}
+						type="button"
+					>
+						{props.addingProfile ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
+						{props.addingProfile ? '正在添加' : '添加浏览器'}
 					</button>
 				</div>
 			</header>
 
-			<div className="metric-row">
-				<MetricCard label="浏览器画像" value={props.profiles.length.toString()} />
-				<MetricCard label="运行中" value={runningCount.toString()} tone="green" />
-				<MetricCard label="启动队列" value={launchingCount.toString()} tone="coral" />
-				<MetricCard label="插件错误" value={errorCount.toString()} tone="red" />
+			<div className="browser-summary" aria-label="浏览器状态概览">
+				<span>
+					<strong>{props.allProfiles.length}</strong> 个画像
+				</span>
+				<span className="browser-summary__running">
+					<strong>{runningCount}</strong> 运行中
+				</span>
+				<span>
+					<strong>{launchingCount}</strong> 启动中
+				</span>
+				{errorCount > 0 ? (
+					<span className="browser-summary__error">
+						<strong>{errorCount}</strong> 个异常
+					</span>
+				) : null}
 			</div>
 
-			{props.profiles.length === 0 ? (
+			{props.allProfiles.length === 0 ? (
 				<EmptyState
-					action={props.addProfile}
+					action={() => void props.addProfile()}
 					actionLabel="添加第一个浏览器"
 					title="还没有浏览器画像"
 				>
 					创建一个持久画像后，登录态、Cookie 与缓存会保存在独立目录中。
 				</EmptyState>
+			) : props.profiles.length === 0 ? (
+				<EmptyState
+					action={() => props.setQuery('')}
+					actionIcon={X}
+					actionLabel="清除搜索"
+					title="没有匹配的浏览器"
+				>
+					换一个名称、ID 或目录关键词，或者清除当前搜索。
+				</EmptyState>
 			) : (
-				<div className="browser-workspace">
-					<div className="profile-list">
-						<div className="profile-row profile-row--head">
-							<span />
-							<span>画像</span>
-							<span>状态</span>
-							<span>上次使用</span>
-							<span>操作</span>
-						</div>
-						{props.profiles.map((profile) => (
-							<ProfileRow key={profile.id} profile={profile} {...props} />
-						))}
+				<div className="profile-list">
+					<div className="profile-row profile-row--head">
+						<span />
+						<span>画像</span>
+						<span>状态</span>
+						<span>上次使用</span>
+						<span>操作</span>
 					</div>
-					<ProfileInspector
-						launchProfile={props.launchProfile}
-						profile={inspectorProfile}
-						settings={props.settings}
-						status={props.statuses[inspectorProfile.id] ?? 'idle'}
-						stopProfile={props.stopProfile}
-						versionsCount={props.profiles.length}
-					/>
+					{props.profiles.map((profile) => (
+						<ProfileRow key={profile.id} profile={profile} {...props} />
+					))}
 				</div>
 			)}
 
@@ -983,34 +1388,27 @@ function BrowserPage(props: BrowserPageProps) {
 					</div>
 					<button
 						className="primary-button"
+						disabled={props.batchLaunching || selectionBusy}
 						onClick={() => void props.launchSelected()}
 						type="button"
 					>
-						<Play size={16} />
-						打开选中 ({props.selectedIds.length})
+						{props.batchLaunching ? (
+							<LoaderCircle className="spin" size={16} />
+						) : (
+							<Play size={16} />
+						)}
+						{props.batchLaunching ? '正在启动' : `打开选中 (${props.selectedIds.length})`}
 					</button>
-					<button className="soft-button" onClick={() => props.setSelectedIds([])} type="button">
+					<button
+						className="soft-button"
+						disabled={props.batchLaunching}
+						onClick={() => props.setSelectedIds([])}
+						type="button"
+					>
 						取消选择
 					</button>
 				</div>
 			) : null}
-		</div>
-	)
-}
-
-function MetricCard({
-	label,
-	value,
-	tone = 'neutral',
-}: {
-	label: string
-	value: string
-	tone?: string
-}) {
-	return (
-		<div className={`metric-card metric-card--${tone}`}>
-			<span>{label}</span>
-			<strong>{value}</strong>
 		</div>
 	)
 }
@@ -1020,8 +1418,113 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 	const selected = props.selectedIds.includes(props.profile.id)
 	const running = status === 'running'
 	const launching = status === 'launching'
+	const failed = status === 'error'
+	const actionPending = props.pendingProfileIds.includes(props.profile.id)
+	const menuButtonRef = useRef<HTMLButtonElement>(null)
+	const menuRef = useRef<HTMLDivElement>(null)
+	const [menuOpen, setMenuOpen] = useState(false)
+	const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null)
+
+	const closeMenu = useCallback((returnFocus = false) => {
+		setMenuOpen(false)
+		if (returnFocus) {
+			window.requestAnimationFrame(() => menuButtonRef.current?.focus())
+		}
+	}, [])
+
+	const toggleMenu = () => {
+		if (menuOpen) {
+			closeMenu(true)
+			return
+		}
+
+		const trigger = menuButtonRef.current
+		if (!trigger) return
+		const bounds = trigger.getBoundingClientRect()
+		const menuWidth = 164
+		const estimatedHeight = failed ? 192 : 156
+		const fitsBelow = bounds.bottom + 6 + estimatedHeight <= window.innerHeight - 8
+		setMenuPosition({
+			left: Math.min(
+				Math.max(8, bounds.right - menuWidth),
+				Math.max(8, window.innerWidth - menuWidth - 8),
+			),
+			top: fitsBelow ? bounds.bottom + 6 : Math.max(8, bounds.top - estimatedHeight - 6),
+		})
+		setMenuOpen(true)
+	}
+
+	useEffect(() => {
+		if (!menuOpen) return
+
+		const focusFrame = window.requestAnimationFrame(() => {
+			menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+		})
+		const handlePointerDown = (event: PointerEvent) => {
+			const target = event.target as Node | null
+			if (menuButtonRef.current?.contains(target) || menuRef.current?.contains(target)) return
+			closeMenu()
+		}
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				event.preventDefault()
+				closeMenu(true)
+				return
+			}
+
+			const menu = menuRef.current
+			if (!menu?.contains(document.activeElement)) return
+			const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+			const activeIndex = items.indexOf(document.activeElement as HTMLButtonElement)
+
+			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+				event.preventDefault()
+				const direction = event.key === 'ArrowDown' ? 1 : -1
+				items[(activeIndex + direction + items.length) % items.length]?.focus()
+				return
+			}
+			if (event.key === 'Home' || event.key === 'End') {
+				event.preventDefault()
+				items[event.key === 'Home' ? 0 : items.length - 1]?.focus()
+				return
+			}
+			if (event.key === 'Tab') {
+				event.preventDefault()
+				const backwards = event.shiftKey
+				setMenuOpen(false)
+				window.requestAnimationFrame(() => {
+					const trigger = menuButtonRef.current
+					if (!trigger) return
+					if (backwards) {
+						trigger.focus()
+						return
+					}
+					const controls = Array.from(
+						document.querySelectorAll<HTMLElement>(
+							'button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+						),
+					)
+					controls[controls.indexOf(trigger) + 1]?.focus()
+				})
+			}
+		}
+		const handleViewportChange = () => closeMenu()
+
+		document.addEventListener('pointerdown', handlePointerDown, true)
+		document.addEventListener('keydown', handleKeyDown)
+		window.addEventListener('resize', handleViewportChange)
+		window.addEventListener('scroll', handleViewportChange, true)
+		return () => {
+			window.cancelAnimationFrame(focusFrame)
+			document.removeEventListener('pointerdown', handlePointerDown, true)
+			document.removeEventListener('keydown', handleKeyDown)
+			window.removeEventListener('resize', handleViewportChange)
+			window.removeEventListener('scroll', handleViewportChange, true)
+		}
+	}, [closeMenu, menuOpen])
 
 	const toggleSelected = () => {
+		if (props.batchLaunching || actionPending) return
 		props.setSelectedIds(
 			selected
 				? props.selectedIds.filter((id) => id !== props.profile.id)
@@ -1034,18 +1537,26 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 			className={`profile-row profile-row--${status} ${selected ? 'profile-row--selected' : ''}`}
 		>
 			<label className="checkbox-control">
-				<input checked={selected} onChange={toggleSelected} type="checkbox" />
+				<input
+					aria-label={`选择 ${props.profile.displayName}`}
+					checked={selected}
+					disabled={props.batchLaunching || actionPending}
+					onChange={toggleSelected}
+					type="checkbox"
+				/>
 				<span />
 			</label>
 			<div className="profile-identity">
 				<div className={`profile-avatar profile-avatar--${props.profile.colorKey}`}>
 					{props.profile.displayName.slice(0, 1)}
 				</div>
-				<div>
+				<div className="profile-copy">
 					{props.editingId === props.profile.id ? (
 						<div className="rename-field">
 							<input
+								aria-label={`重命名 ${props.profile.displayName}`}
 								autoFocus
+								disabled={actionPending || props.batchLaunching}
 								onChange={(event) => props.setDraftName(event.target.value)}
 								onKeyDown={(event) => {
 									if (event.key === 'Enter') props.commitRename(props.profile.id)
@@ -1053,160 +1564,161 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 								}}
 								value={props.draftName}
 							/>
-							<button onClick={() => props.commitRename(props.profile.id)} type="button">
+							<button
+								aria-label="确认重命名"
+								disabled={actionPending || props.batchLaunching}
+								onClick={() => void props.commitRename(props.profile.id)}
+								type="button"
+							>
 								<Check size={14} />
 							</button>
-							<button onClick={() => props.setEditingId(null)} type="button">
+							<button
+								aria-label="取消重命名"
+								disabled={actionPending || props.batchLaunching}
+								onClick={() => props.setEditingId(null)}
+								type="button"
+							>
 								<X size={14} />
 							</button>
 						</div>
 					) : (
-						<button
-							className="profile-name"
-							onDoubleClick={() => {
-								props.setEditingId(props.profile.id)
-								props.setDraftName(props.profile.displayName)
-							}}
-							type="button"
-						>
-							{props.profile.displayName}
-						</button>
+						<strong className="profile-name">{props.profile.displayName}</strong>
 					)}
-					<span className="profile-id">{props.profile.id}</span>
+					{props.editingId === props.profile.id ? null : (
+						<span className="profile-id">{props.profile.id}</span>
+					)}
+					<StatusBadge compact status={status} />
 				</div>
 			</div>
 			<StatusBadge status={status} />
 			<span className="mono-text">{formatRelativeTime(props.profile.lastUsedAt)}</span>
 			<div className="row-actions">
 				<button
-					disabled={launching}
-					onClick={() =>
-						running
-							? void props.launchProfile(props.profile.id)
-							: void props.launchProfile(props.profile.id)
-					}
-					title={running ? '聚焦' : '打开'}
+					className="row-primary-action"
+					disabled={launching || actionPending || props.batchLaunching}
+					onClick={() => void props.launchProfile(props.profile.id)}
+					title={running ? '聚焦' : failed ? '重新启动' : '打开'}
 					type="button"
 				>
 					{launching ? (
 						<LoaderCircle className="spin" size={15} />
 					) : running ? (
 						<Focus size={15} />
+					) : failed ? (
+						<RefreshCw size={15} />
 					) : (
 						<Play size={15} />
 					)}
+					<span>{launching ? '启动中' : running ? '聚焦' : failed ? '重试' : '打开'}</span>
 				</button>
-				<button
-					disabled={!running}
-					onClick={() => void props.stopProfile(props.profile.id)}
-					title="停止"
-					type="button"
-				>
-					<Square size={15} />
-				</button>
-				<button
-					onClick={() => {
-						props.setEditingId(props.profile.id)
-						props.setDraftName(props.profile.displayName)
-					}}
-					title="重命名"
-					type="button"
-				>
-					<Pencil size={15} />
-				</button>
-				<button
-					disabled={launching || running}
-					onClick={() => void props.duplicateProfile(props.profile.id)}
-					title="复制为新画像"
-					type="button"
-				>
-					<Copy size={15} />
-				</button>
-				<button
-					onClick={() => void props.openProfileFolder(props.profile.id)}
-					title="打开画像文件夹"
-					type="button"
-				>
-					<FolderOpen size={15} />
-				</button>
-				<button
-					className="danger-icon"
-					disabled={launching || running}
-					onClick={() => void props.removeProfile(props.profile.id)}
-					title="删除"
-					type="button"
-				>
-					<Trash2 size={15} />
-				</button>
-			</div>
-		</div>
-	)
-}
-
-function ProfileInspector({
-	launchProfile,
-	profile,
-	settings,
-	status,
-	stopProfile,
-	versionsCount,
-}: {
-	launchProfile: (profileId: string) => Promise<void>
-	profile: BrowserProfile
-	settings: LauncherSettings
-	status: BrowserStatus
-	stopProfile: (profileId: string) => Promise<void>
-	versionsCount: number
-}) {
-	const launching = status === 'launching'
-	const running = status === 'running'
-
-	return (
-		<aside className="inspector-panel">
-			<div className="inspector-head">
-				<div className={`profile-avatar profile-avatar--${profile.colorKey}`}>
-					{profile.displayName[0]}
-				</div>
-				<div>
-					<strong>{profile.displayName}</strong>
-					<StatusBadge status={status} />
+				{running ? (
+					<button
+						aria-label={`停止 ${props.profile.displayName}`}
+						disabled={actionPending || props.batchLaunching}
+						onClick={() => void props.stopProfile(props.profile.id)}
+						title="停止"
+						type="button"
+					>
+						<Square size={15} />
+					</button>
+				) : null}
+				<div className="row-more">
+					<button
+						aria-controls={`profile-menu-${props.profile.id}`}
+						aria-expanded={menuOpen}
+						aria-haspopup="menu"
+						aria-label={`${props.profile.displayName} 的更多操作`}
+						className="row-more__trigger"
+						disabled={actionPending || props.batchLaunching}
+						onClick={toggleMenu}
+						onKeyDown={(event) => {
+							if (event.key !== 'ArrowDown' || menuOpen) return
+							event.preventDefault()
+							toggleMenu()
+						}}
+						ref={menuButtonRef}
+						title="更多操作"
+						type="button"
+					>
+						<MoreHorizontal size={16} />
+					</button>
 				</div>
 			</div>
-			<button
-				className="primary-button"
-				disabled={launching}
-				onClick={() => void launchProfile(profile.id)}
-				type="button"
-			>
-				{launching ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}
-				{running ? '聚焦' : '打开'}
-			</button>
-			<button
-				className="soft-button"
-				disabled={!running}
-				onClick={() => void stopProfile(profile.id)}
-				type="button"
-			>
-				<Square size={16} />
-				停止
-			</button>
-			<InspectorInfo label="画像目录" value={profile.userDataDir} />
-			<InspectorInfo label="并发上限" value={`${settings.launch.concurrencyLimit} 个`} />
-			<InspectorInfo label="错峰间隔" value={`${settings.launch.staggerMs} ms`} />
-			<InspectorInfo label="画像数量" value={`${versionsCount} 个`} />
-			<div className="recent-log-card">
-				<span>近期日志</span>
-				<p>等待浏览器内问学插件发送遥测日志。</p>
-			</div>
-		</aside>
-	)
-}
-
-function InspectorInfo({ label, value }: { label: string; value: string }) {
-	return (
-		<div className="inspector-info">
-			<span>{label}</span>
-			<strong>{value}</strong>
+			{menuOpen && menuPosition
+				? createPortal(
+						<div
+							aria-label={`${props.profile.displayName} 的更多操作`}
+							className="row-more__menu"
+							id={`profile-menu-${props.profile.id}`}
+							ref={menuRef}
+							role="menu"
+							style={menuPosition}
+						>
+							{failed ? (
+								<button
+									onClick={() => {
+										closeMenu()
+										props.viewLogs()
+									}}
+									role="menuitem"
+									type="button"
+								>
+									<ScrollText size={15} />
+									查看日志
+								</button>
+							) : null}
+							<button
+								onClick={() => {
+									closeMenu()
+									props.setEditingId(props.profile.id)
+									props.setDraftName(props.profile.displayName)
+								}}
+								role="menuitem"
+								type="button"
+							>
+								<Pencil size={15} />
+								重命名
+							</button>
+							<button
+								disabled={launching || running}
+								onClick={() => {
+									closeMenu()
+									void props.duplicateProfile(props.profile.id)
+								}}
+								role="menuitem"
+								type="button"
+							>
+								<Copy size={15} />
+								复制画像
+							</button>
+							<button
+								onClick={() => {
+									closeMenu()
+									void props.openProfileFolder(props.profile.id)
+								}}
+								role="menuitem"
+								type="button"
+							>
+								<FolderOpen size={15} />
+								打开目录
+							</button>
+							<button
+								className="danger-icon"
+								disabled={launching || running}
+								onClick={() => {
+									closeMenu()
+									void props.removeProfile(props.profile.id)
+								}}
+								role="menuitem"
+								type="button"
+							>
+								<Trash2 size={15} />
+								删除画像
+							</button>
+						</div>,
+						document.body,
+					)
+				: null}
 		</div>
 	)
 }
@@ -1214,10 +1726,12 @@ function InspectorInfo({ label, value }: { label: string; value: string }) {
 function LogsPage({
 	activeLogSources,
 	clearLogs,
+	clearingLogs,
 	followLogs,
 	logLevels,
 	logQuery,
 	logs,
+	totalLogCount,
 	profiles,
 	settings,
 	setActiveLogSources,
@@ -1227,10 +1741,12 @@ function LogsPage({
 }: {
 	activeLogSources: LogSource[]
 	clearLogs: () => Promise<void>
+	clearingLogs: boolean
 	followLogs: boolean
 	logLevels: LogLevel[]
 	logQuery: string
 	logs: LauncherLogEntry[]
+	totalLogCount: number
 	profiles: BrowserProfile[]
 	settings: LauncherSettings
 	setActiveLogSources: (sources: LogSource[]) => void
@@ -1238,6 +1754,19 @@ function LogsPage({
 	setLogLevels: (levels: LogLevel[]) => void
 	setLogQuery: (query: string) => void
 }) {
+	const logStreamRef = useRef<HTMLDivElement>(null)
+
+	useEffect(() => {
+		if (!followLogs || !logStreamRef.current) return
+		logStreamRef.current.scrollTop = logStreamRef.current.scrollHeight
+	}, [followLogs, logs])
+
+	const resetFilters = () => {
+		setLogQuery('')
+		setLogLevels(['debug', 'info', 'warn', 'error'])
+		setActiveLogSources(logSources)
+	}
+
 	return (
 		<div className="page">
 			<header className="page-header safe-actions">
@@ -1247,6 +1776,7 @@ function LogsPage({
 				</div>
 				<div className="header-actions">
 					<button
+						aria-pressed={followLogs}
 						className={`soft-button ${followLogs ? 'soft-button--active' : ''}`}
 						onClick={() => setFollowLogs(!followLogs)}
 						type="button"
@@ -1256,13 +1786,14 @@ function LogsPage({
 					</button>
 					<button
 						className="soft-button"
+						disabled={clearingLogs}
 						onClick={() => {
 							if (window.confirm('清空全部日志？此操作不可撤销。')) void clearLogs()
 						}}
 						type="button"
 					>
-						<Trash2 size={15} />
-						清空
+						{clearingLogs ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+						{clearingLogs ? '正在清空' : '清空'}
 					</button>
 					<button
 						className="primary-button"
@@ -1277,7 +1808,7 @@ function LogsPage({
 			</header>
 
 			<div className="log-toolbar">
-				<label className="search-field">
+				<label aria-label="搜索日志" className="search-field">
 					<Search size={16} />
 					<input
 						onChange={(event) => setLogQuery(event.target.value)}
@@ -1288,6 +1819,7 @@ function LogsPage({
 				<div className="level-filter">
 					{(['debug', 'info', 'warn', 'error'] as LogLevel[]).map((level) => (
 						<button
+							aria-pressed={logLevels.includes(level)}
 							className={logLevels.includes(level) ? 'level-filter__item--active' : ''}
 							key={level}
 							onClick={() =>
@@ -1307,6 +1839,7 @@ function LogsPage({
 				<div className="source-filter" aria-label="日志来源筛选">
 					{logSources.map((source) => (
 						<button
+							aria-pressed={activeLogSources.includes(source)}
 							className={activeLogSources.includes(source) ? 'source-filter__item--active' : ''}
 							key={source}
 							onClick={() =>
@@ -1334,16 +1867,29 @@ function LogsPage({
 				<span>保留策略由设置页控制</span>
 			</div>
 
-			{logs.length === 0 ? (
-				<EmptyState
-					action={() => setFollowLogs(true)}
-					actionLabel="跟随最新"
-					title="还没有启动器日志"
-				>
+			{totalLogCount === 0 ? (
+				<EmptyState title="还没有启动器日志">
 					插件日志通道连接后，会在这里按时间线实时出现。
 				</EmptyState>
+			) : logs.length === 0 ? (
+				<EmptyState
+					action={resetFilters}
+					actionIcon={X}
+					actionLabel="重置筛选"
+					title="没有匹配的日志"
+				>
+					调整关键词、级别或来源，或者重置全部筛选条件。
+				</EmptyState>
 			) : (
-				<div className="log-stream">
+				<div
+					className="log-stream"
+					onScroll={(event) => {
+						if (!followLogs) return
+						const { clientHeight, scrollHeight, scrollTop } = event.currentTarget
+						if (scrollHeight - scrollTop - clientHeight > 48) setFollowLogs(false)
+					}}
+					ref={logStreamRef}
+				>
 					{logs.map((entry) => (
 						<LogRow entry={entry} key={entry.id} />
 					))}
@@ -1355,31 +1901,58 @@ function LogsPage({
 
 function LogRow({ entry }: { entry: LauncherLogEntry }) {
 	const [open, setOpen] = useState(false)
+	const detailsId = `log-details-${entry.id}`
 	return (
 		<div className={`log-row log-row--${entry.level}`}>
-			<button onClick={() => setOpen(!open)} type="button">
+			<button
+				aria-controls={detailsId}
+				aria-expanded={open}
+				onClick={() => setOpen(!open)}
+				type="button"
+			>
 				<span className="mono-text">{formatTime(entry.ts)}</span>
 				<span className={`level-dot level-dot--${entry.level}`} />
 				<span className="log-tag">{entry.source}</span>
 				<span className="log-tag">{entry.browserId}</span>
 				<strong>{entry.message}</strong>
-				<ChevronDown size={14} />
+				<ChevronDown className={open ? 'log-row__chevron--open' : ''} size={14} />
 			</button>
-			{open ? <pre>{JSON.stringify(entry.data ?? { context: entry.context }, null, 2)}</pre> : null}
+			{open ? (
+				<pre id={detailsId}>
+					{JSON.stringify(entry.data ?? { context: entry.context }, null, 2)}
+				</pre>
+			) : null}
 		</div>
 	)
 }
 
-function TokensPage({ summary }: { summary: TokenUsageSummary }) {
+function TokensPage({
+	loading,
+	onRefresh,
+	summary,
+}: {
+	loading: boolean
+	onRefresh: () => Promise<void>
+	summary: TokenUsageSummary
+}) {
 	const hasData = summary.totalTokens > 0
 	return (
 		<div className="page page--tokens">
 			<header className="page-header safe-actions">
 				<div>
 					<h1>Tokens</h1>
-					<p>按画像、模型与日期查看本机消耗。</p>
+					<p>当前账号的用量归因；成本按已配置模型价格估算，仅供参考。</p>
 				</div>
 				<div className="header-actions">
+					<button
+						className="soft-button"
+						disabled={loading}
+						onClick={() => void onRefresh()}
+						type="button"
+					>
+						<RefreshCw className={loading ? 'spin' : ''} size={15} />
+						{loading ? '同步中' : '刷新'}
+					</button>
 					<button
 						className="primary-button"
 						disabled={!hasData}
@@ -1392,50 +1965,87 @@ function TokensPage({ summary }: { summary: TokenUsageSummary }) {
 				</div>
 			</header>
 
-			<div className="token-summary-grid">
-				<MetricCard label="输入 tokens" value={formatNumber(summary.totalInputTokens)} />
-				<MetricCard
-					label="输出 tokens"
-					value={formatNumber(summary.totalOutputTokens)}
-					tone="green"
-				/>
-				<MetricCard label="总 tokens" value={formatNumber(summary.totalTokens)} tone="blue" />
-				<MetricCard
-					label="估算成本"
-					value={`¥${summary.estimatedCostCny.toFixed(4)}`}
-					tone="coral"
-				/>
-			</div>
-
-			{hasData ? (
-				<div className="token-grid">
-					<TokenPanel title="按浏览器画像" buckets={summary.byBrowser} />
-					<TokenPanel title="按模型" buckets={summary.byModel} />
-					<TokenPanel title="日期趋势" buckets={summary.daily} />
-					<div className="token-panel">
-						<h2>最近调用</h2>
-						{summary.recent.map((record) => (
-							<div className="usage-record" key={record.id}>
-								<span className="mono-text">{formatTime(record.ts)}</span>
-								<strong>{record.model}</strong>
-								<span>{formatNumber(record.totalTokens)} tokens</span>
-							</div>
-						))}
+			<section aria-label="Tokens 总览" className="token-overview">
+				<div className="token-overview__total">
+					<span>总 tokens</span>
+					<strong>{formatNumber(summary.totalTokens)}</strong>
+				</div>
+				<div className="token-overview__details">
+					<div>
+						<span>输入</span>
+						<strong>{formatNumber(summary.totalInputTokens)}</strong>
+					</div>
+					<div>
+						<span>输出</span>
+						<strong>{formatNumber(summary.totalOutputTokens)}</strong>
+					</div>
+					<div>
+						<span>估算成本</span>
+						<strong>¥{summary.estimatedCostCny.toFixed(4)}</strong>
 					</div>
 				</div>
+			</section>
+
+			{hasData ? (
+				<div className="token-sections">
+					<div className="token-distributions">
+						<TokenPanel title="按浏览器画像" buckets={summary.byBrowser} />
+						<TokenPanel title="按模型" buckets={summary.byModel} />
+					</div>
+					<TokenPanel flow title="日期趋势" buckets={summary.daily} />
+					<section className="usage-history">
+						<h2>最近调用</h2>
+						<table>
+							<thead>
+								<tr>
+									<th>时间</th>
+									<th>模型</th>
+									<th>用量</th>
+								</tr>
+							</thead>
+							<tbody>
+								{summary.recent.length > 0 ? (
+									summary.recent.map((record) => (
+										<tr key={record.id}>
+											<td className="mono-text">{formatTime(record.ts)}</td>
+											<td>{record.model}</td>
+											<td>{formatNumber(record.totalTokens)} tokens</td>
+										</tr>
+									))
+								) : (
+									<tr>
+										<td className="usage-history__empty" colSpan={3}>
+											暂无最近调用
+										</td>
+									</tr>
+								)}
+							</tbody>
+						</table>
+					</section>
+				</div>
 			) : (
-				<EmptyState action={() => undefined} actionLabel="等待遥测" title="还没有 tokens 记录">
-					启动器会从已脱敏日志遥测或后续网关计量中汇总 tokens，不保存提示词正文。
+				<EmptyState title={loading ? '正在同步 tokens' : '还没有 tokens 记录'}>
+					{loading
+						? '正在读取当前账号的网关计量与本地缓存。'
+						: '完成一次模型调用后，这里会汇总网关计量或已脱敏的本地缓存。'}
 				</EmptyState>
 			)}
 		</div>
 	)
 }
 
-function TokenPanel({ buckets, title }: { buckets: TokenUsageBucket[]; title: string }) {
+function TokenPanel({
+	buckets,
+	flow = false,
+	title,
+}: {
+	buckets: TokenUsageBucket[]
+	flow?: boolean
+	title: string
+}) {
 	const max = Math.max(...buckets.map((bucket) => bucket.totalTokens), 1)
 	return (
-		<div className="token-panel">
+		<section className={flow ? 'token-flow' : 'token-panel'}>
 			<h2>{title}</h2>
 			{buckets.map((bucket) => (
 				<div className="usage-bar" key={bucket.key}>
@@ -1448,42 +2058,58 @@ function TokenPanel({ buckets, title }: { buckets: TokenUsageBucket[]; title: st
 					</span>
 				</div>
 			))}
-		</div>
+		</section>
 	)
 }
 
 function SettingsPage({
 	savedTick,
+	saving,
+	section,
+	setMessage,
+	setSection,
 	settings,
 	updateSettings,
 	versions,
 }: {
 	savedTick: boolean
+	saving: boolean
+	section: SettingsSectionId
+	setMessage: (message: string | null) => void
+	setSection: (section: SettingsSectionId) => void
 	settings: LauncherSettings
-	updateSettings: (patch: LauncherSettingsPatch) => Promise<void>
+	updateSettings: (patch: LauncherSettingsPatch) => Promise<boolean>
 	versions: AppVersions
 }) {
-	const [section, setSection] = useState<SettingsSectionId>('launch')
-
 	return (
 		<div className="page page--settings">
 			<header className="page-header safe-actions">
 				<div>
 					<h1>设置</h1>
-					<p>启动默认值、启动器行为、日志、内核与关于。</p>
+					<p>批量启动、退出行为、日志、内核与关于。</p>
 				</div>
-				{savedTick ? (
-					<div className="saved-indicator">
-						<Check size={15} />
-						已保存
-					</div>
-				) : null}
+				<div aria-live="polite" className="settings-save-state">
+					{saving ? (
+						<>
+							<LoaderCircle className="spin" size={15} />
+							正在保存
+						</>
+					) : savedTick ? (
+						<>
+							<Check size={15} />
+							已保存
+						</>
+					) : (
+						'修改后自动保存'
+					)}
+				</div>
 			</header>
 
 			<div className="settings-layout">
-				<nav className="settings-tabs">
+				<nav aria-label="设置分类" className="settings-tabs">
 					{settingsSections.map((item) => (
 						<button
+							aria-current={section === item.id ? 'page' : undefined}
 							className={section === item.id ? 'settings-tabs__item--active' : ''}
 							key={item.id}
 							onClick={() => setSection(item.id)}
@@ -1493,83 +2119,39 @@ function SettingsPage({
 						</button>
 					))}
 				</nav>
-				<div className="settings-panels">
+				<div aria-busy={saving} className="settings-panels" inert={saving}>
 					{section === 'launch' ? (
 						<section className="settings-panel">
-							<h2>启动默认值</h2>
+							<h2>批量启动</h2>
+							<p className="settings-panel__intro">控制“打开选中”队列，修改后下一批立即使用。</p>
 							<NumberSetting
-								label="默认窗口宽度"
-								onChange={(value) => updateSettings({ launch: { windowWidth: value } })}
-								value={settings.launch.windowWidth}
-							/>
-							<NumberSetting
-								label="默认窗口高度"
-								onChange={(value) => updateSettings({ launch: { windowHeight: value } })}
-								value={settings.launch.windowHeight}
-							/>
-							<TextSetting
-								label="起始页 URL"
-								onChange={(value) => updateSettings({ launch: { startUrl: value } })}
-								value={settings.launch.startUrl}
-							/>
-							<NumberSetting
+								hint="批量打开时的并发数量"
 								label="同时打开上限"
+								max={12}
+								min={1}
 								onChange={(value) => updateSettings({ launch: { concurrencyLimit: value } })}
 								value={settings.launch.concurrencyLimit}
 							/>
 							<NumberSetting
-								label="错峰间隔 ms"
+								hint="降低同时启动时的资源峰值"
+								label="错峰间隔"
+								max={5000}
+								min={0}
 								onChange={(value) => updateSettings({ launch: { staggerMs: value } })}
+								step={100}
+								suffix="ms"
 								value={settings.launch.staggerMs}
 							/>
-							<SelectSetting
-								label="新建画像类型"
-								onChange={(value) =>
-									updateSettings({
-										launch: { profileType: value as LauncherSettings['launch']['profileType'] },
-									})
-								}
-								options={['persistent', 'incognito']}
-								value={settings.launch.profileType}
-							/>
-							<SelectSetting
-								label="代理模式"
-								onChange={(value) =>
-									updateSettings({
-										launch: { proxyMode: value as LauncherSettings['launch']['proxyMode'] },
-									})
-								}
-								options={['none', 'system', 'custom']}
-								value={settings.launch.proxyMode}
-							/>
-							<NumberSetting
-								label="默认缩放"
-								onChange={(value) => updateSettings({ launch: { zoom: value } })}
-								value={settings.launch.zoom}
-							/>
-							<SelectSetting
-								label="界面语言"
-								onChange={(value) => updateSettings({ launch: { language: value } })}
-								options={['zh-CN', 'en-US']}
-								value={settings.launch.language}
-							/>
+							<p className="settings-panel__note">
+								<Info size={15} />
+								窗口大小、起始页、画像类型、代理、缩放与语言将在运行时接入后开放。
+							</p>
 						</section>
 					) : null}
 					{section === 'behavior' ? (
 						<section className="settings-panel">
 							<h2>启动器行为</h2>
-							<SelectSetting
-								label="关闭按钮行为"
-								onChange={(value) =>
-									updateSettings({
-										behavior: {
-											closeAction: value as LauncherSettings['behavior']['closeAction'],
-										},
-									})
-								}
-								options={['ask', 'minimizeToTray', 'quit']}
-								value={settings.behavior.closeAction}
-							/>
+							<p className="settings-panel__intro">浏览器仍在运行时，决定关闭问学后的处理方式。</p>
 							<SelectSetting
 								label="退出处理"
 								onChange={(value) =>
@@ -1579,49 +2161,51 @@ function SettingsPage({
 										},
 									})
 								}
-								options={['ask', 'launcherOnly', 'closeBrowsers']}
+								options={[
+									{ value: 'ask', label: '每次询问' },
+									{ value: 'launcherOnly', label: '仅退出启动器' },
+									{ value: 'closeBrowsers', label: '同时关闭浏览器' },
+								]}
 								value={settings.behavior.exitWithBrowsers}
 							/>
-							<CheckboxSetting
-								checked={settings.behavior.openAtLogin}
-								label="开机自启"
-								onChange={(value) => updateSettings({ behavior: { openAtLogin: value } })}
-							/>
-							<TextSetting
-								label="默认下载目录"
-								onChange={(value) => updateSettings({ behavior: { downloadDir: value } })}
-								value={settings.behavior.downloadDir}
-							/>
+							<p className="settings-panel__note">
+								<Info size={15} />
+								关闭按钮策略、开机自启与下载目录将在对应系统能力接入后开放。
+							</p>
 						</section>
 					) : null}
 					{section === 'logs' ? (
 						<section className="settings-panel">
 							<h2>日志</h2>
+							<p className="settings-panel__intro">日志只保存在本机，并按时长和条数自动裁剪。</p>
 							<NumberSetting
-								label="保留时长 天"
+								hint="超过时长的记录会自动清理"
+								label="保留时长"
+								max={90}
+								min={1}
 								onChange={(value) => updateSettings({ logs: { retentionDays: value } })}
+								suffix="天"
 								value={settings.logs.retentionDays}
 							/>
 							<NumberSetting
+								hint="超过上限时优先清理最旧记录"
 								label="最大条数"
+								max={100000}
+								min={100}
 								onChange={(value) => updateSettings({ logs: { maxEntries: value } })}
+								step={100}
 								value={settings.logs.maxEntries}
 							/>
 							<SelectSetting
 								label="最低捕获级别"
 								onChange={(value) => updateSettings({ logs: { minLevel: value as LogLevel } })}
-								options={['debug', 'info', 'warn', 'error']}
+								options={[
+									{ value: 'debug', label: 'Debug' },
+									{ value: 'info', label: 'Info' },
+									{ value: 'warn', label: 'Warn' },
+									{ value: 'error', label: 'Error' },
+								]}
 								value={settings.logs.minLevel}
-							/>
-							<CheckboxSetting
-								checked={settings.logs.captureLlmRequests}
-								label="捕获 LLM 请求"
-								onChange={(value) => updateSettings({ logs: { captureLlmRequests: value } })}
-							/>
-							<CheckboxSetting
-								checked={settings.logs.captureLlmResponses}
-								label="捕获 LLM 响应"
-								onChange={(value) => updateSettings({ logs: { captureLlmResponses: value } })}
 							/>
 							<SelectSetting
 								label="默认导出格式"
@@ -1632,15 +2216,24 @@ function SettingsPage({
 										},
 									})
 								}
-								options={['json', 'ndjson', 'text']}
+								options={[
+									{ value: 'json', label: 'JSON' },
+									{ value: 'ndjson', label: 'NDJSON' },
+									{ value: 'text', label: '纯文本' },
+								]}
 								value={settings.logs.defaultExportFormat}
 							/>
+							<p className="settings-panel__note">
+								<Info size={15} />
+								LLM 请求与响应捕获将在采集链路接入后开放。
+							</p>
 						</section>
 					) : null}
 					{section === 'kernel' ? (
 						<section className="settings-panel">
 							<h2>浏览器内核</h2>
-							<div className="about-card">
+							<p className="settings-panel__intro">随问学安装并由启动器统一管理的运行时版本。</p>
+							<div className="version-list">
 								<span>Browser</span>
 								<strong>{versions.browser}</strong>
 								<span>Extension</span>
@@ -1651,7 +2244,8 @@ function SettingsPage({
 					{section === 'about' ? (
 						<section className="settings-panel">
 							<h2>关于</h2>
-							<div className="about-card">
+							<p className="settings-panel__intro">问学 WenXue · ask for everything</p>
+							<div className="version-list">
 								<span>App</span>
 								<strong>{versions.app}</strong>
 								<span>Browser</span>
@@ -1661,7 +2255,18 @@ function SettingsPage({
 							</div>
 							<button
 								className="soft-button"
-								onClick={() => void window.wenxue.app.openLogs()}
+								onClick={() => {
+									void window.wenxue.app
+										.openLogs()
+										.then((result) => {
+											if (!result.ok) {
+												setMessage(result.error ?? strings.openLogsFallback)
+											}
+										})
+										.catch((error: unknown) =>
+											setMessage(readCloudBaseErrorMessage(error, strings.openLogsFallback)),
+										)
+								}}
 								type="button"
 							>
 								<FolderOpen size={15} />
@@ -1676,39 +2281,99 @@ function SettingsPage({
 }
 
 function NumberSetting({
+	hint,
 	label,
+	max,
+	min,
 	onChange,
+	step,
+	suffix,
 	value,
 }: {
+	hint?: string
 	label: string
-	onChange: (value: number) => void
+	max?: number
+	min?: number
+	onChange: (value: number) => Promise<boolean>
+	step?: number
+	suffix?: string
 	value: number
 }) {
-	return (
-		<label className="setting-row">
-			<span>{label}</span>
-			<input
-				onBlur={(event) => onChange(Number(event.target.value))}
-				type="number"
-				defaultValue={value}
-			/>
-		</label>
-	)
-}
+	const [draft, setDraft] = useState(String(value))
+	const [invalid, setInvalid] = useState(false)
+	const [committing, setCommitting] = useState(false)
+	const canonicalValueRef = useRef(value)
+	const resolvedStep = step ?? 1
 
-function TextSetting({
-	label,
-	onChange,
-	value,
-}: {
-	label: string
-	onChange: (value: string) => void
-	value: string
-}) {
+	useEffect(() => {
+		canonicalValueRef.current = value
+		setDraft(String(value))
+	}, [value])
+
+	const commit = async () => {
+		const next = Number(draft)
+		const stepOffset = next - (min ?? 0)
+		const matchesStep =
+			Math.abs(stepOffset / resolvedStep - Math.round(stepOffset / resolvedStep)) < 1e-9
+		if (
+			!draft.trim() ||
+			!Number.isFinite(next) ||
+			(min !== undefined && next < min) ||
+			(max !== undefined && next > max) ||
+			!matchesStep
+		) {
+			setInvalid(true)
+			return
+		}
+		setInvalid(false)
+		if (next === value) return
+		setCommitting(true)
+		try {
+			if (!(await onChange(next))) setDraft(String(canonicalValueRef.current))
+		} finally {
+			setCommitting(false)
+		}
+	}
+
 	return (
 		<label className="setting-row">
-			<span>{label}</span>
-			<input onBlur={(event) => onChange(event.target.value)} type="text" defaultValue={value} />
+			<SettingCopy hint={hint} label={label} />
+			<div className="setting-control">
+				<div className="setting-input-wrap">
+					<input
+						aria-invalid={invalid}
+						disabled={committing}
+						max={max}
+						min={min}
+						onBlur={() => void commit()}
+						onChange={(event) => {
+							setDraft(event.target.value)
+							setInvalid(false)
+						}}
+						onKeyDown={(event) => {
+							if (event.key === 'Enter') event.currentTarget.blur()
+							if (event.key === 'Escape') {
+								event.preventDefault()
+								setDraft(String(value))
+								setInvalid(false)
+							}
+						}}
+						step={resolvedStep}
+						type="number"
+						value={draft}
+					/>
+					{suffix ? <span>{suffix}</span> : null}
+				</div>
+				{invalid ? (
+					<small className="setting-error">
+						{min !== undefined && max !== undefined
+							? `请输入 ${min}–${max} 范围内、步长为 ${resolvedStep} 的数字`
+							: min !== undefined
+								? `请输入不小于 ${min}、步长为 ${resolvedStep} 的数字`
+								: `请输入不大于 ${max}、步长为 ${resolvedStep} 的数字`}
+					</small>
+				) : null}
+			</div>
 		</label>
 	)
 }
@@ -1720,46 +2385,40 @@ function SelectSetting({
 	value,
 }: {
 	label: string
-	onChange: (value: string) => void
-	options: string[]
+	onChange: (value: string) => Promise<boolean>
+	options: Array<{ label: string; value: string }>
 	value: string
 }) {
 	return (
 		<label className="setting-row">
-			<span>{label}</span>
-			<select onChange={(event) => onChange(event.target.value)} value={value}>
-				{options.map((option) => (
-					<option key={option}>{option}</option>
-				))}
-			</select>
+			<SettingCopy label={label} />
+			<div className="setting-control">
+				<select onChange={(event) => void onChange(event.target.value)} value={value}>
+					{options.map((option) => (
+						<option key={option.value} value={option.value}>
+							{option.label}
+						</option>
+					))}
+				</select>
+			</div>
 		</label>
 	)
 }
 
-function CheckboxSetting({
-	checked,
-	label,
-	onChange,
-}: {
-	checked: boolean
-	label: string
-	onChange: (value: boolean) => void
-}) {
+function SettingCopy({ hint, label }: { hint?: string; label: string }) {
 	return (
-		<label className="setting-row">
-			<span>{label}</span>
-			<input
-				checked={checked}
-				onChange={(event) => onChange(event.target.checked)}
-				type="checkbox"
-			/>
-		</label>
+		<span className="setting-copy">
+			<strong>{label}</strong>
+			{hint ? <small>{hint}</small> : null}
+		</span>
 	)
 }
 
-function StatusBadge({ status }: { status: BrowserStatus }) {
+function StatusBadge({ compact = false, status }: { compact?: boolean; status: BrowserStatus }) {
 	return (
-		<span className={`status-badge status-badge--${status}`}>
+		<span
+			className={`status-badge status-badge--${status} ${compact ? 'status-badge--compact' : ''}`}
+		>
 			<i />
 			{statusLabels[status]}
 		</span>
@@ -1768,12 +2427,14 @@ function StatusBadge({ status }: { status: BrowserStatus }) {
 
 function EmptyState({
 	action,
+	actionIcon: ActionIcon = Plus,
 	actionLabel,
 	children,
 	title,
 }: {
-	action: () => void
-	actionLabel: string
+	action?: () => void
+	actionIcon?: LucideIcon
+	actionLabel?: string
 	children: string
 	title: string
 }) {
@@ -1784,10 +2445,12 @@ function EmptyState({
 			</div>
 			<h2>{title}</h2>
 			<p>{children}</p>
-			<button className="primary-button" onClick={action} type="button">
-				<Plus size={16} />
-				{actionLabel}
-			</button>
+			{action && actionLabel ? (
+				<button className="primary-button" onClick={action} type="button">
+					<ActionIcon size={16} />
+					{actionLabel}
+				</button>
+			) : null}
 		</section>
 	)
 }
