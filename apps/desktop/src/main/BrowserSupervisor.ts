@@ -46,6 +46,7 @@ export class BrowserSupervisor {
 	private readonly listeners = new Set<StatusListener>()
 	private readonly profileListeners = new Set<ProfileStatusListener>()
 	private readonly instances = new Map<string, BrowserInstance>()
+	private readonly pendingLaunches = new Map<string, object>()
 	private readonly statusValues = new Map<string, BrowserStatus>()
 
 	constructor(private readonly deps: BrowserSupervisorDeps) {
@@ -70,26 +71,33 @@ export class BrowserSupervisor {
 			return
 		}
 
-		const userDataDir = await this.deps.profiles.ensureProfile(profileId)
-		const binary = this.deps.resources.browserBinary()
-		const argv = buildArgv({
-			userDataDir,
-			extensionDir: this.deps.resources.extensionDir(),
-			startUrl: options.startUrl ?? 'chrome://newtab',
-		})
-
 		this.setProfileStatus(profileId, 'launching')
 		this.deps.logger.log('BrowserSupervisor', 'info', `launching profile ${profileId}`)
+		const launchToken = {}
+		this.pendingLaunches.set(profileId, launchToken)
 
 		let child: BrowserProcessLike
+		let binary: string
+		let argv: string[]
 		try {
+			const userDataDir = await this.deps.profiles.prepareForUnpackedExtension(profileId)
+			if (this.pendingLaunches.get(profileId) !== launchToken) return
+			binary = this.deps.resources.browserBinary()
+			argv = buildArgv({
+				userDataDir,
+				extensionDir: this.deps.resources.extensionDir(),
+				startUrl: options.startUrl ?? 'chrome://newtab',
+			})
 			child = this.spawnBrowser(binary, argv)
 		} catch (error) {
+			if (this.pendingLaunches.get(profileId) !== launchToken) return
+			this.pendingLaunches.delete(profileId)
 			this.instances.delete(profileId)
 			this.setProfileStatus(profileId, 'error')
 			throw error
 		}
 
+		this.pendingLaunches.delete(profileId)
 		this.instances.set(profileId, {
 			child,
 			binary,
@@ -101,6 +109,7 @@ export class BrowserSupervisor {
 	}
 
 	async stop(profileId: string): Promise<void> {
+		this.pendingLaunches.delete(profileId)
 		const current = this.instances.get(profileId)
 		if (!current) {
 			this.setProfileStatus(profileId, 'idle')
@@ -175,7 +184,11 @@ export class BrowserSupervisor {
 	}
 
 	async requestShutdown(): Promise<void> {
-		await Promise.all(Array.from(this.instances.keys()).map((profileId) => this.stop(profileId)))
+		const profileIds = new Set([
+			...Array.from(this.instances.keys()),
+			...Array.from(this.pendingLaunches.keys()),
+		])
+		await Promise.all(Array.from(profileIds).map((profileId) => this.stop(profileId)))
 	}
 
 	private bindChildEvents(profileId: string, child: BrowserProcessLike): void {

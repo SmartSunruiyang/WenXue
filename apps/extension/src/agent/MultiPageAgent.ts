@@ -10,6 +10,7 @@ import { RemotePageController } from './RemotePageController'
 import SYSTEM_PROMPT from './system_prompt.md?raw'
 import { TabsController } from './TabsController'
 import { createTabTools } from './tabTools'
+import { createVisualObserveTools, type VisualModelConfig } from './visualObserve'
 
 /** Detect user language from browser settings */
 function detectLanguage(): 'en-US' | 'zh-CN' {
@@ -25,6 +26,7 @@ interface MultiPageAgentConfig extends AgentConfig {
 	 * 不传则回退到 agent 自身的模型作为 text、vision 留空(含图题进入人工)。
 	 */
 	chaoxingModels?: { text: LLMConfig; vision: LLMConfig }
+	visualObservationModel?: VisualModelConfig
 }
 
 export function createAgentRuntimeLifecycle({
@@ -96,10 +98,15 @@ export class MultiPageAgent extends PageAgentCore {
 			tabsController,
 			getModels: () => config.chaoxingModels ?? { text: fallbackTextModel, vision: undefined },
 		})
+		const visualObserveTools = createVisualObserveTools({
+			getVisionModel: () => config.visualObservationModel,
+			getTargetTabId: () => tabsController.currentTabId,
+		})
 		const customTools = {
 			...createTabTools(tabsController),
 			...createFrameTools(pageController),
 			...chaoxingTools,
+			...visualObserveTools,
 		}
 
 		// system prompt - auto-detect language if not specified

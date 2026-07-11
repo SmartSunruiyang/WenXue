@@ -17,7 +17,7 @@ describe('handleTabControlMessage activate_tab', () => {
 		const result = handleTabControlMessage(
 			{ type: 'TAB_CONTROL', action: 'activate_tab', payload: { tabId: 42 } },
 			sender,
-			sendResponse
+			sendResponse,
 		)
 
 		expect(result).toBe(true)
@@ -35,9 +35,32 @@ describe('handleTabControlMessage activate_tab', () => {
 		handleTabControlMessage(
 			{ type: 'TAB_CONTROL', action: 'activate_tab', payload: { tabId: 42 } },
 			sender,
-			sendResponse
+			sendResponse,
 		)
 
-		await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ error: 'No tab with id: 42.' }))
+		await vi.waitFor(() =>
+			expect(sendResponse).toHaveBeenCalledWith({ error: 'No tab with id: 42.' }),
+		)
+	})
+})
+
+describe('handleTabControlMessage get_active_tab', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals()
+	})
+
+	it('uses the last focused browser window instead of an arbitrary active tab', async () => {
+		const query = vi.fn(async () => [{ id: 42, windowId: 3 }])
+		vi.stubGlobal('chrome', { tabs: { query } })
+		const sendResponse = vi.fn()
+
+		handleTabControlMessage(
+			{ type: 'TAB_CONTROL', action: 'get_active_tab', payload: undefined },
+			sender,
+			sendResponse,
+		)
+
+		await vi.waitFor(() => expect(sendResponse).toHaveBeenCalled())
+		expect(query).toHaveBeenCalledWith({ active: true, lastFocusedWindow: true })
 	})
 })

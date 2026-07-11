@@ -59,6 +59,7 @@ describe('runtimeModelConfig', () => {
 			model: 'qwen3.7-plus',
 			apiKey: 'cloudbase-access-token',
 		})
+		expect(models.vision).toEqual(models.chaoxingModels.vision)
 	})
 
 	it('keeps custom BYO-Key models direct and does not require a user session', () => {
@@ -92,6 +93,7 @@ describe('runtimeModelConfig', () => {
 			apiKey: 'sk-user-owned',
 		})
 		expect(models.chaoxingModels.vision).toEqual(models.active)
+		expect(models.vision).toEqual(models.active)
 	})
 
 	it('keeps built-in models usable without a user session until the first send', () => {
@@ -110,6 +112,7 @@ describe('runtimeModelConfig', () => {
 			model: 'qwen3.7-plus',
 			apiKey: '',
 		})
+		expect(models.vision).toEqual(models.chaoxingModels.vision)
 	})
 
 	it('loads the persisted user session and ignores obsolete fallback flags', async () => {

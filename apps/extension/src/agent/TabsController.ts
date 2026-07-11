@@ -124,7 +124,7 @@ export class TabsController {
 		const result = await sendMessage({
 			type: 'TAB_CONTROL',
 			action: 'open_new_tab',
-			payload: { url },
+			payload: { url, windowId: this.windowId },
 		})
 
 		if (!result.success) {
@@ -166,12 +166,14 @@ export class TabsController {
 			throw new Error(`Tab ID ${tabId} not found in tab list.`)
 		}
 
-		// best-effort visual follow; logical switch proceeds even if the tab vanished mid-flight
-		await sendMessage({
+		const result = await sendMessage({
 			type: 'TAB_CONTROL',
 			action: 'activate_tab',
 			payload: { tabId },
 		})
+		if (!result?.success) {
+			throw new Error(`Failed to activate tab ID ${tabId}: ${result?.error ?? 'unknown error'}`)
+		}
 
 		await this.updateCurrentTabId(tabId)
 
@@ -200,7 +202,7 @@ export class TabsController {
 			if (this.currentTabId === tabId) {
 				const newCurrentTab = this.tabs[this.tabs.length - 1] || null
 				if (newCurrentTab) {
-					await this.switchToTab(newCurrentTab.id)
+					await this.switchToReplacementTab(newCurrentTab.id)
 				} else {
 					await this.updateCurrentTabId(null)
 				}
@@ -249,6 +251,15 @@ export class TabsController {
 
 		this.currentTabId = tabId
 		await chrome.storage.local.set({ currentTabId: tabId })
+	}
+
+	private async switchToReplacementTab(tabId: number): Promise<void> {
+		try {
+			await this.switchToTab(tabId)
+		} catch (error) {
+			await this.updateCurrentTabId(null)
+			throw error
+		}
 	}
 
 	async getTabInfo(tabId: number): Promise<{ title: string; url: string }> {
@@ -320,7 +331,9 @@ export class TabsController {
 				const shouldTrack = this.experimentalIncludeAllTabs || tab.groupId === this.tabGroupId
 				if (shouldTrack && tab.id != null) {
 					this.addTab({ id: tab.id, isInitial: false })
-					this.switchToTab(tab.id)
+					void this.switchToTab(tab.id).catch((error: unknown) => {
+						console.error(`${PREFIX} failed to activate a newly tracked tab`, error)
+					})
 				}
 			} else if (message.action === 'removed') {
 				const { tabId } = message.payload as { tabId: number }
@@ -330,9 +343,13 @@ export class TabsController {
 					if (this.currentTabId === tabId) {
 						const newCurrentTab = this.tabs[this.tabs.length - 1] || null
 						if (newCurrentTab) {
-							this.switchToTab(newCurrentTab.id)
+							void this.switchToReplacementTab(newCurrentTab.id).catch((error: unknown) => {
+								console.error(`${PREFIX} failed to activate the replacement tab`, error)
+							})
 						} else {
-							this.updateCurrentTabId(null)
+							void this.updateCurrentTabId(null).catch((error: unknown) => {
+								console.error(`${PREFIX} failed to clear the current tab`, error)
+							})
 						}
 					}
 				}

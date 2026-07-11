@@ -8,6 +8,7 @@ export interface LaunchOptions {
 export function buildArgv(opts: LaunchOptions): string[] {
 	const argv = [
 		`--user-data-dir=${opts.userDataDir}`,
+		`--disable-extensions-except=${opts.extensionDir}`,
 		`--load-extension=${opts.extensionDir}`,
 		'--no-first-run',
 		'--no-default-browser-check',

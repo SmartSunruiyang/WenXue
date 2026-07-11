@@ -10,7 +10,7 @@ const debug = console.debug.bind(console, `\x1b[90m${PREFIX}\x1b[0m`)
 export function handleTabControlMessage(
 	message: { type: 'TAB_CONTROL'; action: TabAction; payload: any },
 	sender: chrome.runtime.MessageSender,
-	sendResponse: (response: unknown) => void
+	sendResponse: (response: unknown) => void,
 ): true | undefined {
 	const { action, payload } = message
 
@@ -18,7 +18,7 @@ export function handleTabControlMessage(
 		case 'get_active_tab': {
 			debug('get_active_tab')
 			chrome.tabs
-				.query({ active: true })
+				.query({ active: true, lastFocusedWindow: true })
 				.then((tabs) => {
 					debug('get_active_tab: success', tabs)
 					sendResponse({ success: true, tab: tabs[0] })
@@ -46,7 +46,11 @@ export function handleTabControlMessage(
 		case 'open_new_tab': {
 			debug('open_new_tab', payload)
 			chrome.tabs
-				.create({ url: payload.url, active: true })
+				.create({
+					url: payload.url,
+					active: true,
+					...(typeof payload.windowId === 'number' ? { windowId: payload.windowId } : {}),
+				})
 				.then((newTab) => {
 					debug('open_new_tab: success', newTab)
 					sendResponse({ success: true, tabId: newTab.id })

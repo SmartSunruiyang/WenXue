@@ -45,6 +45,7 @@ function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
 	}
 	const profiles = {
 		ensureProfile: vi.fn(async (profileId = 'default') => `/profiles/${profileId}`),
+		prepareForUnpackedExtension: vi.fn(async (profileId = 'default') => `/profiles/${profileId}`),
 		listProfiles: vi.fn(() => ['default']),
 	} as unknown as ProfileStore
 	const logger: AppLogger = {
@@ -85,10 +86,11 @@ function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
 
 describe('BrowserSupervisor', () => {
 	it('starts idle and emits launching then running during launch', async () => {
-		const { supervisor, child, events } = createSupervisorHarness()
+		const { supervisor, child, events, profiles } = createSupervisorHarness()
 
 		expect(supervisor.status()).toBe('idle')
 		await supervisor.launch()
+		expect(profiles.prepareForUnpackedExtension).toHaveBeenCalledWith('default')
 		expect(events).toEqual(['launching'])
 
 		child.emit('spawn')
@@ -194,6 +196,69 @@ describe('BrowserSupervisor', () => {
 		expect(events).toEqual(['launching'])
 	})
 
+	it('claims the profile before awaiting preparation so concurrent launches cannot race', async () => {
+		const { supervisor, spawns, events, profiles } = createSupervisorHarness()
+		let finishPreparation!: (dir: string) => void
+		vi.mocked(profiles.prepareForUnpackedExtension).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					finishPreparation = resolve
+				}),
+		)
+
+		const first = supervisor.launch()
+		const second = supervisor.launch()
+		await vi.waitFor(() => expect(profiles.prepareForUnpackedExtension).toHaveBeenCalledOnce())
+		expect(events).toEqual(['launching'])
+
+		finishPreparation('/profiles/default')
+		await Promise.all([first, second])
+
+		expect(spawns).toHaveLength(1)
+	})
+
+	it('cancels a pending launch when the profile is stopped during preparation', async () => {
+		const { supervisor, spawns, events, profiles } = createSupervisorHarness()
+		let finishPreparation!: (dir: string) => void
+		vi.mocked(profiles.prepareForUnpackedExtension).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					finishPreparation = resolve
+				}),
+		)
+
+		const launch = supervisor.launch()
+		await vi.waitFor(() => expect(profiles.prepareForUnpackedExtension).toHaveBeenCalledOnce())
+		await supervisor.stop('default')
+		expect(supervisor.status()).toBe('idle')
+
+		finishPreparation('/profiles/default')
+		await launch
+
+		expect(spawns).toHaveLength(0)
+		expect(events).toEqual(['launching', 'idle'])
+	})
+
+	it('cancels pending launches during application shutdown', async () => {
+		const { supervisor, spawns, profiles } = createSupervisorHarness()
+		let finishPreparation!: (dir: string) => void
+		vi.mocked(profiles.prepareForUnpackedExtension).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					finishPreparation = resolve
+				}),
+		)
+
+		const launch = supervisor.launch()
+		await vi.waitFor(() => expect(profiles.prepareForUnpackedExtension).toHaveBeenCalledOnce())
+		await supervisor.requestShutdown()
+		finishPreparation('/profiles/default')
+		await launch
+
+		expect(spawns).toHaveLength(0)
+		expect(supervisor.status()).toBe('idle')
+	})
+
 	it('focuses the existing browser while running without replacing the child', async () => {
 		const { supervisor, child, spawns, focusCalls, events } = createSupervisorHarness()
 
@@ -217,9 +282,7 @@ describe('BrowserSupervisor', () => {
 
 		expect(spawns).toHaveLength(1)
 		expect(focusCalls).toHaveLength(1)
-		expect(focusCalls[0].argv).toContain(
-			'http://127.0.0.1:4321/wenxue-user-session-handoff/test',
-		)
+		expect(focusCalls[0].argv).toContain('http://127.0.0.1:4321/wenxue-user-session-handoff/test')
 		expect(focusCalls[0].argv).not.toContain('chrome://newtab')
 	})
 

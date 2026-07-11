@@ -202,6 +202,10 @@ function createChromeStorageHarness(initial: Record<string, unknown> = {}) {
 		}),
 	}
 	const chromeHarness = {
+		runtime: {
+			sendMessage: vi.fn(async () => ({ ok: true, protocolVersion: 2 })),
+			reload: vi.fn(),
+		},
 		storage: {
 			local,
 			onChanged: {
@@ -277,6 +281,12 @@ describe('useAgent user session reload', () => {
 			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
 			apiKey: '',
 			model: 'qwen3.7-max',
+			visualObservationModel: {
+				baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+				apiKey: '',
+				model: 'qwen3.7-plus',
+				requiresApiKey: true,
+			},
 		})
 		expect(renders.at(-1)?.config).toMatchObject({
 			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
@@ -288,6 +298,44 @@ describe('useAgent user session reload', () => {
 		await probe.unmount()
 		expect(storage.chrome.storage.onChanged.removeListener).toHaveBeenCalledTimes(1)
 		expect(storage.listenerCount()).toBe(0)
+	})
+
+	it('passes the named-tool compatibility setting to the visual model', async () => {
+		const storage = createChromeStorageHarness({
+			advancedConfig: { disableNamedToolChoice: true },
+		})
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+
+		const probe = await renderAgentProbe(() => {})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		expect(multiPageAgentMockState.instances[0].options).toMatchObject({
+			disableNamedToolChoice: true,
+			visualObservationModel: { disableNamedToolChoice: true },
+		})
+
+		await probe.unmount()
+	})
+
+	it('keeps the non-visual agent available when the visual background cannot self-refresh', async () => {
+		const storage = createChromeStorageHarness({ visualObserveProtocolReloadAttempt: 2 })
+		storage.chrome.runtime.sendMessage = vi.fn(async () => ({ error: 'Unknown message type' }))
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+		const renders: UseAgentResult[] = []
+
+		const probe = await renderAgentProbe((result) => {
+			renders.push(result)
+		})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		expect(renders.at(-1)?.config).not.toBeNull()
+		expect(errorSpy).toHaveBeenCalledWith(
+			'[useAgent] Visual observation background is unavailable:',
+			expect.any(Error),
+		)
+
+		await probe.unmount()
 	})
 
 	it('rebuilds the built-in agent after the desktop handoff stores a user session', async () => {
@@ -318,6 +366,11 @@ describe('useAgent user session reload', () => {
 			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
 			apiKey: USER_ACCESS_TOKEN,
 			model: 'qwen3.7-max',
+			visualObservationModel: {
+				baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
+				apiKey: USER_ACCESS_TOKEN,
+				model: 'qwen3.7-plus',
+			},
 		})
 		expect(renders.at(-1)?.config).toMatchObject({
 			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,

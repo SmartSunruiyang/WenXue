@@ -90,13 +90,13 @@ vendor 原则：
 
 ### 4.1 主进程模块（模块卡片与契约的权威是 ARCHITECTURE §2/§3，此处为速览）
 
-| 模块                     | 职责                                                                                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BrowserResources`       | 定位资源路径（CfT 二进制、插件产物）、读 `browser.lock.json` 提供版本（纯函数）                                                                               |
-| `LaunchConfig`           | 由路径参数组装 CfT argv（纯函数，参数全集见 §4.3）                                                                                                            |
-| `BrowserSupervisor`      | 持有子进程句柄；监听 `exit`/`error`；状态机：`idle → launching → running → idle`；停止时 SIGTERM 后 2s 未退出则 SIGKILL；崩溃（非 0 退出码）或停止超时通知 UI |
-| `ProfileStore`           | 画像目录创建与定位。Demo 仅 `default` 一个画像，目录结构按多画像设计                                                                                          |
-| `AppPaths` / `AppLogger` | `app.getPath('userData')` 目录布局 / electron-log，主进程与 CfT stdout/stderr 各一份滚动日志                                                                  |
+| 模块                     | 职责                                                                                                                                                                       |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BrowserResources`       | 定位资源路径（CfT 二进制、插件产物）、读 `browser.lock.json` 提供版本（纯函数）                                                                                            |
+| `LaunchConfig`           | 由路径参数组装 CfT argv（纯函数，参数全集见 §4.3）                                                                                                                         |
+| `BrowserSupervisor`      | 持有子进程句柄；监听 `exit`/`error`；状态机：`idle → launching → running → idle`；停止时 SIGTERM 后 2s 未退出则 SIGKILL；崩溃（非 0 退出码）或停止超时通知 UI              |
+| `ProfileStore`           | 画像目录创建与定位；启动前安全开启专用画像的 unpacked-extension Developer Mode（POSIX SingletonLock / Windows lockfile 防并发占用，Preferences 临时文件 fsync 后原子替换） |
+| `AppPaths` / `AppLogger` | `app.getPath('userData')` 目录布局 / electron-log，主进程与 CfT stdout/stderr 各一份滚动日志                                                                               |
 
 ### 4.2 数据目录布局（多开预留）
 
@@ -114,6 +114,7 @@ vendor 原则：
 | 参数                          | 值                            | 目的                                                                                        |
 | ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------- |
 | `--user-data-dir`             | `<userData>/profiles/default` | 与系统浏览器完全隔离；CfT 自带 ProcessSingleton：同画像二次启动自动聚焦已有窗口，天然防多开 |
+| `--disable-extensions-except` | `<resources>/extension`       | 专用 CfT 画像只启用问学扩展，避免其他扩展干扰消息与截图链路                                 |
 | `--load-extension`            | `<resources>/extension`       | 插件注入（CfT 永久保留该参数）                                                              |
 | `--no-first-run`              | —                             | 跳过首次运行向导                                                                            |
 | `--no-default-browser-check`  | —                             | 不弹"设为默认浏览器"                                                                        |
@@ -175,11 +176,13 @@ extraResources:
 | 5   | 页面级 API（`window.PAGE_AGENT_EXT`） | 上游的 token 鉴权对外 API，Demo 不需要 → 默认关闭（编译开关保留，正式版再评估）                                                                 |
 | 6   | 遥测确认                              | 审计上游是否有任何外发统计/Demo LLM 端点残留，全部移除或指向空实现                                                                              |
 | 7   | 历史与存储                            | 沿用 IndexedDB 历史、`chrome.storage.local` 存配置（含 API Key，不出本机）                                                                      |
+| 8   | 视觉观察工具                          | `visual_observe` 由 Agent 自主调用，截取当前可见视口并经视觉模型返回结构化 JSON；图片本体不落盘、不入历史、不入日志                             |
 
 - 权限审计补充：保留 `webNavigation` 权限，用于 `list_frames` 获取 frame 元数据，并支撑按 `frame_id` 执行 JavaScript；这是跨 frame JS 能力对权限最小化原则的显式权衡。
+- 权限审计补充：`visual_observe` 使用 `chrome.tabs.captureVisibleTab` 截取 Agent 当前管理 tab 的可见视口。v2 capture 消息必须携带逻辑 targetTabId，background 在截图后复核 active tab id 与 URL，目标不存在时 fail closed，不回退截图任意活动 tab；该必填约束相对旧 wire contract 不兼容，所以显式升为 v2。Chrome Tabs API 文档说明匹配 host permissions 可支持该能力；本项目已有 `<all_urls>` host permission，首版不新增 manifest 权限。特权页、浏览器 UI、不可截图页面等失败时返回结构化错误并建议改用 DOM 检查或人工处理。
 - 页面级 API 补充：本期 main-world executor 是独立 eval 通道，仅服务 `execute_javascript` 的 `world: 'main'`，不启用上游 `window.PAGE_AGENT_EXT`。
 
-构建：`pnpm -F extension build` → WXT 产出 `.output/chrome-mv3/`，被 desktop 打包步骤消费。
+构建：`pnpm -F extension build` → WXT 产出 `.output/chrome-mv3/`，被 desktop 打包步骤消费。仓库根 `pnpm dev` 先构建 extension 再启动 desktop，避免持久画像注册旧 MV3 service worker；修改 background 后必须重启该开发链。专用画像启动前由 ProfileStore 开启 Developer Mode，使 unpacked extension 的 service worker 能从当前目录重新注册；sidepanel/hub 再以 v2 握手探测，并用 Web Locks 在 extension origin 内互斥、最多调用一次 `chrome.runtime.reload()`，失败时仅视觉工具降级，不阻断 DOM Agent。
 
 ## 7. 业务边界矩阵（插件 / 桌面端 / 未来后端）
 
@@ -245,18 +248,19 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ### 8.3 冒烟测试（发布门禁）
 
-`scripts/smoke-launch.ts`：以 `--remote-debugging-pipe` 启动打包产物中的 CfT → CDP `Target.getTargets` 断言问学插件 service worker 存在 → 正常退出无残留进程。双平台 CI 各跑一次。
+`scripts/smoke-launch.ts`：以 `--remote-debugging-pipe` 启动打包产物中的 CfT → CDP `Target.getTargets` 断言问学插件 service worker 存在 → `VISUAL_OBSERVE/get_protocol_version` 返回当前版本 → 测试页截图返回 JPEG data URL 且 requested/captured tab id 一致 → 正常退出无残留进程。双平台 CI 各跑一次。
 
 ## 9. 错误处理与可观测性
 
-| 故障                                      | 检测                                          | 处置                                                       |
-| ----------------------------------------- | --------------------------------------------- | ---------------------------------------------------------- |
-| CfT 启动失败（二进制缺失/被杀毒拦截）     | spawn `error` 事件                            | UI 明确报错 + 指引（日志路径、重装提示）                   |
-| CfT 运行中崩溃                            | 非 0 退出码                                   | 系统通知 + 一键重启；日志留档                              |
-| 插件未加载                                | 冒烟测试期 CDP 校验；运行期用户反馈           | 属发布门禁问题，不做运行时自动修复                         |
-| LLM 401/限流/超时                         | 插件内（上游已有处理）/ CloudBase LLM Gateway | 侧边栏内联错误与重试引导；网关记录无敏感信息的状态码与延迟 |
-| 页面不可操作（sandbox/CSP/canvas/验证码） | Agent 自报告；`execute_javascript` 超时或错误 | 提示人工接管，任务可完成后继续或暂停并保留上下文           |
-| 日志                                      | `<userData>/logs/` 滚动文件                   | Demo 不上报云端；M1 评估接入上报                           |
+| 故障                                      | 检测                                          | 处置                                                             |
+| ----------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------- |
+| CfT 启动失败（二进制缺失/被杀毒拦截）     | spawn `error` 事件                            | UI 明确报错 + 指引（日志路径、重装提示）                         |
+| CfT 运行中崩溃                            | 非 0 退出码                                   | 系统通知 + 一键重启；日志留档                                    |
+| 插件未加载                                | 冒烟测试期 CDP 校验；运行期用户反馈           | 属发布门禁问题，不做运行时自动修复                               |
+| 插件页面与旧 service worker 协议不一致    | sidepanel `VISUAL_OBSERVE` 版本握手           | 单飞 reload 一次；仍失败则视觉工具结构化降级，DOM Agent 保持可用 |
+| LLM 401/限流/超时                         | 插件内（上游已有处理）/ CloudBase LLM Gateway | 侧边栏内联错误与重试引导；网关记录无敏感信息的状态码与延迟       |
+| 页面不可操作（sandbox/CSP/canvas/验证码） | Agent 自报告；`execute_javascript` 超时或错误 | 提示人工接管，任务可完成后继续或暂停并保留上下文                 |
+| 日志                                      | `<userData>/logs/` 滚动文件                   | Demo 不上报云端；M1 评估接入上报                                 |
 
 ## 10. 安全与隐私基线
 
@@ -265,6 +269,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 - Electron 渲染层全沙箱（contextIsolation + sandbox），IPC 面最小化且必须登记于 `ARCHITECTURE.md §3.2`；
 - CfT 日常启动不开远程调试端口/管道；
 - 插件权限最小化（改造清单 #4），页面级 API 默认关闭（#5）；
+- `visual_observe` 的截图 data URL 仅在插件内存中用于单次视觉模型请求；内置视觉网关缺少用户 session token 时在截图前失败，自定义无鉴权端点仍可用；不向供应商额外发送 tab URL/title；成功输出有字段/数组/总长度上限并拒绝 data URI/长 base64，错误诊断按当前 API key 精确去密；LLM fetch 日志对视觉请求体和响应体分别只记录 omitted 概要，不记录图片本体或模型回显；
 - `execute_javascript` 默认启用以满足真实网页排障/动态 DOM/iframe 场景；高风险部署可通过 `experimentalScriptExecutionTool: false` 关闭。`world: 'main'` 与 `frame_id` 仍受 sandbox、CSP、特权页、跨源隔离和执行超时约束，不承诺绕过页面安全边界；
 - 画像目录权限沿用 OS 用户级隔离；不写入任何系统级配置（无需管理员权限安装）。
 

@@ -17,13 +17,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { loadStoredConfig, saveStoredConfig } from '@/lib/configStorage'
 import type { UILanguage } from '@/lib/i18n'
 import {
+	BUILT_IN_MODEL_ID,
+	BUILT_IN_VISION_MODEL_ID,
 	type CustomModelConfig,
+	normalizeVisionModelId,
 	resolveSelectedLLMConfig,
 	resolveVisionLLMConfig,
 } from '@/lib/modelConfig'
 import { loadRuntimeAgentModels, type RuntimeAgentModels } from '@/lib/runtimeModelConfig'
 import { WENXUE_USER_SESSION_KEY } from '@/lib/userSession'
 import { MultiPageAgent } from './MultiPageAgent'
+import { ensureVisualObserveBackgroundReady } from './visualObserve'
 
 /** Language preference: undefined means follow system */
 export type LanguagePreference = SupportedLanguage | undefined
@@ -467,6 +471,16 @@ export function createAgentForConfig(
 		text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
 		vision: resolveVisionLLMConfig(config.visionModelId, customModels),
 	}
+	const resolvedVisualObservationModel = runtimeModels?.vision ?? chaoxingModels.vision
+	const resolvedVisionModelId = normalizeVisionModelId(config.visionModelId, customModels)
+	const visualObservationModel = {
+		...resolvedVisualObservationModel,
+		disableNamedToolChoice:
+			config.disableNamedToolChoice ?? resolvedVisualObservationModel.disableNamedToolChoice,
+		requiresApiKey:
+			resolvedVisionModelId === BUILT_IN_MODEL_ID ||
+			resolvedVisionModelId === BUILT_IN_VISION_MODEL_ID,
+	}
 	const activeModel = runtimeModels?.active ?? config
 
 	return new MultiPageAgent({
@@ -479,6 +493,7 @@ export function createAgentForConfig(
 		disableNamedToolChoice: config.disableNamedToolChoice,
 		compaction: config.compaction,
 		chaoxingModels,
+		visualObservationModel,
 		instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
 	})
 }
@@ -555,6 +570,13 @@ export function useAgent({ enableUserTakeover = false }: UseAgentOptions = {}): 
 			}
 
 			try {
+				try {
+					const backgroundState = await ensureVisualObserveBackgroundReady()
+					if (backgroundState === 'reloading' || abortController.signal.aborted) return
+				} catch (error) {
+					if (abortController.signal.aborted) return
+					console.error('[useAgent] Visual observation background is unavailable:', error)
+				}
 				await initializeAgentSession({
 					signal: abortController.signal,
 					loadConfig: () => loadStoredConfig(),

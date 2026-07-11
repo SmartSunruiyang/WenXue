@@ -32,6 +32,7 @@
 
 - **BrowserStatus 状态机**：`idle | launching | running | error`，由 BrowserSupervisor 对子进程事件归约，仅存于主进程内存，经 IPC 事件推送 UI。
 - **DOM 快照**：page-controller 每轮 Agent 循环对页面的文本化表示，用完即弃。
+- **VisualObservation**：Agent 主动调用 `visual_observe` 后，由当前可见视口截图经视觉模型生成的结构化 JSON；图片本体用完即弃，不进入历史、IndexedDB 或日志，JSON 作为工具结果进入任务历史。
 - **版本三元组**（app / browser / extension）：由打包资源与 lock 文件即时计算。
 
 ### 1.3 不变量（任何模块都必须维护）
@@ -88,7 +89,7 @@
 ```
 ## 模块名：LaunchConfig
 - 职责：由 { userDataDir, extensionDir, startUrl?, debugPipe? } 组装 CfT argv
-  （--load-extension、--no-first-run 等全集见 TECH-INFRA §4.3）
+  （--disable-extensions-except、--load-extension、--no-first-run 等全集见 TECH-INFRA §4.3）
 - 不负责：不触文件系统；不 spawn；不持状态
 - 输入：调用方传入的路径参数
 - 输出：string[]（给 BrowserSupervisor）
@@ -100,8 +101,8 @@
 
 ```
 ## 模块名：ProfileStore
-- 职责：画像目录创建/枚举/定位（demo 仅 default，接口按多画像设计）
-- 不负责：不管理画像内部内容（cookie/登录态归 CfT）；不删除画像
+- 职责：画像目录创建/枚举/定位（demo 仅 default，接口按多画像设计）；仅在 Developer Mode 尚未开启且画像无 POSIX `SingletonLock` / Windows `lockfile` 时，以保留权限的临时文件 + fsync + 原子 rename 设置 `extensions.ui.developer_mode`
+- 不负责：不管理画像 cookie/登录态；不在画像被 CfT 占用时修改 Chrome Preferences；已完成迁移的运行中画像只读短路，可继续走既有聚焦链
 - 输入：AppPaths
 - 输出：BrowserSupervisor、MainBootstrap
 - 关键类型/接口：ensureProfile(id = 'default'): Promise<string> · listProfiles(): string[]
@@ -190,7 +191,7 @@
 
 ```
 ## 模块名：BrowserSupervisor
-- 职责：按画像 spawn CfT、监听 exit/error、维护每个画像 idle→launching→running 状态机、崩溃通知（I1 执行者）；停止时先 SIGTERM，2s 未退出则 SIGKILL，5s 仍无退出事件标记 error
+- 职责：按画像 spawn CfT、监听 exit/error、维护每个画像 idle→launching→running 状态机、崩溃通知（I1 执行者）；在首个异步画像准备前先占用 launching 状态以防并发重复 spawn；停止时先 SIGTERM，2s 未退出则 SIGKILL，5s 仍无退出事件标记 error
 - 不负责：不组参数（LaunchConfig）；不定位资源（BrowserResources）；不渲染 UI
 - 输入：LaunchConfig、BrowserResources、ProfileStore、AppLogger
 - 输出：状态事件 → DesktopBridge
@@ -298,7 +299,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：Logging（L4）
-- 职责：定义日志类型与脱敏规则；为所有插件运行时提供统一 logger；由 background 作为 IndexedDB 单写入者完成追加、查询、导出、清空与自动清理；限定并记录 LLM fetch 请求/响应正文
+- 职责：定义日志类型与脱敏规则；为所有插件运行时提供统一 logger；由 background 作为 IndexedDB 单写入者完成追加、查询、导出、清空与自动清理；限定并记录 LLM fetch 请求/响应正文；视觉观察请求只记录脱敏概要，不记录 image data URL
 - 不负责：不渲染日志 UI；不写桌面日志；不远程上报；不持久化 API Key、Authorization 或 Bearer；不修改 packages/*（I2/I3/I5）
 - 输入：background / sidepanel / hub / newtab / content 的日志事件；ExtensionSettingsConfig 的 logRetentionDays/logMaxEntries；命中 LLM 端点的 fetch 请求与响应
 - 输出：已脱敏 LogEntry；LOG_APPEND/LOG_QUERY/LOG_EXPORT/LOG_CLEAR 响应；启动器遥测出口的日志批次
@@ -336,11 +337,21 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：MultiPageAgent（L5）
-- 职责：多标签编排、当前标签加载等待、向 PageAgentCore 透传压缩配置、问学产品层卡住检测（连续 3 次重复动作触发人工接管，done/ask_user/request_user_takeover/recall_steps 不计入重复）
+- 职责：多标签编排、当前标签加载等待、向 PageAgentCore 透传压缩配置、注入 `visual_observe` / `chaoxing_solve` / 多标签工具、问学产品层卡住检测（连续 3 次重复动作触发人工接管，done/ask_user/request_user_takeover/recall_steps 不计入重复）
 - 不负责：不渲染 UI
-- 输入：@page-agent/core、@page-agent/page-controller
+- 输入：@page-agent/core、@page-agent/page-controller、ExtensionSettingsConfig 解析出的文本/视觉模型配置
 - 输出：SidepanelApp
 - 持有状态：运行中任务
+```
+
+```
+## 模块名：VisualObservation（L5）
+- 职责：向 Agent 暴露 `visual_observe` 工具；以 `VISUAL_OBSERVE` v2 协议强制绑定 `TabsController.currentTabId` 截取当前可见视口；调用配置的视觉模型获取 schema 校验后的页面控件/遮挡/确认审计 JSON；初始化时用 origin-wide Web Lock 单飞探测 background 协议并最多自刷新一次；内置网关无 session token 时在截图前阻断
+- 不负责：不自动触发截图；不保存图片本体；不把 tab URL/title 发送给视觉模型；不输出 DOM index、点击坐标或动作命令；不绕过特权页、登录、验证码或页面安全限制
+- 输入：MultiPageAgent 的视觉模型配置、ExtensionEntrypoints 的 `VISUAL_OBSERVE` v2 截图桥、Agent 管理的当前 tab id
+- 输出：`visual_observe` 工具 JSON 字符串结果，进入 PageAgentCore step history
+- 关键类型/接口：createVisualObserveTools · ensureVisualObserveBackgroundReady · askVisualObservation · handleVisualObserveMessage · captureCurrentVisibleTab
+- 持有状态：background 协议 reload-attempt 标记；截图 data URL 仅存在于单次工具调用内存中。输出 schema/总 JSON 有上限并拒绝 data URI/长 base64 回灌
 ```
 
 ```
@@ -357,7 +368,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：ExtensionEntrypoints（L6/组装根）
-- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与消息路由、按 frameId 路由 PAGE_CONTROL、main-world JS 执行通道、`webNavigation` frame 发现、`list_frames` 工具、newtab 页面装配；接收 localhost `WENXUE_USER_SESSION` 外部消息并保存插件侧用户 session
+- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与集中式消息路由、按 frameId 路由 PAGE_CONTROL、main-world JS 执行通道、`webNavigation` frame 发现、`list_frames` 工具、版本化 `VISUAL_OBSERVE` 当前视口截图桥、newtab 页面装配；接收 localhost `WENXUE_USER_SESSION` 外部消息并保存插件侧用户 session；未知内部消息不抢占其他 listener 响应
 - 不负责：业务决策
 - 持有状态：会话级路由表
 ```
@@ -435,7 +446,9 @@ graph TD
         NewTabHome --> PA_UI["@page-agent/ui"]
         NewTabHome --> Logging
         ExtensionEntrypoints --> MultiPageAgent
+        ExtensionEntrypoints --> VisualObservation
         ExtensionEntrypoints --> Chaoxing["chaoxing/*"]
+        ExtensionEntrypoints --> ChromeTabs["chrome.tabs"]
         ExtensionEntrypoints --> WebNavigation["chrome.webNavigation"]
         SidepanelApp --> MultiPageAgent
         SidepanelApp --> ExtensionSettingsConfig
@@ -444,7 +457,9 @@ graph TD
         Logging --> ExtensionSettingsConfig
         MultiPageAgent --> PA_CORE["@page-agent/core"]
         MultiPageAgent --> PA_PC["@page-agent/page-controller"]
+        MultiPageAgent --> VisualObservation
         MultiPageAgent --> Logging
+        VisualObservation --> PA_LLMS["@page-agent/llms"]
         Chaoxing --> PA_LLMS["@page-agent/llms"]
         Chaoxing --> PA_PC["@page-agent/page-controller"]
         Chaoxing --> Logging
@@ -466,7 +481,7 @@ graph TD
 	    end
 ```
 
-> 桌面域与插件域无运行时控制边（I3）；当前仅允许用户 session 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；后台管理域只依赖 CloudBase Web Auth 与 AdminApi，不直接读写 NoSQL；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`chrome.webNavigation` 是浏览器外部 API，仅供 ExtensionEntrypoints 发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
+> 桌面域与插件域无运行时控制边（I3）；当前仅允许用户 session 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；后台管理域只依赖 CloudBase Web Auth 与 AdminApi，不直接读写 NoSQL；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`VisualObservation` 使用公开 LLMConfig 形状直接发 OpenAI-compatible 多模态请求，图片只在工具调用内存中存在；`chrome.tabs` 与 `chrome.webNavigation` 均为浏览器外部 API，分别供 ExtensionEntrypoints 截取当前可见视口和发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
 
 ### 3.1 依赖方向规则
 
@@ -657,6 +672,7 @@ graph TD
 - **启动器 App 化新增单测**：BrowserProfileStore 持久化与目录对齐；BrowserSupervisor 多画像并行与同画像 I1；DesktopBridge 新 IPC 契约；LauncherTelemetryIngest 日志/tokens 导入与二次清洗；窗口外壳选项纯函数。
 - **UserSessionStore / UserSessionHandoff / UsageCloudClient**：覆盖 session 字段校验、未登录拒绝启动/云端 summary、按 userId 读取与缓存云端 summary、云端失败时读同 userId 缓存、一次性 localhost handoff 成功/失败与重复完成保护。
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1/v2→v3 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
+- **VisualObservation**：覆盖 v2 协议握手与单次自刷新、跨 extension realm 的 Web Lock 单飞、v1 明确不兼容、目标 tab 必填及切换/导航 TOCTOU、旧 background/消息拒绝结构化降级、AbortError 传播、Qwen 强制工具参数与重试消息顺序、CloudBase 错误 envelope、自定义无鉴权端点/内置网关鉴权前置、输出/日志禁止 data URI 回灌；发布前以真实 CfT 走协议握手 + 截图 data URL + tab id 一致性 smoke。
 - **CloudBaseLlmGateway**：TDD 覆盖 token 缺失拒绝、CloudBase access token introspection、无 user_accounts/disabled 时请求 DashScope 前拒绝、active 用户放行、流式请求注入 `stream_options.include_usage`、SSE 末块 usage 解析、计量记录无正文/Key/敏感头。
 - **AdminApi / AdminConsole**：AdminApi 覆盖未登录/非 admin_users/禁用账号拒绝、viewer 只读、admin 可调整用户状态、tokens 聚合总数等于明细求和、响应不含敏感字段；AdminConsole 至少通过 `tsc --noEmit` 与 `vite build`，登录页/看板/用户状态表单需手动或浏览器 smoke 验证。
 - **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。

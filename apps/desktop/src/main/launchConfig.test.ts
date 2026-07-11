@@ -10,6 +10,7 @@ describe('buildArgv', () => {
 			}),
 		).toEqual([
 			'--user-data-dir=/tmp/wenxue-profile',
+			'--disable-extensions-except=/tmp/wenxue-extension',
 			'--load-extension=/tmp/wenxue-extension',
 			'--no-first-run',
 			'--no-default-browser-check',

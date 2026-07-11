@@ -68,6 +68,65 @@ describe('installLlmFetchLogging', () => {
 		uninstall()
 	})
 
+	it('does not log visual observation image request bodies', async () => {
+		const mockResponse = new Response(
+			JSON.stringify({
+				choices: [
+					{
+						message: {
+							tool_calls: [
+								{
+									function: {
+										arguments: JSON.stringify({
+											visibleRegion: 'data:image/jpeg;base64,SCREENSHOT_ECHO',
+										}),
+									},
+								},
+							],
+						},
+					},
+				],
+			}),
+			{ status: 200 },
+		)
+		const fakeFetch = vi.fn().mockResolvedValue(mockResponse)
+		globalThis.fetch = fakeFetch
+
+		const uninstall = installModule.installLlmFetchLogging()
+
+		await globalThis.fetch('https://api.example.com/v1/chat/completions', {
+			method: 'POST',
+			body: JSON.stringify({
+				model: 'vision-model',
+				messages: [
+					{ role: 'system', content: 'observe' },
+					{
+						role: 'user',
+						content: [
+							{ type: 'text', text: 'observe' },
+							{
+								type: 'image_url',
+								image_url: { url: 'data:image/jpeg;base64,SCREENSHOT' },
+							},
+						],
+					},
+				],
+			}),
+		})
+
+		await vi.waitFor(() => {
+			expect(logger.info).toHaveBeenCalled()
+		})
+		const payload = vi.mocked(logger.info).mock.calls.at(-1)?.[2]
+		const serialized = JSON.stringify(payload)
+		expect(serialized).not.toContain('data:image')
+		expect(serialized).not.toContain('SCREENSHOT')
+		expect(serialized).toContain('visual image request omitted')
+		expect(serialized).toContain('visual image response omitted')
+
+		uninstall()
+	})
+
 	it('does not log non-LLM fetches', async () => {
 		const fakeFetch = vi.fn().mockResolvedValue(new Response('ok'))
 		globalThis.fetch = fakeFetch

@@ -51,6 +51,20 @@ describe('createAgentRuntimeLifecycle', () => {
 	})
 })
 
+describe('MultiPageAgent visual observe tool', () => {
+	it('registers visual_observe as an explicit tool only', () => {
+		const agent = createAgent({
+			visualObservationModel: {
+				baseURL: 'https://api.example.com/v1',
+				model: 'vision-model',
+				apiKey: 'sk-vision',
+			},
+		})
+
+		expect(agent.tools.has('visual_observe')).toBe(true)
+	})
+})
+
 const result: ExecutionResult = {
 	success: true,
 	data: 'done',
@@ -133,7 +147,9 @@ function createToolCallResponse({
 
 function mockExecuteLoop(urls: string[]): void {
 	let observationIndex = 0
-	vi.mocked(TabsController.prototype.init).mockImplementation(async function () {
+	vi.mocked(TabsController.prototype.init).mockImplementation(async function (
+		this: TabsController,
+	) {
 		this.currentTabId = 1
 	})
 	vi.spyOn(TabsController.prototype, 'switchToTab').mockResolvedValue('Switched to tab 1')

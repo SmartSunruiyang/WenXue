@@ -3,11 +3,6 @@ import type { LLMConfig } from '@page-agent/llms'
 import { DEMO_CONFIG, DEMO_VISION_CONFIG } from '@/agent/constants'
 import type { ExtConfig } from '@/agent/useAgent'
 import {
-	loadExtensionUserSession,
-	type ExtensionUserSession,
-	type UserSessionStorageArea,
-} from '@/lib/userSession'
-import {
 	BUILT_IN_MODEL_ID,
 	BUILT_IN_VISION_MODEL_ID,
 	normalizeSelectedModelId,
@@ -16,9 +11,15 @@ import {
 	resolveVisionLLMConfig,
 	type CustomModelConfig,
 } from '@/lib/modelConfig'
+import {
+	loadExtensionUserSession,
+	type ExtensionUserSession,
+	type UserSessionStorageArea,
+} from '@/lib/userSession'
 
 export interface RuntimeAgentModels {
 	active: LLMConfig
+	vision: LLMConfig
 	chaoxingModels: {
 		text: LLMConfig
 		vision: LLMConfig
@@ -54,6 +55,7 @@ export function buildRuntimeAgentModels(
 
 	return {
 		active,
+		vision,
 		chaoxingModels: {
 			text: active,
 			vision,

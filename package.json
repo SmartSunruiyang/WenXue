@@ -7,7 +7,7 @@
   },
 	"scripts": {
 		"build": "pnpm -r build",
-		"dev": "pnpm -F desktop dev",
+		"dev": "pnpm -F extension build && pnpm -F desktop dev",
 		"dev:website": "pnpm -F website dev",
 		"test": "pnpm -r test",
     "lint": "eslint .",

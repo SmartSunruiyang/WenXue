@@ -1,14 +1,9 @@
-import { handleChaoxingControlMessage } from '@/agent/chaoxing/bridge.background'
-import { handlePageControlMessage } from '@/agent/RemotePageController.background'
-import { handleTabControlMessage, setupTabEventsPort } from '@/agent/TabsController.background'
-import {
-	clearExtensionUserSession,
-	loadExtensionUserSession,
-	saveExtensionUserSession,
-} from '@/lib/userSession'
-import { handleLogControlMessage } from '@/lib/log.background'
+import { setupTabEventsPort } from '@/agent/TabsController.background'
 import { configureLogger } from '@/lib/logger'
 import { purge } from '@/lib/logStore'
+import { saveExtensionUserSession } from '@/lib/userSession'
+
+import { routeBackgroundMessage } from './internal/backgroundMessageRouter'
 
 const LOG_PURGE_ALARM = 'log-purge'
 const DEFAULT_RETENTION_DAYS = 3
@@ -35,40 +30,7 @@ export default defineBackground(() => {
 
 	// message proxy
 
-	chrome.runtime.onMessage.addListener((message, sender, sendResponse): true | undefined => {
-		if (message.type === 'TAB_CONTROL') {
-			return handleTabControlMessage(message, sender, sendResponse)
-		} else if (message.type === 'PAGE_CONTROL') {
-			return handlePageControlMessage(message, sender, sendResponse)
-		} else if (message.type === 'CHAOXING_CONTROL') {
-			return handleChaoxingControlMessage(message, sender, sendResponse)
-		} else if (message.type?.startsWith('LOG_')) {
-			return handleLogControlMessage(message, sender, sendResponse)
-		} else if (message.type === 'WENXUE_GET_USER_SESSION') {
-			loadExtensionUserSession(chrome.storage.local).then(
-				(session) => sendResponse({ ok: true, session }),
-				(error: unknown) =>
-					sendResponse({
-						ok: false,
-						error: error instanceof Error ? error.message : 'Failed to load user session',
-					}),
-			)
-			return true
-		} else if (message.type === 'WENXUE_CLEAR_USER_SESSION') {
-			clearExtensionUserSession(chrome.storage.local).then(
-				() => sendResponse({ ok: true }),
-				(error: unknown) =>
-					sendResponse({
-						ok: false,
-						error: error instanceof Error ? error.message : 'Failed to clear user session',
-					}),
-			)
-			return true
-		} else {
-			sendResponse({ error: 'Unknown message type' })
-			return
-		}
-	})
+	chrome.runtime.onMessage.addListener(routeBackgroundMessage)
 
 	// external messages (from localhost launcher page via externally_connectable)
 

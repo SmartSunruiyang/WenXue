@@ -28,7 +28,8 @@ export function installLlmFetchLogging(opts?: LoggingFetchOptions): () => void {
 		input: RequestInfo | URL,
 		init?: RequestInit,
 	): Promise<Response> {
-		const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+		const url =
+			typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
 
 		if (!isLlm(url)) {
 			return origFetch.call(globalThis, input, init)
@@ -38,10 +39,15 @@ export function installLlmFetchLogging(opts?: LoggingFetchOptions): () => void {
 
 		// Read and redact request body before sending
 		let redactedRequest: unknown = undefined
+		let visualRequest = false
 		try {
 			const bodyText = init?.body
 			if (typeof bodyText === 'string') {
-				redactedRequest = redact(JSON.parse(bodyText))
+				const requestBody = JSON.parse(bodyText)
+				visualRequest = hasImageDataUri(requestBody)
+				redactedRequest = visualRequest
+					? { request: 'visual image request omitted' }
+					: redact(requestBody)
 			}
 		} catch {
 			// Non-JSON or unreadable body — skip request logging
@@ -63,7 +69,7 @@ export function installLlmFetchLogging(opts?: LoggingFetchOptions): () => void {
 		const durationMs = Date.now() - start
 
 		// Log response asynchronously — don't block the caller
-		logResponse(response, url, redactedRequest, durationMs).catch(() => {})
+		logResponse(response, url, redactedRequest, durationMs, visualRequest).catch(() => {})
 
 		return response
 	}
@@ -78,17 +84,24 @@ async function logResponse(
 	url: string,
 	redactedRequest: unknown,
 	durationMs: number,
+	visualRequest: boolean,
 ): Promise<void> {
 	let bodyText: string | undefined
-	try {
-		// Clone to avoid consuming the original body
-		const clone = response.clone()
-		bodyText = await clone.text()
-	} catch {
-		// Response body may not be readable (e.g. opaque response)
+	if (!visualRequest) {
+		try {
+			// Clone to avoid consuming the original body
+			const clone = response.clone()
+			bodyText = await clone.text()
+		} catch {
+			// Response body may not be readable (e.g. opaque response)
+		}
 	}
 
-	const redactedBody = bodyText ? redact(safeJsonParse(bodyText)) : undefined
+	const redactedBody = visualRequest
+		? { response: 'visual image response omitted' }
+		: bodyText
+			? redact(safeJsonParse(bodyText))
+			: undefined
 
 	logger.info('llm', `LLM ${response.status} ${url}`, {
 		request: redactedRequest,
@@ -106,4 +119,11 @@ function safeJsonParse(text: string): unknown {
 	} catch {
 		return text
 	}
+}
+
+function hasImageDataUri(value: unknown): boolean {
+	if (typeof value === 'string') return /^data:image\//i.test(value)
+	if (!value || typeof value !== 'object') return false
+	if (Array.isArray(value)) return value.some(hasImageDataUri)
+	return Object.values(value as Record<string, unknown>).some(hasImageDataUri)
 }
