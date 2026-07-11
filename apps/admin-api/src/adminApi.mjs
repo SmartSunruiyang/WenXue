@@ -11,12 +11,12 @@ const SENSITIVE_PATTERN = /prompt|content|api[_-]?key|authorization|bearer|raw.?
 /** @typedef {{ uid: string }} AdminIdentity */
 /** @typedef {{ _id: string, role: AdminRole, status: AdminUserStatus, displayName?: string }} AdminUser */
 /** @typedef {{ _id: string, uid: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs?: number, ts: number, createdAt?: string }} UsageRecord */
-/** @typedef {{ _id: string, uid: string, status: UserAccountStatus, createdAt?: string, updatedAt?: string, note?: string }} UserAccount */
-/** @typedef {{ userId: string, status: UserAccountStatus, createdAt: string, updatedAt: string, note?: string, inputTokens: number, outputTokens: number, totalTokens: number }} UserAccountView */
+/** @typedef {{ _id: string, uid: string, active: boolean, status: UserAccountStatus, firstSeenAt?: string, lastSeenAt?: string, createdAt?: string, updatedAt?: string, note?: string }} UserAccount */
+/** @typedef {{ userId: string, status: UserAccountStatus, firstSeenAt: string, lastSeenAt: string, createdAt: string, updatedAt: string, note?: string, inputTokens: number, outputTokens: number, totalTokens: number }} UserAccountView */
 /** @typedef {{ totalInputTokens: number, totalOutputTokens: number, totalTokens: number, byDay: UsageBucket[], byModel: UsageBucket[], byUser: UsageBucket[], recent: UsageRecordView[], userStatus: { active: number, disabled: number, total: number } }} AdminUsageSummary */
 /** @typedef {{ key: string, label: string, inputTokens: number, outputTokens: number, totalTokens: number }} UsageBucket */
 /** @typedef {{ id: string, ts: number, userId: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number }} UsageRecordView */
-/** @typedef {{ getAdminUser(uid: string): Promise<unknown | null>, listUsageRecords(filter: { from?: number, to?: number, limit?: number, userId?: string, model?: string }): Promise<unknown[]>, listUserAccounts(filter: { status?: UserAccountStatus, q?: string, limit?: number }): Promise<unknown[]>, getUserAccount(userId: string): Promise<unknown | null>, updateUserAccount(userId: string, patch: Partial<Pick<UserAccount, 'status' | 'updatedAt' | 'note'>>): Promise<unknown | null>, createUserPermissionAudit(record: Record<string, unknown>): Promise<void> }} AdminStore */
+/** @typedef {{ getAdminUser(uid: string): Promise<unknown | null>, listUsageRecords(filter: { status?: UserAccountStatus, from?: number, to?: number, limit?: number, userId?: string, model?: string }): Promise<unknown[]>, listUserAccounts(filter: { status?: UserAccountStatus, q?: string, limit?: number }): Promise<unknown[]>, getUserAccount(userId: string): Promise<unknown | null>, updateUserAccount(userId: string, patch: Partial<Pick<UserAccount, 'active' | 'updatedAt' | 'note'>>): Promise<unknown | null>, createUserPermissionAudit(record: Record<string, unknown>): Promise<void> }} AdminStore */
 /** @typedef {{ cloudbaseEnvId: string, cloudbaseClientId: string, cloudbaseAdminApiKey?: string, allowedOrigins?: string[], requestTimeoutMs?: number }} AdminApiEnv */
 
 export class AdminApiError extends Error {
@@ -92,7 +92,9 @@ export async function handleAdminRequest(input) {
 				{
 					users: users.flatMap((user) => {
 						const normalized = normalizeUserAccount(user)
-						return normalized ? [toUserAccountView(normalized, usageByUser.get(normalized.uid))] : []
+						return normalized
+							? [toUserAccountView(normalized, usageByUser.get(normalized.uid))]
+							: []
 					}),
 				},
 				200,
@@ -249,12 +251,16 @@ export function normalizeUserAccount(value) {
 	if (!isRecord(value)) return null
 	const id = readString(value._id) ?? readString(value.uid)
 	const uid = readString(value.uid) ?? id
-	const status = readUserStatus(value.status)
+	const active = readBoolean(value.active)
+	const status = active === null ? readUserStatus(value.status) : active ? 'active' : 'disabled'
 	if (!id || !uid || !status) return null
 	return {
 		_id: id,
 		uid,
+		active: status === 'active',
 		status,
+		firstSeenAt: readString(value.firstSeenAt) ?? undefined,
+		lastSeenAt: readString(value.lastSeenAt) ?? undefined,
 		createdAt: readString(value.createdAt) ?? '',
 		updatedAt: readString(value.updatedAt) ?? '',
 		note: readString(value.note) ?? undefined,
@@ -354,6 +360,8 @@ function toUserAccountView(user, usage) {
 	return {
 		userId: normalized.uid,
 		status: normalized.status,
+		firstSeenAt: normalized.firstSeenAt ?? normalized.createdAt ?? '',
+		lastSeenAt: normalized.lastSeenAt ?? normalized.updatedAt ?? '',
 		createdAt: normalized.createdAt ?? '',
 		updatedAt: normalized.updatedAt ?? '',
 		note: normalized.note,
@@ -390,18 +398,18 @@ function parseUserStatusPatch(rawBody) {
 	if (!userId) {
 		throw new AdminApiError('Invalid userId', 400)
 	}
-	const patch = /** @type {Partial<Pick<UserAccount, 'status' | 'note'>>} */ ({})
+	const patch = /** @type {Partial<Pick<UserAccount, 'active' | 'note'>>} */ ({})
 	if ('status' in body) {
 		const status = readUserStatus(body.status)
 		if (!status) throw new AdminApiError('Invalid user status', 400)
-		patch.status = status
+		patch.active = status === 'active'
 	}
 	if ('note' in body) {
 		const note = readString(body.note)
 		if (note && note.length > 500) throw new AdminApiError('note is too long', 400)
 		patch.note = note ?? ''
 	}
-	if (!patch.status && patch.note === undefined) {
+	if (patch.active === undefined && patch.note === undefined) {
 		throw new AdminApiError('No user status fields provided', 400)
 	}
 	return {
@@ -506,6 +514,13 @@ function sumBy(records, select) {
 function readUserStatus(value) {
 	if (value === 'active' || value === 'disabled') return value
 	return null
+}
+
+/**
+ * @param {unknown} value
+ */
+function readBoolean(value) {
+	return typeof value === 'boolean' ? value : null
 }
 
 /**

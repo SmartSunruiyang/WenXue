@@ -112,7 +112,7 @@ describe('createCloudBaseAdminStore', () => {
 				doc: {
 					_id: USER_ID,
 					uid: USER_ID,
-					status: 'disabled',
+					active: false,
 					note: 'manual review',
 					updatedAt,
 				},
@@ -122,13 +122,13 @@ describe('createCloudBaseAdminStore', () => {
 
 		await expect(
 			store.updateUserAccount(USER_ID, {
-				status: 'disabled',
+				active: false,
 				note: 'manual review',
 				updatedAt,
 			}),
 		).resolves.toMatchObject({
 			uid: USER_ID,
-			status: 'disabled',
+			active: false,
 			note: 'manual review',
 		})
 
@@ -138,7 +138,7 @@ describe('createCloudBaseAdminStore', () => {
 		expect(readJsonBody(calls[0].init)).toMatchObject({
 			data: {
 				$set: {
-					status: 'disabled',
+					active: false,
 					note: 'manual review',
 					updatedAt,
 				},
@@ -149,7 +149,9 @@ describe('createCloudBaseAdminStore', () => {
 	})
 
 	it('inserts user permission audit records through the REST collection endpoint', async () => {
-		const { calls, fetchImpl } = createFetch([Response.json({ insertedIds: ['audit-1'] }, { status: 201 })])
+		const { calls, fetchImpl } = createFetch([
+			Response.json({ insertedIds: ['audit-1'] }, { status: 201 }),
+		])
 		const store = createCloudBaseAdminStore({ envId: ENV_ID, apiKey: API_KEY, fetchImpl })
 
 		await store.createUserPermissionAudit({

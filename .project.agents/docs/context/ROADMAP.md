@@ -19,7 +19,7 @@
 | M2        | 浏览器供应链与桌面底层模块                           | `fetch-browser` 拉到 CfT；底层模块单测全绿                 |
 | M3        | 启动链路打通                                         | 点「启动浏览器」→ CfT 带插件拉起，状态机全程正确           |
 | M3.5      | 启动器 App 化重构                                    | 无边框白色 App 工作台可管理多画像、查看日志、tokens 与设置 |
-| M4.5      | CloudBase LLM Gateway M0 Spike                      | 真实流式网关调用 usage 非 0，并记录延迟基线                |
+| M4.5      | CloudBase LLM Gateway M0 Spike                       | 真实流式网关调用 usage 非 0，并记录延迟基线                |
 | M4.6      | 后台管理系统                                         | 内部账号密码登录后台，可查看 tokens 看板并调整用户状态     |
 | M4        | 品牌化与默认配置                                     | 全新 profile 首启只填 Key，示例页全链路任务成功            |
 | M5        | 打包分发与冒烟                                       | 双端安装包在干净机器通过 PRD F1–F4 验收                    |
@@ -88,8 +88,8 @@
 
 ### M4.6 — 后台管理系统（依赖 M4.5）
 
-- [ ] `CloudBaseLlmGateway` 在请求 DashScope 前 introspect CloudBase access token，并执行 `user_accounts.status` 鉴权
-- [ ] `apps/admin-api` 入位：CloudBase Auth bearer introspection、`admin_users` 角色校验、tokens summary、users 查询、status patch 与 audit 写入
+- [ ] `CloudBaseLlmGateway` 在请求 DashScope 前 introspect CloudBase access token，并执行 `user_accounts.active` 鉴权
+- [ ] `apps/admin-api` 入位：CloudBase Auth bearer introspection、`admin_users` 角色校验、tokens summary、users 查询、active patch 与 audit 写入
 - [ ] `apps/admin` 入位：内部用户名/密码登录、受保护后台壳、tokens 看板、用户启用/禁用
 - [ ] CloudBase Auth 前置要求：启用 username/password provider，创建内部管理员账号，并在 `admin_users` 以 CloudBase Auth uid 登记 active admin；普通用户状态由 `user_accounts` 控制
 - **验收**：未登录/非管理员后台 API 均拒绝；后台看板聚合正确；后台禁用用户后该用户网关调用在 DashScope 前返回 403；`pnpm -F admin-api test`、`pnpm -F admin-api typecheck`、`pnpm -F admin build` 通过。

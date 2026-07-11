@@ -13,7 +13,7 @@ const TENCENTCLOUD_TCB_VERSION = '2018-06-08'
 /** @typedef {{ uid: string }} GatewayUser */
 /** @typedef {{ [key: string]: unknown }} JsonRecord */
 /** @typedef {{ _id: string, ts: number, uid: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number, requestId: string, createdAt: string }} CloudUsageRecord */
-/** @typedef {{ _id: string, uid: string, status: 'active' | 'disabled', createdAt: string, updatedAt: string, note?: string }} UserAccount */
+/** @typedef {{ _id: string, uid: string, active: boolean, status: 'active' | 'disabled', createdAt: string, updatedAt: string, note?: string }} UserAccount */
 /** @typedef {{ cloudbaseEnvId: string, cloudbaseRegion?: string, cloudbaseUsageApiKey?: string, tencentCloudSecretId?: string, tencentCloudSecretKey?: string, tencentCloudToken?: string, requestTimeoutMs?: number }} LauncherRegistrationEnv */
 
 export class GatewayError extends Error {
@@ -201,7 +201,7 @@ async function createActiveUserAccount(input) {
 	const record = {
 		_id: input.uid,
 		uid: input.uid,
-		status: 'active',
+		active: true,
 		firstSeenAt: timestamp,
 		lastSeenAt: timestamp,
 		createdAt: timestamp,
@@ -246,14 +246,9 @@ export function buildTencentCloudSignedRequest(input) {
 	const canonicalHeaders = `content-type:${contentType}\nhost:${endpoint.host}\n`
 	const signedHeaders = 'content-type;host'
 	const hashedPayload = sha256Hex(payload)
-	const canonicalRequest = [
-		'POST',
-		'/',
-		'',
-		canonicalHeaders,
-		signedHeaders,
-		hashedPayload,
-	].join('\n')
+	const canonicalRequest = ['POST', '/', '', canonicalHeaders, signedHeaders, hashedPayload].join(
+		'\n',
+	)
 	const credentialScope = `${date}/${TENCENTCLOUD_TCB_SERVICE}/tc3_request`
 	const stringToSign = [
 		'TC3-HMAC-SHA256',
@@ -907,10 +902,10 @@ function collectionDocumentsUrl(envId, collectionName) {
  */
 function createCloudBaseUserCreationError(response, apiError, payload) {
 	const code = apiError
-		? readString(apiError.Code) ?? readString(apiError.code) ?? readString(apiError.errorCode)
+		? (readString(apiError.Code) ?? readString(apiError.code) ?? readString(apiError.errorCode))
 		: null
 	const message = apiError
-		? readString(apiError.Message) ?? readString(apiError.message)
+		? (readString(apiError.Message) ?? readString(apiError.message))
 		: readTencentCloudPayloadMessage(payload)
 	const text = `${code ?? ''} ${message ?? ''}`.toLowerCase()
 	if (/already|exist|duplicate|resourceinuse|conflict/.test(text)) {
@@ -931,7 +926,7 @@ function createCloudBaseUserCreationError(response, apiError, payload) {
  */
 function createCloudBaseUserLookupError(response, apiError, payload) {
 	const message = apiError
-		? readString(apiError.Message) ?? readString(apiError.message)
+		? (readString(apiError.Message) ?? readString(apiError.message))
 		: readTencentCloudPayloadMessage(payload)
 	const status = response.ok ? 502 : response.status
 	const suffix = message ? `：${message}` : response.ok ? '' : ` (${response.status})`
@@ -998,8 +993,17 @@ function normalizeUserAccount(value) {
 	}
 	const id = readString(value._id) ?? readString(value.uid)
 	const uid = readString(value.uid) ?? id
+	const active = readBoolean(value.active)
 	const status =
-		value.status === 'disabled' ? 'disabled' : value.status === 'active' ? 'active' : null
+		active === null
+			? value.status === 'disabled'
+				? 'disabled'
+				: value.status === 'active'
+					? 'active'
+					: null
+			: active
+				? 'active'
+				: 'disabled'
 	const createdAt = readString(value.createdAt) ?? ''
 	const updatedAt = readString(value.updatedAt) ?? ''
 	const note = readString(value.note) ?? undefined
@@ -1009,6 +1013,7 @@ function normalizeUserAccount(value) {
 	return {
 		_id: id,
 		uid,
+		active: status === 'active',
 		status,
 		createdAt,
 		updatedAt,
@@ -1038,6 +1043,13 @@ function readNumber(value) {
  */
 function readString(value) {
 	return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+/**
+ * @param {unknown} value
+ */
+function readBoolean(value) {
+	return typeof value === 'boolean' ? value : null
 }
 
 /**

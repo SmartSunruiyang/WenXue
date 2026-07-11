@@ -1,15 +1,7 @@
 :root {
 	color: #17202a;
 	background: #f7f8fa;
-	font-family:
-		Inter,
-		ui-sans-serif,
-		system-ui,
-		-apple-system,
-		BlinkMacSystemFont,
-		'PingFang SC',
-		'Microsoft YaHei',
-		sans-serif;
+	font-family: system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 	font-synthesis: none;
 	text-rendering: optimizeLegibility;
 }
@@ -173,6 +165,14 @@ button {
 .segmented button:disabled {
 	cursor: not-allowed;
 	opacity: 0.58;
+}
+
+.nav-list a:focus-visible,
+.icon-button:focus-visible,
+.primary-button:focus-visible,
+.segmented button:focus-visible {
+	outline: 2px solid #1f6f9f;
+	outline-offset: 2px;
 }
 
 .primary-button {
@@ -386,8 +386,14 @@ tbody tr {
 }
 
 tbody tr:hover,
-tbody tr.selected-row {
+tbody tr.selected-row,
+tbody tr:focus-visible {
 	background: #f3f8fb;
+}
+
+tbody tr:focus-visible {
+	outline: 2px solid #1f6f9f;
+	outline-offset: -2px;
 }
 
 .table-scroll {
@@ -444,6 +450,16 @@ tbody tr.selected-row {
 .field-block {
 	display: grid;
 	gap: 7px;
+}
+
+.field-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 8px;
+}
+
+.field-grid.two {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .field-block > span {
@@ -619,8 +635,20 @@ textarea:focus {
 		flex-wrap: wrap;
 	}
 
+	.nav-list a,
+	.icon-button,
+	.primary-button,
+	.segmented button {
+		min-height: 44px;
+	}
+
 	.metric-grid,
 	.content-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.field-grid,
+	.field-grid.two {
 		grid-template-columns: 1fr;
 	}
 }

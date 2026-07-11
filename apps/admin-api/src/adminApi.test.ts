@@ -12,7 +12,9 @@ interface StoreState {
 	user: {
 		_id: string
 		uid: string
-		status: 'active' | 'disabled'
+		active: boolean
+		firstSeenAt: string
+		lastSeenAt: string
 		createdAt: string
 		updatedAt: string
 		note?: string
@@ -64,7 +66,7 @@ function createStore(state: StoreState) {
 		},
 		async updateUserAccount(
 			_userId: string,
-			patch: Partial<Pick<StoreState['user'], 'status' | 'updatedAt' | 'note'>>,
+			patch: Partial<Pick<StoreState['user'], 'active' | 'updatedAt' | 'note'>>,
 		) {
 			state.user = { ...state.user, ...patch }
 			return state.user
@@ -83,7 +85,9 @@ function createState(overrides: Partial<StoreState> = {}): StoreState {
 		user: {
 			_id: USER_ID,
 			uid: USER_ID,
-			status: 'active',
+			active: true,
+			firstSeenAt: '2026-06-30T00:00:00.000Z',
+			lastSeenAt: '2026-07-01T12:00:00.000Z',
 			createdAt: '2026-07-01T00:00:00.000Z',
 			updatedAt: '2026-07-01T00:00:00.000Z',
 		},
@@ -200,6 +204,14 @@ describe('AdminApi', () => {
 		})
 
 		expect(read.statusCode).toBe(200)
+		expect(parseBody(read).users[0]).toMatchObject({
+			userId: USER_ID,
+			firstSeenAt: '2026-06-30T00:00:00.000Z',
+			lastSeenAt: '2026-07-01T12:00:00.000Z',
+			inputTokens: 12,
+			outputTokens: 8,
+			totalTokens: 20,
+		})
 		expect(write.statusCode).toBe(403)
 		expect(parseBody(write).error.message).toBe('Admin role is required')
 	})
@@ -223,6 +235,10 @@ describe('AdminApi', () => {
 			status: 'disabled',
 			note: 'abnormal usage',
 		})
+		expect(state.user).toMatchObject({
+			active: false,
+			note: 'abnormal usage',
+		})
 		expect(state.audits).toHaveLength(1)
 		expect(state.audits[0]).toMatchObject({
 			userId: USER_ID,
@@ -240,7 +256,7 @@ describe('AdminApi', () => {
 					...createState().user,
 					_id: 'user_disabled',
 					uid: 'user_disabled',
-					status: 'disabled',
+					active: false,
 				},
 			],
 		)

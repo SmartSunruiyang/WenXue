@@ -28,7 +28,7 @@ export function createCloudBaseAdminStore(input) {
 		},
 		async listUserAccounts(filter) {
 			const result = await client.query(USER_ACCOUNTS_COLLECTION, {
-				query: filter.status ? { status: filter.status } : {},
+				query: filter.status ? { active: filter.status === 'active' } : {},
 				limit: filter.limit ?? 500,
 			})
 			return result.filter((record) => {
@@ -78,9 +78,13 @@ function createCloudBaseNoSqlClient(input) {
 		 * @returns {Promise<Record<string, unknown> | null>}
 		 */
 		async getById(collectionName, docId) {
-			const response = await requestCloudBase(input, documentUrl(input.envId, collectionName, docId), {
-				method: 'GET',
-			})
+			const response = await requestCloudBase(
+				input,
+				documentUrl(input.envId, collectionName, docId),
+				{
+					method: 'GET',
+				},
+			)
 			if (response.status === 404) return null
 			await assertCloudBaseOk(response, `read ${collectionName}`)
 			const payload = normalizeEjson(await response.json())
@@ -114,15 +118,19 @@ function createCloudBaseNoSqlClient(input) {
 		 * @returns {Promise<Record<string, unknown> | null>}
 		 */
 		async updateById(collectionName, docId, patch) {
-			const response = await requestCloudBase(input, documentUrl(input.envId, collectionName, docId), {
-				method: 'PATCH',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					data: { $set: patch },
-					replaceMode: false,
-					returnDoc: true,
-				}),
-			})
+			const response = await requestCloudBase(
+				input,
+				documentUrl(input.envId, collectionName, docId),
+				{
+					method: 'PATCH',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						data: { $set: patch },
+						replaceMode: false,
+						returnDoc: true,
+					}),
+				},
+			)
 			if (response.status === 404) return null
 			await assertCloudBaseOk(response, `update ${collectionName}`)
 			const payload = normalizeEjson(await response.json())
@@ -134,11 +142,15 @@ function createCloudBaseNoSqlClient(input) {
 		 * @param {Record<string, unknown>} record
 		 */
 		async insert(collectionName, record) {
-			const response = await requestCloudBase(input, collectionDocumentsUrl(input.envId, collectionName), {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ data: [record] }),
-			})
+			const response = await requestCloudBase(
+				input,
+				collectionDocumentsUrl(input.envId, collectionName),
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ data: [record] }),
+				},
+			)
 			await assertCloudBaseOk(response, `insert ${collectionName}`)
 		},
 	}

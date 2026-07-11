@@ -155,11 +155,11 @@ flowchart LR
 - 用户故事：作为问学用户，我先用用户 id + 密码登录桌面端，登录成功后即可启动浏览器并使用内置模型。
 - 需求点：
   - 桌面端提供独立登录页与注册页；账号标识为用户 id，认证方式为密码，不使用验证码、短信、邮箱 OTP 或匿名登录入口；
-  - 注册入口在创建 CloudBase Auth externalUser 成功后，同步创建同 uid 的 `user_accounts` 记录并置为 `status=active`，使新用户注册登录后可直接使用插件内置模型；后台管理仍可随后禁用该用户；
+  - 注册入口在创建 CloudBase Auth externalUser 成功后，同步创建同 uid 的 `user_accounts` 记录并置为 `active=true`，使新用户注册登录后可直接使用插件内置模型；后台管理仍可随后禁用该用户；
   - 未登录时只能访问登录/注册入口，不进入主工作台，不能启动/聚焦浏览器画像，不能读取云端 tokens summary；
   - 登录成功后，桌面端把当前 CloudBase session 同步给主进程；主进程在启动或聚焦目标浏览器画像时，通过一次性 localhost `externally_connectable` 页面把 `userId`、`accessToken`、`refreshToken`、`expiresAt` 与网关地址交给插件 background；
   - 插件保存用户 session 后仅用于内置模型网关鉴权，并负责在 access token 过期前/过期后用 refresh token 刷新；自定义 BYO-Key 模型仍保持本机直连；
-  - CloudBase LLM Gateway 收到 `Authorization: Bearer <CloudBase accessToken>` 后 introspect CloudBase Auth token，解析用户 id，再查询 `user_accounts`；仅 `status=active` 放行调用百炼，`status=disabled` 或无记录返回无权限；
+  - CloudBase LLM Gateway 收到 `Authorization: Bearer <CloudBase accessToken>` 后 introspect CloudBase Auth token，解析用户 id，再查询 `user_accounts`；仅 `active=true` 放行调用百炼，`active=false` 或无记录返回无权限；
   - tokens 计量继续写 CloudBase `token_usage`，其中 `uid` 为 CloudBase 用户 id，不再是 machine id。
 - 验收标准：干净安装首启进入登录页；注册/登录使用用户 id + 密码；登录成功后进入主工作台并可启动浏览器；浏览器启动后插件自动收到用户 session；桌面端、插件 options、IPC 与网关代码中不再出现 `wxm_` 生成、展示、复制、手动同步、`machine_accounts`、`machineId` 或 `tokenHash` 作为鉴权路径。
 
@@ -169,7 +169,7 @@ flowchart LR
 - 需求点：
   - 后台前端公网可访问，但只允许 CloudBase Auth 内部用户名/密码账号登录；不提供注册、匿名登录、手机号验证码、机器 token 登录或第三方 OAuth；
   - 后台 API 在服务端校验 CloudBase Auth session，并继续查询 `admin_users` 角色；非登录、非内部账号、禁用账号均不得访问管理数据；
-  - 网关不再自动创建机器记录；用户访问由后台管理的 `user_accounts` 控制，`status=active` 才能调用内置模型；
+  - 网关不再自动创建机器记录；用户访问由后台管理的 `user_accounts.active` 控制，`active=true` 才能调用内置模型；
   - 后台 tokens 看板展示全局输入 tokens、输出 tokens、总 tokens、模型分布、日期趋势、用户分布与最近调用；所有记录不得包含提示词正文、响应正文、API Key、Authorization/Bearer、access token 或 refresh token；
   - 后台用户列表支持按状态筛选、查看 user id、首次/最近出现时间、累计 tokens，并允许管理员启用/禁用用户、填写备注；
   - 每次用户状态调整写 `user_permission_audit`，记录管理员 uid、用户、旧值、新值、原因与时间。

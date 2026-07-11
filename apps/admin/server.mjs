@@ -5,6 +5,7 @@ import { extname, join, normalize, resolve } from 'node:path'
 
 const port = Number(process.env.PORT ?? 3000)
 const distDir = resolve('dist')
+const adminBasePath = '/admin'
 
 const contentTypes = new Map([
 	['.html', 'text/html; charset=utf-8'],
@@ -35,10 +36,20 @@ createServer(async (request, response) => {
  * @param {string} pathname
  */
 async function resolveFile(pathname) {
-	const safePath = normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '')
+	const effectivePathname = stripAdminBasePath(pathname)
+	const safePath = normalize(decodeURIComponent(effectivePathname)).replace(/^(\.\.[/\\])+/, '')
 	const candidate = join(distDir, safePath === '/' ? 'index.html' : safePath)
 	if (candidate.startsWith(distDir) && (await isFile(candidate))) return candidate
 	return join(distDir, 'index.html')
+}
+
+/**
+ * @param {string} pathname
+ */
+function stripAdminBasePath(pathname) {
+	if (pathname === adminBasePath) return '/'
+	if (pathname.startsWith(`${adminBasePath}/`)) return pathname.slice(adminBasePath.length) || '/'
+	return pathname
 }
 
 /**

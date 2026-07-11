@@ -1,10 +1,4 @@
-import type {
-	AdminMe,
-	AdminSession,
-	AdminUsageSummary,
-	UserAccountView,
-	UserStatus,
-} from './types'
+import type { AdminMe, AdminSession, AdminUsageSummary, UserAccountView, UserStatus } from './types'
 
 const apiBaseUrl = (import.meta.env.VITE_WENXUE_ADMIN_API_BASE_URL ?? '').replace(/\/+$/, '')
 
@@ -24,11 +18,11 @@ interface UserStatusResponse {
 }
 
 export async function fetchMe(session: AdminSession): Promise<AdminMe> {
-	return adminFetch('/admin/v1/me', session)
+	return adminFetch('/api/admin/v1/me', session)
 }
 
 export async function fetchUsageSummary(session: AdminSession): Promise<AdminUsageSummary> {
-	return adminFetch('/admin/v1/usage/summary', session)
+	return adminFetch('/api/admin/v1/usage/summary', session)
 }
 
 export async function fetchUsers(
@@ -37,7 +31,7 @@ export async function fetchUsers(
 ): Promise<UserAccountView[]> {
 	const params = new URLSearchParams()
 	if (status && status !== 'all') params.set('status', status)
-	const path = `/admin/v1/users${params.size ? `?${params.toString()}` : ''}`
+	const path = `/api/admin/v1/users${params.size ? `?${params.toString()}` : ''}`
 	const response = await adminFetch<UsersResponse>(path, session)
 	return response.users
 }
@@ -46,7 +40,7 @@ export async function patchUserStatus(
 	session: AdminSession,
 	patch: UserStatusPatch,
 ): Promise<UserAccountView> {
-	const response = await adminFetch<UserStatusResponse>('/admin/v1/users/status', session, {
+	const response = await adminFetch<UserStatusResponse>('/api/admin/v1/user-status', session, {
 		method: 'PATCH',
 		body: JSON.stringify(patch),
 	})

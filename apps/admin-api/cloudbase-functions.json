@@ -9,11 +9,25 @@
 			"triggerPath": "/admin/v1/me"
 		},
 		{
+			"name": "admin-me-gateway",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "me",
+			"triggerPath": "/api/admin/v1/me"
+		},
+		{
 			"name": "admin-usage-summary",
 			"directory": ".",
 			"source": "index.mjs",
 			"target": "usageSummary",
 			"triggerPath": "/admin/v1/usage/summary"
+		},
+		{
+			"name": "admin-usage-summary-gateway",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "usageSummary",
+			"triggerPath": "/api/admin/v1/usage/summary"
 		},
 		{
 			"name": "admin-users",
@@ -23,11 +37,32 @@
 			"triggerPath": "/admin/v1/users"
 		},
 		{
+			"name": "admin-users-gateway",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "users",
+			"triggerPath": "/api/admin/v1/users"
+		},
+		{
 			"name": "admin-user-status",
 			"directory": ".",
 			"source": "index.mjs",
 			"target": "userStatus",
 			"triggerPath": "/admin/v1/users/status"
+		},
+		{
+			"name": "admin-user-status-gateway",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "userStatus",
+			"triggerPath": "/api/admin/v1/users/status"
+		},
+		{
+			"name": "admin-user-status-gateway-short",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "userStatus",
+			"triggerPath": "/api/admin/v1/user-status"
 		}
 	]
 }

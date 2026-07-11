@@ -3,12 +3,10 @@ import {
 	BarChart3,
 	CheckCircle2,
 	CircleAlert,
-	Database,
 	LogOut,
 	RefreshCw,
 	Save,
 	Shield,
-	SlidersHorizontal,
 	Users,
 } from 'lucide-react'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
@@ -124,7 +122,21 @@ export default function App() {
 	}) => {
 		if (!session) return
 		const updated = await patchUserStatus(session, patch)
-		setUsers((current) => current.map((user) => (user.userId === updated.userId ? updated : user)))
+		setUsers((current) =>
+			current.map((user) =>
+				user.userId === updated.userId
+					? {
+							...user,
+							...updated,
+							firstSeenAt: user.firstSeenAt,
+							lastSeenAt: user.lastSeenAt,
+							inputTokens: user.inputTokens,
+							outputTokens: user.outputTokens,
+							totalTokens: user.totalTokens,
+						}
+					: user,
+			),
+		)
 		setSelectedUserId(updated.userId)
 	}
 
@@ -159,14 +171,6 @@ export default function App() {
 					<a href="#users">
 						<Users size={18} />
 						用户
-					</a>
-					<a href="#audit">
-						<Database size={18} />
-						审计
-					</a>
-					<a href="#settings">
-						<SlidersHorizontal size={18} />
-						设置
 					</a>
 				</nav>
 			</aside>
@@ -460,7 +464,8 @@ function UserTable({
 						<th>用户</th>
 						<th>状态</th>
 						<th>累计 tokens</th>
-						<th>更新时间</th>
+						<th>首次出现</th>
+						<th>最近出现</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -469,13 +474,22 @@ function UserTable({
 							key={user.userId}
 							className={user.userId === selectedUserId ? 'selected-row' : ''}
 							onClick={() => onSelect(user.userId)}
+							onKeyDown={(event) => {
+								if (event.key === 'Enter' || event.key === ' ') {
+									event.preventDefault()
+									onSelect(user.userId)
+								}
+							}}
+							tabIndex={0}
+							aria-selected={user.userId === selectedUserId}
 						>
 							<td className="mono">{shortUserId(user.userId)}</td>
 							<td>
 								<StatusBadge status={user.status} />
 							</td>
 							<td>{formatNumber(user.totalTokens)}</td>
-							<td>{formatDate(user.updatedAt || user.createdAt)}</td>
+							<td>{formatDate(user.firstSeenAt || user.createdAt)}</td>
+							<td>{formatDate(user.lastSeenAt || user.updatedAt || user.createdAt)}</td>
 						</tr>
 					))}
 				</tbody>
@@ -538,9 +552,12 @@ function UserInspector({
 		if (!user) return
 		setStatus(user.status)
 		setNote(user.note ?? '')
+	}, [user?.note, user?.status, user?.userId])
+
+	useEffect(() => {
 		setReason('')
 		setMessage(null)
-	}, [user])
+	}, [user?.userId])
 
 	const handleSave = async () => {
 		if (!user) return
@@ -574,6 +591,30 @@ function UserInspector({
 					<div className="field-block">
 						<span>用户 id</span>
 						<strong className="mono">{user.userId}</strong>
+					</div>
+					<div className="field-grid">
+						<div className="field-block">
+							<span>输入 tokens</span>
+							<strong>{formatNumber(user.inputTokens)}</strong>
+						</div>
+						<div className="field-block">
+							<span>输出 tokens</span>
+							<strong>{formatNumber(user.outputTokens)}</strong>
+						</div>
+						<div className="field-block">
+							<span>总 tokens</span>
+							<strong>{formatNumber(user.totalTokens)}</strong>
+						</div>
+					</div>
+					<div className="field-grid two">
+						<div className="field-block">
+							<span>首次出现</span>
+							<strong>{formatDate(user.firstSeenAt || user.createdAt)}</strong>
+						</div>
+						<div className="field-block">
+							<span>最近出现</span>
+							<strong>{formatDate(user.lastSeenAt || user.updatedAt || user.createdAt)}</strong>
+						</div>
 					</div>
 					<div className="field-block">
 						<span>状态</span>

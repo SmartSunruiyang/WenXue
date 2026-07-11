@@ -50,6 +50,8 @@ export interface AdminUsageSummary {
 export interface UserAccountView {
 	userId: string
 	status: UserStatus
+	firstSeenAt: string
+	lastSeenAt: string
 	createdAt: string
 	updatedAt: string
 	note?: string

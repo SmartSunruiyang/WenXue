@@ -200,8 +200,8 @@ extraResources:
 
 - 运行形态：CloudBase Run Function 模式，服务名 `wenxue-llm-gateway`，环境 `wenxue-d8gz76tacc3659f05`（ap-shanghai）。
 - 入口：OpenAI-compatible `POST /v1/chat/completions`；M4 起同服务暴露 `GET /v1/usage/summary` 供启动器 tokens 页读取当前用户计量。
-- 鉴权：请求 `Authorization: Bearer <CloudBase accessToken>`；网关 introspect CloudBase Auth access token 后取得用户 uid，再读取 `user_accounts[_id=uid]`，仅 `status=active` 放行。
-- 注册：`/v1/auth/register` 先通过 Tencent Cloud TCB `CreateUser` 创建 CloudBase Auth externalUser，再用同 uid 写入 `user_accounts.status=active`，保证新用户注册登录后可直接调用内置模型；后台仍可通过 AdminApi 禁用。
+- 鉴权：请求 `Authorization: Bearer <CloudBase accessToken>`；网关 introspect CloudBase Auth access token 后取得用户 uid，再读取 `user_accounts[_id=uid]`，仅 `active=true` 放行。
+- 注册：`/v1/auth/register` 先通过 Tencent Cloud TCB `CreateUser` 创建 CloudBase Auth externalUser，再用同 uid 写入 `user_accounts.active=true`，保证新用户注册登录后可直接调用内置模型；后台仍可通过 AdminApi 禁用。
 - 上游：`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`；DashScope Key 只来自 CloudBase Run 环境变量 `DASHSCOPE_API_KEY`。
 - 流式计量：当请求 `stream=true` 时，网关必须注入 `stream_options: { include_usage: true }`，否则 DashScope 流式响应不返回 usage。
 - 计量：M0 捕获 usage 与端到端延迟；M1 后写 `token_usage`，记录只含 CloudBase 用户 uid、model、tokens、latency、createdAt；M4 的 `usage-summary` target 实时读取当前用户 uid 记录并返回脱敏 `TokenUsageSummary`（recent id 不含 uid）。
@@ -216,12 +216,13 @@ extraResources:
 - 前端：`apps/admin` 静态站点，使用 CloudBase Web SDK 的 username/password 登录；路由守卫必须使用 `auth.getSession()`，不得使用已废弃且可能误判的 `getLoginState()`；当前通过 CloudBase Run 静态容器发布，避免 CloudBase 共享静态托管域返回 attachment 头；默认使用内置 publishable key，部署可用 `VITE_CLOUDBASE_ACCESS_KEY` 覆盖。
 - 后端：`apps/admin-api` CloudBase Run Function mode，PUBLIC 访问但所有业务接口先校验 CloudBase Auth bearer，再查 `admin_users` 角色；前端不直接读写 NoSQL。
 - 数据：`user_accounts` 由后台管理/初始化控制 active 或 disabled；`admin_users` 由内部初始化；`user_permission_audit` 由 AdminApi 写入。
-- 当前公网部署（2026-07-01）：
-  - AdminConsole：`https://wenxue-admin-web-4037646-1427406869.ap-shanghai.run.tcloudbase.com/`，CloudBase Run 容器服务 `wenxue-admin-web`，`OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.25`、`Mem:0.5`；构建期注入真实 Publishable Key 与 AdminApi base URL。
-  - AdminApi：`https://wenxue-admin-api-4037646-1427406869.ap-shanghai.run.tcloudbase.com`，CloudBase Run 容器服务 `wenxue-admin-api`，`OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.5`、`Mem:1`。
+- 当前公网部署（2026-07-09）：
+  - AdminConsole 主入口：`https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com/admin`，使用 CloudBase HTTP 网关默认域名；`/admin`、`/admin/`、`/admin/assets/*` 路由到 CloudBase Run 容器服务 `wenxue-admin-web`，`OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.25`、`Mem:0.5`；构建期注入 `VITE_BASE_PATH=/admin/` 与同源 AdminApi base URL。
+  - AdminApi 主入口：同域精确路由 `/api/admin/v1/me`、`/api/admin/v1/usage/summary`、`/api/admin/v1/users`、`/api/admin/v1/user-status` 到 CloudBase Run 容器服务 `wenxue-admin-api`，`OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.5`、`Mem:1`；不在默认域名下使用 `/admin/v1/*`，因为 `/admin` 页面路由会按前缀捕获。
+  - 直连 CloudRun 域名仍作为底层服务排障入口：AdminConsole `https://wenxue-admin-web-4037646-1427406869.ap-shanghai.run.tcloudbase.com/`；AdminApi `https://wenxue-admin-api-4037646-1427406869.ap-shanghai.run.tcloudbase.com`。
   - 授权内部账号：`administrator`、`outas`、`spike2801` 的 CloudBase uid 已写入 `admin_users`，`role=admin`、`status=active`。
   - 数据权限：`admin_users`、`user_accounts`、`user_permission_audit` 为 `ADMINONLY`；后台前端只能经 AdminApi 访问。
-  - 待重新验证：公网 AdminApi 未带 bearer token 返回 401；公网 AdminConsole HTML/JS/CSS 资源返回 200 且无 attachment 头；公网 LLM Gateway `GET /v1/usage/summary` 接受 CloudBase access token 并只返回当前用户脱敏 summary。
+  - 2026-07-09 验证：`/admin` 返回 200 HTML 且引用 `/admin/assets/index-DAabuiMV.js`；JS/CSS 静态资源返回 200；四条 AdminApi 精确路由未带 bearer token 均返回 401，并带 CloudBase Run upstream 状态。
 
 ## 8. 构建、CI 与分发
 

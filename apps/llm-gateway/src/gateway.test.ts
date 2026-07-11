@@ -24,7 +24,7 @@ const USER_ID = 'user_123'
 const ACTIVE_USER = {
 	_id: USER_ID,
 	uid: USER_ID,
-	status: 'active',
+	active: true,
 	createdAt: '2026-07-01T00:00:00.000Z',
 	updatedAt: '2026-07-01T00:00:00.000Z',
 }
@@ -179,9 +179,7 @@ describe('CloudBase LLM gateway behavior', () => {
 		})
 		expect(calls[0].headers.get('x-tc-action')).toBe('CreateUser')
 		expect(calls[0].headers.get('x-tc-version')).toBe('2018-06-08')
-		expect(calls[0].headers.get('authorization')).toContain(
-			'TC3-HMAC-SHA256 Credential=secret-id/',
-		)
+		expect(calls[0].headers.get('authorization')).toContain('TC3-HMAC-SHA256 Credential=secret-id/')
 		expect(calls[1].url).toBe(
 			'https://wenxue-d8gz76tacc3659f05.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)/collections/user_accounts/documents',
 		)
@@ -191,7 +189,7 @@ describe('CloudBase LLM gateway behavior', () => {
 				{
 					_id: 'cloudbase-user-1',
 					uid: 'cloudbase-user-1',
-					status: 'active',
+					active: true,
 					firstSeenAt: '2026-06-28T15:20:00.000Z',
 					lastSeenAt: '2026-06-28T15:20:00.000Z',
 					createdAt: '2026-06-28T15:20:00.000Z',
@@ -217,7 +215,7 @@ describe('CloudBase LLM gateway behavior', () => {
 						},
 					}),
 			}),
-			).resolves.toMatchObject({ userId: 'cloudbase-user-2' })
+		).resolves.toMatchObject({ userId: 'cloudbase-user-2' })
 	})
 
 	it('looks up the CloudBase user id when CreateUser omits it', async () => {
@@ -279,7 +277,7 @@ describe('CloudBase LLM gateway behavior', () => {
 				expect.objectContaining({
 					_id: 'cloudbase-user-lookup',
 					uid: 'cloudbase-user-lookup',
-					status: 'active',
+					active: true,
 				}),
 			],
 		})
@@ -376,7 +374,7 @@ describe('CloudBase LLM gateway behavior', () => {
 	})
 
 	it('rejects disabled or missing user_accounts before calling DashScope', async () => {
-		for (const account of [{ ...ACTIVE_USER, status: 'disabled' }, null]) {
+		for (const account of [{ ...ACTIVE_USER, active: false }, null]) {
 			const calls: string[] = []
 
 			await expect(
@@ -442,9 +440,9 @@ describe('CloudBase LLM gateway behavior', () => {
 				],
 			},
 		])
-		expect(calls.filter((url) => url.includes('/collections/user_accounts/documents'))).toHaveLength(
-			1,
-		)
+		expect(
+			calls.filter((url) => url.includes('/collections/user_accounts/documents')),
+		).toHaveLength(1)
 		expect(calls.filter((url) => url.includes('/collections/token_usage/documents'))).toHaveLength(
 			1,
 		)
