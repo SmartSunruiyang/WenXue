@@ -1,19 +1,10 @@
 import {
 	ArrowDown,
-	Circle,
 	Code2,
 	Compass,
 	Download,
-	ExternalLink,
-	Globe2,
-	Lock,
-	MousePointer2,
-	Pin,
 	Play,
-	Send,
-	Sparkles,
 	Terminal,
-	X,
 } from 'lucide-react'
 import {
 	useEffect,
@@ -32,6 +23,9 @@ type Language = 'zh' | 'en'
 type SitePage = 'home' | 'docs'
 
 const githubUrl = 'https://github.com/SmartSunruiyang/WenXue'
+const workDemoVideoSrc = '/assets/wenxue-work-demo.mov'
+const teachingDemoVideoSrc = '/assets/wenxue-teaching-demo.mov'
+const tutorialStepDurationMs = 4200
 
 const translations = {
 	zh: {
@@ -53,9 +47,13 @@ const translations = {
 		},
 		browser: {
 			eyebrow: '浏览器里的问学',
-			titleFirst: '下滑一次，',
-			titleSecond: '看见它怎样出现。',
+			titleFirst: '问学是如何工作的',
+			titleSecond: '如何将问学呼出并固定到顶部',
 			tabLabel: '问学使用步骤',
+			workLabel: '问学操作演示',
+			tutorialLabel: '问学教学演示',
+			lessonTabLabel: '呼出与固定步骤',
+			workingStatus: '问学正在操作网页',
 			newTab: '新建标签页',
 			favorite: '收藏',
 			openPlugin: '打开问学插件',
@@ -73,9 +71,9 @@ const translations = {
 			choiceA: 'A. 压缩上下文',
 			choiceB: 'B. 检查并修正答案',
 			steps: [
-				{ id: 'summon', title: '呼出插件', description: '在浏览器工具栏打开问学。' },
-				{ id: 'pin', title: '固定到顶部', description: '把问学留在每个网页旁边。' },
-				{ id: 'task', title: '输入任务', description: '让 AI 在当前网页里执行。' },
+				{ id: 'summon', title: '呼出问学', description: '点击浏览器顶部的问学入口。' },
+				{ id: 'pin', title: '固定到顶部', description: '点亮图钉，让入口常驻工具栏。' },
+				{ id: 'task', title: '开始任务', description: '回到网页，直接输入第一条指令。' },
 			],
 			tasks: ['总结这页重点', '回答页面题目', '整理成表格'],
 			results: [
@@ -245,9 +243,13 @@ const translations = {
 		},
 		browser: {
 			eyebrow: 'WenXue in the browser',
-			titleFirst: 'Scroll once,',
-			titleSecond: 'watch it appear.',
+			titleFirst: 'How WenXue works',
+			titleSecond: 'How to open WenXue and pin it to the top',
 			tabLabel: 'WenXue usage steps',
+			workLabel: 'WenXue work demo',
+			tutorialLabel: 'WenXue tutorial demo',
+			lessonTabLabel: 'Open and pin steps',
+			workingStatus: 'WenXue is operating the webpage',
 			newTab: 'New tab',
 			favorite: 'Save',
 			openPlugin: 'Open WenXue extension',
@@ -265,9 +267,9 @@ const translations = {
 			choiceA: 'A. Compress context',
 			choiceB: 'B. Check and refine answers',
 			steps: [
-				{ id: 'summon', title: 'Open', description: 'Launch WenXue from the browser toolbar.' },
-				{ id: 'pin', title: 'Pin', description: 'Keep WenXue beside every webpage.' },
-				{ id: 'task', title: 'Ask', description: 'Let AI act on the current page.' },
+				{ id: 'summon', title: 'Open WenXue', description: 'Click the WenXue entry in the top toolbar.' },
+				{ id: 'pin', title: 'Pin to top', description: 'Turn on the pin so the entry stays visible.' },
+				{ id: 'task', title: 'Start a task', description: 'Return to the page and enter the first instruction.' },
 			],
 			tasks: ['Summarize this page', 'Answer the question', 'Turn into a table'],
 			results: [
@@ -1216,8 +1218,6 @@ function TiltAnchor({
 }
 
 export default function App() {
-	const [activeStep, setActiveStep] = useState(0)
-	const [activeTask, setActiveTask] = useState(0)
 	const [page, setPage] = useState<SitePage>(getInitialPage)
 	const [docsSectionId, setDocsSectionId] = useState(getInitialDocsSectionId)
 	const heroTitleRef = useRef<HTMLHeadingElement | null>(null)
@@ -1238,6 +1238,78 @@ export default function App() {
 			window.removeEventListener('popstate', syncRoute)
 		}
 	}, [])
+
+	useEffect(() => {
+		let context: { revert: () => void } | undefined
+		let disposed = false
+
+		const setupTitleMotion = async () => {
+			const [{ default: gsap }, { ScrollTrigger }] = await Promise.all([
+				import('gsap'),
+				import('gsap/ScrollTrigger'),
+			])
+
+			if (disposed) {
+				return
+			}
+
+			gsap.registerPlugin(ScrollTrigger)
+
+			const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+			context = gsap.context(() => {
+				const titles = gsap.utils.toArray<HTMLElement>(
+					[
+						'.hero-title-proximity',
+						'.reveal-title',
+						'.docs-section-hero h1',
+						'.docs-section > h2',
+						'.docs-subsection h3',
+						'.docs-card h3',
+					].join(', '),
+				)
+
+				if (reduceMotion) {
+					gsap.set(titles, { autoAlpha: 1, y: 0 })
+					return
+				}
+
+				titles.forEach((title) => {
+					gsap.fromTo(
+						title,
+						{ autoAlpha: 0, y: 30 },
+						{
+							autoAlpha: 1,
+							duration: 0.82,
+							ease: 'power3.out',
+							y: 0,
+							scrollTrigger: {
+								trigger: title,
+								start: 'top 86%',
+								once: true,
+							},
+						},
+					)
+				})
+			})
+
+			ScrollTrigger.refresh()
+		}
+
+		void setupTitleMotion()
+
+		return () => {
+			disposed = true
+			context?.revert()
+		}
+	}, [page])
+
+	useEffect(() => {
+		const videos = document.querySelectorAll<HTMLVideoElement>('video.demo-video')
+		videos.forEach((video) => {
+			video.muted = true
+			void video.play().catch(() => undefined)
+		})
+	}, [page])
 
 	const goHome = () => {
 		setPage('home')
@@ -1313,7 +1385,7 @@ export default function App() {
 								<img src="/assets/wenxue-logo.png" alt="" aria-hidden="true" />
 								<span>{copy.hero.version}</span>
 							</div>
-							<h1 className="hero-title-proximity" ref={heroTitleRef}>
+							<h1 className="hero-title-proximity reveal-title" ref={heroTitleRef}>
 								<span>
 									<VariableProximity
 										className="hero-title-line"
@@ -1372,42 +1444,27 @@ export default function App() {
 						</TiltButton>
 					</section>
 
-					<section className="browser-section" id="browser-demo" aria-label={copy.browser.eyebrow}>
+					<section
+						className="browser-section work-demo-section"
+						id="browser-demo"
+						aria-label={copy.browser.titleFirst}
+					>
 						<div className="section-copy">
-							<p>{copy.browser.eyebrow}</p>
-							<h2>
-								<span>{copy.browser.titleFirst}</span>
-								<span>{copy.browser.titleSecond}</span>
-							</h2>
+							<h2 className="reveal-title">{copy.browser.titleFirst}</h2>
 						</div>
-						<div className="step-switcher" role="tablist" aria-label={copy.browser.tabLabel}>
-							{copy.browser.steps.map((step, index) => (
-								<TiltButton
-									aria-selected={activeStep === index}
-									className={activeStep === index ? 'step-pill step-pill-active' : 'step-pill'}
-									key={step.id}
-									onClick={() => setActiveStep(index)}
-									rotateAmplitude={6}
-									role="tab"
-									tiltClassName="tilt-pill"
-									type="button"
-								>
-									<span>{index + 1}</span>
-									{step.title}
-								</TiltButton>
-							))}
+						<WorkDemo copy={copy.browser} />
+					</section>
+
+					<section className="browser-section tutorial-section" aria-label={copy.browser.titleSecond}>
+						<div className="section-copy">
+							<h2 className="reveal-title">{copy.browser.titleSecond}</h2>
 						</div>
-						<BrowserDemo
-							activeStep={activeStep}
-							activeTask={activeTask}
-							copy={copy.browser}
-							onTaskChange={setActiveTask}
-						/>
+						<TutorialDemo copy={copy.browser} />
 					</section>
 
 					<section className="final-cta" id="download" aria-label={copy.hero.download}>
 						<img src="/assets/wenxue-logo.png" alt="" aria-hidden="true" />
-						<h2>{copy.finalCta.title}</h2>
+						<h2 className="reveal-title">{copy.finalCta.title}</h2>
 						<div className="hero-actions">
 							<TiltButton
 								className="button button-primary"
@@ -1632,174 +1689,97 @@ function renderDocsBlock(block: DocsBlock, copy: DocsCopy, index: number) {
 	)
 }
 
-interface BrowserDemoProps {
-	activeStep: number
-	activeTask: number
+interface DemoProps {
 	copy: (typeof translations)[Language]['browser']
-	onTaskChange: (index: number) => void
 }
 
-function BrowserDemo({ activeStep, activeTask, copy, onTaskChange }: BrowserDemoProps) {
-	const active = copy.steps[activeStep]
+function WorkDemo({ copy }: DemoProps) {
+	return (
+		<div className="demo-stage work-demo-stage">
+			<article className="demo-shell work-demo-shell">
+				<div className="demo-video-frame">
+					<video
+						aria-label={copy.workLabel}
+						autoPlay
+						className="demo-video"
+						controls={false}
+						controlsList="nodownload noplaybackrate noremoteplayback"
+						disablePictureInPicture
+						loop
+						muted
+						onContextMenu={(event) => event.preventDefault()}
+						playsInline
+						preload="metadata"
+						src={workDemoVideoSrc}
+					/>
+				</div>
+			</article>
+		</div>
+	)
+}
+
+function TutorialDemo({ copy }: DemoProps) {
+	const [activeStep, setActiveStep] = useState(0)
+
+	useEffect(() => {
+		const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+		if (reduceMotion) {
+			return
+		}
+
+		const intervalId = window.setInterval(() => {
+			setActiveStep((current) => (current + 1) % copy.steps.length)
+		}, tutorialStepDurationMs)
+
+		return () => window.clearInterval(intervalId)
+	}, [copy.steps.length])
 
 	return (
-		<div className="browser-stage">
-			<div className="signal-path signal-path-one" />
-			<div className="signal-path signal-path-two" />
-			<article className="browser-window">
-				<header className="browser-toolbar">
-					<div className="traffic-lights" aria-hidden="true">
-						<span />
-						<span />
-						<span />
-					</div>
-					<div className="tab-strip">
-						<div className="browser-tab">
-							<Globe2 size={15} />
-							arXiv.org
-							<X size={13} />
-						</div>
-						<TiltButton
-							aria-label={copy.newTab}
-							className="toolbar-icon"
-							rotateAmplitude={5}
-							scaleOnHover={1.05}
-							tiltClassName="tilt-icon-button"
-							type="button"
-						>
-							<Circle size={13} />
-						</TiltButton>
-					</div>
-					<div className="address-bar">
-						<Lock size={14} />
-						<span>https://arxiv.org/abs/2401.12345</span>
-					</div>
-					<div className="toolbar-actions">
-						<TiltButton
-							aria-label={copy.favorite}
-							className="toolbar-icon"
-							rotateAmplitude={5}
-							scaleOnHover={1.05}
-							tiltClassName="tilt-icon-button"
-							type="button"
-						>
-							<ExternalLink size={15} />
-						</TiltButton>
-						<TiltButton
-							aria-label={copy.openPlugin}
-							className="toolbar-plugin toolbar-plugin-active"
-							rotateAmplitude={5}
-							scaleOnHover={1.05}
-							tiltClassName="tilt-icon-button"
-							type="button"
-						>
-							<img src="/assets/wenxue-logo.png" alt="" aria-hidden="true" />
-						</TiltButton>
-						<TiltButton
-							aria-label={copy.pinPlugin}
-							className={activeStep >= 1 ? 'toolbar-pin toolbar-pin-active' : 'toolbar-pin'}
-							rotateAmplitude={5}
-							scaleOnHover={1.05}
-							tiltClassName="tilt-icon-button"
-							type="button"
-						>
-							<Pin size={15} />
-						</TiltButton>
-					</div>
-				</header>
+		<div className="demo-stage tutorial-demo-stage">
+			<div className="tutorial-progress" role="tablist" aria-label={copy.lessonTabLabel}>
+				{copy.steps.map((step, index) => (
+					<button
+						aria-selected={activeStep === index}
+						className={[
+							'tutorial-step',
+							activeStep === index ? 'tutorial-step-active' : '',
+							index < activeStep ? 'tutorial-step-complete' : '',
+						]
+							.filter(Boolean)
+							.join(' ')}
+						key={step.id}
+						onClick={() => setActiveStep(index)}
+						role="tab"
+						type="button"
+					>
+						<span className="tutorial-step-number">{String(index + 1).padStart(2, '0')}</span>
+						<span className="tutorial-step-copy">
+							<strong>{step.title}</strong>
+							<span>{step.description}</span>
+						</span>
+						<span className="tutorial-step-track" aria-hidden="true">
+							<span className="tutorial-step-fill" />
+						</span>
+					</button>
+				))}
+			</div>
 
-				<div className="browser-body">
-					<section className="page-surface">
-						<div className="breadcrumb">{copy.breadcrumb}</div>
-						<h3>{copy.paperTitle}</h3>
-						<p className="authors">{copy.authors}</p>
-						<div className="abstract-block">
-							<strong>{copy.abstractTitle}</strong>
-							<p>{copy.abstract}</p>
-						</div>
-						<TiltHover
-							className="tilt-card tilt-quiz-card"
-							rotateAmplitude={4}
-							scaleOnHover={1.018}
-						>
-							<div className="quiz-strip">
-								<span>{copy.questionLabel}</span>
-								<p>{copy.question}</p>
-								<div className="choice-row">
-									<TiltButton
-										className="choice-button"
-										rotateAmplitude={5}
-										scaleOnHover={1.035}
-										tiltClassName="tilt-choice"
-										type="button"
-									>
-										{copy.choiceA}
-									</TiltButton>
-									<TiltButton
-										className="choice-button choice-selected"
-										rotateAmplitude={5}
-										scaleOnHover={1.035}
-										tiltClassName="tilt-choice"
-										type="button"
-									>
-										{copy.choiceB}
-									</TiltButton>
-								</div>
-							</div>
-						</TiltHover>
-					</section>
-
-					<aside className={activeStep === 0 ? 'sidepanel sidepanel-summon' : 'sidepanel'}>
-						<header className="sidepanel-header">
-							<div>
-								<img src="/assets/wenxue-logo.png" alt="" aria-hidden="true" />
-								<span>{copy.sidepanelName}</span>
-							</div>
-							<Pin size={15} className={activeStep >= 1 ? 'pin-lit' : undefined} />
-						</header>
-						<div className="sidepanel-copy">
-							<p>{active.title}</p>
-							<h4>{active.description}</h4>
-						</div>
-						<div className="task-chips">
-							{copy.tasks.map((task, index) => (
-								<TiltButton
-									className={activeTask === index ? 'task-chip task-chip-active' : 'task-chip'}
-									key={task}
-									onClick={() => onTaskChange(index)}
-									rotateAmplitude={5}
-									scaleOnHover={1.032}
-									tiltClassName="tilt-chip"
-									type="button"
-								>
-									{task}
-								</TiltButton>
-							))}
-						</div>
-						<TiltHover
-							className="tilt-card tilt-result-card"
-							rotateAmplitude={4}
-							scaleOnHover={1.018}
-						>
-							<div className="result-card">
-								<Sparkles size={16} />
-								<p>{copy.results[activeTask]}</p>
-							</div>
-						</TiltHover>
-						<div className="command-bar">
-							<MousePointer2 size={15} />
-							<span>{copy.tasks[activeTask]}</span>
-							<TiltButton
-								aria-label={copy.sendTask}
-								rotateAmplitude={5}
-								scaleOnHover={1.05}
-								tiltClassName="tilt-send"
-								type="button"
-							>
-								<Send size={16} />
-							</TiltButton>
-						</div>
-					</aside>
+			<article className="demo-shell tutorial-demo-shell">
+				<div className="demo-video-frame">
+					<video
+						aria-label={copy.tutorialLabel}
+						autoPlay
+						className="demo-video"
+						controls={false}
+						controlsList="nodownload noplaybackrate noremoteplayback"
+						disablePictureInPicture
+						loop
+						muted
+						onContextMenu={(event) => event.preventDefault()}
+						playsInline
+						preload="metadata"
+						src={teachingDemoVideoSrc}
+					/>
 				</div>
 			</article>
 		</div>
