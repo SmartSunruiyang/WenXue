@@ -49,7 +49,10 @@ type View = { name: 'chat' } | { name: 'history' } | { name: 'history-detail'; s
 
 const NEW_CONVERSATION_COLLECT_ANIMATION_MS = 520
 const DEFAULT_HARD_TOKENS = 28_000
-const SIDEPANEL_AGENT_OPTIONS = { enableUserTakeover: true } as const
+export const SIDEPANEL_AGENT_OPTIONS = {
+	enableUserTakeover: true,
+	enableUserQuestions: true,
+} as const
 
 export function pickSendAction({
 	status,
@@ -61,9 +64,13 @@ export function pickSendAction({
 	return hasConversation && (status === 'completed' || status === 'error') ? 'followUp' : 'execute'
 }
 
-export function getSidepanelControlState(status: AgentStatus): {
+export function getSidepanelControlState(
+	status: AgentStatus,
+	hasPendingUserQuestion = false,
+): {
 	isRunning: boolean
 	isAwaitingTakeover: boolean
+	isAwaitingQuestion: boolean
 	inputDisabled: boolean
 	canStartNewConversation: boolean
 	showStopButton: boolean
@@ -72,15 +79,17 @@ export function getSidepanelControlState(status: AgentStatus): {
 } {
 	const isRunning = status === 'running'
 	const isAwaitingTakeover = status === 'waiting_for_user' || status === 'paused'
+	const isAwaitingQuestion = isRunning && hasPendingUserQuestion
 
 	return {
 		isRunning,
 		isAwaitingTakeover,
-		inputDisabled: isRunning,
+		isAwaitingQuestion,
+		inputDisabled: isRunning && !isAwaitingQuestion,
 		canStartNewConversation: !isRunning,
 		showStopButton: isAgentTaskActive(status),
-		showSendButton: !isRunning,
-		shouldSubmitToActiveTask: isAwaitingTakeover,
+		showSendButton: !isRunning || isAwaitingQuestion,
+		shouldSubmitToActiveTask: isAwaitingTakeover || isAwaitingQuestion,
 	}
 }
 
@@ -101,6 +110,7 @@ export default function App() {
 		activity,
 		currentTask,
 		takeoverRequest,
+		userQuestionRequest,
 		config,
 		execute,
 		followUp,
@@ -113,7 +123,7 @@ export default function App() {
 		restoreConversation,
 		configure,
 	} = useAgent(SIDEPANEL_AGENT_OPTIONS)
-	const controlState = getSidepanelControlState(status)
+	const controlState = getSidepanelControlState(status, Boolean(userQuestionRequest))
 	const isRunning = controlState.isRunning
 	const isTaskLocked = isAgentTaskActive(status)
 	const hasVisibleConversation = hasAgentConversationContent({ currentTask, history, activity })
@@ -144,7 +154,12 @@ export default function App() {
 		if (historyRef.current) {
 			historyRef.current.scrollTop = historyRef.current.scrollHeight
 		}
-	}, [history, activity, takeoverRequest, status])
+	}, [history, activity, takeoverRequest, userQuestionRequest, status])
+
+	useEffect(() => {
+		if (!userQuestionRequest) return
+		window.requestAnimationFrame(() => textareaRef.current?.focus())
+	}, [userQuestionRequest])
 
 	const runTask = useCallback(
 		(task: string) => {
@@ -306,7 +321,7 @@ export default function App() {
 
 	return (
 		<div className="relative flex h-screen w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-background">
-			<MotionOverlay active={isRunning} />
+			<MotionOverlay active={isRunning && !controlState.isAwaitingQuestion} />
 			{showEmptyState && <PinTip />}
 			{/* Header */}
 			<header className="flex items-center justify-between px-3 py-2">
@@ -362,6 +377,7 @@ export default function App() {
 							activity={activity}
 							running={isRunning}
 							takeoverRequest={takeoverRequest}
+							userQuestionRequest={userQuestionRequest}
 							onCompleteTakeover={completeUserTakeover}
 							onPauseTakeover={pauseUserTakeover}
 							onResumePausedTask={handleResume}
@@ -388,7 +404,8 @@ export default function App() {
 						onChange={(e) => setInputValue(e.target.value)}
 						onKeyDown={handleKeyDown}
 						disabled={controlState.inputDisabled || clearingConversation}
-						aria-label={t('describeTask')}
+						placeholder={userQuestionRequest ? t('answerQuestion') : undefined}
+						aria-label={userQuestionRequest ? t('answerQuestion') : t('describeTask')}
 						className="max-h-36 min-h-11 px-3.5 pb-2 pt-3 text-[14px] leading-relaxed"
 					/>
 					<InputGroupAddon align="block-end" className="justify-between gap-2 px-2.5 pb-2">

@@ -7,6 +7,7 @@ import { PageAgentCore, type PageAgentCoreConfig, tool } from './PageAgentCore'
 import type {
 	AgentActivity,
 	AgentStatus,
+	AgentStepEvent,
 	ExecutionResult,
 	UserTakeoverEvent,
 	UserTakeoverRequest,
@@ -518,18 +519,24 @@ describe('PageAgentCore', () => {
 			await agent.execute('Run without manual takeover support')
 			agent.onUserTakeover = async () => 'completed'
 			await agent.execute('Run with manual takeover support')
+			agent.onUserTakeover = undefined
 			agent.onAskUser = async () => 'Clarified'
+			await agent.execute('Run with clarification support')
+			agent.onUserTakeover = async () => 'completed'
 			await agent.execute('Run with manual takeover and clarification support')
 
 			const neitherPrompt =
 				outboundRequests[0].messages.find((message) => message.role === 'system')?.content ?? ''
 			const takeoverOnlyPrompt =
 				outboundRequests[1].messages.find((message) => message.role === 'system')?.content ?? ''
-			const bothPrompt =
+			const askOnlyPrompt =
 				outboundRequests[2].messages.find((message) => message.role === 'system')?.content ?? ''
+			const bothPrompt =
+				outboundRequests[3].messages.find((message) => message.role === 'system')?.content ?? ''
 			const neitherTools = JSON.stringify(outboundRequests[0].tools)
 			const takeoverOnlyTools = JSON.stringify(outboundRequests[1].tools)
-			const bothTools = JSON.stringify(outboundRequests[2].tools)
+			const askOnlyTools = JSON.stringify(outboundRequests[2].tools)
+			const bothTools = JSON.stringify(outboundRequests[3].tools)
 
 			expect(agent.tools.get('request_user_takeover')).toBeDefined()
 			expect(agent.tools.get('ask_user')).toBeDefined()
@@ -560,6 +567,9 @@ describe('PageAgentCore', () => {
 				'call `request_user_takeover` with the appropriate `reason`, a concise `title`, the current goal in `goal`, and a concise user instruction in `message`',
 			)
 			expect(takeoverOnlyPrompt).toContain(
+				'call `request_user_takeover` immediately. Do not keep trying browser actions or request the protected value as a clarification',
+			)
+			expect(takeoverOnlyPrompt).toContain(
 				'Missing information or clarification is separate from protected manual browser actions',
 			)
 			expect(takeoverOnlyPrompt).toContain(
@@ -572,13 +582,60 @@ describe('PageAgentCore', () => {
 				'An alternative public route is allowed only when the protected action is not actually required',
 			)
 
+			expect(askOnlyTools).toContain('ask_user')
+			expect(askOnlyTools).not.toContain('request_user_takeover')
+			expect(askOnlyPrompt).toContain('<ask_user_rules>')
+			expect(askOnlyPrompt).not.toContain('<manual_takeover_rules>')
+			expect(askOnlyPrompt).not.toContain('request_user_takeover')
+			expect(askOnlyPrompt).toContain('call `ask_user` before ending the task as unclear')
+			expect(askOnlyPrompt).not.toContain('Ask user for help if you have any difficulty')
+			expect(askOnlyPrompt).not.toContain('user request is not clear')
+
 			expect(bothTools).toContain('request_user_takeover')
 			expect(bothTools).toContain('ask_user')
 			expect(bothPrompt).toContain('<manual_takeover_rules>')
 			expect(bothPrompt).toContain('<ask_user_rules>')
-			expect(bothPrompt).toContain('Use `ask_user` only for missing information or clarification')
+			expect(bothPrompt).toContain(
+				'Use `ask_user` only when the task cannot proceed because a required user-specific value or ambiguous choice is missing',
+			)
+			expect(bothPrompt).toContain('do not guess user-specific values')
 		},
 	)
+
+	it('runs ask_user to completion with the active task signal', async () => {
+		let fetchCount = 0
+		let callbackSignal: AbortSignal | undefined
+		const onAskUser = vi.fn(async (_question: string, options?: { signal: AbortSignal }) => {
+			callbackSignal = options?.signal
+			return 'Linear algebra'
+		})
+		const agent = new PageAgentCore(
+			createConfig({
+				customFetch: async () => {
+					fetchCount++
+					return createToolCallResponse(
+						fetchCount === 1
+							? { ask_user: { question: 'Which course should I open?' } }
+							: { done: { text: 'Opened the requested course', success: true } },
+						fetchCount,
+					)
+				},
+			}),
+		)
+		agent.onAskUser = onAskUser
+
+		const result = await agent.execute('Open a course')
+		const askStep = result.history.find(
+			(event): event is AgentStepEvent => event.type === 'step' && event.action.name === 'ask_user',
+		)
+
+		expect(result).toMatchObject({ success: true, data: 'Opened the requested course' })
+		expect(onAskUser).toHaveBeenCalledWith('Which course should I open?', {
+			signal: expect.any(AbortSignal),
+		})
+		expect(callbackSignal).toBeInstanceOf(AbortSignal)
+		expect(askStep?.action.output).toBe('User answered: Linear algebra')
+	})
 
 	it('runs the LLM takeover tool to completion with the active signal', async () => {
 		const takeoverInput = {

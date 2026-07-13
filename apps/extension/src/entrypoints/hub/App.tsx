@@ -9,7 +9,10 @@ import { Switch } from '@/components/ui/switch'
 
 import { useHubWs } from './hub-ws'
 
-export const HUB_AGENT_OPTIONS = { enableUserTakeover: false } as const
+export const HUB_AGENT_OPTIONS = {
+	enableUserTakeover: false,
+	enableUserQuestions: false,
+} as const
 
 export default function App() {
 	const { status, history, activity, currentTask, config, execute, stop, configure } =

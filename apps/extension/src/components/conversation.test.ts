@@ -117,6 +117,39 @@ describe('Conversation takeover UI', () => {
 		expect(html).not.toContain('需要你接管当前页面后继续')
 	})
 
+	it('renders a captcha request through the manual takeover prompt', () => {
+		const html = renderConversation({
+			status: 'waiting_for_user',
+			takeoverRequest: {
+				...LOGIN_REQUEST,
+				id: 'takeover-captcha',
+				reason: 'captcha',
+				title: 'Complete verification',
+				message: 'Finish the captcha in the page, then continue.',
+			},
+		})
+
+		expect(html).toContain('Complete verification')
+		expect(html).toContain('Finish the captcha in the page')
+		expect(html).toContain('已完成，继续')
+	})
+
+	it('renders an ask_user question separately from manual takeover', () => {
+		const html = renderConversation({
+			running: true,
+			userQuestionRequest: {
+				id: 'question-1',
+				question: 'Which delivery address should I use?',
+			},
+		})
+
+		expect(html).toContain('需要补充信息')
+		expect(html).toContain('Which delivery address should I use?')
+		expect(html).toContain('请在下方输入回答')
+		expect(html).not.toContain('需要你完成一步')
+		expect(html).not.toContain('思考中')
+	})
+
 	it('uses the stuck takeover primary action label', () => {
 		const stuckRequest: UserTakeoverRequest = {
 			...LOGIN_REQUEST,

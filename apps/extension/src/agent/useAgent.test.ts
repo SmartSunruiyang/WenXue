@@ -26,6 +26,7 @@ vi.mock('./MultiPageAgent', () => {
 		status = 'idle'
 		task = ''
 		history = []
+		onAskUser = undefined
 		onUserTakeover = undefined
 		execute = vi.fn(async () => ({
 			success: true,
@@ -65,11 +66,13 @@ import {
 	createClearedAgentConversationState,
 	createRestoredAgentConversationState,
 	createTakeoverRequestController,
+	createUserQuestionController,
 	hasAgentConversationContent,
 	initializeAgentSession,
 	isAgentTaskActive,
 	useAgent,
 	type UseAgentResult,
+	type UserQuestionRequest,
 } from './useAgent'
 
 const TAKEOVER_REQUEST: UserTakeoverRequest = {
@@ -90,6 +93,7 @@ class FakeAgent extends EventTarget {
 	status: AgentStatus = 'idle'
 	task = ''
 	history: HistoricalEvent[] = []
+	onAskUser?: (question: string, options?: { signal: AbortSignal }) => Promise<string>
 	onUserTakeover?: (
 		request: UserTakeoverRequest,
 		options?: { signal: AbortSignal },
@@ -132,6 +136,7 @@ function createSessionHarness() {
 		activity: null as AgentActivity | null,
 		currentTask: '',
 		takeoverRequest: null as UserTakeoverRequest | null,
+		userQuestionRequest: null as UserQuestionRequest | null,
 	}
 	const controller = createAgentSessionController({
 		setStatus: (status) => {
@@ -148,6 +153,9 @@ function createSessionHarness() {
 		},
 		setTakeoverRequest: (request) => {
 			state.takeoverRequest = request
+		},
+		setUserQuestionRequest: (request) => {
+			state.userQuestionRequest = request
 		},
 	})
 
@@ -692,6 +700,64 @@ describe('takeover request controller', () => {
 	})
 })
 
+describe('user question controller', () => {
+	it('returns the current answer exactly once and removes its abort listener', async () => {
+		const requests: Array<UserQuestionRequest | null> = []
+		const abortController = new AbortController()
+		const removeListener = vi.spyOn(abortController.signal, 'removeEventListener')
+		const controller = createUserQuestionController((request) => requests.push(request))
+
+		const answer = controller.request('Which course should I open?', {
+			signal: abortController.signal,
+		})
+		expect(controller.hasPending()).toBe(true)
+		expect(controller.answer('Linear algebra')).toBe(true)
+		expect(controller.answer('Calculus')).toBe(false)
+
+		await expect(answer).resolves.toBe('Linear algebra')
+		expect(requests[0]).toMatchObject({ question: 'Which course should I open?' })
+		expect(requests.at(-1)).toBeNull()
+		expect(controller.hasPending()).toBe(false)
+		expect(removeListener).toHaveBeenCalledTimes(1)
+	})
+
+	it('rejects and clears a question when the task signal aborts', async () => {
+		const requests: Array<UserQuestionRequest | null> = []
+		const abortController = new AbortController()
+		const controller = createUserQuestionController((request) => requests.push(request))
+		const reason = new Error('task stopped')
+
+		const answer = controller.request('Which account?', { signal: abortController.signal })
+		abortController.abort(reason)
+
+		await expect(answer).rejects.toBe(reason)
+		expect(requests.at(-1)).toBeNull()
+		expect(controller.hasPending()).toBe(false)
+	})
+
+	it('supersedes an earlier question without letting its abort settle the latest one', async () => {
+		const requests: Array<UserQuestionRequest | null> = []
+		const firstAbortController = new AbortController()
+		const controller = createUserQuestionController((request) => requests.push(request))
+
+		const firstAnswer = controller.request('First question?', {
+			signal: firstAbortController.signal,
+		})
+		const secondAnswer = controller.request('Second question?')
+		firstAbortController.abort(new Error('stale abort'))
+		controller.answer('Second answer')
+
+		await expect(firstAnswer).rejects.toMatchObject({ name: 'AbortError' })
+		await expect(secondAnswer).resolves.toBe('Second answer')
+		expect(requests.map((request) => request?.question ?? null)).toEqual([
+			'First question?',
+			null,
+			'Second question?',
+			null,
+		])
+	})
+})
+
 describe('agent session controller', () => {
 	it('synchronizes replacement state and live agent events', () => {
 		const event = { type: 'observation', content: 'Existing history' } as HistoricalEvent
@@ -709,6 +775,7 @@ describe('agent session controller', () => {
 			activity: null,
 			currentTask: 'Existing task',
 			takeoverRequest: null,
+			userQuestionRequest: null,
 		})
 		expect(state.history).not.toBe(agent.history)
 
@@ -773,6 +840,7 @@ describe('agent session controller', () => {
 			activity: null,
 			currentTask: 'New task',
 			takeoverRequest: null,
+			userQuestionRequest: null,
 		})
 	})
 
@@ -914,6 +982,7 @@ describe('agent session controller', () => {
 			activity: null,
 			currentTask: 'Hub task',
 			takeoverRequest: null,
+			userQuestionRequest: null,
 		})
 	})
 
@@ -943,6 +1012,7 @@ describe('agent session controller', () => {
 			activity: null,
 			currentTask: '',
 			takeoverRequest: null,
+			userQuestionRequest: null,
 		})
 
 		oldAgent.setStatus('error')
@@ -989,7 +1059,42 @@ describe('agent session controller', () => {
 			activity: null,
 			currentTask: '',
 			takeoverRequest: null,
+			userQuestionRequest: null,
 		})
+	})
+
+	it('routes a clarification answer back to ask_user while the agent remains running', async () => {
+		const agent = new FakeAgent()
+		agent.status = 'running'
+		agent.task = 'Book a meeting'
+		const { controller, state } = createSessionHarness()
+		controller.bind(agent, { enableUserTakeover: true, enableUserQuestions: true })
+		agent.setActivity({ type: 'thinking' })
+
+		const answer = agent.onAskUser!('Which day works for you?')
+
+		expect(state.userQuestionRequest).toMatchObject({ question: 'Which day works for you?' })
+		expect(state.activity).toBeNull()
+		expect(state.takeoverRequest).toBeNull()
+		await expect(controller.submitActiveTaskMessage('Next Monday')).resolves.toBeUndefined()
+		await expect(answer).resolves.toBe('Next Monday')
+		expect(state.userQuestionRequest).toBeNull()
+		expect(agent.pushObservation).not.toHaveBeenCalled()
+		expect(agent.onUserTakeover).toBeDefined()
+	})
+
+	it('cancels a pending clarification when the user stops the task', async () => {
+		const agent = new FakeAgent()
+		agent.status = 'running'
+		const { controller, state } = createSessionHarness()
+		controller.bind(agent, { enableUserTakeover: true, enableUserQuestions: true })
+		const answer = agent.onAskUser!('Please provide the missing value.')
+
+		controller.stop()
+
+		await expect(answer).rejects.toMatchObject({ name: 'AbortError' })
+		expect(agent.stop).toHaveBeenCalledTimes(1)
+		expect(state.userQuestionRequest).toBeNull()
 	})
 
 	it('submits waiting takeover input to the active task without replacing its memory', async () => {
@@ -1014,14 +1119,17 @@ describe('agent session controller', () => {
 		expect(state.history).toEqual([event])
 	})
 
-	it('leaves takeover capability unset for Hub mode', () => {
+	it('leaves interactive user capabilities unset for Hub mode', () => {
 		const agent = new FakeAgent()
+		agent.onAskUser = vi.fn(async () => 'answer')
 		agent.onUserTakeover = vi.fn(async () => 'completed' as const)
 		const { controller, state } = createSessionHarness()
 
-		controller.bind(agent, { enableUserTakeover: false })
+		controller.bind(agent, { enableUserTakeover: false, enableUserQuestions: false })
 
+		expect(agent.onAskUser).toBeUndefined()
 		expect(agent.onUserTakeover).toBeUndefined()
 		expect(state.takeoverRequest).toBeNull()
+		expect(state.userQuestionRequest).toBeNull()
 	})
 })

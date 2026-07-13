@@ -85,9 +85,9 @@ tools.set(
 	'ask_user',
 	tool({
 		description:
-			'Ask the user a question and wait for their answer. Use this if you need more information or clarification.',
+			'Ask the user one concise question and wait for their answer. Use only when a required user-specific value or ambiguous choice is missing and cannot be determined from the page. Never use this for login, captcha, 2FA, permission prompts, or other protected browser actions; those require manual browser takeover.',
 		inputSchema: z.object({
-			question: z.string(),
+			question: z.string().trim().min(1).max(1000),
 		}),
 		execute: async function (this: PageAgentCore, input, { signal }) {
 			if (!this.onAskUser) {
@@ -103,7 +103,7 @@ tools.set(
 	'request_user_takeover',
 	tool({
 		description:
-			'Ask the user to manually handle login, captcha, permission dialogs, unavailable page areas, or other browser actions that must not be automated.',
+			'Immediately ask the user to manually handle login, captcha, 2FA, permission dialogs, unavailable page areas, or other browser actions that must not be automated. Do not use this for ordinary clarification questions.',
 		inputSchema: z.object({
 			reason: z.enum(LLM_USER_TAKEOVER_REASONS),
 			title: z.string(),

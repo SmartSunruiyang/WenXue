@@ -99,6 +99,7 @@ const translations = {
 		// App (side panel)
 		task: '任务',
 		describeTask: '描述您的任务...（Enter 发送）',
+		answerQuestion: '输入回答...（Enter 发送）',
 		stopTask: '停止任务',
 		newConversation: '新建对话',
 		send: '发送',
@@ -146,6 +147,8 @@ const translations = {
 		evalLabel: '评估',
 		memoryLabel: '记忆',
 		taskStopped: '已停止',
+		userQuestionTitle: '需要补充信息',
+		userQuestionHint: '请在下方输入回答，问学会继续当前任务。',
 		errorNextStep: '请检查模型配置或页面状态，然后重试。',
 		resultDone: '已完成',
 		resultFailed: '未完成',
@@ -286,6 +289,7 @@ const translations = {
 
 		task: 'Task',
 		describeTask: 'Describe your task... (Enter to send)',
+		answerQuestion: 'Type your answer... (Enter to send)',
 		stopTask: 'Stop task',
 		newConversation: 'New conversation',
 		send: 'Send',
@@ -330,6 +334,8 @@ const translations = {
 		evalLabel: 'Eval',
 		memoryLabel: 'Memory',
 		taskStopped: 'Stopped',
+		userQuestionTitle: 'More information needed',
+		userQuestionHint: 'Answer below and WenXue will continue the current task.',
 		errorNextStep: 'Check the model settings or page state, then try again.',
 		resultDone: 'Done',
 		resultFailed: 'Not completed',

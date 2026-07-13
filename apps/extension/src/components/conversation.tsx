@@ -6,13 +6,23 @@ import type {
 	HistoricalEvent,
 	ObservationEvent,
 	RetryEvent,
-	UserTakeoverEvent,
 	UserMessageEvent,
+	UserTakeoverEvent,
 	UserTakeoverRequest,
 } from '@page-agent/core'
-import { Check, ChevronRight, CircleAlert, CirclePause, Hand, Play, X } from 'lucide-react'
+import {
+	Check,
+	ChevronRight,
+	CircleAlert,
+	CircleHelp,
+	CirclePause,
+	Hand,
+	Play,
+	X,
+} from 'lucide-react'
 import { useState } from 'react'
 
+import type { UserQuestionRequest } from '@/agent/useAgent'
 import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { type TranslationKey, useI18n } from '@/lib/i18n'
@@ -100,6 +110,7 @@ export function Conversation({
 	activity,
 	running = false,
 	takeoverRequest = null,
+	userQuestionRequest = null,
 	onCompleteTakeover,
 	onPauseTakeover,
 	onResumePausedTask,
@@ -110,6 +121,7 @@ export function Conversation({
 	activity?: AgentActivity | null
 	running?: boolean
 	takeoverRequest?: UserTakeoverRequest | null
+	userQuestionRequest?: UserQuestionRequest | null
 	onCompleteTakeover?: () => void
 	onPauseTakeover?: () => void
 	onResumePausedTask?: () => void
@@ -121,10 +133,12 @@ export function Conversation({
 	const hasAgentOutput = items.some((item) => item.kind !== 'user-message')
 	const lastUserMessage = findLastUserMessage(events)
 	const shouldShowTaskFallback = Boolean(task) && lastUserMessage !== task
-	const shouldShowWaiting = running && !activity && Boolean(task) && !hasAgentOutput
+	const shouldShowWaiting =
+		running && !activity && !userQuestionRequest && Boolean(task) && !hasAgentOutput
 	const pausedTakeover = status === 'paused' ? findLatestPausedTakeover(events) : null
-	const shouldShowActivity = activity && !(activity.type === 'waiting_for_user' && takeoverRequest)
-	const isLive = running || status === 'waiting_for_user'
+	const shouldShowActivity =
+		activity && !userQuestionRequest && !(activity.type === 'waiting_for_user' && takeoverRequest)
+	const isLive = running || status === 'waiting_for_user' || Boolean(userQuestionRequest)
 
 	return (
 		<div
@@ -142,6 +156,7 @@ export function Conversation({
 			)}
 
 			{shouldShowWaiting && <LiveStatus text={t('thinking')} live />}
+			{userQuestionRequest && <UserQuestionPrompt request={userQuestionRequest} />}
 			{takeoverRequest && (
 				<TakeoverPrompt
 					request={takeoverRequest}
@@ -154,6 +169,29 @@ export function Conversation({
 			)}
 			{shouldShowActivity && <ActivityLine activity={activity} />}
 		</div>
+	)
+}
+
+function UserQuestionPrompt({ request }: { request: UserQuestionRequest }) {
+	const { t } = useI18n()
+
+	return (
+		<section className="min-w-0 max-w-full overflow-x-hidden rounded-lg border border-border/70 bg-muted/55 px-3.5 py-3 text-foreground animate-in fade-in-0 slide-in-from-bottom-1 duration-300">
+			<div className="flex min-w-0 items-start gap-2.5">
+				<CircleHelp className="mt-0.5 size-4 shrink-0 text-foreground/70" />
+				<div className="min-w-0 flex-1">
+					<p className="text-[10px] font-medium uppercase text-muted-foreground">
+						{t('userQuestionTitle')}
+					</p>
+					<p className="mt-1 min-w-0 whitespace-pre-wrap text-[13px] font-medium leading-relaxed [overflow-wrap:anywhere]">
+						{request.question}
+					</p>
+					<p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+						{t('userQuestionHint')}
+					</p>
+				</div>
+			</div>
+		</section>
 	)
 }
 

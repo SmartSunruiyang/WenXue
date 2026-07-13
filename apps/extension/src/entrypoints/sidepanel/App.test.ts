@@ -5,7 +5,12 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 
-import { SidepanelHistoryButton, getSidepanelControlState, pickSendAction } from './App'
+import {
+	SIDEPANEL_AGENT_OPTIONS,
+	SidepanelHistoryButton,
+	getSidepanelControlState,
+	pickSendAction,
+} from './App'
 
 const APP_SOURCE = fileURLToPath(new URL('./App.tsx', import.meta.url))
 
@@ -28,6 +33,13 @@ describe('Sidepanel new conversation transition', () => {
 })
 
 describe('getSidepanelControlState', () => {
+	it('enables clarification questions and protected-action takeover in the side panel', () => {
+		expect(SIDEPANEL_AGENT_OPTIONS).toEqual({
+			enableUserTakeover: true,
+			enableUserQuestions: true,
+		})
+	})
+
 	it('keeps escape controls available while waiting for user takeover', () => {
 		expect(getSidepanelControlState('waiting_for_user')).toMatchObject({
 			inputDisabled: false,
@@ -45,6 +57,17 @@ describe('getSidepanelControlState', () => {
 			showStopButton: true,
 			showSendButton: false,
 			shouldSubmitToActiveTask: false,
+		})
+	})
+
+	it('unlocks only answer submission while ask_user is waiting', () => {
+		expect(getSidepanelControlState('running', true)).toMatchObject({
+			isAwaitingQuestion: true,
+			inputDisabled: false,
+			canStartNewConversation: false,
+			showStopButton: true,
+			showSendButton: true,
+			shouldSubmitToActiveTask: true,
 		})
 	})
 })
