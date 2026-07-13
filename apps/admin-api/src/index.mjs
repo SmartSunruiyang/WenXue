@@ -1,7 +1,7 @@
 import { handleAdminRequest } from './adminApi.mjs'
 import { createCloudBaseAdminStore } from './cloudbaseStore.mjs'
 
-/** @typedef {{ httpContext?: { headers?: Record<string, string | string[] | undefined> } }} CloudBaseContext */
+/** @typedef {{ httpContext?: { headers?: Record<string, string | string[] | undefined>, httpMethod?: string, url?: string } }} CloudBaseContext */
 
 /**
  * @param {unknown} event
@@ -140,6 +140,7 @@ function readEventQuery(event) {
  * @param {unknown} event
  */
 function readEventBody(event) {
+	if (typeof event === 'string') return event
 	if (!isRecord(event)) return '{}'
 	if (typeof event.body === 'string') {
 		const body = /** @type {{ body: string, isBase64Encoded?: boolean }} */ (event)
@@ -148,7 +149,7 @@ function readEventBody(event) {
 	if (typeof event.rawBody === 'string') {
 		return /** @type {{ rawBody: string }} */ (event).rawBody
 	}
-	return JSON.stringify('body' in event ? event.body : {})
+	return JSON.stringify('body' in event ? event.body : event)
 }
 
 /**
