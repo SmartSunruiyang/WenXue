@@ -118,7 +118,7 @@ export class MultiPageAgent extends PageAgentCore {
 		)
 
 		const includeInitialTab = config.includeInitialTab ?? true
-		const experimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? false
+		const experimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? true
 		const stuckGuard = new StuckActionGuard(3)
 		const { compaction, onBeforeTask, onAfterTask, onBeforeStep, onAfterStep, onDispose } = config
 

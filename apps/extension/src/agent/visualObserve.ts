@@ -1,4 +1,10 @@
-import type { LLMConfig } from '@page-agent/llms'
+import {
+	hasNamedToolChoice,
+	isNamedToolChoiceCompatibilityError,
+	rememberNamedToolChoiceUnsupported,
+	shouldDisableNamedToolChoice,
+	type LLMConfig,
+} from '@page-agent/llms'
 import * as z from 'zod/v4'
 
 import {
@@ -287,15 +293,12 @@ export async function askVisualObservation(
 			),
 		],
 		parallel_tool_calls: false,
-		tool_choice: cfg.disableNamedToolChoice
-			? 'required'
-			: { type: 'function', function: { name: TOOL_NAME } },
 	}
 	if (isQwenLike(cfg)) baseBody.enable_thinking = false
 
 	let lastError: unknown
 	for (let attempt = 0; attempt < 2; attempt += 1) {
-		const body =
+		const attemptBody =
 			attempt === 0
 				? baseBody
 				: {
@@ -308,6 +311,12 @@ export async function askVisualObservation(
 							...messages.slice(1),
 						],
 					}
+		const body = {
+			...attemptBody,
+			tool_choice: shouldDisableNamedToolChoice(cfg)
+				? 'required'
+				: { type: 'function', function: { name: TOOL_NAME } },
+		}
 		try {
 			return await postVisualObservation(cfg, body, opts)
 		} catch (error) {
@@ -324,7 +333,10 @@ async function postVisualObservation(
 	opts?: { signal?: AbortSignal; fetchImpl?: typeof fetch },
 ): Promise<VisualObservationResult> {
 	const fetchImpl = opts?.fetchImpl ?? cfg.customFetch ?? globalThis.fetch
-	const transformedBody = cfg.transformRequestBody?.(body) ?? body
+	const requestBody = { ...body }
+	const transformedBody = cfg.transformRequestBody?.(requestBody) ?? requestBody
+	const canFallbackFromNamedToolChoice =
+		!shouldDisableNamedToolChoice(cfg) && hasNamedToolChoice(transformedBody)
 	const baseURL = cfg.baseURL.replace(/\/+$/, '')
 	let response: Response
 	try {
@@ -343,7 +355,14 @@ async function postVisualObservation(
 	}
 
 	if (!response.ok) {
-		const message = await readErrorMessage(response)
+		const { data, message } = await readErrorResponse(response)
+		if (
+			canFallbackFromNamedToolChoice &&
+			isNamedToolChoiceCompatibilityError(response.status, data)
+		) {
+			await rememberNamedToolChoiceUnsupported(cfg)
+			return postVisualObservation(cfg, { ...body, tool_choice: 'required' }, opts)
+		}
 		throw new Error(`LLM request failed (HTTP ${response.status}): ${message}`)
 	}
 
@@ -355,6 +374,13 @@ async function postVisualObservation(
 		throw new InvalidVisualObservationResponseError(
 			`Vision model response is not valid JSON: ${errorMessage(error)}`,
 		)
+	}
+	if (
+		canFallbackFromNamedToolChoice &&
+		isNamedToolChoiceCompatibilityError(response.status, data)
+	) {
+		await rememberNamedToolChoiceUnsupported(cfg)
+		return postVisualObservation(cfg, { ...body, tool_choice: 'required' }, opts)
 	}
 	throwIfCloudBaseErrorEnvelope(data)
 	const argString = extractToolArguments(data)
@@ -439,12 +465,16 @@ function extractToolArguments(data: unknown): string | undefined {
 	return typeof args === 'string' ? args : undefined
 }
 
-async function readErrorMessage(response: Response): Promise<string> {
+async function readErrorResponse(response: Response): Promise<{ data: unknown; message: string }> {
 	try {
-		return readErrorMessageFromValue(await response.json()) ?? response.statusText
+		const data: unknown = await response.json()
+		return {
+			data,
+			message: readErrorMessageFromValue(data) ?? response.statusText,
+		}
 	} catch (error) {
 		if (isAbortError(error)) throw error
-		return response.statusText
+		return { data: undefined, message: response.statusText }
 	}
 }
 

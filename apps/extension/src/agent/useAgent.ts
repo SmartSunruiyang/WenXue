@@ -36,7 +36,6 @@ export interface AdvancedConfig {
 	systemInstruction?: string
 	experimentalLlmsTxt?: boolean
 	experimentalIncludeAllTabs?: boolean
-	disableNamedToolChoice?: boolean
 	compaction?: ExtensionCompactionConfig
 	logRetentionDays?: number
 	logMaxEntries?: number
@@ -475,8 +474,6 @@ export function createAgentForConfig(
 	const resolvedVisionModelId = normalizeVisionModelId(config.visionModelId, customModels)
 	const visualObservationModel = {
 		...resolvedVisualObservationModel,
-		disableNamedToolChoice:
-			config.disableNamedToolChoice ?? resolvedVisualObservationModel.disableNamedToolChoice,
 		requiresApiKey:
 			resolvedVisionModelId === BUILT_IN_MODEL_ID ||
 			resolvedVisionModelId === BUILT_IN_VISION_MODEL_ID,
@@ -490,7 +487,9 @@ export function createAgentForConfig(
 		language: config.language,
 		experimentalLlmsTxt: config.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
-		disableNamedToolChoice: config.disableNamedToolChoice,
+		disableNamedToolChoice: activeModel.disableNamedToolChoice,
+		getNamedToolChoiceDisabled: activeModel.getNamedToolChoiceDisabled,
+		onNamedToolChoiceUnsupported: activeModel.onNamedToolChoiceUnsupported,
 		compaction: config.compaction,
 		chaoxingModels,
 		visualObservationModel,

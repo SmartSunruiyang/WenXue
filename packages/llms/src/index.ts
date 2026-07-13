@@ -1,9 +1,22 @@
 import { OpenAIClient } from './OpenAIClient'
 import { DEFAULT_TEMPERATURE, LLM_MAX_RETRIES } from './constants'
 import { InvokeError, InvokeErrorTypes } from './errors'
+import {
+	hasNamedToolChoice,
+	isNamedToolChoiceCompatibilityError,
+	rememberNamedToolChoiceUnsupported,
+	shouldDisableNamedToolChoice,
+} from './namedToolChoice'
 import type { InvokeOptions, InvokeResult, LLMClient, LLMConfig, Message, Tool } from './types'
 
-export { InvokeError, InvokeErrorTypes }
+export {
+	hasNamedToolChoice,
+	InvokeError,
+	InvokeErrorTypes,
+	isNamedToolChoiceCompatibilityError,
+	rememberNamedToolChoiceUnsupported,
+	shouldDisableNamedToolChoice,
+}
 export type { InvokeOptions, InvokeResult, LLMClient, LLMConfig, Message, Tool }
 
 export function parseLLMConfig(config: LLMConfig): Required<LLMConfig> {
@@ -11,7 +24,7 @@ export function parseLLMConfig(config: LLMConfig): Required<LLMConfig> {
 	if (!config.baseURL || !config.model) {
 		throw new Error(
 			'[PageAgent] LLM configuration required. Please provide: baseURL, model. ' +
-				'See: https://alibaba.github.io/page-agent/docs/features/models'
+				'See: https://alibaba.github.io/page-agent/docs/features/models',
 		)
 	}
 
@@ -23,6 +36,8 @@ export function parseLLMConfig(config: LLMConfig): Required<LLMConfig> {
 		maxRetries: config.maxRetries ?? LLM_MAX_RETRIES,
 		transformRequestBody: config.transformRequestBody ?? ((requestBody) => requestBody),
 		disableNamedToolChoice: config.disableNamedToolChoice ?? false,
+		getNamedToolChoiceDisabled: config.getNamedToolChoiceDisabled ?? (() => false),
+		onNamedToolChoiceUnsupported: config.onNamedToolChoiceUnsupported ?? (() => undefined),
 		customFetch: (config.customFetch ?? fetch).bind(globalThis), // fetch will be illegal unless bound
 	}
 }
@@ -48,7 +63,7 @@ export class LLM extends EventTarget {
 		messages: Message[],
 		tools: Record<string, Tool>,
 		abortSignal: AbortSignal,
-		options?: InvokeOptions
+		options?: InvokeOptions,
 	): Promise<InvokeResult> {
 		return await withRetry(async () => this.client.invoke(messages, tools, abortSignal, options), {
 			maxRetries: this.config.maxRetries,
@@ -56,7 +71,7 @@ export class LLM extends EventTarget {
 				this.dispatchEvent(
 					new CustomEvent('retry', {
 						detail: { attempt, maxAttempts: this.config.maxRetries, lastError },
-					})
+					}),
 				)
 			},
 		})
@@ -71,7 +86,7 @@ async function withRetry<T>(
 	settings: {
 		maxRetries: number
 		onRetry: (attempt: number, lastError: Error) => void
-	}
+	},
 ): Promise<T> {
 	let attempt = 0
 	while (true) {

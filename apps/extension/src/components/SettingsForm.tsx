@@ -142,10 +142,7 @@ export function SettingsForm({
 		config?.experimentalLlmsTxt ?? false,
 	)
 	const [experimentalIncludeAllTabs, setExperimentalIncludeAllTabs] = useState(
-		config?.experimentalIncludeAllTabs ?? false,
-	)
-	const [disableNamedToolChoice, setDisableNamedToolChoice] = useState(
-		config?.disableNamedToolChoice ?? false,
+		config?.experimentalIncludeAllTabs ?? true,
 	)
 	const [logRetentionDays, setLogRetentionDays] = useState(config?.logRetentionDays ?? 3)
 	const [logMaxEntries, setLogMaxEntries] = useState(config?.logMaxEntries ?? 5000)
@@ -179,8 +176,7 @@ export function SettingsForm({
 		const nextUILanguage = config.uiLanguage ?? 'zh-CN'
 		const nextSystemInstruction = config.systemInstruction ?? ''
 		const nextExperimentalLlmsTxt = config.experimentalLlmsTxt ?? false
-		const nextExperimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? false
-		const nextDisableNamedToolChoice = config.disableNamedToolChoice ?? false
+		const nextExperimentalIncludeAllTabs = config.experimentalIncludeAllTabs ?? true
 
 		hydratedRef.current = true
 		lastSavedKeyRef.current = settingsConfigKey(
@@ -193,7 +189,6 @@ export function SettingsForm({
 				systemInstruction: nextSystemInstruction,
 				experimentalLlmsTxt: nextExperimentalLlmsTxt,
 				experimentalIncludeAllTabs: nextExperimentalIncludeAllTabs,
-				disableNamedToolChoice: nextDisableNamedToolChoice,
 				logRetentionDays,
 				logMaxEntries,
 			}),
@@ -207,7 +202,6 @@ export function SettingsForm({
 		setSystemInstruction(nextSystemInstruction)
 		setExperimentalLlmsTxt(nextExperimentalLlmsTxt)
 		setExperimentalIncludeAllTabs(nextExperimentalIncludeAllTabs)
-		setDisableNamedToolChoice(nextDisableNamedToolChoice)
 		setReady(true)
 	}, [config])
 
@@ -360,7 +354,6 @@ export function SettingsForm({
 				systemInstruction,
 				experimentalLlmsTxt,
 				experimentalIncludeAllTabs,
-				disableNamedToolChoice,
 				logRetentionDays,
 				logMaxEntries,
 			}),
@@ -373,7 +366,6 @@ export function SettingsForm({
 			systemInstruction,
 			experimentalLlmsTxt,
 			experimentalIncludeAllTabs,
-			disableNamedToolChoice,
 			logRetentionDays,
 			logMaxEntries,
 		],
@@ -598,15 +590,12 @@ export function SettingsForm({
 
 						<div className="divide-y rounded-md border bg-muted/15 px-4">
 							<label className="flex min-h-14 cursor-pointer items-center justify-between gap-5 py-3">
-								<span className="text-sm text-muted-foreground">{t('disableNamedToolChoice')}</span>
-								<Switch
-									checked={disableNamedToolChoice}
-									onCheckedChange={setDisableNamedToolChoice}
-								/>
-							</label>
-
-							<label className="flex min-h-14 cursor-pointer items-center justify-between gap-5 py-3">
-								<span className="text-sm text-muted-foreground">{t('experimentalLlmsTxt')}</span>
+								<span className="grid gap-1">
+									<span className="text-sm text-muted-foreground">{t('experimentalLlmsTxt')}</span>
+									<span className="text-xs leading-5 text-muted-foreground/80">
+										{t('experimentalLlmsTxtHelp')}
+									</span>
+								</span>
 								<Switch checked={experimentalLlmsTxt} onCheckedChange={setExperimentalLlmsTxt} />
 							</label>
 

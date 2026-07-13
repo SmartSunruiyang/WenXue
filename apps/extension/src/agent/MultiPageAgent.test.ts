@@ -205,6 +205,30 @@ describe('MultiPageAgent stuck action guard', () => {
 		expect(agent.tools.has('list_frames')).toBe(true)
 	})
 
+	it('includes all tabs by default when a task starts', async () => {
+		const agent = createAgent()
+
+		await agent.config.onBeforeTask?.(agent)
+
+		expect(TabsController.prototype.init).toHaveBeenCalledWith('', {
+			includeInitialTab: true,
+			experimentalIncludeAllTabs: true,
+		})
+		await agent.config.onAfterTask?.(agent, result)
+	})
+
+	it('preserves an explicit request to include only managed tabs', async () => {
+		const agent = createAgent({ experimentalIncludeAllTabs: false })
+
+		await agent.config.onBeforeTask?.(agent)
+
+		expect(TabsController.prototype.init).toHaveBeenCalledWith('', {
+			includeInitialTab: true,
+			experimentalIncludeAllTabs: false,
+		})
+		await agent.config.onAfterTask?.(agent, result)
+	})
+
 	it('requests takeover exactly once on the third repeated step using the observed URL', async () => {
 		const agent = createAgent()
 		let currentURL = 'https://example.com/task#first'

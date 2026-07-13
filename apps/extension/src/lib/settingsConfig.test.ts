@@ -14,7 +14,6 @@ describe('settingsConfig', () => {
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
-			disableNamedToolChoice: false,
 			logRetentionDays: 3,
 			logMaxEntries: 5000,
 		})
@@ -29,7 +28,6 @@ describe('settingsConfig', () => {
 			systemInstruction: undefined,
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
-			disableNamedToolChoice: false,
 			logRetentionDays: 3,
 			logMaxEntries: 5000,
 		})
@@ -55,7 +53,6 @@ describe('settingsConfig', () => {
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
-			disableNamedToolChoice: false,
 			logRetentionDays: 3,
 			logMaxEntries: 5000,
 		})
@@ -75,7 +72,6 @@ describe('settingsConfig', () => {
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
-			disableNamedToolChoice: false,
 			logRetentionDays: 3,
 			logMaxEntries: 5000,
 		})
@@ -102,7 +98,6 @@ describe('settingsConfig', () => {
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
-			disableNamedToolChoice: false,
 			logRetentionDays: 3,
 			logMaxEntries: 5000,
 		})
@@ -134,7 +129,6 @@ describe('settingsConfig', () => {
 			systemInstruction: '',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
-			disableNamedToolChoice: false,
 			logRetentionDays: 3,
 			logMaxEntries: 5000,
 		})
@@ -168,9 +162,11 @@ describe('settingsConfig', () => {
 			systemInstruction: 'Be concise',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: false,
-			disableNamedToolChoice: true,
 		}
 
 		expect(settingsConfigKey(config)).toBe(settingsConfigKey({ ...config }))
+		expect(settingsConfigKey(config)).toBe(
+			settingsConfigKey({ ...config, disableNamedToolChoice: true }),
+		)
 	})
 })

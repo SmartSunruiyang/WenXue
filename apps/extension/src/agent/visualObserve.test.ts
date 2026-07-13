@@ -205,6 +205,182 @@ describe('askVisualObservation', () => {
 		})
 	})
 
+	it('remembers named tool_choice incompatibility and retries visual observation with required', async () => {
+		const expected: VisualObservationResult = {
+			pageType: 'document',
+			visibleRegion: 'current viewport',
+			controls: [],
+			blockingElements: [],
+			checks: [],
+			visualWarnings: [],
+			recommendedNextObservation: 'none',
+			confidence: 'high',
+		}
+		const onNamedToolChoiceUnsupported = vi.fn(async () => {})
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						error: {
+							param: 'tool_choice',
+							message: "Invalid tool_choice type: 'object'; expected string",
+						},
+					}),
+					{ status: 400, headers: { 'Content-Type': 'application/json' } },
+				),
+			)
+			.mockResolvedValueOnce(toolResponse(expected))
+		const model = { ...visionModel, onNamedToolChoiceUnsupported }
+
+		await expect(
+			askVisualObservation(
+				model,
+				{ purpose: 'observe', reason: 'Need visual context' },
+				{
+					ok: true,
+					protocolVersion: 2,
+					dataUrl: 'data:image/jpeg;base64,SCREENSHOT',
+					tab: { id: 9, windowId: 2 },
+				},
+				{ fetchImpl },
+			),
+		).resolves.toEqual(expected)
+
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+		expect(JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string).tool_choice).toEqual({
+			type: 'function',
+			function: { name: 'visual_observation' },
+		})
+		expect(JSON.parse(fetchImpl.mock.calls[1]?.[1]?.body as string).tool_choice).toBe('required')
+		expect(model.disableNamedToolChoice).toBe(true)
+		expect(onNamedToolChoiceUnsupported).toHaveBeenCalledOnce()
+	})
+
+	it('does not learn from an unrelated visual-model 400 response', async () => {
+		const onNamedToolChoiceUnsupported = vi.fn(async () => {})
+		const fetchImpl = vi.fn<typeof fetch>(async () =>
+			Promise.resolve(
+				new Response(JSON.stringify({ error: { message: 'bad request: missing model' } }), {
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				}),
+			),
+		)
+
+		await expect(
+			askVisualObservation(
+				{ ...visionModel, onNamedToolChoiceUnsupported },
+				{ purpose: 'observe', reason: 'Need visual context' },
+				{
+					ok: true,
+					protocolVersion: 2,
+					dataUrl: 'data:image/jpeg;base64,SCREENSHOT',
+					tab: { id: 9, windowId: 2 },
+				},
+				{ fetchImpl },
+			),
+		).rejects.toThrow(/missing model/i)
+		expect(fetchImpl).toHaveBeenCalledOnce()
+		expect(onNamedToolChoiceUnsupported).not.toHaveBeenCalled()
+	})
+
+	it('retries a detailed CloudBase compatibility envelope with required', async () => {
+		const expected: VisualObservationResult = {
+			pageType: 'document',
+			visibleRegion: 'current viewport',
+			controls: [],
+			blockingElements: [],
+			checks: [],
+			visualWarnings: [],
+			recommendedNextObservation: 'none',
+			confidence: 'high',
+		}
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						statusCode: 400,
+						body: JSON.stringify({
+							error: {
+								param: 'tool_choice',
+								message: 'Named tool choice object is not supported',
+							},
+						}),
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } },
+				),
+			)
+			.mockResolvedValueOnce(toolResponse(expected))
+
+		await expect(
+			askVisualObservation(
+				{ ...visionModel },
+				{ purpose: 'observe', reason: 'Need visual context' },
+				{
+					ok: true,
+					protocolVersion: 2,
+					dataUrl: 'data:image/jpeg;base64,SCREENSHOT',
+					tab: { id: 9, windowId: 2 },
+				},
+				{ fetchImpl },
+			),
+		).resolves.toEqual(expected)
+		expect(JSON.parse(fetchImpl.mock.calls[1]?.[1]?.body as string).tool_choice).toBe('required')
+	})
+
+	it('keeps required tool choice for the structured-response retry after learning compatibility', async () => {
+		const expected: VisualObservationResult = {
+			pageType: 'document',
+			visibleRegion: 'current viewport',
+			controls: [],
+			blockingElements: [],
+			checks: [],
+			visualWarnings: [],
+			recommendedNextObservation: 'none',
+			confidence: 'high',
+		}
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						error: {
+							param: 'tool_choice',
+							message: "Invalid tool_choice type: 'object'; expected string",
+						},
+					}),
+					{ status: 400, headers: { 'Content-Type': 'application/json' } },
+				),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ choices: [{ message: { content: 'not structured' } }] }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' },
+				}),
+			)
+			.mockResolvedValueOnce(toolResponse(expected))
+
+		await expect(
+			askVisualObservation(
+				{ ...visionModel },
+				{ purpose: 'observe', reason: 'Need visual context' },
+				{
+					ok: true,
+					protocolVersion: 2,
+					dataUrl: 'data:image/jpeg;base64,SCREENSHOT',
+					tab: { id: 9, windowId: 2 },
+				},
+				{ fetchImpl },
+			),
+		).resolves.toEqual(expected)
+
+		expect(fetchImpl).toHaveBeenCalledTimes(3)
+		expect(JSON.parse(fetchImpl.mock.calls[1]?.[1]?.body as string).tool_choice).toBe('required')
+		expect(JSON.parse(fetchImpl.mock.calls[2]?.[1]?.body as string).tool_choice).toBe('required')
+	})
+
 	it('surfaces a CloudBase HTTP error envelope without retrying it as invalid model JSON', async () => {
 		const fetchImpl = vi.fn<typeof fetch>(
 			async () =>

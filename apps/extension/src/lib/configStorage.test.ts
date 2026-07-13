@@ -39,6 +39,11 @@ describe('configStorage', () => {
 
 		expect(config).toEqual({
 			...DEMO_CONFIG,
+			systemInstruction: undefined,
+			experimentalLlmsTxt: false,
+			experimentalIncludeAllTabs: true,
+			logRetentionDays: undefined,
+			logMaxEntries: undefined,
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels: [],
 			visionModelId: undefined,
@@ -91,6 +96,9 @@ describe('configStorage', () => {
 			language: 'en-US',
 			uiLanguage: 'zh-CN',
 			...advancedConfig,
+			experimentalIncludeAllTabs: true,
+			logRetentionDays: undefined,
+			logMaxEntries: undefined,
 		})
 	})
 
@@ -122,6 +130,7 @@ describe('configStorage', () => {
 			llmConfig: {
 				baseURL: 'https://api.example.com/v1',
 				model: 'custom-model',
+				disableNamedToolChoice: true,
 			},
 			advancedConfig: {
 				[legacyStepLimitKey]: 20,
@@ -144,12 +153,27 @@ describe('configStorage', () => {
 			systemInstruction: 'Answer with citations',
 			experimentalLlmsTxt: true,
 			experimentalIncludeAllTabs: false,
-			disableNamedToolChoice: true,
 			visionModelId: undefined,
 			logRetentionDays: undefined,
 			logMaxEntries: undefined,
 		})
 		expect(config).not.toHaveProperty(legacyStepLimitKey)
+		expect(config).not.toHaveProperty('disableNamedToolChoice')
+		expect(storage.set).toHaveBeenCalledWith({
+			llmConfig: {
+				baseURL: 'https://api.example.com/v1',
+				model: 'custom-model',
+			},
+		})
+		expect(storage.set).toHaveBeenCalledWith({
+			advancedConfig: {
+				systemInstruction: 'Answer with citations',
+				experimentalLlmsTxt: true,
+				experimentalIncludeAllTabs: false,
+				logRetentionDays: undefined,
+				logMaxEntries: undefined,
+			},
+		})
 	})
 
 	it('loads a selected custom model as the active LLM config', async () => {
@@ -189,7 +213,6 @@ describe('configStorage', () => {
 			systemInstruction: 'Be direct',
 			experimentalLlmsTxt: false,
 			experimentalIncludeAllTabs: true,
-			disableNamedToolChoice: true,
 			selectedModelId: BUILT_IN_MODEL_ID,
 			customModels: [],
 		}
@@ -208,7 +231,6 @@ describe('configStorage', () => {
 				systemInstruction: 'Be direct',
 				experimentalLlmsTxt: false,
 				experimentalIncludeAllTabs: true,
-				disableNamedToolChoice: true,
 				logRetentionDays: undefined,
 				logMaxEntries: undefined,
 			},
@@ -221,11 +243,38 @@ describe('configStorage', () => {
 				systemInstruction: 'Be direct',
 				experimentalLlmsTxt: false,
 				experimentalIncludeAllTabs: true,
-				disableNamedToolChoice: true,
 				logRetentionDays: undefined,
 				logMaxEntries: undefined,
 			},
 		})
+	})
+
+	it('strips the legacy named-tool flag when saving an old config shape', async () => {
+		const storage = createStorage()
+		const config: ExtConfig = {
+			baseURL: 'https://api.example.com/v1',
+			model: 'custom-model',
+			disableNamedToolChoice: true,
+		}
+
+		const saved = await saveStoredConfig(storage, config)
+
+		expect(storage.set).toHaveBeenCalledWith({
+			llmConfig: {
+				baseURL: 'https://api.example.com/v1',
+				model: 'custom-model',
+			},
+		})
+		expect(storage.set).toHaveBeenCalledWith({
+			advancedConfig: {
+				systemInstruction: undefined,
+				experimentalLlmsTxt: false,
+				experimentalIncludeAllTabs: true,
+				logRetentionDays: undefined,
+				logMaxEntries: undefined,
+			},
+		})
+		expect(saved).not.toHaveProperty('disableNamedToolChoice')
 	})
 
 	it('saves each custom model with its own API key and persists the selected model', async () => {

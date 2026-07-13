@@ -60,6 +60,7 @@ vi.mock('./MultiPageAgent', () => {
 })
 
 import {
+	createAgentForConfig,
 	createAgentSessionController,
 	createClearedAgentConversationState,
 	createRestoredAgentConversationState,
@@ -267,6 +268,46 @@ afterEach(() => {
 })
 
 describe('useAgent user session reload', () => {
+	it('preserves live named-tool capability state across agent config copies', async () => {
+		const capability = { disabled: false }
+		const getNamedToolChoiceDisabled = () => capability.disabled
+		const onNamedToolChoiceUnsupported = async () => {
+			capability.disabled = true
+		}
+		const active = {
+			baseURL: 'https://api.example.test/v1',
+			model: 'shared-model',
+			apiKey: 'text-key',
+			getNamedToolChoiceDisabled,
+			onNamedToolChoiceUnsupported,
+		}
+		const vision = { ...active, apiKey: 'vision-key' }
+
+		createAgentForConfig(
+			{
+				...active,
+				selectedModelId: 'custom-text',
+				visionModelId: 'custom-vision',
+				customModels: [
+					{ id: 'custom-text', provider: 'custom', ...active },
+					{ id: 'custom-vision', provider: 'custom', ...vision },
+				],
+			},
+			{
+				active,
+				vision,
+				chaoxingModels: { text: active, vision },
+			},
+		)
+
+		const options = multiPageAgentMockState.instances.at(-1)?.options
+		const visualModel = options?.visualObservationModel as Record<string, unknown>
+		await (options?.onNamedToolChoiceUnsupported as () => Promise<void>)()
+
+		expect((options?.getNamedToolChoiceDisabled as () => boolean)()).toBe(true)
+		expect((visualModel.getNamedToolChoiceDisabled as () => boolean)()).toBe(true)
+	})
+
 	it('initializes the built-in agent without a token so the first send can show auth errors in chat', async () => {
 		const storage = createChromeStorageHarness()
 		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
@@ -281,6 +322,7 @@ describe('useAgent user session reload', () => {
 			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
 			apiKey: '',
 			model: 'qwen3.7-max',
+			experimentalIncludeAllTabs: true,
 			visualObservationModel: {
 				baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
 				apiKey: '',
@@ -291,6 +333,8 @@ describe('useAgent user session reload', () => {
 		expect(renders.at(-1)?.config).toMatchObject({
 			baseURL: WENXUE_GATEWAY_OPENAI_BASE_URL,
 			selectedModelId: 'builtin:qwen3.7-max',
+			experimentalLlmsTxt: false,
+			experimentalIncludeAllTabs: true,
 		})
 		expect(storage.chrome.storage.onChanged.addListener).toHaveBeenCalledTimes(1)
 		expect(storage.listenerCount()).toBe(1)
@@ -300,9 +344,42 @@ describe('useAgent user session reload', () => {
 		expect(storage.listenerCount()).toBe(0)
 	})
 
-	it('passes the named-tool compatibility setting to the visual model', async () => {
+	it('removes the deprecated global named-tool setting before creating the agent', async () => {
 		const storage = createChromeStorageHarness({
 			advancedConfig: { disableNamedToolChoice: true },
+		})
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const renders: UseAgentResult[] = []
+
+		const probe = await renderAgentProbe((result) => {
+			renders.push(result)
+		})
+
+		await vi.waitFor(() => {
+			expect(storage.store.advancedConfig).toEqual({
+				systemInstruction: undefined,
+				experimentalLlmsTxt: false,
+				experimentalIncludeAllTabs: true,
+				logRetentionDays: undefined,
+				logMaxEntries: undefined,
+			})
+		})
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances.length).toBeGreaterThan(0))
+		await vi.waitFor(() => expect(renders.at(-1)?.config).not.toBeNull())
+		const options = multiPageAgentMockState.instances.at(-1)?.options
+		expect(options?.disableNamedToolChoice).not.toBe(true)
+		expect(
+			(options?.visualObservationModel as Record<string, unknown> | undefined)
+				?.disableNamedToolChoice,
+		).not.toBe(true)
+		expect(renders.at(-1)?.config).not.toHaveProperty('disableNamedToolChoice')
+
+		await probe.unmount()
+	})
+
+	it('preserves an explicit request to limit the agent to its managed tab group', async () => {
+		const storage = createChromeStorageHarness({
+			advancedConfig: { experimentalIncludeAllTabs: false },
 		})
 		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
 
@@ -310,8 +387,7 @@ describe('useAgent user session reload', () => {
 
 		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
 		expect(multiPageAgentMockState.instances[0].options).toMatchObject({
-			disableNamedToolChoice: true,
-			visualObservationModel: { disableNamedToolChoice: true },
+			experimentalIncludeAllTabs: false,
 		})
 
 		await probe.unmount()

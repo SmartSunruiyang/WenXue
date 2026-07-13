@@ -31,11 +31,14 @@ export class TabsController {
 	private tabs: TabMeta[] = []
 	private initialTabId: number | null = null
 	private tabGroupId: number | null = null
-	private experimentalIncludeAllTabs = false
+	private includeInitialTab = true
+	private experimentalIncludeAllTabs = true
+	private activationRequestId = 0
+	private pendingActivation: { requestId: number; tabId: number } | null = null
 	private task: string = ''
 
 	async init(task: string, options: TabsInitOptions = {}) {
-		const { includeInitialTab = true, experimentalIncludeAllTabs = false } = options
+		const { includeInitialTab = true, experimentalIncludeAllTabs = true } = options
 		debug('init', task, options)
 
 		if (this.disposed) {
@@ -51,7 +54,10 @@ export class TabsController {
 		this.tabs = []
 		this.tabGroupId = null
 		this.initialTabId = null
+		this.includeInitialTab = includeInitialTab
 		this.experimentalIncludeAllTabs = experimentalIncludeAllTabs
+		this.activationRequestId++
+		this.pendingActivation = null
 		this.task = task
 
 		const activeTabResult = await sendMessage({
@@ -79,7 +85,11 @@ export class TabsController {
 				payload: { windowId: this.windowId },
 			})
 			for (const tab of allTabs.tabs as chrome.tabs.Tab[]) {
-				if (tab.id && !tab.pinned && isContentScriptAllowed(tab.url)) {
+				if (
+					tab.id &&
+					(includeInitialTab || tab.id !== this.initialTabId) &&
+					this.isEligibleAllTabsTab(tab)
+				) {
 					this.addTab({
 						id: tab.id,
 						isInitial: tab.id === this.initialTabId,
@@ -165,19 +175,34 @@ export class TabsController {
 		if (!targetTab) {
 			throw new Error(`Tab ID ${tabId} not found in tab list.`)
 		}
+		const requestId = ++this.activationRequestId
+		this.pendingActivation = { requestId, tabId }
 
-		const result = await sendMessage({
-			type: 'TAB_CONTROL',
-			action: 'activate_tab',
-			payload: { tabId },
-		})
-		if (!result?.success) {
-			throw new Error(`Failed to activate tab ID ${tabId}: ${result?.error ?? 'unknown error'}`)
+		try {
+			const result = await sendMessage({
+				type: 'TAB_CONTROL',
+				action: 'activate_tab',
+				payload: { tabId },
+			})
+			if (!result?.success) {
+				throw new Error(`Failed to activate tab ID ${tabId}: ${result?.error ?? 'unknown error'}`)
+			}
+			if (
+				this.disposed ||
+				this.pendingActivation?.requestId !== requestId ||
+				!this.tabs.some((tab) => tab.id === tabId)
+			) {
+				throw new Error(`Tab activation for ID ${tabId} is no longer current.`)
+			}
+
+			await this.updateCurrentTabId(tabId)
+
+			return `✅ Switched to tab ID ${tabId}.`
+		} finally {
+			if (this.pendingActivation?.requestId === requestId) {
+				this.pendingActivation = null
+			}
 		}
-
-		await this.updateCurrentTabId(tabId)
-
-		return `✅ Switched to tab ID ${tabId}.`
 	}
 
 	async closeTab(tabId: number): Promise<string> {
@@ -244,6 +269,29 @@ export class TabsController {
 	private addTab(meta: TabMeta) {
 		if (this.tabs.find((t) => t.id === meta.id)) return
 		this.tabs.push(meta)
+	}
+
+	private removeTrackedTab(tabId: number) {
+		const targetTab = this.tabs.find((tab) => tab.id === tabId)
+		if (!targetTab) return
+
+		this.tabs = this.tabs.filter((tab) => tab.id !== tabId)
+		if (this.pendingActivation?.tabId === tabId) {
+			this.activationRequestId++
+			this.pendingActivation = null
+		}
+		if (this.currentTabId !== tabId) return
+
+		const replacement = this.tabs[this.tabs.length - 1] ?? null
+		if (replacement) {
+			void this.switchToReplacementTab(replacement.id).catch((error: unknown) => {
+				console.error(`${PREFIX} failed to activate the replacement tab`, error)
+			})
+		} else {
+			void this.updateCurrentTabId(null).catch((error: unknown) => {
+				console.error(`${PREFIX} failed to clear the current tab`, error)
+			})
+		}
 	}
 
 	async updateCurrentTabId(tabId: number | null) {
@@ -328,34 +376,44 @@ export class TabsController {
 
 			if (message.action === 'created') {
 				const tab = message.payload.tab as chrome.tabs.Tab
-				const shouldTrack = this.experimentalIncludeAllTabs || tab.groupId === this.tabGroupId
+				const shouldTrack = this.experimentalIncludeAllTabs
+					? this.isEligibleAllTabsTab(tab)
+					: tab.groupId === this.tabGroupId
 				if (shouldTrack && tab.id != null) {
-					this.addTab({ id: tab.id, isInitial: false })
+					this.addTab({
+						id: tab.id,
+						isInitial: false,
+						url: tab.url,
+						title: tab.title,
+						status: tab.status,
+					})
 					void this.switchToTab(tab.id).catch((error: unknown) => {
 						console.error(`${PREFIX} failed to activate a newly tracked tab`, error)
 					})
 				}
 			} else if (message.action === 'removed') {
 				const { tabId } = message.payload as { tabId: number }
-				const targetTab = this.tabs.find((t) => t.id === tabId)
-				if (targetTab) {
-					this.tabs = this.tabs.filter((t) => t.id !== tabId)
-					if (this.currentTabId === tabId) {
-						const newCurrentTab = this.tabs[this.tabs.length - 1] || null
-						if (newCurrentTab) {
-							void this.switchToReplacementTab(newCurrentTab.id).catch((error: unknown) => {
-								console.error(`${PREFIX} failed to activate the replacement tab`, error)
-							})
-						} else {
-							void this.updateCurrentTabId(null).catch((error: unknown) => {
-								console.error(`${PREFIX} failed to clear the current tab`, error)
-							})
-						}
-					}
-				}
+				this.removeTrackedTab(tabId)
 			} else if (message.action === 'updated') {
 				const { tabId, tab } = message.payload as { tabId: number; tab: chrome.tabs.Tab }
-				const targetTab = this.tabs.find((t) => t.id === tabId)
+				let targetTab = this.tabs.find((t) => t.id === tabId)
+				if (targetTab && this.experimentalIncludeAllTabs && !this.isEligibleAllTabsTab(tab)) {
+					this.removeTrackedTab(tabId)
+					return
+				}
+				if (!targetTab && this.experimentalIncludeAllTabs && this.isEligibleAllTabsTab(tab)) {
+					this.addTab({
+						id: tabId,
+						isInitial: false,
+						url: tab.url,
+						title: tab.title,
+						status: tab.status,
+					})
+					targetTab = this.tabs.find((candidate) => candidate.id === tabId)
+					void this.switchToTab(tabId).catch((error: unknown) => {
+						console.error(`${PREFIX} failed to activate a newly eligible tab`, error)
+					})
+				}
 				if (targetTab) {
 					targetTab.url = tab.url
 					targetTab.title = tab.title
@@ -377,9 +435,20 @@ export class TabsController {
 		})
 	}
 
+	private isEligibleAllTabsTab(tab: chrome.tabs.Tab): boolean {
+		return (
+			(this.includeInitialTab || tab.id !== this.initialTabId) &&
+			tab.windowId === this.windowId &&
+			!tab.pinned &&
+			isContentScriptAllowed(tab.pendingUrl ?? tab.url)
+		)
+	}
+
 	dispose() {
 		debug('dispose')
 		this.disposed = true
+		this.activationRequestId++
+		this.pendingActivation = null
 		this.port?.disconnect()
 		this.port = undefined
 	}

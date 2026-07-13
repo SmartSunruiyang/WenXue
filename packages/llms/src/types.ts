@@ -59,7 +59,7 @@ export interface LLMClient {
 		messages: Message[],
 		tools: Record<string, Tool>,
 		abortSignal?: AbortSignal,
-		options?: InvokeOptions
+		options?: InvokeOptions,
 	): Promise<InvokeResult>
 }
 
@@ -102,14 +102,23 @@ export interface LLMConfig {
 	 * Return a new object, or mutate the input object and return undefined.
 	 */
 	transformRequestBody?: (
-		requestBody: Record<string, unknown>
+		requestBody: Record<string, unknown>,
 	) => Record<string, unknown> | undefined
 
 	/**
-	 * remove the tool_choice field from the request.
-	 * @note fix "Invalid tool_choice type: 'object'" for some LLMs.
+	 * Use provider-neutral required tool selection instead of a named tool_choice object.
 	 */
 	disableNamedToolChoice?: boolean
+
+	/**
+	 * Read a runtime-shared named tool_choice capability state.
+	 *
+	 * Unlike the boolean flag, this hook remains live when an LLM config is copied.
+	 */
+	getNamedToolChoiceDisabled?: () => boolean
+
+	/** Called after this model rejects named tool_choice so the capability can be persisted. */
+	onNamedToolChoiceUnsupported?: () => void | Promise<void>
 
 	/**
 	 * Custom fetch function for LLM API requests.

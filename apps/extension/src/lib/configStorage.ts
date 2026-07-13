@@ -27,6 +27,14 @@ const CONFIG_STORAGE_KEYS = [
 	'visionModelId',
 ]
 
+function sanitizePersistedLLMConfig(config: LLMConfig): LLMConfig {
+	if (!Object.prototype.hasOwnProperty.call(config, 'disableNamedToolChoice')) return config
+
+	const sanitized = { ...config }
+	delete sanitized.disableNamedToolChoice
+	return sanitized
+}
+
 export async function loadStoredConfig(
 	storage: ConfigStorageArea = chrome.storage.local,
 ): Promise<ExtConfig> {
@@ -39,19 +47,31 @@ export async function loadStoredConfig(
 		customModels,
 	)
 	const hasStoredModelSelection = typeof result.selectedModelId === 'string'
+	const rawStoredLLMConfig = (result.llmConfig as LLMConfig | undefined) ?? DEMO_CONFIG
+	const storedLLMConfig = sanitizePersistedLLMConfig(rawStoredLLMConfig)
 	let llmConfig = hasStoredModelSelection
 		? resolveSelectedLLMConfig(selectedModelId, customModels)
-		: ((result.llmConfig as LLMConfig | undefined) ?? DEMO_CONFIG)
+		: storedLLMConfig
 	const language = (result.language as SupportedLanguage | undefined) || undefined
 	const uiLanguage = (result.uiLanguage as UILanguage | undefined) || undefined
-	const storedAdvancedConfig = (result.advancedConfig as AdvancedConfig | undefined) ?? {}
+	const rawStoredAdvancedConfig = result.advancedConfig
+	const storedAdvancedConfig =
+		typeof rawStoredAdvancedConfig === 'object' && rawStoredAdvancedConfig !== null
+			? (rawStoredAdvancedConfig as AdvancedConfig)
+			: {}
 	const advancedConfig: AdvancedConfig = {
 		systemInstruction: storedAdvancedConfig.systemInstruction,
-		experimentalLlmsTxt: storedAdvancedConfig.experimentalLlmsTxt,
-		experimentalIncludeAllTabs: storedAdvancedConfig.experimentalIncludeAllTabs,
-		disableNamedToolChoice: storedAdvancedConfig.disableNamedToolChoice,
+		experimentalLlmsTxt: storedAdvancedConfig.experimentalLlmsTxt ?? false,
+		experimentalIncludeAllTabs: storedAdvancedConfig.experimentalIncludeAllTabs ?? true,
 		logRetentionDays: storedAdvancedConfig.logRetentionDays,
 		logMaxEntries: storedAdvancedConfig.logMaxEntries,
+	}
+	if (
+		typeof rawStoredAdvancedConfig === 'object' &&
+		rawStoredAdvancedConfig !== null &&
+		'disableNamedToolChoice' in rawStoredAdvancedConfig
+	) {
+		await storage.set({ advancedConfig })
 	}
 	const visionModelId = typeof result.visionModelId === 'string' ? result.visionModelId : undefined
 
@@ -59,8 +79,8 @@ export async function loadStoredConfig(
 	if (migrated !== llmConfig) {
 		llmConfig = migrated
 		await storage.set({ llmConfig: migrated })
-	} else if (!result.llmConfig) {
-		await storage.set({ llmConfig })
+	} else if (!result.llmConfig || storedLLMConfig !== rawStoredLLMConfig) {
+		await storage.set({ llmConfig: result.llmConfig ? storedLLMConfig : llmConfig })
 	}
 
 	return {
@@ -82,7 +102,6 @@ export async function saveStoredConfig(
 		systemInstruction,
 		experimentalLlmsTxt,
 		experimentalIncludeAllTabs,
-		disableNamedToolChoice,
 		logRetentionDays,
 		logMaxEntries,
 		selectedModelId,
@@ -93,10 +112,11 @@ export async function saveStoredConfig(
 ): Promise<ExtConfig> {
 	const customModels = normalizeCustomModels(rawCustomModels)
 	const normalizedSelectedModelId = normalizeSelectedModelId(selectedModelId, customModels)
-	const llmConfig =
+	const llmConfig = sanitizePersistedLLMConfig(
 		rawCustomModels || selectedModelId
 			? resolveSelectedLLMConfig(normalizedSelectedModelId, customModels)
-			: legacyLLMConfig
+			: legacyLLMConfig,
+	)
 
 	await storage.set({ llmConfig })
 	await storage.set({ selectedModelId: normalizedSelectedModelId })
@@ -117,9 +137,8 @@ export async function saveStoredConfig(
 
 	const advancedConfig: AdvancedConfig = {
 		systemInstruction,
-		experimentalLlmsTxt,
-		experimentalIncludeAllTabs,
-		disableNamedToolChoice,
+		experimentalLlmsTxt: experimentalLlmsTxt ?? false,
+		experimentalIncludeAllTabs: experimentalIncludeAllTabs ?? true,
 		logRetentionDays,
 		logMaxEntries,
 	}

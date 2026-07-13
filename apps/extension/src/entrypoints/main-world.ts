@@ -20,7 +20,10 @@ export interface ExecuteConfig {
 	 */
 	includeInitialTab?: boolean
 
-	/** Control all unpinned tabs in the window instead of only the tab group. */
+	/**
+	 * Control all unpinned tabs in the window instead of only the tab group.
+	 * @default true
+	 */
 	experimentalIncludeAllTabs?: boolean
 
 	onStatusChange?: (status: AgentStatus) => void

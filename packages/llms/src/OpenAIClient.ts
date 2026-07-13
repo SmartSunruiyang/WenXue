@@ -4,6 +4,12 @@
 import * as z from 'zod/v4'
 
 import { InvokeError, InvokeErrorTypes } from './errors'
+import {
+	hasNamedToolChoice,
+	isNamedToolChoiceCompatibilityError,
+	rememberNamedToolChoiceUnsupported,
+	shouldDisableNamedToolChoice,
+} from './namedToolChoice'
 import type { InvokeOptions, InvokeResult, LLMClient, LLMConfig, Message, Tool } from './types'
 import { modelPatch, zodToOpenAITool } from './utils'
 
@@ -25,6 +31,16 @@ export class OpenAIClient implements LLMClient {
 		abortSignal?: AbortSignal,
 		options?: InvokeOptions,
 	): Promise<InvokeResult> {
+		return this.invokeWithNamedToolChoiceFallback(messages, tools, abortSignal, options, false)
+	}
+
+	private async invokeWithNamedToolChoiceFallback(
+		messages: Message[],
+		tools: Record<string, Tool>,
+		abortSignal: AbortSignal | undefined,
+		options: InvokeOptions | undefined,
+		fallbackAttempted: boolean,
+	): Promise<InvokeResult> {
 		abortSignal?.throwIfAborted()
 
 		// 1. Convert tools to OpenAI format
@@ -32,9 +48,13 @@ export class OpenAIClient implements LLMClient {
 
 		// Build request body
 
+		const requestedToolChoiceName = shouldDisableNamedToolChoice(this.config)
+			? undefined
+			: options?.toolChoiceName
+		const requestedNamedToolChoice = Boolean(requestedToolChoiceName)
 		let toolChoice: unknown = 'required'
-		if (options?.toolChoiceName && !this.config.disableNamedToolChoice) {
-			toolChoice = { type: 'function', function: { name: options.toolChoiceName } }
+		if (requestedToolChoiceName) {
+			toolChoice = { type: 'function', function: { name: requestedToolChoiceName } }
 		}
 
 		const requestBody: Record<string, unknown> = {
@@ -58,6 +78,19 @@ export class OpenAIClient implements LLMClient {
 			)
 		}
 		const finalRequestBody = transformedBody ?? requestBody
+		const canFallbackFromNamedToolChoice =
+			!fallbackAttempted && requestedNamedToolChoice && hasNamedToolChoice(finalRequestBody)
+		const retryWithoutNamedToolChoice = async (
+			status: number,
+			data: unknown,
+		): Promise<InvokeResult | undefined> => {
+			if (!canFallbackFromNamedToolChoice || !isNamedToolChoiceCompatibilityError(status, data)) {
+				return undefined
+			}
+
+			await rememberNamedToolChoiceUnsupported(this.config)
+			return this.invokeWithNamedToolChoiceFallback(messages, tools, abortSignal, options, true)
+		}
 
 		// 2. Call API
 		let response: Response
@@ -85,6 +118,8 @@ export class OpenAIClient implements LLMClient {
 			} catch (error) {
 				if (isAbortError(error)) throw error
 			}
+			const fallbackResult = await retryWithoutNamedToolChoice(response.status, errorData)
+			if (fallbackResult) return fallbackResult
 			throw createHttpInvokeError(
 				response.status,
 				readApiErrorMessage(errorData) || response.statusText,
@@ -104,6 +139,8 @@ export class OpenAIClient implements LLMClient {
 				error,
 			)
 		}
+		const fallbackResult = await retryWithoutNamedToolChoice(response.status, data)
+		if (fallbackResult) return fallbackResult
 		throwIfCloudBaseErrorEnvelope(data)
 
 		if (!isRecord(data) || !Array.isArray(data.choices)) {

@@ -1,4 +1,10 @@
-import type { LLMConfig } from '@page-agent/llms'
+import {
+	hasNamedToolChoice,
+	isNamedToolChoiceCompatibilityError,
+	rememberNamedToolChoiceUnsupported,
+	shouldDisableNamedToolChoice,
+	type LLMConfig,
+} from '@page-agent/llms'
 import * as z from 'zod/v4'
 
 const TOOL_NAME = 'submit_answer'
@@ -78,7 +84,7 @@ export async function askStructured(
 	schema: z.ZodType,
 	opts?: AskStructuredOptions,
 ): Promise<unknown> {
-	const fetchImpl = opts?.fetchImpl ?? globalThis.fetch
+	const fetchImpl = opts?.fetchImpl ?? cfg.customFetch ?? globalThis.fetch
 
 	const tool = toOpenAIFunctionTool(TOOL_NAME, '提交本题的结构化答案', schema)
 
@@ -88,7 +94,9 @@ export async function askStructured(
 		messages,
 		temperature: 0,
 		tools: [tool],
-		tool_choice: { type: 'function', function: { name: TOOL_NAME } },
+		tool_choice: shouldDisableNamedToolChoice(cfg)
+			? 'required'
+			: { type: 'function', function: { name: TOOL_NAME } },
 	}
 	// 搜题要正确率 → 全开思考（含图题的多步读图推理离不开它）。但 Qwen3「思考模式」会拒绝被
 	// 强制(required/object)的 tool_choice（DashScope 400："tool_choice ... not support ... required
@@ -103,7 +111,7 @@ export async function askStructured(
 	}
 
 	const post = (requestBody: Record<string, unknown>) =>
-		fetchImpl(`${cfg.baseURL}/chat/completions`, {
+		fetchImpl.call(globalThis, `${cfg.baseURL}/chat/completions`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
@@ -113,25 +121,33 @@ export async function askStructured(
 			signal: opts?.signal,
 		})
 
+	const sentNamedToolChoice = !shouldDisableNamedToolChoice(cfg) && hasNamedToolChoice(body)
 	let response = await post(body)
 
 	// 兜底：若强制 tool_choice 仍因「思考模式」被拒（含图题极端情形），重试一次——保持思考、放宽
 	// tool_choice 为 'auto'。系统提示仍要求调用 submit_answer；万一模型不调用工具，上游退化为 needsReview，绝不错答。
-	if (response.status === 400) {
-		const message = await readErrorMessage(response)
+	if (response.status === 400 || response.status === 422) {
+		const { data, message } = await readErrorResponse(response)
 		if (/tool_choice/i.test(message) && /think/i.test(message)) {
 			response = await post({ ...body, tool_choice: 'auto' })
+		} else if (sentNamedToolChoice && isNamedToolChoiceCompatibilityError(response.status, data)) {
+			await rememberNamedToolChoiceUnsupported(cfg)
+			return askStructured(cfg, messages, schema, opts)
 		} else {
-			throw new Error(`LLM request failed (HTTP 400): ${message}`)
+			throw new Error(`LLM request failed (HTTP ${response.status}): ${message}`)
 		}
 	}
 
 	if (!response.ok) {
-		const message = await readErrorMessage(response)
+		const { message } = await readErrorResponse(response)
 		throw new Error(`LLM request failed (HTTP ${response.status}): ${message}`)
 	}
 
 	const data: unknown = await response.json()
+	if (sentNamedToolChoice && isNamedToolChoiceCompatibilityError(response.status, data)) {
+		await rememberNamedToolChoiceUnsupported(cfg)
+		return askStructured(cfg, messages, schema, opts)
+	}
 	const argString = extractToolArguments(data)
 	if (argString === undefined) {
 		throw new Error('LLM response missing tool call arguments for submit_answer')
@@ -159,11 +175,16 @@ function extractToolArguments(data: unknown): string | undefined {
 	return typeof args === 'string' ? args : undefined
 }
 
-async function readErrorMessage(response: Response): Promise<string> {
+async function readErrorResponse(response: Response): Promise<{ data: unknown; message: string }> {
 	try {
-		const data = (await response.json()) as { error?: { message?: string } }
-		return data?.error?.message ?? response.statusText
-	} catch {
-		return response.statusText
+		const data: unknown = await response.json()
+		const error = (data as { error?: { message?: unknown } } | undefined)?.error
+		return {
+			data,
+			message: typeof error?.message === 'string' ? error.message : response.statusText,
+		}
+	} catch (error) {
+		if ((error as { name?: unknown } | null)?.name === 'AbortError') throw error
+		return { data: undefined, message: response.statusText }
 	}
 }

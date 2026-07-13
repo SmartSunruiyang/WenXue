@@ -88,6 +88,39 @@ describe('askStructured', () => {
 		expect(JSON.stringify(body.tools[0].function.parameters)).toContain('blanks')
 	})
 
+	it('remembers named tool_choice incompatibility and retries with required', async () => {
+		const schema = z.object({ selectedOptions: z.array(z.string()) })
+		const onNamedToolChoiceUnsupported = vi.fn(async () => {})
+		const model = { ...cfg, onNamedToolChoiceUnsupported }
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						error: {
+							param: 'tool_choice',
+							message: "Invalid tool_choice type: 'object'; expected string",
+						},
+					}),
+					{ status: 422, headers: { 'Content-Type': 'application/json' } },
+				),
+			)
+			.mockResolvedValueOnce(cannedResponse({ selectedOptions: ['A'] }))
+
+		await expect(askStructured(model, messages, schema, { fetchImpl })).resolves.toEqual({
+			selectedOptions: ['A'],
+		})
+
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+		expect(JSON.parse(fetchImpl.mock.calls[0][1].body).tool_choice).toEqual({
+			type: 'function',
+			function: { name: 'submit_answer' },
+		})
+		expect(JSON.parse(fetchImpl.mock.calls[1][1].body).tool_choice).toBe('required')
+		expect(model.disableNamedToolChoice).toBe(true)
+		expect(onNamedToolChoiceUnsupported).toHaveBeenCalledOnce()
+	})
+
 	it('passes the abort signal through to fetch', async () => {
 		const schema = z.object({ selectedOptions: z.array(z.string()) })
 		const fetchImpl = vi.fn().mockResolvedValue(cannedResponse({ selectedOptions: ['A'] }))

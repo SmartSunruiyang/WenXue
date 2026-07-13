@@ -70,6 +70,14 @@ function getSentBody(fetchMock: ReturnType<typeof vi.fn>): Record<string, unknow
 	return JSON.parse(init.body as string)
 }
 
+function getSentBodyAt(
+	fetchMock: ReturnType<typeof vi.fn>,
+	callIndex: number,
+): Record<string, unknown> {
+	const init = fetchMock.mock.calls[callIndex][1] as RequestInit
+	return JSON.parse(init.body as string)
+}
+
 const signal = new AbortController().signal
 
 // ---------- Request construction ----------
@@ -100,6 +108,19 @@ describe('OpenAIClient.invoke — request construction', () => {
 		const { client, fetchMock } = makeClient({ disableNamedToolChoice: true })
 		fetchMock.mockResolvedValue(jsonResponse(toolCallBody('greet', { name: 'world' })))
 		await client.invoke([], tools, signal, { toolChoiceName: 'greet' })
+		expect(getSentBody(fetchMock).tool_choice).toBe('required')
+	})
+
+	it('reads a shared named-tool capability state at request time', async () => {
+		let disabled = false
+		const { client, fetchMock } = makeClient({
+			getNamedToolChoiceDisabled: () => disabled,
+		})
+		fetchMock.mockResolvedValue(jsonResponse(toolCallBody('greet', { name: 'world' })))
+		disabled = true
+
+		await client.invoke([], tools, signal, { toolChoiceName: 'greet' })
+
 		expect(getSentBody(fetchMock).tool_choice).toBe('required')
 	})
 
@@ -228,6 +249,143 @@ describe('OpenAIClient.invoke — HTTP errors', () => {
 			retryable: false,
 			message: expect.stringContaining('问学账号'),
 		})
+	})
+})
+
+describe('OpenAIClient.invoke — named tool_choice compatibility', () => {
+	const tools = { greet: makeTool() }
+
+	it('remembers a 400 incompatibility and immediately rebuilds the request with required', async () => {
+		const onNamedToolChoiceUnsupported = vi.fn()
+		const transformRequestBody = vi.fn((body: Record<string, unknown>) => body)
+		const { client, fetchMock } = makeClient({
+			onNamedToolChoiceUnsupported,
+			transformRequestBody,
+		})
+		fetchMock
+			.mockResolvedValueOnce(
+				jsonResponse({ error: { message: "Invalid tool_choice type: 'object'" } }, 400),
+			)
+			.mockResolvedValueOnce(jsonResponse(toolCallBody('greet', { name: 'world' })))
+
+		const result = await client.invoke([], tools, signal, { toolChoiceName: 'greet' })
+
+		expect(result.toolResult).toBe('hello world')
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		expect(transformRequestBody).toHaveBeenCalledTimes(2)
+		expect(getSentBodyAt(fetchMock, 0).tool_choice).toEqual({
+			type: 'function',
+			function: { name: 'greet' },
+		})
+		expect(getSentBodyAt(fetchMock, 1).tool_choice).toBe('required')
+		expect(client.config.disableNamedToolChoice).toBe(true)
+		expect(onNamedToolChoiceUnsupported).toHaveBeenCalledOnce()
+	})
+
+	it('supports a CloudBase 200 response containing a logical 422 envelope', async () => {
+		const { client, fetchMock } = makeClient()
+		fetchMock
+			.mockResolvedValueOnce(
+				jsonResponse({
+					statusCode: 422,
+					body: JSON.stringify({
+						error: {
+							param: 'tool_choice',
+							message: 'Object format is not supported',
+						},
+					}),
+				}),
+			)
+			.mockResolvedValueOnce(jsonResponse(toolCallBody('greet', { name: 'world' })))
+
+		await expect(
+			client.invoke([], tools, signal, { toolChoiceName: 'greet' }),
+		).resolves.toMatchObject({ toolResult: 'hello world' })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		expect(getSentBodyAt(fetchMock, 1).tool_choice).toBe('required')
+	})
+
+	it('does not learn when the transformed request did not send a named selection', async () => {
+		const onNamedToolChoiceUnsupported = vi.fn()
+		const { client, fetchMock } = makeClient({
+			onNamedToolChoiceUnsupported,
+			transformRequestBody: (body) => {
+				delete body.tool_choice
+			},
+		})
+		fetchMock.mockResolvedValue(
+			jsonResponse({ error: { message: "Invalid tool_choice type: 'object'" } }, 400),
+		)
+
+		await expect(
+			client.invoke([], tools, signal, { toolChoiceName: 'greet' }),
+		).rejects.toMatchObject({ type: InvokeErrorTypes.UNKNOWN })
+		expect(fetchMock).toHaveBeenCalledOnce()
+		expect(onNamedToolChoiceUnsupported).not.toHaveBeenCalled()
+	})
+
+	it('does not learn when the invocation did not request a named selection', async () => {
+		const onNamedToolChoiceUnsupported = vi.fn()
+		const { client, fetchMock } = makeClient({ onNamedToolChoiceUnsupported })
+		fetchMock.mockResolvedValue(
+			jsonResponse({ error: { message: "Invalid tool_choice type: 'object'" } }, 400),
+		)
+
+		await expect(client.invoke([], tools, signal)).rejects.toMatchObject({
+			type: InvokeErrorTypes.UNKNOWN,
+		})
+		expect(fetchMock).toHaveBeenCalledOnce()
+		expect(onNamedToolChoiceUnsupported).not.toHaveBeenCalled()
+	})
+
+	it('does not relearn when named selection was already disabled before transforms', async () => {
+		const onNamedToolChoiceUnsupported = vi.fn()
+		const { client, fetchMock } = makeClient({
+			disableNamedToolChoice: true,
+			onNamedToolChoiceUnsupported,
+			transformRequestBody: (body) => ({
+				...body,
+				tool_choice: { type: 'function', function: { name: 'greet' } },
+			}),
+		})
+		fetchMock.mockResolvedValue(
+			jsonResponse({ error: { message: "Invalid tool_choice type: 'object'" } }, 400),
+		)
+
+		await expect(
+			client.invoke([], tools, signal, { toolChoiceName: 'greet' }),
+		).rejects.toMatchObject({ type: InvokeErrorTypes.UNKNOWN })
+		expect(fetchMock).toHaveBeenCalledOnce()
+		expect(onNamedToolChoiceUnsupported).not.toHaveBeenCalled()
+	})
+
+	it('falls back only once and does not recurse indefinitely', async () => {
+		const onNamedToolChoiceUnsupported = vi.fn()
+		const { client, fetchMock } = makeClient({ onNamedToolChoiceUnsupported })
+		fetchMock.mockResolvedValue(
+			jsonResponse({ error: { message: "Invalid tool_choice type: 'object'" } }, 400),
+		)
+
+		await expect(
+			client.invoke([], tools, signal, { toolChoiceName: 'greet' }),
+		).rejects.toMatchObject({ type: InvokeErrorTypes.UNKNOWN })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
+		expect(onNamedToolChoiceUnsupported).toHaveBeenCalledOnce()
+	})
+
+	it('continues the fallback when the persistence callback rejects', async () => {
+		const onNamedToolChoiceUnsupported = vi.fn().mockRejectedValue(new Error('storage failed'))
+		const { client, fetchMock } = makeClient({ onNamedToolChoiceUnsupported })
+		fetchMock
+			.mockResolvedValueOnce(
+				jsonResponse({ error: { message: "Invalid tool_choice type: 'object'" } }, 400),
+			)
+			.mockResolvedValueOnce(jsonResponse(toolCallBody('greet', { name: 'world' })))
+
+		await expect(
+			client.invoke([], tools, signal, { toolChoiceName: 'greet' }),
+		).resolves.toMatchObject({ toolResult: 'hello world' })
+		expect(fetchMock).toHaveBeenCalledTimes(2)
 	})
 })
 

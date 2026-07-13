@@ -17,7 +17,6 @@ export interface SettingsFormValues {
 	systemInstruction: string
 	experimentalLlmsTxt: boolean
 	experimentalIncludeAllTabs: boolean
-	disableNamedToolChoice: boolean
 	logRetentionDays: number
 	logMaxEntries: number
 }
@@ -53,7 +52,6 @@ export function buildSettingsConfig(values: SettingsFormValues): ExtConfig {
 		systemInstruction: values.systemInstruction || undefined,
 		experimentalLlmsTxt: values.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: values.experimentalIncludeAllTabs,
-		disableNamedToolChoice: values.disableNamedToolChoice,
 		logRetentionDays: values.logRetentionDays,
 		logMaxEntries: values.logMaxEntries,
 	}
@@ -72,7 +70,6 @@ export function settingsConfigKey(config: ExtConfig): string {
 		systemInstruction: config.systemInstruction,
 		experimentalLlmsTxt: config.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,
-		disableNamedToolChoice: config.disableNamedToolChoice,
 		logRetentionDays: config.logRetentionDays,
 		logMaxEntries: config.logMaxEntries,
 	})
