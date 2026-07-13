@@ -49,6 +49,10 @@
 
 **判断标准**：如果一个新会话的 Agent 只读需求 + 架构 + 开发规范就能正确开始一个任务 —— 文档就算合格。
 
+本项目的 AI 浏览器重构是用户明确授权的独立目标运行时文档域，统一位于
+`.project.agents/docs/refactor/ai-browser/`。它不改变 `docs/context/` 对当前 Electron + CfT
+运行时的权威性；新旧兼容、迁移或切换改动必须按重构 `README.md` 的传播矩阵同步两侧。
+
 ### 1.3 Agent 协作配置
 - [ ] 在 `CLAUDE.md` 写明项目级规则（已有，保持更新）
 - [ ] 在本文件 + `SELF_CONSTRAINTS.md` 中固化经验
@@ -247,6 +251,7 @@ bug 来了不要直接钻进代码。按下列顺序：
 
 > 本节随项目演进，不是规则的一部分。由 Agent 在每个 milestone 后更新。
 
-- 当前状态：M0 + M1 完成——vendor page-agent v1.9.0 五包入库，`pnpm -r test` 全绿，`wxt build` 产出 chrome-mv3 可手动加载。
-- 已有工程结构：`apps/desktop/`（Electron）、`apps/extension/`（WXT MV3 插件）、`packages/{core,llms,page-controller,ui}`（上游 vendor 四包）。
-- 下一步合规动作：进入 M2（浏览器供应链与桌面底层模块）；M1 人工验收待完成。任何新增模块、目录或依赖方向先回写 `ARCHITECTURE.md`，再写代码。
+- 当前运行时：M0 + M1 完成——vendor page-agent v1.9.0 五包入库，`pnpm -r test` 全绿，`wxt build` 产出 chrome-mv3 可手动加载；`apps/desktop/` 仍是 Electron + CfT 启动器。
+- 目标运行时：Chromium AI 浏览器重构已通过 G0，产品、目标架构与实施计划基线位于 `.project.agents/docs/refactor/ai-browser/`。
+- 当前阶段：Phase 0.3 / G1 前置就绪。目标浏览器正式代码尚未开工。
+- 下一步合规动作：先完成目标仓库/revision、macOS 与 Windows 工具链、插件能力矩阵、CfT 对称性能基线和迁移 fixtures，再召开 G1 开工评审。当前运行时工作仍按 `docs/context/ROADMAP.md` 推进。
