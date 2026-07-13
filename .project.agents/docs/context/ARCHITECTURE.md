@@ -268,9 +268,9 @@ vendor 四包为上游快照（粗粒度卡片；内部实现以上游为准，�
 
 ```
 ## 模块名：@page-agent/llms（L2）
-- 职责：OpenAI-compatible LLM 客户端（流式、错误归一化）
-- 不负责：不持久化配置；不做计费；不组提示词
-- 关键类型/接口：OpenAIClient（I4 的唯一 LLM 出口）
+- 职责：OpenAI-compatible LLM 客户端（流式、错误归一化）；识别 named `tool_choice` 类型/格式不兼容并在当前配置内自动降级为 `required`
+- 不负责：不直接持久化模型能力；不做计费；不组提示词
+- 关键类型/接口：OpenAIClient（I4 的唯一 LLM 出口）· isNamedToolChoiceCompatibilityError · rememberNamedToolChoiceUnsupported
 ```
 
 ```
@@ -281,20 +281,20 @@ vendor 四包为上游快照（粗粒度卡片；内部实现以上游为准，�
 
 ```
 ## 模块名：@page-agent/core（L4）
-- 职责：PageAgentCore Agent 循环（系统提示词、工具执行、`execute_javascript` 的 world/frame 参数、活动流、ExecutionResult、可恢复人工接管状态、完成后同会话续接、agent_history 投影压缩、recall_steps 回退取回）
+- 职责：PageAgentCore Agent 循环（系统提示词、工具执行、`execute_javascript` 的 world/frame 参数、活动流、ExecutionResult、按 `onAskUser` / `onUserTakeover` 动态暴露的用户提问与可恢复人工接管、完成后同会话续接、agent_history 投影压缩、recall_steps 回退取回）
 - 不负责：不直接操作多标签（MultiPageAgent 的事）；不渲染历史 UI；不决定问学产品层卡住阈值
 ```
 
 fork 应用层（apps/extension）：
 
 ```
-## 模块名：ExtensionSettingsConfig（L4/纯配置）
-- 职责：定义内置模型 ID、厂商预设、自定义厂商与自定义模型结构；归一化 selectedModelId/customModels；将设置页源数据解析为 Agent 可用的 llmConfig；在运行时把内置模型解析为 CloudBase Gateway baseURL + 用户 access token；定义并归一化插件日志保留配置
-- 不负责：不读写 chrome.storage；不渲染 UI；不发 LLM 请求
-- 输入：设置页表单值、chrome.storage 中的 ModelConfig、插件侧 `WenXueUserSession`
+## 模块名：ExtensionSettingsConfig（L4）
+- 职责：定义内置模型 ID、厂商预设、自定义厂商与自定义模型结构；归一化 selectedModelId/customModels；将设置页源数据解析为 Agent 可用的 llmConfig；在运行时把内置模型解析为 CloudBase Gateway baseURL + 用户 access token；按规范化 endpoint + model 读取/写入带 TTL 的 named `tool_choice` 兼容能力；定义并归一化插件日志保留配置
+- 不负责：不渲染 UI；不直接发 LLM 请求；能力记录不保存 API Key、鉴权信息或错误正文
+- 输入：设置页表单值、chrome.storage 中的 ModelConfig / ModelToolChoiceCompatibility、插件侧 `WenXueUserSession`
 - 输出：ExtConfig / LLMConfig / RuntimeAgentModels
 - 关键类型/接口：CustomModelConfig · ModelProviderPreset · resolveSelectedLLMConfig · normalizeCustomModels · buildSettingsConfig · buildRuntimeAgentModels · loadRuntimeAgentModels · logRetentionDays · logMaxEntries
-- 持有状态：无（纯函数）
+- 持有状态：`chrome.storage.local` 中版本化、30 天 TTL 的 ModelToolChoiceCompatibility；其余转换保持纯函数
 ```
 
 ```
@@ -309,11 +309,12 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：SidepanelApp（L5）
-- 职责：侧边栏对话流、完成/错误后的 followUp 续接路由、近溢出上下文横幅、人工接管/暂停/继续 UI、右上角更多菜单、语言快捷入口、任务历史 UI、options 设置页 UI、自定义模型列表与默认模型选择
+- 职责：侧边栏对话流、完成/错误后的 followUp 续接路由、`ask_user` 问题展示与回答 Promise 桥接、近溢出上下文横幅、登录/验证码等人工接管/暂停/继续 UI、右上角更多菜单、语言快捷入口、任务历史 UI、options 设置页 UI、自定义模型列表与默认模型选择
 - 不负责：不实现 Agent 循环；不直接发 LLM 请求
 - 输入：MultiPageAgent、ExtensionSettingsConfig、@page-agent/ui
 - 输出：用户
-- 持有状态：UI 态；读写 ModelConfig（chrome.storage.local）与按 conversationId upsert 的会话历史（IndexedDB）
+- 关键约束：普通澄清与受保护浏览器动作使用独立控制器；`ask_user` 保持 Agent `running` 但只解锁回答输入，人工接管使用 `waiting_for_user` / `paused`；两类挂起请求都监听任务 AbortSignal，并在 stop/reset/rebind/dispose 时取消
+- 持有状态：UI 态、当前 `UserQuestionRequest` / `UserTakeoverRequest`；读写 ModelConfig（chrome.storage.local）与按 conversationId upsert 的会话历史（IndexedDB）
 ```
 
 ```
@@ -337,7 +338,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：MultiPageAgent（L5）
-- 职责：多标签编排、当前标签加载等待、向 PageAgentCore 透传压缩配置、注入 `visual_observe` / `chaoxing_solve` / 多标签工具、问学产品层卡住检测（连续 3 次重复动作触发人工接管，done/ask_user/request_user_takeover/recall_steps 不计入重复）
+- 职责：多标签编排（当前插件基线默认纳入当前窗口全部可操作、非固定标签页，允许设置显式关闭）、当前标签加载等待、向 PageAgentCore 透传压缩配置、注入 `visual_observe` / `chaoxing_solve` / 多标签工具、问学产品层卡住检测（连续 3 次重复动作触发人工接管，done/ask_user/request_user_takeover/recall_steps 不计入重复）
 - 不负责：不渲染 UI
 - 输入：@page-agent/core、@page-agent/page-controller、ExtensionSettingsConfig 解析出的文本/视觉模型配置
 - 输出：SidepanelApp
@@ -650,6 +651,7 @@ graph TD
 | tokens 用量                                   | `<userData>/token-usage.json`                                                                                                             | TokenUsageStore / LauncherTelemetryIngest                                | 仅保存 tokens 数量、模型、画像、时间与估算成本；不含提示词正文或敏感头                                                                                                                         |
 | 云端 tokens summary 缓存                      | `<userData>/token-usage-summary-cache.json`                                                                                               | UsageCloudClient                                                         | 按 userId 绑定；只保存已脱敏 `TokenUsageSummary`，不保存 access token、refresh token、uid 到 summary、正文或敏感头                                                                             |
 | ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`                                                                                                                    | SidepanelApp options 设置页与语言快捷入口                                | 自定义 BYO-Key 不出本机；内置模型只保存网关 baseURL 与空 apiKey，不保存百炼 Key；`selectedModelId` + `customModels[]` 为设置页源数据；历史 `WenXueUseLocalBuiltinLlmFallback` 标志被运行时忽略 |
+| ModelToolChoiceCompatibility                  | `chrome.storage.local` 独立版本化记录                                                                                                     | ExtensionSettingsConfig / RuntimeAgentModels                             | 仅按规范化 endpoint + model 保存 named `tool_choice` 不兼容的到期时间（30 天 TTL）；不含 API Key、用户 session、错误正文或鉴权头；过期/无效项加载时裁剪                                        |
 | 用户 session                                  | 主进程内存；插件 `chrome.storage.local` 的 `WenXueUserSession`                                                                            | ConsoleUI / UserSessionStore / UserSessionHandoff / ExtensionEntrypoints | 仅作为调网关凭据；不得在桌面设置页展示/复制 token；不得写入日志、tokens 记录或打包产物；refresh token 仅用于插件刷新 session                                                                   |
 | DashScope API Key                             | CloudBase Run 环境变量 `DASHSCOPE_API_KEY`                                                                                                | CloudBaseLlmGateway                                                      | 仅服务端读取；不得返回给客户端、写入日志、写入仓库或本地配置                                                                                                                                   |
 | 云端 tokens 计量                              | CloudBase NoSQL `token_usage`                                                                                                             | CloudBaseLlmGateway / usage-summary target                               | 原始计量仅用户 uid、模型、tokens、时间、延迟；summary 返回前移除 uid；不含正文、Key、Authorization/Bearer/accessToken/refreshToken                                                             |
@@ -673,6 +675,7 @@ graph TD
 - **UserSessionStore / UserSessionHandoff / UsageCloudClient**：覆盖 session 字段校验、未登录拒绝启动/云端 summary、按 userId 读取与缓存云端 summary、云端失败时读同 userId 缓存、一次性 localhost handoff 成功/失败与重复完成保护。
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1/v2→v3 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
 - **VisualObservation**：覆盖 v2 协议握手与单次自刷新、跨 extension realm 的 Web Lock 单飞、v1 明确不兼容、目标 tab 必填及切换/导航 TOCTOU、旧 background/消息拒绝结构化降级、AbortError 传播、Qwen 强制工具参数与重试消息顺序、CloudBase 错误 envelope、自定义无鉴权端点/内置网关鉴权前置、输出/日志禁止 data URI 回灌；发布前以真实 CfT 走协议握手 + 截图 data URL + tab id 一致性 smoke。
+- **模型 tool_choice 兼容**：`@page-agent/llms` 覆盖严格错误匹配、named→required 单次重建、无关/思考模式错误不学习与回调失败不阻断；`RuntimeAgentModels` 覆盖 endpoint/model 隔离、TTL、过期裁剪及无敏感字段；视觉观察与学习通直连请求覆盖等价降级路径。
 - **CloudBaseLlmGateway**：TDD 覆盖 token 缺失拒绝、CloudBase access token introspection、无 user_accounts/disabled 时请求 DashScope 前拒绝、active 用户放行、流式请求注入 `stream_options.include_usage`、SSE 末块 usage 解析、计量记录无正文/Key/敏感头。
 - **AdminApi / AdminConsole**：AdminApi 覆盖未登录/非 admin_users/禁用账号拒绝、viewer 只读、admin 可调整用户状态、tokens 聚合总数等于明细求和、响应不含敏感字段；AdminConsole 至少通过 `tsc --noEmit` 与 `vite build`，登录页/看板/用户状态表单需手动或浏览器 smoke 验证。
 - **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。

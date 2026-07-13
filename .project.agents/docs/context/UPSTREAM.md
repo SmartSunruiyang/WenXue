@@ -64,3 +64,17 @@
 - 内容：`@page-agent/core` 将 `execute_javascript` 改为默认启用（仅 `experimentalScriptExecutionTool === false` 时关闭），工具 schema 增加 `world: 'isolated' | 'main'` 与 `frame_id`；`@page-agent/page-controller` 新增零依赖 `serializeResult`，修复对象结果显示为 `[object Object]`，并允许 `executeJavascript(script, options?)` 签名供 extension 透传；`apps/extension` 增加 allFrames content script、background `frameId` 路由、`webNavigation.getAllFrames`、main-world executor postMessage 桥接、`RemotePageController.listFrames()` 与 `list_frames` customTool。
 - 配套测试：`PageAgentCore` 覆盖默认开关与 schema 解析；`serializeResult` 覆盖基础类型、循环引用、函数、DOM、Error 与截断；extension 覆盖 `RemotePageController` payload、background frame 路由/list_frames、content world 分发/超时、`frameTools` 输出与 `MultiPageAgent` 注入。
 - Upstream sync note: vendor 侧改动集中在公开工具 schema、公开/准公开 PageController 执行入口和独立序列化函数；extension 侧为 WenXue runtime 能力扩展。未来升级 alibaba/page-agent 时优先保留测试作为偏离哨兵，再逐项评估上游是否已提供等价能力。
+
+## Local patch: automatic named tool_choice compatibility
+
+- Scope: `packages/llms`, `apps/extension`
+- 内容：当实际发送的 named `tool_choice` 被兼容端点以明确的 400/422 类型或格式错误拒绝时，`OpenAIClient` 自动记忆当前配置并以 `required` 重建一次请求；公开错误识别与能力标记函数供视觉观察、学习通直连请求复用。应用层按规范化 endpoint + model 将兼容结论保存为版本化、30 天 TTL 的本地记录，普通用户不再配置协议开关。
+- 配套测试：覆盖 named→required、无关/思考模式错误不学习、CloudBase 逻辑错误 envelope、endpoint/model 隔离、TTL/无效记录裁剪，以及视觉观察和学习通直连路径。
+- Upstream sync note：vendor 改动集中在 `LLMConfig` 的可选能力回调 / 动态读取器、`OpenAIClient` 单次降级和独立识别函数；升级上游时保留应用层存储契约，并评估上游是否已有等价的 tool-choice capability negotiation。
+
+## Local patch: stable clarification and protected-action takeover routing
+
+- Scope: `packages/core`, `apps/extension`
+- 内容：收紧 `ask_user` schema、工具说明与提示词，只用于页面无法确定的必要用户信息或歧义选项；登录、验证码、滑块、2FA、权限等受保护动作立即进入 `request_user_takeover`。Sidepanel 绑定 `onAskUser`，用独立可取消控制器把回答返回原工具调用，并保留既有人工接管提示与暂停/恢复链路。
+- 配套测试：覆盖两类工具的动态可用性与提示词隔离、`ask_user` 工具输出和 AbortSignal、回答一次性结算、重复问题覆盖、stop 清理、Hub 禁用、侧栏运行态输入解锁，以及登录/验证码接管提示。
+- Upstream sync note：vendor 改动仅位于 `packages/core/src/tools/index.ts`、两份 system prompt 同步内容及 `PageAgentCore` 测试；升级上游时应保留工具动态裁剪测试，避免不可用工具名残留在 prompt/schema 中。
