@@ -268,7 +268,7 @@ importers:
   apps/llm-gateway:
     dependencies:
       '@cloudbase/functions-framework':
-        specifier: ^1.3.0
+        specifier: 1.18.2
         version: 1.18.2(supports-color@5.5.0)
     devDependencies:
       '@types/node':

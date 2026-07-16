@@ -35,6 +35,41 @@
 			"source": "index.mjs",
 			"target": "healthCheck",
 			"triggerPath": "/healthz"
+		},
+		{
+			"name": "admin-console",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "adminConsole",
+			"triggerPath": "/admin"
+		},
+		{
+			"name": "admin-me",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "adminMe",
+			"triggerPath": "/api/admin/v1/me"
+		},
+		{
+			"name": "admin-usage-summary",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "adminUsageSummary",
+			"triggerPath": "/api/admin/v1/usage/summary"
+		},
+		{
+			"name": "admin-users",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "adminUsers",
+			"triggerPath": "/api/admin/v1/users"
+		},
+		{
+			"name": "admin-user-status",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "adminUserStatus",
+			"triggerPath": "/api/admin/v1/user-status"
 		}
 	]
 }

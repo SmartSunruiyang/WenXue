@@ -94,6 +94,16 @@
 - [ ] CloudBase Auth 前置要求：username/password provider 已启用；创建内部管理员账号并在 `admin_users` 登记 active admin；普通用户授权状态以 CloudBase Auth `ACTIVE/BLOCKED` 为准
 - **验收**：未登录/非管理员后台 API 均拒绝；后台看板聚合正确；后台禁用用户后该用户网关调用在 DashScope 前返回 403；`pnpm -F admin-api test`、`pnpm -F admin-api typecheck`、`pnpm -F admin build` 通过。
 
+#### M4.6 后续 — CloudBase 常驻实例降耗（2026-07-17）
+
+- [x] 建立三个 CloudRun 服务、七条 HTTP 路由与固定计算资源点基线
+- [x] 在仓库中把 AdminApi targets 与 AdminConsole 静态产物合并到 `wenxue-llm-gateway`，并完成白名单 staging、本地 Functions Framework、测试与 typecheck
+- [ ] 环境恢复后回滚无流量中间灰度版本 022，发布当前完整组合版本并按 5% → 25% → 50% → 100% 验证
+- [ ] 新 Gateway 达到 100% 后，批量把 `/admin*` 与 `/api/admin/v1/*` 七条路由切到 Gateway
+- [ ] 将 `wenxue-admin-web`、`wenxue-admin-api` 调为 `MinNum=0`，再把唯一常驻 Gateway 调为 0.25C/0.5GB、`MinNum=1`
+- **阻塞**：CloudBase 返回“环境已停服，请恢复环境后重试”，`EnvActivated=no`；购买资源点、开启超限或恢复环境属于计费/账户操作，未获明确授权前不自动执行。
+- **目标**：固定计算从约 107100 点/月降至约 21420 点/月（约 80%），唯一 Gateway 不设 `MinNum=0`，不把 LLM、登录或后台首请求置于冷启动路径。
+
 ### M4 — 品牌化与默认配置（依赖 M3）
 
 - [ ] 插件品牌化：名称 / 图标 / `_locales`（zh_CN、en）→ 问学 WenXue · ask for everything

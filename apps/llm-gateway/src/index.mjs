@@ -8,6 +8,14 @@ import {
 	handleUsageSummary,
 } from './gateway.mjs'
 
+export {
+	me as adminMe,
+	usageSummary as adminUsageSummary,
+	users as adminUsers,
+	userStatus as adminUserStatus,
+} from '../../admin-api/src/index.mjs'
+export { adminConsole } from './adminConsole.mjs'
+
 /** @typedef {{ sse: () => { closed: boolean, send: (chunk: string) => unknown, end: () => unknown, on?: (event: 'close', cb: () => void) => unknown }, httpContext?: { headers?: Record<string, string | string[] | undefined> } }} CloudBaseContext */
 
 const CORS_HEADERS = {
@@ -99,7 +107,11 @@ export function healthCheck() {
 		headers: {
 			'content-type': 'application/json; charset=utf-8',
 		},
-		body: JSON.stringify({ ok: true, service: 'wenxue-llm-gateway' }),
+		body: JSON.stringify({
+			ok: true,
+			service: 'wenxue-llm-gateway',
+			revision: 'admin-runtime-consolidated-v2',
+		}),
 	}
 }
 

@@ -3,6 +3,13 @@ import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+	me as originalAdminMe,
+	usageSummary as originalAdminUsageSummary,
+	users as originalAdminUsers,
+	userStatus as originalAdminUserStatus,
+} from '../../admin-api/src/index.mjs'
+import { resetAdminConsoleFileCache, serveAdminConsole } from './adminConsole.mjs'
+import {
 	assertUsageRecordSafe,
 	buildDashScopeRequest,
 	buildTencentCloudSignedRequest,
@@ -21,6 +28,11 @@ import {
 	writeUsageRecord,
 } from './gateway.mjs'
 import {
+	adminConsole,
+	adminMe,
+	adminUsageSummary,
+	adminUsers,
+	adminUserStatus,
 	healthCheck,
 	launcherActivate,
 	launcherRegister,
@@ -934,13 +946,14 @@ describe('CloudBase LLM gateway behavior', () => {
 			expect(JSON.parse(response.body)).toEqual({
 				ok: true,
 				service: 'wenxue-llm-gateway',
+				revision: 'admin-runtime-consolidated-v2',
 			})
 		} finally {
 			globalThis.fetch = previousFetch
 		}
 	})
 
-	it('configures health, registration, and activation routes', () => {
+	it('configures health, launcher, AdminConsole, and AdminApi routes', () => {
 		const config = JSON.parse(
 			readFileSync(new URL('../cloudbase-functions.json', import.meta.url), 'utf8'),
 		) as { functions: Array<{ target: string; triggerPath: string }> }
@@ -954,6 +967,129 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(config.functions).toContainEqual(
 			expect.objectContaining({ target: 'launcherActivate', triggerPath: '/v1/auth/activate' }),
 		)
+		expect(config.functions).toContainEqual(
+			expect.objectContaining({ target: 'adminConsole', triggerPath: '/admin' }),
+		)
+		expect(config.functions).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					target: 'adminMe',
+					triggerPath: '/api/admin/v1/me',
+				}),
+				expect.objectContaining({
+					target: 'adminUsageSummary',
+					triggerPath: '/api/admin/v1/usage/summary',
+				}),
+				expect.objectContaining({
+					target: 'adminUsers',
+					triggerPath: '/api/admin/v1/users',
+				}),
+				expect.objectContaining({
+					target: 'adminUserStatus',
+					triggerPath: '/api/admin/v1/user-status',
+				}),
+			]),
+		)
+	})
+
+	it('reuses the AdminApi Function mode targets without copying their implementation', () => {
+		expect(adminMe).toBe(originalAdminMe)
+		expect(adminUsageSummary).toBe(originalAdminUsageSummary)
+		expect(adminUsers).toBe(originalAdminUsers)
+		expect(adminUserStatus).toBe(originalAdminUserStatus)
+	})
+
+	it('packages the gateway, AdminApi, and built AdminConsole with their topology intact', () => {
+		const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8')
+		const prepareScript = readFileSync(
+			new URL('../scripts/prepare-cloudbase-deploy.mjs', import.meta.url),
+			'utf8',
+		)
+
+		expect(dockerfile).toContain('WORKDIR /app/apps/llm-gateway')
+		expect(dockerfile).toContain('COPY apps/llm-gateway/src ./src')
+		expect(dockerfile).toContain('COPY apps/admin-api/src /app/apps/admin-api/src')
+		expect(dockerfile).toContain('COPY apps/admin/dist /app/apps/admin/dist')
+		expect(prepareScript).toContain("VITE_BASE_PATH: '/admin/'")
+		expect(prepareScript).toContain("VITE_WENXUE_ADMIN_API_BASE_URL: ''")
+	})
+
+	it('serves the AdminConsole index and immutable assets from the consolidated runtime', async () => {
+		resetAdminConsoleFileCache()
+		const files = new Map([
+			['/tmp/admin-dist/index.html', Buffer.from('<!doctype html><title>admin</title>')],
+			['/tmp/admin-dist/assets/app-123.js', Buffer.from('console.log("admin")')],
+		])
+		const readFileImpl = vi.fn(async (path: string) => {
+			const body = files.get(path)
+			if (!body) {
+				const error = new Error('missing') as NodeJS.ErrnoException
+				error.code = 'ENOENT'
+				throw error
+			}
+			return body
+		})
+
+		const indexResponse = await serveAdminConsole({
+			url: 'https://example.com/admin?tab=usage',
+			distRoot: '/tmp/admin-dist',
+			readFileImpl,
+		})
+		expect(indexResponse).toMatchObject({
+			statusCode: 200,
+			headers: {
+				'cache-control': 'no-cache',
+				'content-type': 'text/html; charset=utf-8',
+				'x-content-type-options': 'nosniff',
+			},
+			body: Buffer.from('<!doctype html><title>admin</title>'),
+		})
+
+		const assetResponse = await serveAdminConsole({
+			url: 'https://example.com/admin/assets/app-123.js',
+			distRoot: '/tmp/admin-dist',
+			readFileImpl,
+		})
+		expect(assetResponse).toMatchObject({
+			statusCode: 200,
+			headers: {
+				'cache-control': 'public, max-age=31536000, immutable',
+				'content-type': 'text/javascript; charset=utf-8',
+			},
+			body: Buffer.from('console.log("admin")'),
+		})
+	})
+
+	it('rejects AdminConsole traversal and non-read methods', async () => {
+		const readFileImpl = vi.fn()
+		const traversal = await serveAdminConsole({
+			url: 'https://example.com/admin/assets/%2e%2e/secret.txt',
+			distRoot: '/tmp/admin-dist',
+			readFileImpl,
+		})
+		const post = await serveAdminConsole({
+			url: 'https://example.com/admin',
+			method: 'POST',
+			distRoot: '/tmp/admin-dist',
+			readFileImpl,
+		})
+		const unexpectedDeepLink = await serveAdminConsole({
+			url: 'https://example.com/admin/secret.txt',
+			distRoot: '/tmp/admin-dist',
+			readFileImpl,
+		})
+
+		expect(traversal.statusCode).toBe(404)
+		expect(unexpectedDeepLink.statusCode).toBe(404)
+		expect(post).toMatchObject({
+			statusCode: 405,
+			headers: { allow: 'GET, HEAD' },
+		})
+		expect(readFileImpl).not.toHaveBeenCalled()
+	})
+
+	it('exposes the AdminConsole target through the gateway entry module', () => {
+		expect(adminConsole).toBeTypeOf('function')
 	})
 
 	it('builds token usage summary without leaking uid or sensitive fields', () => {
