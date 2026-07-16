@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
 	assertUsageRecordSafe,
@@ -11,23 +13,24 @@ import {
 	extractBearerToken,
 	extractUsageFromSseFrame,
 	handleChatCompletions,
+	handleLauncherActivation,
 	handleLauncherRegistration,
 	handleUsageSummary,
 	readUsageRecords,
 	resolveCloudBaseUser,
 	writeUsageRecord,
 } from './gateway.mjs'
-import { launcherRegister, main, usageSummary } from './index.mjs'
+import {
+	healthCheck,
+	launcherActivate,
+	launcherRegister,
+	main,
+	resetLauncherRegistrationRateLimits,
+	usageSummary,
+} from './index.mjs'
 
 const ACCESS_TOKEN = 'cloudbase-access-token'
 const USER_ID = 'user_123'
-const ACTIVE_USER = {
-	_id: USER_ID,
-	uid: USER_ID,
-	active: true,
-	createdAt: '2026-07-01T00:00:00.000Z',
-	updatedAt: '2026-07-01T00:00:00.000Z',
-}
 const DEFAULT_ENV = {
 	cloudbaseEnvId: 'wenxue-d8gz76tacc3659f05',
 	cloudbaseClientId: 'client-id',
@@ -41,6 +44,10 @@ const DEFAULT_ENV = {
 }
 
 describe('CloudBase LLM gateway behavior', () => {
+	beforeEach(() => {
+		resetLauncherRegistrationRateLimits()
+	})
+
 	it('injects stream_options.include_usage for streamed DashScope requests without mutating input', () => {
 		const input = {
 			model: 'qwen-plus',
@@ -130,7 +137,7 @@ describe('CloudBase LLM gateway behavior', () => {
 		)
 	})
 
-	it('registers a launcher account by creating a CloudBase external user', async () => {
+	it('registers a validated launcher account without writing an authorization row', async () => {
 		const calls: Array<{
 			url: string
 			headers: Headers
@@ -138,10 +145,7 @@ describe('CloudBase LLM gateway behavior', () => {
 		}> = []
 
 		const result = await handleLauncherRegistration({
-			rawBody: JSON.stringify({
-				username: 'alice',
-				password: 'pass123',
-			}),
+			rawBody: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
 			env: DEFAULT_ENV,
 			now: () => 1782660000000,
 			fetchImpl: async (url, init) => {
@@ -150,162 +154,185 @@ describe('CloudBase LLM gateway behavior', () => {
 					headers: new Headers(init?.headers),
 					body: JSON.parse(String(init?.body)),
 				})
-				if (String(url).includes('/collections/user_accounts/documents')) {
-					return Response.json({ insertedIds: ['cloudbase-user-1'] }, { status: 201 })
-				}
-				return Response.json({
-					Response: {
-						Uid: 'cloudbase-user-1',
-						RequestId: 'request-1',
-					},
-				})
+				return Response.json({ Response: { RequestId: 'request-1' } })
 			},
 		})
 
-		expect(result).toEqual({
-			ok: true,
-			userId: 'cloudbase-user-1',
-			username: 'alice',
-		})
-		expect(calls).toHaveLength(2)
+		expect(result).toEqual({ ok: true, username: 'alice' })
+		expect(calls).toHaveLength(1)
 		expect(calls[0].url).toBe('https://tcb.tencentcloudapi.com')
 		expect(calls[0].body).toMatchObject({
 			EnvId: 'wenxue-d8gz76tacc3659f05',
 			Name: 'alice',
 			NickName: 'alice',
-			Password: 'pass123',
+			Password: 'AuthTest9!',
 			Type: 'externalUser',
 			UserStatus: 'ACTIVE',
 		})
+		expect(calls[0].body).not.toHaveProperty('Uid')
 		expect(calls[0].headers.get('x-tc-action')).toBe('CreateUser')
 		expect(calls[0].headers.get('x-tc-version')).toBe('2018-06-08')
 		expect(calls[0].headers.get('authorization')).toContain('TC3-HMAC-SHA256 Credential=secret-id/')
-		expect(calls[1].url).toBe(
-			'https://wenxue-d8gz76tacc3659f05.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)/collections/user_accounts/documents',
-		)
-		expect(calls[1].headers.get('authorization')).toBe('Bearer cloudbase-usage-api-key')
-		expect(calls[1].body).toEqual({
-			data: [
-				{
-					_id: 'cloudbase-user-1',
-					uid: 'cloudbase-user-1',
-					active: true,
-					firstSeenAt: '2026-06-28T15:20:00.000Z',
-					lastSeenAt: '2026-06-28T15:20:00.000Z',
-					createdAt: '2026-06-28T15:20:00.000Z',
-					updatedAt: '2026-06-28T15:20:00.000Z',
-				},
-			],
-		})
 	})
 
-	it('does not require email or phone when validating launcher registration input', async () => {
+	it('rejects invalid launcher usernames before calling CloudBase', async () => {
+		const cases = [
+			{ username: 'abcd', message: '用户名长度必须为 5–24 位' },
+			{ username: 'a'.repeat(25), message: '用户名长度必须为 5–24 位' },
+			{ username: '1alice', message: '用户名只能包含英文字母和数字，且必须以英文字母开头' },
+			{ username: 'ali_ce', message: '用户名只能包含英文字母和数字，且必须以英文字母开头' },
+			{ username: '问学user', message: '用户名只能包含英文字母和数字，且必须以英文字母开头' },
+		]
+		for (const item of cases) {
+			let called = false
+			await expect(
+				handleLauncherRegistration({
+					rawBody: JSON.stringify({ username: item.username, password: 'AuthTest9!' }),
+					env: DEFAULT_ENV,
+					fetchImpl: async () => {
+						called = true
+						return Response.json({})
+					},
+				}),
+			).rejects.toMatchObject({ message: item.message, status: 400 })
+			expect(called).toBe(false)
+		}
+	})
+
+	it('accepts a five-character alphabetic username', async () => {
 		await expect(
 			handleLauncherRegistration({
-				rawBody: JSON.stringify({
-					username: 'bob',
-					password: 'pass123',
-				}),
+				rawBody: JSON.stringify({ username: 'abcde', password: 'AuthTest9!' }),
 				env: DEFAULT_ENV,
-				fetchImpl: async () =>
-					Response.json({
-						Response: {
-							Uid: 'cloudbase-user-2',
-							RequestId: 'request-2',
-						},
-					}),
+				fetchImpl: async () => Response.json({ Response: { RequestId: 'request-short' } }),
 			}),
-		).resolves.toMatchObject({ userId: 'cloudbase-user-2' })
+		).resolves.toEqual({ ok: true, username: 'abcde' })
 	})
 
-	it('looks up the CloudBase user id when CreateUser omits it', async () => {
-		const calls: Array<{
-			action: string | null
-			body: Record<string, unknown>
-		}> = []
+	it('rejects weak launcher passwords before calling CloudBase', async () => {
+		const cases = [
+			{ password: 'Auth9!', message: '密码长度必须为 9–32 位' },
+			{ password: `Aa1!${'x'.repeat(29)}`, message: '密码长度必须为 9–32 位' },
+			{ password: '!AuthTest9', message: '密码必须以英文字母或数字开头' },
+			{
+				password: 'authtest9',
+				message: '密码必须包含大写字母、小写字母、数字和特殊符号中的至少 3 类',
+			},
+			{ password: 'Auth Test9!', message: '密码包含不支持的字符' },
+			{ password: 'Auth测试99!', message: '密码包含不支持的字符' },
+			{ password: 'AuthTest9~', message: '密码包含不支持的字符' },
+		]
+		for (const item of cases) {
+			let called = false
+			await expect(
+				handleLauncherRegistration({
+					rawBody: JSON.stringify({ username: 'alice', password: item.password }),
+					env: DEFAULT_ENV,
+					fetchImpl: async () => {
+						called = true
+						return Response.json({})
+					},
+				}),
+			).rejects.toMatchObject({ message: item.message, status: 400 })
+			expect(called).toBe(false)
+		}
+	})
 
-		const result = await handleLauncherRegistration({
-			rawBody: JSON.stringify({
-				username: 'carol',
-				password: 'pass123',
-			}),
-			env: DEFAULT_ENV,
-			now: () => 1782660000000,
-			fetchImpl: async (url, init) => {
-				const headers = new Headers(init?.headers)
-				const action = headers.get('x-tc-action')
-				const body = JSON.parse(String(init?.body))
-				calls.push({ action, body })
-				if (String(url).includes('/collections/user_accounts/documents')) {
-					return Response.json({ insertedIds: ['cloudbase-user-lookup'] }, { status: 201 })
-				}
-				if (action === 'DescribeUserList') {
+	it('bounds CreateUser request and response body reads to ten seconds', async () => {
+		vi.useFakeTimers()
+		try {
+			for (const stallBody of [false, true]) {
+				const registration = handleLauncherRegistration({
+					rawBody: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
+					env: { ...DEFAULT_ENV, requestTimeoutMs: 60_000 },
+					fetchImpl: ((_, init) => {
+						if (!stallBody) {
+							return new Promise<Response>((_, reject) => {
+								init?.signal?.addEventListener('abort', () => reject(abortError()))
+							})
+						}
+						return Promise.resolve({
+							ok: true,
+							status: 200,
+							text: () =>
+								new Promise<string>((_, reject) => {
+									init?.signal?.addEventListener('abort', () => reject(abortError()))
+								}),
+						} as Response)
+					}) as typeof fetch,
+				})
+				const rejection = expect(registration).rejects.toMatchObject({
+					message: 'Upstream request timed out',
+					status: 504,
+				})
+
+				await vi.advanceTimersByTimeAsync(10_000)
+				await rejection
+			}
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('keeps duplicate registration as 409 without a database write', async () => {
+		const calls: string[] = []
+		await expect(
+			handleLauncherRegistration({
+				rawBody: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
+				env: DEFAULT_ENV,
+				fetchImpl: async (url) => {
+					calls.push(String(url))
 					return Response.json({
 						Response: {
-							Data: {
-								Total: 1,
-								UserList: [
-									{
-										Uid: 'cloudbase-user-lookup',
-										Name: 'carol',
-										Type: 'externalUser',
-									},
-								],
-							},
-							RequestId: 'request-lookup',
+							Error: { Code: 'ResourceInUse.UserName', Message: 'user already exists' },
 						},
 					})
-				}
-				return Response.json({
-					Response: {
-						RequestId: 'request-create',
-					},
-				})
+				},
+			}),
+		).rejects.toMatchObject({ message: '用户名已存在', status: 409 })
+		expect(calls).toEqual(['https://tcb.tencentcloudapi.com'])
+	})
+
+	it('activates an authenticated CloudBase user without a database write', async () => {
+		const calls: string[] = []
+		const result = await handleLauncherActivation({
+			headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+			env: DEFAULT_ENV,
+			fetchImpl: async (url) => {
+				calls.push(String(url))
+				return Response.json({ status: 'ACTIVE', sub: USER_ID })
 			},
 		})
 
-		expect(result).toMatchObject({ userId: 'cloudbase-user-lookup', username: 'carol' })
-		expect(calls.map((call) => call.action)).toEqual(['CreateUser', 'DescribeUserList', null])
-		expect(calls[1].body).toMatchObject({
-			EnvId: 'wenxue-d8gz76tacc3659f05',
-			Name: 'carol',
-			PageNo: 1,
-			PageSize: 10,
-		})
-		expect(calls[2].body).toMatchObject({
-			data: [
-				expect.objectContaining({
-					_id: 'cloudbase-user-lookup',
-					uid: 'cloudbase-user-lookup',
-					active: true,
-				}),
-			],
-		})
+		expect(result).toEqual({ ok: true, userId: USER_ID })
+		expect(calls).toHaveLength(1)
+		expect(calls[0]).toContain('/auth/v1/user/me')
+		expect(calls[0]).not.toContain('/database/')
 	})
 
-	it('maps CloudBase duplicate username errors to a clear registration error', async () => {
+	it('rejects activation when CloudBase marks the user as blocked', async () => {
 		await expect(
-			handleLauncherRegistration({
-				rawBody: JSON.stringify({
-					username: 'alice',
-					password: 'pass123',
-				}),
+			handleLauncherActivation({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
 				env: DEFAULT_ENV,
-				fetchImpl: async () =>
-					Response.json({
-						Response: {
-							Error: {
-								Code: 'ResourceInUse.UserName',
-								Message: 'user already exists',
-							},
-							RequestId: 'request-3',
-						},
-					}),
+				fetchImpl: async () => Response.json({ status: 'BLOCKED', sub: USER_ID }),
 			}),
-		).rejects.toMatchObject({
-			message: '用户名已存在',
-			status: 409,
-		})
+		).rejects.toMatchObject({ status: 403 })
+	})
+
+	it('rejects activation without a bearer token before any database write', async () => {
+		let called = false
+		await expect(
+			handleLauncherActivation({
+				headers: {},
+				env: DEFAULT_ENV,
+				fetchImpl: async () => {
+					called = true
+					return Response.json({})
+				},
+			}),
+		).rejects.toMatchObject({ status: 401 })
+		expect(called).toBe(false)
 	})
 
 	it('builds deterministic Tencent Cloud TC3 signed requests', () => {
@@ -316,32 +343,24 @@ describe('CloudBase LLM gateway behavior', () => {
 			region: 'ap-shanghai',
 			action: 'CreateUser',
 			now: () => 1782660000000,
-			payload: {
-				EnvId: 'wenxue-d8gz76tacc3659f05',
-				Name: 'alice',
-			},
+			payload: { EnvId: 'wenxue-d8gz76tacc3659f05', Name: 'alice' },
 		})
 		const headers = new Headers(request.headers)
 
 		expect(request.method).toBe('POST')
-		expect(request.body).toBe(
-			JSON.stringify({
-				EnvId: 'wenxue-d8gz76tacc3659f05',
-				Name: 'alice',
-			}),
-		)
+		expect(request.body).toBe(JSON.stringify({ EnvId: 'wenxue-d8gz76tacc3659f05', Name: 'alice' }))
 		expect(headers.get('x-tc-token')).toBe('session-token')
 		expect(headers.get('x-tc-timestamp')).toBe('1782660000')
 		expect(headers.get('authorization')).toContain('SignedHeaders=content-type;host')
 		expect(headers.get('authorization')).toContain('Signature=')
 	})
 
-	it('rejects missing or inactive CloudBase bearer tokens before account lookup', async () => {
+	it('rejects missing or invalid CloudBase bearer tokens', async () => {
 		await expect(
 			resolveCloudBaseUser({
 				headers: {},
 				env: DEFAULT_ENV,
-				fetchImpl: async () => Response.json({ active: true, sub: USER_ID }),
+				fetchImpl: async () => Response.json({ status: 'ACTIVE', sub: USER_ID }),
 			}),
 		).rejects.toThrow('登录已过期/无权限')
 
@@ -349,12 +368,12 @@ describe('CloudBase LLM gateway behavior', () => {
 			resolveCloudBaseUser({
 				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
 				env: DEFAULT_ENV,
-				fetchImpl: async () => Response.json({ active: false, sub: USER_ID }),
+				fetchImpl: async () => Response.json({}, { status: 401 }),
 			}),
 		).rejects.toThrow('登录已过期/无权限')
 	})
 
-	it('introspects CloudBase access tokens and extracts the CloudBase user id', async () => {
+	it('reads the active CloudBase profile and extracts the user id', async () => {
 		const calls: Array<{ url: string; authorization: string | null }> = []
 		const user = await resolveCloudBaseUser({
 			headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
@@ -362,41 +381,69 @@ describe('CloudBase LLM gateway behavior', () => {
 			fetchImpl: async (url, init) => {
 				const headers = new Headers(init?.headers)
 				calls.push({ url: String(url), authorization: headers.get('authorization') })
-				return Response.json({ active: true, sub: USER_ID })
+				return Response.json({ status: 'ACTIVE', sub: USER_ID })
 			},
 		})
 
 		expect(user).toEqual({ uid: USER_ID })
 		expect(calls).toHaveLength(1)
-		expect(calls[0].url).toContain('/auth/v1/token/introspect')
+		expect(calls[0].url).toContain('/auth/v1/user/me')
 		expect(calls[0].url).toContain('client_id=client-id')
 		expect(calls[0].authorization).toBe(`Bearer ${ACCESS_TOKEN}`)
 	})
 
-	it('rejects disabled or missing user_accounts before calling DashScope', async () => {
-		for (const account of [{ ...ACTIVE_USER, active: false }, null]) {
-			const calls: string[] = []
+	it('times out a stalled user-profile response body without leaking the token', async () => {
+		vi.useFakeTimers()
+		try {
+			let failure: unknown
+			const profileRequest = resolveCloudBaseUser({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				env: { ...DEFAULT_ENV, requestTimeoutMs: 1_000 },
+				fetchImpl: (async (_, init) =>
+					({
+						ok: true,
+						status: 200,
+						text: () =>
+							new Promise<string>((_, reject) => {
+								init?.signal?.addEventListener('abort', () => reject(abortError()))
+							}),
+					}) as Response) as typeof fetch,
+			}).catch((error: unknown) => {
+				failure = error
+			})
 
-			await expect(
-				handleChatCompletions({
-					headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
-					rawBody: JSON.stringify({
-						model: 'qwen3.7-max',
-						stream: false,
-						messages: [{ role: 'user', content: 'hello' }],
-					}),
-					env: DEFAULT_ENV,
-					fetchImpl: createGatewayFetch({
-						calls,
-						userAccount: account,
-					}),
-				}),
-			).rejects.toThrow('无权限：当前用户未启用或已被禁用。')
+			await vi.advanceTimersByTimeAsync(1_000)
+			await profileRequest
 
-			expect(calls.some((url) => url.includes('/auth/v1/token/introspect'))).toBe(true)
-			expect(calls.some((url) => url.includes('/collections/user_accounts/documents'))).toBe(true)
-			expect(calls.some((url) => url === DASHSCOPE_CHAT_COMPLETIONS_URL)).toBe(false)
+			expect(failure).toMatchObject({ message: 'Upstream request timed out', status: 504 })
+			expect(failure).toBeInstanceOf(Error)
+			expect((failure as Error).message).not.toContain(ACCESS_TOKEN)
+		} finally {
+			vi.useRealTimers()
 		}
+	})
+
+	it('rejects blocked CloudBase users before calling DashScope', async () => {
+		const calls: string[] = []
+
+		await expect(
+			handleChatCompletions({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				rawBody: JSON.stringify({
+					model: 'qwen3.7-max',
+					stream: false,
+					messages: [{ role: 'user', content: 'hello' }],
+				}),
+				env: DEFAULT_ENV,
+				fetchImpl: createGatewayFetch({
+					calls,
+					userProfile: { status: 'BLOCKED', sub: USER_ID },
+				}),
+			}),
+		).rejects.toThrow('无权限：当前用户未启用或已被禁用。')
+
+		expect(calls.some((url) => url.includes('/auth/v1/user/me'))).toBe(true)
+		expect(calls.some((url) => url === DASHSCOPE_CHAT_COMPLETIONS_URL)).toBe(false)
 	})
 
 	it('proxies non-streaming requests for active users and writes usage under the user id', async () => {
@@ -440,9 +487,7 @@ describe('CloudBase LLM gateway behavior', () => {
 				],
 			},
 		])
-		expect(
-			calls.filter((url) => url.includes('/collections/user_accounts/documents')),
-		).toHaveLength(1)
+		expect(calls.filter((url) => url.includes('/auth/v1/user/me'))).toHaveLength(1)
 		expect(calls.filter((url) => url.includes('/collections/token_usage/documents'))).toHaveLength(
 			1,
 		)
@@ -611,7 +656,7 @@ describe('CloudBase LLM gateway behavior', () => {
 				},
 			)
 
-			expect(calls.some((url) => url.includes('/auth/v1/token/introspect'))).toBe(true)
+			expect(calls.some((url) => url.includes('/auth/v1/user/me'))).toBe(true)
 			expect(result).toMatchObject({
 				usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
 			})
@@ -626,26 +671,14 @@ describe('CloudBase LLM gateway behavior', () => {
 		const previousFetch = globalThis.fetch
 		const previousSecretId = process.env.TENCENTCLOUD_SECRETID
 		const previousSecretKey = process.env.TENCENTCLOUD_SECRETKEY
-		const previousUsageApiKey = process.env.CLOUDBASE_USAGE_API_KEY
 		process.env.TENCENTCLOUD_SECRETID = 'secret-id'
 		process.env.TENCENTCLOUD_SECRETKEY = 'secret-key'
-		process.env.CLOUDBASE_USAGE_API_KEY = 'cloudbase-usage-api-key'
 		globalThis.fetch = (async () =>
-			Response.json({
-				Response: {
-					Uid: 'cloudbase-user-3',
-					RequestId: 'request-4',
-				},
-			})) as typeof fetch
+			Response.json({ Response: { RequestId: 'request-4' } })) as typeof fetch
 
 		try {
 			const response = await launcherRegister(
-				{
-					body: JSON.stringify({
-						username: 'charlie',
-						password: 'pass123',
-					}),
-				},
+				{ body: JSON.stringify({ username: 'charlie', password: 'AuthTest9!' }) },
 				{
 					sse() {
 						throw new Error('SSE should not be used for launcher registration')
@@ -654,19 +687,38 @@ describe('CloudBase LLM gateway behavior', () => {
 			)
 
 			expect(response.statusCode).toBe(201)
-			expect(response.headers).toMatchObject({
-				'access-control-allow-origin': '*',
-			})
+			expect(response.headers).toMatchObject({ 'access-control-allow-origin': '*' })
 			expect(JSON.parse(response.body)).toMatchObject({
 				ok: true,
-				userId: 'cloudbase-user-3',
 				username: 'charlie',
 			})
 		} finally {
 			globalThis.fetch = previousFetch
 			restoreEnv('TENCENTCLOUD_SECRETID', previousSecretId)
 			restoreEnv('TENCENTCLOUD_SECRETKEY', previousSecretKey)
-			restoreEnv('CLOUDBASE_USAGE_API_KEY', previousUsageApiKey)
+		}
+	})
+
+	it('exposes authenticated launcher activation through its own target', async () => {
+		const previousFetch = globalThis.fetch
+		globalThis.fetch = (async () =>
+			Response.json({ status: 'ACTIVE', sub: USER_ID })) as typeof fetch
+
+		try {
+			const response = await launcherActivate(
+				{ headers: { authorization: `Bearer ${ACCESS_TOKEN}` } },
+				{
+					sse() {
+						throw new Error('SSE should not be used for launcher activation')
+					},
+				},
+			)
+
+			expect(response.statusCode).toBe(200)
+			expect(response.headers).toMatchObject({ 'access-control-allow-origin': '*' })
+			expect(JSON.parse(response.body)).toEqual({ ok: true, userId: USER_ID })
+		} finally {
+			globalThis.fetch = previousFetch
 		}
 	})
 
@@ -706,7 +758,7 @@ describe('CloudBase LLM gateway behavior', () => {
 		}
 	})
 
-	it('detects launcher registration preflight from access-control request headers', async () => {
+	it('detects registration preflight from access-control request headers', async () => {
 		const response = await launcherRegister(
 			{
 				headers: {
@@ -725,10 +777,183 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(response).toMatchObject({
 			statusCode: 204,
 			body: '',
+			headers: { 'access-control-allow-origin': '*' },
+		})
+	})
+
+	it('answers activation CORS preflight without requiring a bearer token', async () => {
+		const response = await launcherActivate(
+			{
+				headers: {
+					'access-control-request-method': 'POST',
+					'access-control-request-headers': 'authorization',
+				},
+			},
+			{
+				sse() {
+					throw new Error('SSE should not be used for launcher activation')
+				},
+			},
+		)
+
+		expect(response).toMatchObject({
+			statusCode: 204,
+			body: '',
 			headers: {
 				'access-control-allow-origin': '*',
+				'access-control-allow-headers': 'content-type, authorization',
 			},
 		})
+	})
+
+	it('rate limits a warm instance by trusted IP and username with Retry-After', async () => {
+		const previousFetch = globalThis.fetch
+		const previousSecretId = process.env.TENCENTCLOUD_SECRETID
+		const previousSecretKey = process.env.TENCENTCLOUD_SECRETKEY
+		const previousUsageApiKey = process.env.CLOUDBASE_USAGE_API_KEY
+		process.env.TENCENTCLOUD_SECRETID = 'secret-id'
+		process.env.TENCENTCLOUD_SECRETKEY = 'secret-key'
+		process.env.CLOUDBASE_USAGE_API_KEY = 'cloudbase-usage-api-key'
+		globalThis.fetch = (async () =>
+			Response.json({ Response: { Data: { Uid: 'cloudbase-rate-user' } } })) as typeof fetch
+
+		try {
+			for (let attempt = 0; attempt < 5; attempt += 1) {
+				const response = await launcherRegister(
+					{
+						body: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
+						headers: {
+							'x-forwarded-for': `spoofed-${attempt}, 203.0.113.9`,
+						},
+					},
+					{
+						sse() {
+							throw new Error('SSE should not be used for launcher registration')
+						},
+					},
+				)
+				expect(response.statusCode).toBe(201)
+			}
+
+			const limited = await launcherRegister(
+				{
+					body: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
+					headers: { 'x-forwarded-for': 'another-spoof, 203.0.113.9' },
+				},
+				{
+					sse() {
+						throw new Error('SSE should not be used for launcher registration')
+					},
+				},
+			)
+
+			expect(limited.statusCode).toBe(429)
+			expect(limited.headers).toMatchObject({ 'retry-after': '60' })
+			expect(limited.body).not.toContain('AuthTest9!')
+			resetLauncherRegistrationRateLimits()
+			await expect(
+				launcherRegister(
+					{
+						body: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
+						headers: { 'x-forwarded-for': 'another-spoof, 203.0.113.9' },
+					},
+					{
+						sse() {
+							throw new Error('SSE should not be used for launcher registration')
+						},
+					},
+				),
+			).resolves.toMatchObject({ statusCode: 201 })
+		} finally {
+			globalThis.fetch = previousFetch
+			restoreEnv('TENCENTCLOUD_SECRETID', previousSecretId)
+			restoreEnv('TENCENTCLOUD_SECRETKEY', previousSecretKey)
+			restoreEnv('CLOUDBASE_USAGE_API_KEY', previousUsageApiKey)
+		}
+	})
+
+	it('applies a global registration limit across distinct IP and username keys', async () => {
+		const previousFetch = globalThis.fetch
+		globalThis.fetch = (async () => {
+			throw new Error('invalid passwords must not reach CloudBase')
+		}) as typeof fetch
+
+		try {
+			for (let attempt = 0; attempt < 200; attempt += 1) {
+				const response = await launcherRegister(
+					{
+						body: JSON.stringify({
+							username: `user${String(attempt).padStart(5, '0')}`,
+							password: 'bad',
+						}),
+						headers: { 'x-real-ip': `198.51.100.${attempt}` },
+					},
+					{
+						sse() {
+							throw new Error('SSE should not be used for launcher registration')
+						},
+					},
+				)
+				expect(response.statusCode).toBe(400)
+			}
+			const limited = await launcherRegister(
+				{
+					body: JSON.stringify({ username: 'user99999', password: 'bad' }),
+					headers: { 'x-real-ip': '198.51.100.250' },
+				},
+				{
+					sse() {
+						throw new Error('SSE should not be used for launcher registration')
+					},
+				},
+			)
+			expect(limited).toMatchObject({
+				statusCode: 429,
+				headers: { 'retry-after': '60' },
+			})
+		} finally {
+			globalThis.fetch = previousFetch
+		}
+	})
+
+	it('exposes a credential-free health check target', () => {
+		const previousFetch = globalThis.fetch
+		globalThis.fetch = (async () => {
+			throw new Error('health check must not call an external service')
+		}) as typeof fetch
+
+		try {
+			const response = healthCheck()
+
+			expect(response).toMatchObject({
+				statusCode: 200,
+				headers: {
+					'content-type': 'application/json; charset=utf-8',
+				},
+			})
+			expect(JSON.parse(response.body)).toEqual({
+				ok: true,
+				service: 'wenxue-llm-gateway',
+			})
+		} finally {
+			globalThis.fetch = previousFetch
+		}
+	})
+
+	it('configures health, registration, and activation routes', () => {
+		const config = JSON.parse(
+			readFileSync(new URL('../cloudbase-functions.json', import.meta.url), 'utf8'),
+		) as { functions: Array<{ target: string; triggerPath: string }> }
+
+		expect(config.functions).toContainEqual(
+			expect.objectContaining({ target: 'healthCheck', triggerPath: '/healthz' }),
+		)
+		expect(config.functions).toContainEqual(
+			expect.objectContaining({ target: 'launcherRegister', triggerPath: '/v1/auth/register' }),
+		)
+		expect(config.functions).toContainEqual(
+			expect.objectContaining({ target: 'launcherActivate', triggerPath: '/v1/auth/activate' }),
+		)
 	})
 
 	it('builds token usage summary without leaking uid or sensitive fields', () => {
@@ -904,8 +1129,7 @@ function createGatewayFetch(options: {
 	calls?: string[]
 	dashScopeBodies?: unknown[]
 	usageWrites?: unknown[]
-	userAccount?: Record<string, unknown> | null
-	introspection?: Record<string, unknown>
+	userProfile?: Record<string, unknown>
 	dashScopeResponse?: Response
 	usageWriteStatus?: number
 	usageRecords?: Record<string, unknown>[]
@@ -913,16 +1137,12 @@ function createGatewayFetch(options: {
 	return (async (url, init) => {
 		const href = String(url)
 		options.calls?.push(href)
-		if (href.includes('/auth/v1/token/introspect')) {
+		if (href.includes('/auth/v1/user/me')) {
 			const headers = new Headers(init?.headers)
 			if (headers.get('authorization') !== `Bearer ${ACCESS_TOKEN}`) {
-				return Response.json({ active: false }, { status: 401 })
+				return Response.json({}, { status: 401 })
 			}
-			return Response.json(options.introspection ?? { active: true, sub: USER_ID })
-		}
-		if (href.includes('/collections/user_accounts/documents')) {
-			const account = options.userAccount === undefined ? ACTIVE_USER : options.userAccount
-			return Response.json({ list: account ? [account] : [] })
+			return Response.json(options.userProfile ?? { status: 'ACTIVE', sub: USER_ID })
 		}
 		if (href.includes('/collections/token_usage/documents')) {
 			if (init?.method === 'GET') {
@@ -972,4 +1192,10 @@ function restoreEnv(name: string, previous: string | undefined) {
 	} else {
 		process.env[name] = previous
 	}
+}
+
+function abortError() {
+	const error = new Error('aborted')
+	error.name = 'AbortError'
+	return error
 }

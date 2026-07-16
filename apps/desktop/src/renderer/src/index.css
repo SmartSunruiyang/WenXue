@@ -185,6 +185,11 @@ textarea {
 	padding-inline: 11px;
 }
 
+.auth-field .auth-field__hint {
+	font-size: 12px;
+	line-height: 1.45;
+}
+
 .auth-alert {
 	border: 1px solid oklch(0.58 0.18 25 / 0.22);
 	border-radius: 8px;

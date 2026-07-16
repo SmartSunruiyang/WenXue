@@ -24,7 +24,8 @@
 | TokenUsageRecord         | id、ts、browserId?、uid?、model、inputTokens、outputTokens、totalTokens、estimatedCostCny?、latencyMs?                                                                                    | 由已脱敏日志遥测或 CloudBase LLM Gateway 计量生成                                   | 本地缓存：`<userData>/token-usage.json`；云端权威：`token_usage`；云端 uid 为 CloudBase 用户 id；均不包含提示词正文、API Key、access token、refresh token 或敏感头 |
 | UserSession              | userId、accessToken、refreshToken、expiresAt、gatewayBaseUrl                                                                                                                              | 桌面登录后同步给主进程并交接扩展；扩展用 access token 调网关并用 refresh token 刷新 | 桌面主进程仅内存持有当前 session；插件 `chrome.storage.local` 的 `WenXueUserSession`；CloudBase Web SDK 负责桌面登录态持久化                                       |
 | CloudTokenUsage          | \_id、ts、uid、model、inputTokens、outputTokens、totalTokens、latencyMs、createdAt                                                                                                        | 由 CloudBase LLM Gateway 从 DashScope usage 生成                                    | 是：CloudBase NoSQL `token_usage`；PRIVATE；不含正文、Key、Authorization/Bearer                                                                                    |
-| UserAccount              | \_id/uid、active、firstSeenAt、lastSeenAt、createdAt、updatedAt、note?                                                                                                                    | 由后台管理系统/初始化控制用户是否可调用内置模型                                     | 是：CloudBase NoSQL `user_accounts`；`active=true` 才放行，`active=false` 禁止调用                                                                                 |
+| CloudBaseAuthUser        | sub/uid、username、status（`ACTIVE` / `BLOCKED`）                                                                                                                                         | TCB `CreateUser` 创建；Web Auth SDK 验密；网关每个受保护请求读取 `/auth/v1/user/me` | 是：CloudBase Auth；`status=ACTIVE` 是网关放行的唯一账号状态权威，`BLOCKED` 拒绝调用                                                                               |
+| UserAccount              | \_id/uid、active、firstSeenAt、lastSeenAt、createdAt、updatedAt、note?                                                                                                                    | 现有 AdminApi / AdminConsole 的 legacy 用户状态与备注                               | 是：CloudBase NoSQL `user_accounts`；Auth-native 切换后不再参与网关授权，状态页迁移到 TCB `ModifyUser` 前不能用于封禁                                              |
 | AdminUser                | \_id(uid)、role、status、displayName?、createdAt?、updatedAt?                                                                                                                             | CloudBase Auth 内部账号对应的后台授权记录                                           | 是：CloudBase NoSQL `admin_users`；只有 active 管理员/查看者可访问 AdminApi                                                                                        |
 | UserPermissionAudit      | \_id、uid、adminUid、before、after、reason?、createdAt                                                                                                                                    | 由 AdminApi 在用户状态调整时写入                                                    | 是：CloudBase NoSQL `user_permission_audit`；不含 access token、refresh token、提示词正文或厂商 Key                                                                |
 
@@ -215,9 +216,9 @@
 
 ```
 ## 模块名：ConsoleUI
-- 职责：React 启动器 App shell（侧栏路由、浏览器多开页、日志页、tokens 页、设置页）
-- 不负责：不触 Node API；不写业务判断（仅消费状态、发送意图）
-- 输入：DesktopBridge
+- 职责：React 启动器 App shell（账号登录/注册、侧栏路由、浏览器多开页、日志页、tokens 页、设置页）；注册调用 CloudBaseLlmGateway，登录与会话适配使用 CloudBase Web Auth SDK，并在发起请求前执行凭据格式校验
+- 不负责：不触 Node API；不直接调用 Tencent Cloud 管理 API；不写启动器业务判断（仅消费状态、发送意图）
+- 输入：DesktopBridge、CloudBase Web Auth SDK、CloudBaseLlmGateway `/v1/auth/register` 与 `/v1/auth/activate`
 - 输出：用户
 - 关键类型/接口：无对外编程接口
 - 持有状态：仅 UI 态
@@ -238,18 +239,18 @@
 
 ```
 ## 模块名：CloudBaseLlmGateway
-- 职责：CloudBase Run Function 模式的 OpenAI-compatible 网关；注册入口创建 CloudBase Auth externalUser 后同步创建 `user_accounts.active=true` 授权记录；introspect CloudBase Auth access token 并解析用户 uid；每次请求读取 `user_accounts` 并在请求 DashScope 前执行 active 鉴权；为流式 DashScope 请求注入 stream_options.include_usage；透传 SSE；提取 usage 与延迟并生成 uid 维度计量；提供当前用户 `/v1/usage/summary` 脱敏汇总
+- 职责：CloudBase Run 容器型（Dockerfile + Functions Framework 多 target）的 OpenAI-compatible 网关；注册入口通过 Tencent Cloud TCB `CreateUser(UserStatus=ACTIVE)` 创建 CloudBase Auth externalUser，但不猜测或回查 uid；桌面端使用 CloudBase Web Auth SDK 验证密码并获得 access token 后，再调用兼容 `/v1/auth/activate`；该 target 只读取官方 `/auth/v1/user/me`，校验真实 uid 与 `status=ACTIVE` 后返回，不写业务数据库；注册 target 执行来源 IP、用户名与单实例总量限流；每个模型与 usage 请求同样读取 user profile 并在请求 DashScope 或 NoSQL 前严格要求 `ACTIVE`；为流式 DashScope 请求注入 stream_options.include_usage；透传 SSE；提取 usage 与延迟并生成 uid 维度计量；提供当前用户 `/v1/usage/summary` 脱敏汇总与 `/healthz` 就绪探针
 - 不负责：不持久化提示词/响应正文；不保存或返回 DashScope Key；不实现订阅/扣费；不提供管理员登录或管理 UI；M4 实时聚合不做 rollup 预计算
-- 输入：插件 OpenAIClient 发来的 `/v1/chat/completions` 请求、UsageCloudClient 发来的 `/v1/usage/summary` 请求、桌面注册页发来的 `/v1/auth/register` 请求、CloudBase access token、服务端 DASHSCOPE_API_KEY / CLOUDBASE_USAGE_API_KEY / Tencent Cloud API 凭证环境变量
-- 输出：DashScope SSE/JSON 原样回传；创建 CloudBase Auth 用户并写 `user_accounts`；读取 `user_accounts` 与写 `token_usage`；返回不含 uid/Key/敏感头的 `TokenUsageSummary`
-- 关键类型/接口：handleLauncherRegistration · createCloudBaseExternalUser · buildDashScopeRequest · authorizeUserRequest · resolveCloudBaseUser · readUserAccount · extractUsageFromSseFrame · buildUsageRecord · handleUsageSummary · readUsageRecords · buildUsageSummary
+- 输入：插件 OpenAIClient 发来的 `/v1/chat/completions` 请求、UsageCloudClient 发来的 `/v1/usage/summary` 请求、桌面注册页发来的 `/v1/auth/register` 与 `/v1/auth/activate` 请求、CloudBase access token、服务端 DASHSCOPE_API_KEY / CLOUDBASE_USAGE_API_KEY / Tencent Cloud API 凭证环境变量
+- 输出：DashScope SSE/JSON 原样回传；创建 `ACTIVE` CloudBase Auth 用户；按 bearer token 返回当前 `ACTIVE` 用户 uid；写 `token_usage`；返回不含 uid/Key/敏感头的 `TokenUsageSummary`；返回无凭据健康状态
+- 关键类型/接口：handleLauncherRegistration · handleLauncherActivation · createCloudBaseExternalUser · buildTencentCloudSignedRequest · buildDashScopeRequest · authorizeUserRequest · resolveCloudBaseUser · extractUsageFromSseFrame · buildUsageRecord · handleUsageSummary · readUsageRecords · buildUsageSummary · healthCheck
 - 持有状态：无业务授权缓存；部署态环境变量由 CloudBase Run 管理
 ```
 
 ```
 ## 模块名：AdminApi
 - 职责：CloudBase Run Function 模式的后台管理 API；校验 CloudBase Auth 管理员 session；查询 `admin_users` 角色；读取 `token_usage` 聚合 tokens 看板；读取/更新 `user_accounts` 并写 `user_permission_audit`
-- 不负责：不接受用户 access token 以外的管理登录；不转发 LLM；不保存提示词/响应正文；不下发 CloudBase API Key；不渲染后台 UI
+- 不负责：不接受用户 access token 以外的管理登录；不转发 LLM；不保存提示词/响应正文；不下发 CloudBase API Key；不渲染后台 UI；当前尚未把用户状态更新迁移到 TCB `ModifyUser`，因此其 `user_accounts` 状态不再影响 CloudBaseLlmGateway 放行
 - 输入：AdminConsole 发来的 CloudBase Auth bearer token、服务端 CloudBase 环境变量与 NoSQL 集合
 - 输出：内部兼容 `/admin/v1/me`、`/admin/v1/usage/summary`、`/admin/v1/users`、`/admin/v1/users/status` JSON 响应；公网 HTTP 网关默认域名使用不与 `/admin` 页面前缀冲突的精确路由 `/api/admin/v1/me`、`/api/admin/v1/usage/summary`、`/api/admin/v1/users`、`/api/admin/v1/user-status`
 - 关键类型/接口：resolveCloudBaseAdminIdentity · requireAdminUser · buildAdminUsageSummary · handleAdminRequest
@@ -411,6 +412,7 @@ graph TD
         MainBootstrap --> BrowserSupervisor
         MainBootstrap --> ProfileStore
         ConsoleUI --> DesktopBridge
+		ConsoleUI --> CloudBaseWebAuth["CloudBase Web Auth SDK"]
         DesktopBridge --> BrowserSupervisor
         DesktopBridge --> BrowserProfileStore
         DesktopBridge --> LauncherLogStore
@@ -468,6 +470,7 @@ graph TD
     end
 	    subgraph 云端后端
 	        CloudBaseLlmGateway --> DashScope["DashScope OpenAI-compatible API"]
+	        CloudBaseLlmGateway --> CloudBaseAuth["CloudBase Auth"]
 	        CloudBaseLlmGateway --> CloudNoSQL["CloudBase NoSQL"]
 	        AdminApi --> CloudBaseAuth["CloudBase Auth"]
 	        AdminApi --> CloudNoSQL
@@ -475,7 +478,7 @@ graph TD
 	    UsageCloudClient --> CloudBaseLlmGateway
 	    subgraph 后台管理域
 	        AdminConsole --> AdminApi
-	        AdminConsole --> CloudBaseWebAuth["CloudBase Web Auth SDK"]
+	        AdminConsole --> CloudBaseWebAuth
 	    end
 	    subgraph 官网域
 	        WebsiteSite --> WebsiteAssets["透明品牌资产"]
@@ -524,7 +527,7 @@ graph TD
 //   auth:setSession        invoke (session: UserSession) => Promise<{ ok: boolean; session?: PublicUserSession; error?: string }>
 //   auth:getSession        invoke () => Promise<{ ok: boolean; session?: PublicUserSession; error?: string }>
 //   auth:clearSession      invoke () => Promise<{ ok: boolean; error?: string }>
-//                            // Main 仅内存持有 session；renderer 通过 CloudBase Web SDK 登录/注册/刷新
+//                            // Main 仅内存持有 session；renderer 通过注册网关创建账号，以 CloudBase Web SDK 登录/刷新
 
 // module: BrowserSupervisor
 //   launch(profileId = 'default', opts?: { startUrl?: string }): Promise<void>
@@ -599,12 +602,23 @@ graph TD
 //     // world 默认 isolated；frame_id 由 extension 的 list_frames 发现，缺省为 top frame
 //   new OpenAIClient({ baseURL, apiKey, model })        // I4：插件域唯一 LLM 出口
 
-// module: CloudBaseLlmGateway —— CloudBase Run Function mode
+// module: CloudBaseLlmGateway —— CloudBase Run container + Functions Framework targets
+//   GET /healthz
+//     不要求凭据；仅返回服务就绪状态，不读取或返回环境变量
+//   POST /v1/auth/register
+//     body = { username, password }；服务端重复执行桌面格式校验
+//     通过 TCB CreateUser 创建 externalUser；成功响应不依赖 CreateUser 返回 uid
+//     password 不记录、不持久化、不返回；重复用户名返回 409，桌面端仍可尝试验证本次凭据
+//     HTTP target 按来源 IP、username 与单实例总量限流，超限返回 429 + Retry-After
+//   POST /v1/auth/activate
+//     headers.Authorization = Bearer <CloudBase accessToken>；body 不含 password
+//     10 秒内 GET /auth/v1/user/me；要求响应含真实 uid 且 status === ACTIVE
+//     只做 Auth-native readiness check，不写 NoSQL；BLOCKED 返回 403
 //   POST /v1/chat/completions
 //     headers.Authorization = Bearer <CloudBase accessToken>
 //     body = OpenAI-compatible chat completion payload
 //     stream=true 时必须向 DashScope 注入 stream_options.include_usage=true
-//     请求 DashScope 前必须 introspect CloudBase Auth token，并读取 user_accounts 检查 active=true
+//     请求 DashScope 前必须 GET /auth/v1/user/me，并严格检查 status === ACTIVE
 //     response = DashScope SSE/JSON passthrough
 //     usage record = { uid, model, inputTokens, outputTokens, totalTokens, latencyMs, createdAt }
 //     usage record 禁止包含 prompt/content/API Key/Authorization/Bearer/accessToken/refreshToken
@@ -637,6 +651,7 @@ graph TD
 //     body = { uid, status?, note?, reason? }
 //     response = { user: UserAccountView }
 //     side effect = update user_accounts + insert user_permission_audit
+//     当前仅是 legacy 状态页，不影响网关；必须迁移为 TCB ModifyUser ACTIVE/BLOCKED 后才具备封禁效力
 ```
 
 ## 4. 持久化与边界
@@ -653,9 +668,10 @@ graph TD
 | ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`                                                                                                                    | SidepanelApp options 设置页与语言快捷入口                                | 自定义 BYO-Key 不出本机；内置模型只保存网关 baseURL 与空 apiKey，不保存百炼 Key；`selectedModelId` + `customModels[]` 为设置页源数据；历史 `WenXueUseLocalBuiltinLlmFallback` 标志被运行时忽略 |
 | ModelToolChoiceCompatibility                  | `chrome.storage.local` 独立版本化记录                                                                                                     | ExtensionSettingsConfig / RuntimeAgentModels                             | 仅按规范化 endpoint + model 保存 named `tool_choice` 不兼容的到期时间（30 天 TTL）；不含 API Key、用户 session、错误正文或鉴权头；过期/无效项加载时裁剪                                        |
 | 用户 session                                  | 主进程内存；插件 `chrome.storage.local` 的 `WenXueUserSession`                                                                            | ConsoleUI / UserSessionStore / UserSessionHandoff / ExtensionEntrypoints | 仅作为调网关凭据；不得在桌面设置页展示/复制 token；不得写入日志、tokens 记录或打包产物；refresh token 仅用于插件刷新 session                                                                   |
+| 用户账号授权状态                              | CloudBase Auth user profile                                                                                                               | TCB `CreateUser` / CloudBase 用户管理 / TCB `ModifyUser`                 | 网关每次受保护请求通过 `/auth/v1/user/me` 读取；仅 `ACTIVE` 放行，`BLOCKED` 拒绝；不依赖 NoSQL 激活记录                                                                                        |
 | DashScope API Key                             | CloudBase Run 环境变量 `DASHSCOPE_API_KEY`                                                                                                | CloudBaseLlmGateway                                                      | 仅服务端读取；不得返回给客户端、写入日志、写入仓库或本地配置                                                                                                                                   |
 | 云端 tokens 计量                              | CloudBase NoSQL `token_usage`                                                                                                             | CloudBaseLlmGateway / usage-summary target                               | 原始计量仅用户 uid、模型、tokens、时间、延迟；summary 返回前移除 uid；不含正文、Key、Authorization/Bearer/accessToken/refreshToken                                                             |
-| 用户账号权限                                  | CloudBase NoSQL `user_accounts`                                                                                                           | AdminApi / 内部初始化                                                    | 网关优先读取 active；只有 active=true 可调用内置模型；AdminApi 可改 active/note                                                                                                                |
+| Legacy 用户账号状态                           | CloudBase NoSQL `user_accounts`                                                                                                           | AdminApi                                                                 | 当前 AdminConsole 状态/备注数据；Auth-native 切换后不被 CloudBaseLlmGateway 读取，不能作为封禁权威；远端集合暂不物理删除，待 AdminApi 迁移与数据清理                                           |
 | 后台管理员授权                                | CloudBase NoSQL `admin_users`                                                                                                             | 手动初始化 / AdminApi 读取                                               | `_id` 等于 CloudBase Auth uid；只有 active admin/viewer 可访问 AdminApi；不保存密码，密码由 CloudBase Auth 管理                                                                                |
 | 用户权限审计                                  | CloudBase NoSQL `user_permission_audit`                                                                                                   | AdminApi                                                                 | 每次状态调整写 before/after/adminUid/reason/createdAt；不含提示词正文、access token、refresh token、API Key 或敏感头                                                                           |
 | 任务历史                                      | 插件 IndexedDB `page-agent-ext` v3：`sessions`（`id`、`conversationId`、`createdAt`、`updatedAt`，索引 `by-created` / `by-conversation`） | SidepanelApp                                                             | 不出本机；同一会话多轮续接按 `conversationId` upsert 为一条记录；用户可清空                                                                                                                    |
@@ -676,8 +692,8 @@ graph TD
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1/v2→v3 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
 - **VisualObservation**：覆盖 v2 协议握手与单次自刷新、跨 extension realm 的 Web Lock 单飞、v1 明确不兼容、目标 tab 必填及切换/导航 TOCTOU、旧 background/消息拒绝结构化降级、AbortError 传播、Qwen 强制工具参数与重试消息顺序、CloudBase 错误 envelope、自定义无鉴权端点/内置网关鉴权前置、输出/日志禁止 data URI 回灌；发布前以真实 CfT 走协议握手 + 截图 data URL + tab id 一致性 smoke。
 - **模型 tool_choice 兼容**：`@page-agent/llms` 覆盖严格错误匹配、named→required 单次重建、无关/思考模式错误不学习与回调失败不阻断；`RuntimeAgentModels` 覆盖 endpoint/model 隔离、TTL、过期裁剪及无敏感字段；视觉观察与学习通直连请求覆盖等价降级路径。
-- **CloudBaseLlmGateway**：TDD 覆盖 token 缺失拒绝、CloudBase access token introspection、无 user_accounts/disabled 时请求 DashScope 前拒绝、active 用户放行、流式请求注入 `stream_options.include_usage`、SSE 末块 usage 解析、计量记录无正文/Key/敏感头。
-- **AdminApi / AdminConsole**：AdminApi 覆盖未登录/非 admin_users/禁用账号拒绝、viewer 只读、admin 可调整用户状态、tokens 聚合总数等于明细求和、响应不含敏感字段；AdminConsole 至少通过 `tsc --noEmit` 与 `vite build`，登录页/看板/用户状态表单需手动或浏览器 smoke 验证。
+- **CloudBaseLlmGateway**：TDD 覆盖注册格式与允许字符校验、CreateUser 显式提交 `UserStatus=ACTIVE`、成功但无 uid 仍返回成功、重复用户名不写业务库、注册限流、TCB 响应体超时、`/healthz` 无凭据就绪、激活缺少/无效 token 拒绝、`/auth/v1/user/me` 真实 uid 与严格 `ACTIVE` 校验、`BLOCKED` 在 DashScope 前拒绝、user profile 响应体超时与敏感 token 不泄露、流式请求注入 `stream_options.include_usage`、SSE 末块 usage 解析、计量记录无正文/Key/敏感头。
+- **AdminApi / AdminConsole**：现有 legacy AdminApi 覆盖未登录/非 admin_users/禁用管理员拒绝、viewer 只读、`user_accounts` 状态修改、tokens 聚合总数等于明细求和、响应不含敏感字段；AdminConsole 至少通过 `tsc --noEmit` 与 `vite build`。用户封禁尚未迁移到 TCB `ModifyUser ACTIVE/BLOCKED`，因此状态表单当前不构成网关授权验收证据。
 - **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。
 - **仅手动**：ConsoleUI、SidepanelApp 的视觉与交互（按 `UIUX.md` 与 PRD 验收标准）。
@@ -712,9 +728,9 @@ WenXue/
 │           ├── userSession.ts       # 插件侧用户 session 存储与刷新
 │           ├── runtimeModelConfig.ts # 内置模型运行时解析：gateway 用户 access token 注入；旧 fallback 标志忽略
 │           └── db.ts                # page-agent-ext v3：sessions/by-conversation + logs/by-ts
-	│   ├── llm-gateway/                 # 云端后端：CloudBaseLlmGateway（CloudBase Run Function mode）
-	│   │   ├── cloudbase-functions.json # /v1/chat/completions 函数型云托管入口
-	│   │   ├── src/                     # 网关纯逻辑与 Function mode main
+	│   ├── llm-gateway/                 # 云端后端：CloudBaseLlmGateway（CloudBase Run 容器型）
+	│   │   ├── cloudbase-functions.json # Functions Framework 多 target 路由
+	│   │   ├── src/                     # 网关纯逻辑与容器入口 targets
 	│   │   └── scripts/                 # M0 真实流式验证脚本
 	│   ├── admin-api/                   # 云端后端：AdminApi（CloudBase Run Function mode）
 	│   │   ├── cloudbase-functions.json # /admin/v1/* 兼容入口 + /api/admin/v1 精确默认网关入口

@@ -36,6 +36,61 @@ export const strings = {
 			'执行过程中可随时停止或人工接管。',
 		],
 	},
+	auth: {
+		loading: '正在检查登录状态',
+		modeLabel: '账号入口',
+		mode: {
+			login: '登录',
+			register: '注册',
+		},
+		title: {
+			login: '登录账号',
+			register: '注册账号',
+		},
+		description: {
+			login: '登录后才能进入工作台并启动浏览器。',
+			register: '使用用户名和密码创建问学账号。',
+		},
+		field: {
+			username: '用户名',
+			password: '密码',
+			confirmPassword: '确认密码',
+		},
+		hint: {
+			username: '5–24 位，以英文字母开头，仅可包含英文字母和数字。',
+			password:
+				'9–32 位，首位为英文字母或数字；特殊符号仅限 ()!@#$%^&*|?><_-；至少包含 4 类字符中的 3 类。',
+		},
+		action: {
+			busy: '处理中',
+			login: '登录',
+			register: '注册并登录',
+		},
+		validation: {
+			usernameRequired: '请输入用户名。',
+			usernameLength: '用户名长度必须为 5–24 位。',
+			usernameFormat: '用户名必须以英文字母开头，且只能包含英文字母和数字。',
+			passwordRequired: '请输入密码。',
+			passwordLength: '密码长度必须为 9–32 位。',
+			passwordFirstCharacter: '密码首位必须是英文字母或数字。',
+			passwordCharacterSet:
+				'密码只能包含英文字母、数字及这些特殊符号：()!@#$%^&*|?><_-，不能包含空格、中文或 emoji。',
+			passwordComplexity: '密码必须至少包含小写字母、大写字母、数字和特殊符号中的 3 类。',
+			confirmPasswordRequired: '请再次输入密码。',
+			passwordMismatch: '两次输入的密码不一致。',
+		},
+		error: {
+			operation: '账号操作失败，请稍后重试。',
+			publishableKey: 'CloudBase 身份认证配置不完整，请联系管理员。',
+			login: '登录失败，请检查用户名和密码后重试。',
+			register: '注册失败，请稍后重试。',
+			usernameExists: '用户名已存在，请直接登录或更换用户名',
+			loginSession: '登录成功，但 CloudBase 未返回有效会话，请重新登录。',
+			network: '无法连接 CloudBase 身份认证服务，请检查网络后重试；若网络正常，请稍后再试。',
+			timeout: '身份认证请求超过 12 秒未响应，请检查网络后重试。',
+			logout: '退出登录失败，请重新打开问学后重试。',
+		},
+	},
 	errorFallback: '浏览器启动或运行异常。请重新启动；若仍失败，请查看主进程日志定位原因。',
 	openLogsFallback: '无法打开日志目录。请在系统的应用数据目录中手动查看问学日志。',
 	error: {
@@ -53,7 +108,6 @@ export const strings = {
 		batchLaunch: '批量启动未完成，请检查失败画像后重试。',
 		saveSettings: '设置保存失败，请检查输入后重试。',
 		clearLogs: '清空日志失败，请稍后重试。',
-		logout: '退出登录失败，请重新打开问学后重试。',
 		minimizeWindow: '无法最小化窗口，请重试。',
 		resizeWindow: '无法调整窗口大小，请重试。',
 		closeWindow: '无法关闭窗口，请重试。',

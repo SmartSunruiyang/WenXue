@@ -83,7 +83,8 @@ vendor 原则：
 | 浏览器   | Chrome for Testing，**单一版本全平台统一**，版本号记录于 `apps/desktop/browser.lock.json`                         | Demo 锁定一个 Stable 版本；升级 = 改 lock + 跑冒烟                                                                                            |
 | 插件     | WXT 0.20 + React 19 + Tailwind 4 + shadcn（沿用上游）                                                             | 跟随 vendor 快照                                                                                                                              |
 | LLM 接入 | OpenAI-compatible REST（上游 `@page-agent/llms`）                                                                 | 内置模型 M3 起经 CloudBase 网关并使用 CloudBase 用户 session 鉴权，默认文本 `qwen3.7-max`、默认视觉 `qwen3.7-plus`；自定义 BYO-Key 模型仍直连 |
-| 后台管理 | `apps/admin` Vite + React + CloudBase Web Auth；`apps/admin-api` CloudBase Run Function mode + CloudBase Node SDK | 管理员只走内部 username/password；管理 API PUBLIC 但服务端强制 CloudBase Auth + `admin_users` 角色                                            |
+| 云端网关 | CloudBase Run 容器 + Functions Framework 多 target + CloudBase Auth HTTP / Tencent Cloud TCB API                  | 注册通过 TCB `CreateUser`；激活与所有受保护请求读取 `/auth/v1/user/me`，不以 NoSQL 记录作为账号授权条件                                       |
+| 后台管理 | `apps/admin` Vite + React + CloudBase Web Auth；`apps/admin-api` CloudBase Run Function mode + CloudBase HTTP API | 管理员只走内部 username/password；管理 API PUBLIC 但服务端强制 CloudBase Auth + `admin_users` 角色                                            |
 | 测试     | vitest（沿用上游各包测试）+ 桌面端 CDP 冒烟脚本                                                                   | CI 必跑                                                                                                                                       |
 
 ## 4. 桌面端（Electron）设计
@@ -188,28 +189,30 @@ extraResources:
 
 > 原则：**插件管"智能"，桌面端管"运行时与用户 session handoff"，后端管"密钥托管、用户鉴权与计量"。**
 
-| 能力                                    | 插件                                                                     | 桌面端                                                                     | 云端后端（M2）                                                                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 对话 UI、Agent 循环、DOM 操作、任务历史 | ✅ 唯一归属                                                              | —                                                                          | —                                                                                                                               |
-| LLM 调用                                | ✅ Demo 直连厂商 API；M2 起调自家网关                                    | 永不经手对话内容                                                           | ✅ OpenAI-compatible 透传网关                                                                                                   |
-| CfT 版本/进程/画像管理、插件注入        | —                                                                        | ✅ 唯一归属                                                                | —                                                                                                                               |
-| 用户 session、订阅、计费、用量展示      | 仅消费启动器交接的用户 session；refresh token 只用于刷新内置模型网关会话 | ✅ CloudBase 用户 id + 密码登录/注册；tokens UI 优先读当前用户云端 summary | ✅ CloudBase access token introspection、`user_accounts` 鉴权、计量、当前用户 summary、后台 tokens 看板与用户状态；订阅账单后置 |
-| 密钥                                    | Demo：用户 Key 存 `chrome.storage.local`；内置模型 M3 起仅存用户 session | M2：登录并向插件交接用户 session；不保存厂商 Key                           | M2：厂商 Key 仅存服务端                                                                                                         |
-| 升级通道                                | 随 App 发版                                                              | electron-updater（M3 启用）                                                | 独立部署                                                                                                                        |
+| 能力                                    | 插件                                                                     | 桌面端                                                                                                                  | 云端后端（M2）                                                                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 对话 UI、Agent 循环、DOM 操作、任务历史 | ✅ 唯一归属                                                              | —                                                                                                                       | —                                                                                                                                     |
+| LLM 调用                                | ✅ Demo 直连厂商 API；M2 起调自家网关                                    | 永不经手对话内容                                                                                                        | ✅ OpenAI-compatible 透传网关                                                                                                         |
+| CfT 版本/进程/画像管理、插件注入        | —                                                                        | ✅ 唯一归属                                                                                                             | —                                                                                                                                     |
+| 用户 session、订阅、计费、用量展示      | 仅消费启动器交接的用户 session；refresh token 只用于刷新内置模型网关会话 | ✅ 通过注册网关创建用户，再以 CloudBase Web Auth SDK 完成用户 id + 密码登录与会话；tokens UI 优先读当前用户云端 summary | ✅ CloudBase Auth 用户创建；激活与逐请求读取 user profile 并严格要求 `ACTIVE`；计量、当前用户 summary、后台 tokens 看板；订阅账单后置 |
+| 密钥                                    | Demo：用户 Key 存 `chrome.storage.local`；内置模型 M3 起仅存用户 session | M2：登录并向插件交接用户 session；不保存厂商 Key                                                                        | M2：厂商 Key 仅存服务端                                                                                                               |
+| 升级通道                                | 随 App 发版                                                              | electron-updater（M3 启用）                                                                                             | 独立部署                                                                                                                              |
 
-**M2 网关切换设计（2026-07-02 改为用户 session）**：插件的 LLM 客户端只认 `baseURL + 鉴权头`。切换到计费网关时，仅需把默认 baseURL 指向 CloudBase LLM Gateway、把 API Key 字段换成当前 CloudBase access token——Agent 核心零改动。这是"直连优先"决策的可演进性依据。M0 先做端到端薄切片：扩展/脚本 → CloudBase Run Function mode `wenxue-llm-gateway` → DashScope SSE，必须验证流式末块 usage 非 0 与延迟基线。M3 默认内置文本模型按产品要求为 `qwen3.7-max`，视觉模型为 `qwen3.7-plus`；插件启动不因 session 缺失阻断，首次发送进入聊天后由网关返回「登录已过期/无权限」错误。网关每次请求 introspect CloudBase access token 并读取 `user_accounts`，后台禁用用户后下一次请求即拒绝，tokens usage 仍逐次写入。
+**M2 网关切换设计（2026-07-02 改为用户 session）**：插件的 LLM 客户端只认 `baseURL + 鉴权头`。切换到计费网关时，仅需把默认 baseURL 指向 CloudBase LLM Gateway、把 API Key 字段换成当前 CloudBase access token——Agent 核心零改动。这是"直连优先"决策的可演进性依据。M0 先做端到端薄切片：扩展/脚本 → CloudBase Run 容器型 `wenxue-llm-gateway`（Functions Framework 多 target）→ DashScope SSE，必须验证流式末块 usage 非 0 与延迟基线。M3 默认内置文本模型按产品要求为 `qwen3.7-max`，视觉模型为 `qwen3.7-plus`；插件启动不因 session 缺失阻断，首次发送进入聊天后由网关返回「登录已过期/无权限」错误。网关每个受保护请求都调用 `/auth/v1/user/me`，只有 CloudBase Auth `status=ACTIVE` 才继续请求 DashScope 或读取 usage；`BLOCKED` 在上游调用前返回 403。
 
 ### 7.1 CloudBase LLM Gateway（M0–M5）
 
-- 运行形态：CloudBase Run Function 模式，服务名 `wenxue-llm-gateway`，环境 `wenxue-d8gz76tacc3659f05`（ap-shanghai）。
-- 入口：OpenAI-compatible `POST /v1/chat/completions`；M4 起同服务暴露 `GET /v1/usage/summary` 供启动器 tokens 页读取当前用户计量。
-- 鉴权：请求 `Authorization: Bearer <CloudBase accessToken>`；网关 introspect CloudBase Auth access token 后取得用户 uid，再读取 `user_accounts[_id=uid]`，仅 `active=true` 放行。
-- 注册：`/v1/auth/register` 先通过 Tencent Cloud TCB `CreateUser` 创建 CloudBase Auth externalUser，再用同 uid 写入 `user_accounts.active=true`，保证新用户注册登录后可直接调用内置模型；后台仍可通过 AdminApi 禁用。
+- 运行形态：CloudBase Run 容器型服务（Dockerfile + Functions Framework 多 target），服务名 `wenxue-llm-gateway`，环境 `wenxue-d8gz76tacc3659f05`（ap-shanghai）。
+- 入口：`POST /v1/auth/register` 创建 `ACTIVE` CloudBase Auth 身份；`POST /v1/auth/activate` 保留为登录后的兼容 readiness check，只验证当前 Auth 用户状态而不写数据库；OpenAI-compatible `POST /v1/chat/completions`；M4 起同服务暴露 `GET /v1/usage/summary` 供启动器 tokens 页读取当前用户计量；`GET /healthz` 仅返回无敏感信息的服务就绪状态。
+- 鉴权：请求 `Authorization: Bearer <CloudBase accessToken>`；网关携带同一 bearer 调官方 `/auth/v1/user/me?client_id=...`，从 profile 取得真实 uid，并严格要求 `status === 'ACTIVE'`。缺少/无效 token 返回 401，`BLOCKED` 或其他非 ACTIVE 状态返回 403；`/v1/auth/activate`、chat 与 usage summary 均走同一检查，且不依赖 `user_accounts` 或 token introspection 中不存在的状态字段。
+- 注册：桌面端先校验凭据，再调用 `/v1/auth/register`；网关重复校验后通过 Tencent Cloud TCB `CreateUser(UserStatus=ACTIVE)` 创建 externalUser，且不依赖该接口返回 uid。随后桌面端调用 CloudBase Web Auth SDK `signInWithPassword` 验证密码并取得真实 session，再以 access token 调用 `/v1/auth/activate`；该 target 在 10 秒上限内读取 `/auth/v1/user/me`，确认真实 uid 与 `ACTIVE` 后返回，不写 NoSQL。若 CreateUser 已成功但客户端未收到响应，重试可得到 409，桌面仍以本次密码尝试登录：只有正确密码才能通过 Auth profile 校验。密码只在注册 TLS 请求、TCB 创建调用及 SDK 登录中传递，激活请求体不含密码，密码不写日志、数据库或响应。
 - 上游：`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`；DashScope Key 只来自 CloudBase Run 环境变量 `DASHSCOPE_API_KEY`。
 - 流式计量：当请求 `stream=true` 时，网关必须注入 `stream_options: { include_usage: true }`，否则 DashScope 流式响应不返回 usage。
 - 计量：M0 捕获 usage 与端到端延迟；M1 后写 `token_usage`，记录只含 CloudBase 用户 uid、model、tokens、latency、createdAt；M4 的 `usage-summary` target 实时读取当前用户 uid 记录并返回脱敏 `TokenUsageSummary`（recent id 不含 uid）。
-- 访问：M0/M1 部署 `OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.5`、`Mem:1`；公开多用户前必须补限流。
-- 用户 session：M2 使用 CloudBase Web Auth username/password；桌面端不生成、展示、复制或持久化 `wxm_` 机器 token；桌面端/后台/扩展内置当前环境的 CloudBase publishable key，`VITE_CLOUDBASE_ACCESS_KEY` 仅作为环境覆盖入口。
+- 访问：M0/M1 部署 `OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.5`、`Mem:1`；注册 target 按来源 IP、用户名和单实例总量限流，返回 429 与 `Retry-After`；扩大实例规模或正式公开获客前还必须在共享网关层补全局限流与审计告警。
+- 公网默认入口：`https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com`；2026-07-15 验证旧 `run.tcloudbase.com` 入口持续超时，桌面、主进程与插件默认地址不得再指向旧入口。
+- NoSQL 容量边界：2026-07-15 环境资源点配额 40000 已耗尽，数据库 REST 与 server SDK 写均返回 `EXCEED_REQUEST_LIMIT`。注册、登录、激活与网关用户授权因此改为只依赖 CloudBase Auth 原生 `ACTIVE/BLOCKED` 状态，不消耗 NoSQL 资源点；`token_usage` 写入与 usage/admin NoSQL 查询仍可能受该配额影响，写入失败按既有 best-effort 处理，展示层保留本地缓存兜底，资源点恢复前不得把云端计量/后台状态页表述为可用验收。
+- 用户 session：M2 使用 CloudBase Web Auth username/password；用户名 5–24 位、匹配 `^[A-Za-z][A-Za-z0-9]*$`；密码 9–32 位、首字符为字母或数字，仅允许 ASCII 字母数字与 `()!@#$%^&*|?><_-`，并至少包含小写字母、大写字母、数字、允许的特殊字符中的三类。桌面端在任何认证请求前校验，网关在注册边界重复校验；桌面端的注册、SDK 登录与激活等待均以 12 秒结束 UI busy 状态，网关注册阶段与激活阶段各自共享 10 秒总 deadline。桌面端不生成、展示、复制或持久化 `wxm_` 机器 token；桌面端/后台/扩展内置当前环境的 CloudBase publishable key，`VITE_CLOUDBASE_ACCESS_KEY` 仅作为环境覆盖入口。
 - 会话交接：M2 使用一次性 localhost 页面 + `externally_connectable` 把 `userId`、`accessToken`、`refreshToken`、`expiresAt` 与网关地址交给插件 background；不经远端服务，不向 Agent 发送控制指令。
 - 切换纪律：M3 已把内置模型运行时配置切到网关，`apiKey` 字段只注入插件侧当前 access token；M5 已删除本地百炼 Key 与本地直连兜底开关，旧 DashScope 直连 baseURL 仅用于自动迁移到网关默认配置。
 - 用量展示：M4 新增桌面 `UsageCloudClient`，通过主进程当前用户 session 调 `GET /v1/usage/summary`；成功后按 userId 写 `<userData>/token-usage-summary-cache.json`，失败时 `tokens:getSummary` 回退本地 `TokenUsageStore`。
@@ -218,7 +221,7 @@ extraResources:
 
 - 前端：`apps/admin` 静态站点，使用 CloudBase Web SDK 的 username/password 登录；路由守卫必须使用 `auth.getSession()`，不得使用已废弃且可能误判的 `getLoginState()`；当前通过 CloudBase Run 静态容器发布，避免 CloudBase 共享静态托管域返回 attachment 头；默认使用内置 publishable key，部署可用 `VITE_CLOUDBASE_ACCESS_KEY` 覆盖。
 - 后端：`apps/admin-api` CloudBase Run Function mode，PUBLIC 访问但所有业务接口先校验 CloudBase Auth bearer，再查 `admin_users` 角色；前端不直接读写 NoSQL。
-- 数据：`user_accounts` 由后台管理/初始化控制 active 或 disabled；`admin_users` 由内部初始化；`user_permission_audit` 由 AdminApi 写入。
+- 数据：网关用户授权权威是 CloudBase Auth `ACTIVE/BLOCKED`；运营临时封禁/解封应使用 CloudBase 用户管理或 TCB `ModifyUser(UserStatus=BLOCKED|ACTIVE)`。现有 AdminApi 仍读写 legacy `user_accounts` 与 `user_permission_audit`，尚未迁移到 `ModifyUser`，其状态页当前不影响网关放行；`admin_users` 继续作为后台管理员角色表。
 - 当前公网部署（2026-07-09）：
   - AdminConsole 主入口：`https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com/admin`，使用 CloudBase HTTP 网关默认域名；`/admin`、`/admin/`、`/admin/assets/*` 路由到 CloudBase Run 容器服务 `wenxue-admin-web`，`OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.25`、`Mem:0.5`；构建期注入 `VITE_BASE_PATH=/admin/` 与同源 AdminApi base URL。
   - AdminApi 主入口：同域精确路由 `/api/admin/v1/me`、`/api/admin/v1/usage/summary`、`/api/admin/v1/users`、`/api/admin/v1/user-status` 到 CloudBase Run 容器服务 `wenxue-admin-api`，`OpenAccessTypes:["PUBLIC"]`、`MinNum:1`、`Cpu:0.5`、`Mem:1`；不在默认域名下使用 `/admin/v1/*`，因为 `/admin` 页面路由会按前缀捕获。
@@ -252,15 +255,16 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ## 9. 错误处理与可观测性
 
-| 故障                                      | 检测                                          | 处置                                                             |
-| ----------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------- |
-| CfT 启动失败（二进制缺失/被杀毒拦截）     | spawn `error` 事件                            | UI 明确报错 + 指引（日志路径、重装提示）                         |
-| CfT 运行中崩溃                            | 非 0 退出码                                   | 系统通知 + 一键重启；日志留档                                    |
-| 插件未加载                                | 冒烟测试期 CDP 校验；运行期用户反馈           | 属发布门禁问题，不做运行时自动修复                               |
-| 插件页面与旧 service worker 协议不一致    | sidepanel `VISUAL_OBSERVE` 版本握手           | 单飞 reload 一次；仍失败则视觉工具结构化降级，DOM Agent 保持可用 |
-| LLM 401/限流/超时                         | 插件内（上游已有处理）/ CloudBase LLM Gateway | 侧边栏内联错误与重试引导；网关记录无敏感信息的状态码与延迟       |
-| 页面不可操作（sandbox/CSP/canvas/验证码） | Agent 自报告；`execute_javascript` 超时或错误 | 提示人工接管，任务可完成后继续或暂停并保留上下文                 |
-| 日志                                      | `<userData>/logs/` 滚动文件                   | Demo 不上报云端；M1 评估接入上报                                 |
+| 故障                                      | 检测                                            | 处置                                                                    |
+| ----------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| CfT 启动失败（二进制缺失/被杀毒拦截）     | spawn `error` 事件                              | UI 明确报错 + 指引（日志路径、重装提示）                                |
+| CfT 运行中崩溃                            | 非 0 退出码                                     | 系统通知 + 一键重启；日志留档                                           |
+| 插件未加载                                | 冒烟测试期 CDP 校验；运行期用户反馈             | 属发布门禁问题，不做运行时自动修复                                      |
+| 插件页面与旧 service worker 协议不一致    | sidepanel `VISUAL_OBSERVE` 版本握手             | 单飞 reload 一次；仍失败则视觉工具结构化降级，DOM Agent 保持可用        |
+| 注册网关 / CloudBase Auth 网络或服务失败  | fetch 超时/网络错误或 Web Auth SDK 返回网络错误 | 登录/注册页停止处理中并提示检查网络后重试；不显示原始 `Failed to fetch` |
+| LLM 401/限流/超时                         | 插件内（上游已有处理）/ CloudBase LLM Gateway   | 侧边栏内联错误与重试引导；网关记录无敏感信息的状态码与延迟              |
+| 页面不可操作（sandbox/CSP/canvas/验证码） | Agent 自报告；`execute_javascript` 超时或错误   | 提示人工接管，任务可完成后继续或暂停并保留上下文                        |
+| 日志                                      | `<userData>/logs/` 滚动文件                     | Demo 不上报云端；M1 评估接入上报                                        |
 
 ## 10. 安全与隐私基线
 
@@ -284,15 +288,15 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ## 12. 关键决策记录（ADR 摘要）
 
-| #   | 决策                                                                                                                                                   | 备选与否决理由                                                                                                                   |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | 浏览器内核 = Chrome for Testing，打包内置                                                                                                              | 品牌版 Chrome：137+ 已移除 `--load-extension`；首启下载：被否（要求离线可用、首启零等待）；Playwright Chromium：无增益多一层依赖 |
-| 2   | 插件 = fork page-agent extension 整包                                                                                                                  | npm 依赖自建插件壳：多 1–2 周；完全自研：Demo 周期不可接受                                                                       |
-| 3   | Demo 初期 LLM = 插件直连；2026-06-28 起提前执行 CloudBase LLM Gateway，M3 默认文本 `qwen3.7-max`、视觉 `qwen3.7-plus`，M5 删除内置本地 Key 与 fallback | 本地代理：不满足服务端密钥托管与计量；直接删除本地 Key：切换风险过高，所以先 M3 切流验证，再 M5 删除                             |
-| 7   | CloudBase LLM Gateway = CloudBase Run Function mode + DashScope OpenAI-compatible 透传                                                                 | 云函数：SSE 长连接与服务形态不如 Function mode 云托管；容器模式：M0 过重                                                         |
-| 4   | 单 pnpm monorepo，vendor 上游                                                                                                                          | 双仓库 fork 跟踪：小团队跨仓成本高于上游同步收益                                                                                 |
-| 5   | 浏览器进程不内嵌 Electron                                                                                                                              | Electron 扩展 API 子集跑不动 MV3 sidePanel 插件                                                                                  |
-| 6   | App 退出不强杀浏览器                                                                                                                                   | 保护用户未保存的页面工作                                                                                                         |
+| #   | 决策                                                                                                                                                   | 备选与否决理由                                                                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | 浏览器内核 = Chrome for Testing，打包内置                                                                                                              | 品牌版 Chrome：137+ 已移除 `--load-extension`；首启下载：被否（要求离线可用、首启零等待）；Playwright Chromium：无增益多一层依赖  |
+| 2   | 插件 = fork page-agent extension 整包                                                                                                                  | npm 依赖自建插件壳：多 1–2 周；完全自研：Demo 周期不可接受                                                                        |
+| 3   | Demo 初期 LLM = 插件直连；2026-06-28 起提前执行 CloudBase LLM Gateway，M3 默认文本 `qwen3.7-max`、视觉 `qwen3.7-plus`，M5 删除内置本地 Key 与 fallback | 本地代理：不满足服务端密钥托管与计量；直接删除本地 Key：切换风险过高，所以先 M3 切流验证，再 M5 删除                              |
+| 7   | CloudBase LLM Gateway = CloudBase Run 容器型（Dockerfile + Functions Framework 多 target）+ DashScope OpenAI-compatible 透传                           | 普通云函数：SSE 长连接与服务形态不合适；纯 Function mode：当前服务实际由 Dockerfile 构建并以 container 类型部署，不能作为部署事实 |
+| 4   | 单 pnpm monorepo，vendor 上游                                                                                                                          | 双仓库 fork 跟踪：小团队跨仓成本高于上游同步收益                                                                                  |
+| 5   | 浏览器进程不内嵌 Electron                                                                                                                              | Electron 扩展 API 子集跑不动 MV3 sidePanel 插件                                                                                   |
+| 6   | App 退出不强杀浏览器                                                                                                                                   | 保护用户未保存的页面工作                                                                                                          |
 
 ## 13. 里程碑对应的 Infra 演进
 

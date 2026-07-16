@@ -179,7 +179,7 @@ class BrowserProfileStore {
         return raw.profiles.map((profile) => ({ ...profile }));
       }
     } catch (error) {
-      if (!isMissingFile$4(error)) {
+      if (!isMissingFile$5(error)) {
         throw error;
       }
     }
@@ -206,7 +206,7 @@ function createProfileId() {
 function defaultDisplayName(index) {
   return `浏览器 ${index + 1}`;
 }
-function isMissingFile$4(error) {
+function isMissingFile$5(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 /**
@@ -915,6 +915,7 @@ function createBrowserResources(options) {
 function buildArgv(opts) {
   const argv = [
     `--user-data-dir=${opts.userDataDir}`,
+    `--disable-extensions-except=${opts.extensionDir}`,
     `--load-extension=${opts.extensionDir}`,
     "--no-first-run",
     "--no-default-browser-check",
@@ -936,6 +937,7 @@ class BrowserSupervisor {
     this.listeners = /* @__PURE__ */ new Set();
     this.profileListeners = /* @__PURE__ */ new Set();
     this.instances = /* @__PURE__ */ new Map();
+    this.pendingLaunches = /* @__PURE__ */ new Map();
     this.statusValues = /* @__PURE__ */ new Map();
     this.spawnBrowser = deps.spawnBrowser ?? defaultSpawnBrowser;
     this.focusExisting = deps.focusExisting ?? defaultFocusExisting;
@@ -953,23 +955,31 @@ class BrowserSupervisor {
       await this.focusExisting(current.binary, focusArgv);
       return;
     }
-    const userDataDir = await this.deps.profiles.ensureProfile(profileId);
-    const binary = this.deps.resources.browserBinary();
-    const argv = buildArgv({
-      userDataDir,
-      extensionDir: this.deps.resources.extensionDir(),
-      startUrl: options.startUrl ?? "chrome://newtab"
-    });
     this.setProfileStatus(profileId, "launching");
     this.deps.logger.log("BrowserSupervisor", "info", `launching profile ${profileId}`);
+    const launchToken = {};
+    this.pendingLaunches.set(profileId, launchToken);
     let child;
+    let binary;
+    let argv;
     try {
+      const userDataDir = await this.deps.profiles.prepareForUnpackedExtension(profileId);
+      if (this.pendingLaunches.get(profileId) !== launchToken) return;
+      binary = this.deps.resources.browserBinary();
+      argv = buildArgv({
+        userDataDir,
+        extensionDir: this.deps.resources.extensionDir(),
+        startUrl: options.startUrl ?? "chrome://newtab"
+      });
       child = this.spawnBrowser(binary, argv);
     } catch (error) {
+      if (this.pendingLaunches.get(profileId) !== launchToken) return;
+      this.pendingLaunches.delete(profileId);
       this.instances.delete(profileId);
       this.setProfileStatus(profileId, "error");
       throw error;
     }
+    this.pendingLaunches.delete(profileId);
     this.instances.set(profileId, {
       child,
       binary,
@@ -980,6 +990,7 @@ class BrowserSupervisor {
     this.bindChildEvents(profileId, child);
   }
   async stop(profileId) {
+    this.pendingLaunches.delete(profileId);
     const current = this.instances.get(profileId);
     if (!current) {
       this.setProfileStatus(profileId, "idle");
@@ -1047,7 +1058,11 @@ class BrowserSupervisor {
     };
   }
   async requestShutdown() {
-    await Promise.all(Array.from(this.instances.keys()).map((profileId) => this.stop(profileId)));
+    const profileIds = /* @__PURE__ */ new Set([
+      ...Array.from(this.instances.keys()),
+      ...Array.from(this.pendingLaunches.keys())
+    ]);
+    await Promise.all(Array.from(profileIds).map((profileId) => this.stop(profileId)));
   }
   bindChildEvents(profileId, child) {
     child.on("spawn", () => {
@@ -1425,7 +1440,7 @@ class LauncherLogStore {
         await this.writeEntries([]);
         return [];
       }
-      if (!isMissingFile$3(error)) {
+      if (!isMissingFile$4(error)) {
         throw error;
       }
       return [];
@@ -1439,7 +1454,7 @@ class LauncherLogStore {
     try {
       await fs$1.rename(this.filePath, `${this.filePath}.corrupt-${Date.now()}`);
     } catch (error) {
-      if (!isMissingFile$3(error)) {
+      if (!isMissingFile$4(error)) {
         throw error;
       }
     }
@@ -1465,7 +1480,7 @@ function sanitizeLogData(value) {
 function isSensitiveLogKey(key) {
   return SENSITIVE_LOG_KEYS.has(key.toLowerCase().replace(/[-_\s]/g, ""));
 }
-function isMissingFile$3(error) {
+function isMissingFile$4(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 const DEFAULT_LAUNCHER_SETTINGS = {
@@ -1508,7 +1523,7 @@ class LauncherSettingsStore {
       const raw = JSON.parse(await fs$1.readFile(this.filePath, "utf8"));
       return mergeSettings(DEFAULT_LAUNCHER_SETTINGS, raw);
     } catch (error) {
-      if (!isMissingFile$2(error)) {
+      if (!isMissingFile$3(error)) {
         throw error;
       }
       return structuredClone(DEFAULT_LAUNCHER_SETTINGS);
@@ -1529,7 +1544,7 @@ function mergeSettings(base, patch) {
     localUser: { ...base.localUser, ...patch.localUser }
   };
 }
-function isMissingFile$2(error) {
+function isMissingFile$3(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 const LOG_LEVELS = ["debug", "info", "warn", "error"];
@@ -1717,6 +1732,41 @@ class ProfileStore {
     await fs$1.mkdir(dir, { recursive: true });
     return dir;
   }
+  async prepareForUnpackedExtension(id = "default") {
+    const dir = await this.ensureProfile(id);
+    const defaultDir = path.join(dir, "Default");
+    const preferencesPath = path.join(defaultDir, "Preferences");
+    await fs$1.mkdir(defaultDir, { recursive: true });
+    let preferences = {};
+    let preferencesMode = 384;
+    try {
+      const parsed = JSON.parse(await fs$1.readFile(preferencesPath, "utf8"));
+      if (!isRecord$3(parsed)) {
+        throw new Error(`Chrome Preferences must contain a JSON object: ${preferencesPath}`);
+      }
+      preferences = parsed;
+      preferencesMode = (await fs$1.stat(preferencesPath)).mode & 511;
+    } catch (error) {
+      if (!isMissingFile$2(error)) throw error;
+    }
+    const extensions = isRecord$3(preferences.extensions) ? preferences.extensions : {};
+    const ui = isRecord$3(extensions.ui) ? extensions.ui : {};
+    if (ui.developer_mode === true) return dir;
+    await assertProfileNotInUse(dir);
+    await atomicWriteFile(
+      preferencesPath,
+      `${JSON.stringify({
+        ...preferences,
+        extensions: {
+          ...extensions,
+          ui: { ...ui, developer_mode: true }
+        }
+      })}
+`,
+      preferencesMode
+    );
+    return dir;
+  }
   listProfiles() {
     return fs.readdirSync(this.paths.profilesRoot(), { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort((a, b) => a.localeCompare(b));
   }
@@ -1738,6 +1788,70 @@ class ProfileStore {
     }
     return path.join(this.paths.profilesRoot(), id);
   }
+}
+function isRecord$3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isMissingFile$2(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+async function atomicWriteFile(filePath, content, mode) {
+  const temporaryPath = `${filePath}.wenxue-${node_crypto.randomUUID()}.tmp`;
+  let handle;
+  try {
+    handle = await fs$1.open(temporaryPath, "wx", mode);
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = void 0;
+    await fs$1.rename(temporaryPath, filePath);
+  } catch (error) {
+    await handle?.close().catch(() => void 0);
+    await fs$1.rm(temporaryPath, { force: true }).catch(() => void 0);
+    throw error;
+  }
+}
+async function assertProfileNotInUse(profileDir) {
+  try {
+    await fs$1.stat(path.join(profileDir, "lockfile"));
+    throw profileInUseError(profileDir);
+  } catch (error) {
+    if (!isMissingFile$2(error)) throw error;
+  }
+  const lockPath = path.join(profileDir, "SingletonLock");
+  let target;
+  try {
+    target = await fs$1.readlink(lockPath);
+  } catch (error) {
+    if (isMissingFile$2(error)) return;
+    if (hasErrorCode(error, "EINVAL") || hasErrorCode(error, "UNKNOWN")) {
+      throw profileInUseError(profileDir);
+    }
+    throw error;
+  }
+  const separator = target.lastIndexOf("-");
+  const pid = Number(target.slice(separator + 1));
+  if (separator <= 0 || !Number.isInteger(pid) || pid <= 0) {
+    throw profileInUseError(profileDir);
+  }
+  if (target.slice(0, separator) !== os.hostname()) throw profileInUseError(profileDir);
+  if (isProcessRunning(pid)) throw profileInUseError(profileDir);
+}
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !hasErrorCode(error, "ESRCH");
+  }
+}
+function profileInUseError(profileDir) {
+  return new Error(
+    `Browser profile is already in use. Close its Chrome for Testing window before relaunching: ${profileDir}`
+  );
+}
+function hasErrorCode(error, code) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 class TokenUsageStore {
   constructor(paths) {
@@ -2181,7 +2295,7 @@ function parseCompletionPayload(body) {
 function isRecord$1(value) {
   return typeof value === "object" && value !== null;
 }
-const WENXUE_GATEWAY_BASE_URL = "https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com";
+const WENXUE_GATEWAY_BASE_URL = "https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com";
 class UserSessionStore {
   constructor(options = {}) {
     this.session = null;
@@ -2259,6 +2373,11 @@ function readString(value) {
 function isRecord(value) {
   return typeof value === "object" && value !== null;
 }
+const DESKTOP_ICON_FILES = {
+  darwin: "app-icon-macos-1024.png",
+  win32: "app-icon-windows.ico",
+  fallback: "app-icon-windows-256.png"
+};
 async function handleBrowserRunningClose(deps) {
   const status = deps.status();
   if (status === "idle" || status === "error") {
@@ -2283,12 +2402,12 @@ async function startMainBootstrap() {
   await electron.app.whenReady();
   const paths = new AppPaths(electron.app.getPath("userData"));
   await paths.ensure();
-  const iconPath = path.join(__dirname, "../../resources/icon.png");
+  const iconPath = electron.app.isPackaged ? void 0 : path.join(__dirname, "../../resources", desktopIconFile(process.platform));
   electron.app.setName("问学");
   if (process.platform === "win32") {
     electron.app.setAppUserModelId("com.wenxue.launcher");
   }
-  if (process.platform === "darwin") {
+  if (process.platform === "darwin" && iconPath) {
     electron.app.dock?.setIcon(iconPath);
   }
   const resources = createBrowserResources({
@@ -2434,7 +2553,7 @@ function buildControlWindowOptions(input) {
     autoHideMenuBar: true,
     trafficLightPosition: input.platform === "darwin" ? { x: 18, y: 18 } : void 0,
     titleBarStyle: input.platform === "darwin" ? "hiddenInset" : "hidden",
-    icon: input.iconPath,
+    ...input.iconPath ? { icon: input.iconPath } : {},
     webPreferences: {
       preload: input.preloadPath,
       contextIsolation: true,
@@ -2442,6 +2561,12 @@ function buildControlWindowOptions(input) {
       sandbox: true
     }
   };
+}
+function desktopIconFile(platform) {
+  if (platform === "darwin" || platform === "win32") {
+    return DESKTOP_ICON_FILES[platform];
+  }
+  return DESKTOP_ICON_FILES.fallback;
 }
 startMainBootstrap().catch((error) => {
   console.error(error);

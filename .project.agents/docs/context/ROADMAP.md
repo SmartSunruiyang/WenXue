@@ -79,7 +79,7 @@
 #### M4.5 后续 — 网关硬化与用户 session（2026-07-02 重构）
 
 - [x] M1 网关硬化：文本/视觉/工具透传、usage 写 `token_usage`、无正文落库、缺失/无效 token 拒绝、PUBLIC + `MinNum≥1` 部署
-- [ ] M2 启动器用户账号：恢复 CloudBase Auth 用户 id + 密码登录/注册；删除 `MachineTokenStore`、机器 token IPC/preload 与设置页 token 展示
+- [x] M2 启动器用户账号：恢复 CloudBase Auth 用户 id + 密码登录/注册；桌面校验用户名/密码并通过 CreateUser → Web SDK 验密 → `/auth/v1/user/me` ACTIVE 校验完成真实公网冒烟
 - [ ] M2 session 交接：启动器经一次性 localhost `externally_connectable` 页面把 CloudBase 用户 session 交给插件 background，插件保存 `WenXueUserSession`
 - [ ] M3 内置模型切网关：默认文本 `qwen3.7-max`、视觉 `qwen3.7-plus` 经 CloudBase Gateway 使用用户 session
 - [ ] M4 tokens 页读网关计量：CloudBase Run 暴露 `GET /v1/usage/summary`，启动器 `UsageCloudClient` 云优先读取并按 userId 缓存，本地用量作为失败兜底
@@ -88,10 +88,10 @@
 
 ### M4.6 — 后台管理系统（依赖 M4.5）
 
-- [ ] `CloudBaseLlmGateway` 在请求 DashScope 前 introspect CloudBase access token，并执行 `user_accounts.active` 鉴权
-- [ ] `apps/admin-api` 入位：CloudBase Auth bearer introspection、`admin_users` 角色校验、tokens summary、users 查询、active patch 与 audit 写入
+- [x] `CloudBaseLlmGateway` 在请求 DashScope 前调用 `/auth/v1/user/me`，仅 CloudBase Auth `status=ACTIVE` 放行，`BLOCKED` 在上游调用前拒绝
+- [ ] `apps/admin-api` 入位：CloudBase Auth bearer 校验、`admin_users` 角色校验、tokens summary，以及迁移到 TCB `DescribeUserList` / `ModifyUser ACTIVE|BLOCKED` 的用户管理与审计
 - [ ] `apps/admin` 入位：内部用户名/密码登录、受保护后台壳、tokens 看板、用户启用/禁用
-- [ ] CloudBase Auth 前置要求：启用 username/password provider，创建内部管理员账号，并在 `admin_users` 以 CloudBase Auth uid 登记 active admin；普通用户状态由 `user_accounts` 控制
+- [ ] CloudBase Auth 前置要求：username/password provider 已启用；创建内部管理员账号并在 `admin_users` 登记 active admin；普通用户授权状态以 CloudBase Auth `ACTIVE/BLOCKED` 为准
 - **验收**：未登录/非管理员后台 API 均拒绝；后台看板聚合正确；后台禁用用户后该用户网关调用在 DashScope 前返回 403；`pnpm -F admin-api test`、`pnpm -F admin-api typecheck`、`pnpm -F admin build` 通过。
 
 ### M4 — 品牌化与默认配置（依赖 M3）

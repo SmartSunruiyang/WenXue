@@ -1,7 +1,25 @@
 import cloudbase from '@cloudbase/js-sdk'
+import { strings } from './strings'
 
 const WENXUE_GATEWAY_BASE_URL =
-	'https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com'
+	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
+const USERNAME_MIN_LENGTH = 5
+const USERNAME_MAX_LENGTH = 24
+const PASSWORD_MIN_LENGTH = 9
+const PASSWORD_MAX_LENGTH = 32
+const AUTH_REQUEST_TIMEOUT_MS = 12_000
+const USERNAME_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/
+const PASSWORD_FIRST_CHARACTER_PATTERN = /^[A-Za-z0-9]/
+const PASSWORD_CHARACTER_SET_PATTERN = /^[A-Za-z0-9()!@#$%^&*|?><_-]+$/
+const NETWORK_FAILURE_PATTERNS = [
+	/failed to fetch/i,
+	/fetch failed/i,
+	/network\s*(?:error|request failed)/i,
+	/load failed/i,
+	/err_network/i,
+	/internet connection appears to be offline/i,
+	/\b(?:econnreset|econnrefused|enotfound|etimedout)\b/i,
+]
 const DEFAULT_CLOUDBASE_ACCESS_KEY = [
 	'eyJhbGciOiJSUzI1NiIsImtpZCI6IjlkMWRjMzFlLWI0ZDAtNDQ4Yi1hNzZmLWIwY2M2M2Q4MTQ5OCJ9',
 	'.eyJpc3MiOiJodHRwczovL3dlbnh1ZS1kOGd6NzZ0YWNjMzY1OWYwNS5hcC1zaGFuZ2hhaS50Y2ItYXBpLnRlbmNlbnRjbG91ZGFwaS5jb20iLCJzdWIiOiJhbm9uIiwiYXVkIjoid2VueHVlLWQ4Z3o3NnRhY2MzNjU5ZjA1IiwiZXhwIjo0MDg2MzIwNTQwLCJpYXQiOjE3ODI2MzczNDAs',
@@ -16,6 +34,7 @@ const gatewayBaseUrl = import.meta.env.VITE_WENXUE_GATEWAY_BASE_URL ?? WENXUE_GA
 const registerUrl =
 	import.meta.env.VITE_WENXUE_REGISTER_URL ??
 	`${normalizeGatewayBaseUrl(gatewayBaseUrl)}/v1/auth/register`
+const activateUrl = `${normalizeGatewayBaseUrl(gatewayBaseUrl)}/v1/auth/activate`
 
 interface CloudBaseAuthError {
 	message?: string
@@ -55,6 +74,16 @@ export interface LauncherPublicUser {
 	expiresAt: number
 }
 
+export type LauncherCredentialValidationCode =
+	| 'usernameRequired'
+	| 'usernameLength'
+	| 'usernameFormat'
+	| 'passwordRequired'
+	| 'passwordLength'
+	| 'passwordFirstCharacter'
+	| 'passwordCharacterSet'
+	| 'passwordComplexity'
+
 export const cloudbaseConfig = {
 	envId,
 	region,
@@ -63,16 +92,44 @@ export const cloudbaseConfig = {
 
 let auth: CloudBaseAuthClient | null | undefined
 
+export function validateLauncherCredentials(
+	username: string,
+	password: string,
+): LauncherCredentialValidationCode | null {
+	if (username.length === 0) return 'usernameRequired'
+	if (username.length < USERNAME_MIN_LENGTH || username.length > USERNAME_MAX_LENGTH) {
+		return 'usernameLength'
+	}
+	if (!USERNAME_PATTERN.test(username)) return 'usernameFormat'
+	if (password.length === 0) return 'passwordRequired'
+	if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
+		return 'passwordLength'
+	}
+	if (!PASSWORD_FIRST_CHARACTER_PATTERN.test(password)) return 'passwordFirstCharacter'
+	if (!PASSWORD_CHARACTER_SET_PATTERN.test(password)) return 'passwordCharacterSet'
+	if (countPasswordCharacterCategories(password) < 3) return 'passwordComplexity'
+	return null
+}
+
 export async function signInLauncher(
 	username: string,
 	password: string,
 ): Promise<LauncherAuthSession> {
+	assertLauncherCredentials(username, password)
 	const authClient = getAuth()
-	if (!authClient) throw new Error('CloudBase Publishable Key 未配置')
-	const { data, error } = await authClient.signInWithPassword({ username, password })
-	if (error) throw new Error(readCloudBaseErrorMessage(error, '登录失败'))
+	if (!authClient) throw new Error(strings.auth.error.publishableKey)
+	let data: unknown
+	try {
+		const result = await withAuthRequestTimeout(
+			authClient.signInWithPassword({ username, password }),
+		)
+		if (result.error) throw result.error
+		data = result.data
+	} catch (error) {
+		throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.login))
+	}
 	const session = readLauncherAuthSession(data)
-	if (!session) throw new Error('登录成功但未返回有效 session')
+	if (!session) throw new Error(strings.auth.error.loginSession)
 	return session
 }
 
@@ -80,9 +137,26 @@ export async function registerLauncher(
 	username: string,
 	password: string,
 ): Promise<LauncherAuthSession> {
-	if (!getAuth()) throw new Error('CloudBase Publishable Key 未配置')
-	await createLauncherAccount(username, password)
-	return signInLauncher(username, password)
+	assertLauncherCredentials(username, password)
+	const authClient = getAuth()
+	if (!authClient) throw new Error(strings.auth.error.publishableKey)
+	const accountCreation = await createLauncherAccount(username, password)
+	let session: LauncherAuthSession
+	try {
+		session = await signInLauncher(username, password)
+	} catch (error) {
+		if (accountCreation === 'existing' && !isConnectivityError(error)) {
+			throw new Error(strings.auth.error.usernameExists)
+		}
+		throw error
+	}
+	try {
+		await activateLauncherAccount(session.accessToken)
+	} catch (error) {
+		await discardUnactivatedSession(authClient)
+		throw error
+	}
+	return session
 }
 
 export async function getLauncherSession(): Promise<LauncherAuthSession | null> {
@@ -97,7 +171,7 @@ export async function signOutLauncher(): Promise<void> {
 	const authClient = getAuth()
 	if (!authClient) return
 	const { error } = await authClient.signOut()
-	if (error) throw new Error(readCloudBaseErrorMessage(error, '退出失败'))
+	if (error) throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.logout))
 }
 
 export function toPublicUser(session: LauncherAuthSession): LauncherPublicUser {
@@ -139,7 +213,29 @@ export function readLauncherAuthSession(
 }
 
 export function readCloudBaseErrorMessage(value: unknown, fallback: string): string {
-	return readErrorMessage(value, new Set()) ?? fallback
+	if (isAbortError(value)) return strings.auth.error.timeout
+	const message = readErrorMessage(value, new Set())
+	if (!message) return fallback
+	return NETWORK_FAILURE_PATTERNS.some((pattern) => pattern.test(message))
+		? strings.auth.error.network
+		: message
+}
+
+function assertLauncherCredentials(username: string, password: string): void {
+	const validationCode = validateLauncherCredentials(username, password)
+	if (validationCode) throw new Error(strings.auth.validation[validationCode])
+}
+
+function countPasswordCharacterCategories(password: string): number {
+	return [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((pattern) => pattern.test(password))
+		.length
+}
+
+function isConnectivityError(value: unknown): boolean {
+	if (!(value instanceof Error)) return false
+	return (
+		value.message === strings.auth.error.network || value.message === strings.auth.error.timeout
+	)
 }
 
 function getAuth(): CloudBaseAuthClient | null {
@@ -163,8 +259,14 @@ function getAuth(): CloudBaseAuthClient | null {
 	}
 }
 
-async function createLauncherAccount(username: string, password: string): Promise<void> {
+async function createLauncherAccount(
+	username: string,
+	password: string,
+): Promise<'created' | 'existing'> {
+	const controller = new AbortController()
+	const timeoutId = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS)
 	let response: Response
+	let payload: unknown
 	try {
 		response = await fetch(registerUrl, {
 			method: 'POST',
@@ -172,13 +274,69 @@ async function createLauncherAccount(username: string, password: string): Promis
 				'content-type': 'application/json',
 			},
 			body: JSON.stringify({ username, password }),
+			signal: controller.signal,
 		})
+		payload = await readResponsePayload(response)
 	} catch (error) {
-		throw new Error(readCloudBaseErrorMessage(error, '注册服务暂时不可用'))
+		throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.register))
+	} finally {
+		clearTimeout(timeoutId)
 	}
-	const payload = await readResponsePayload(response)
+	if (response.status === 201) return 'created'
+	if (response.status === 409) return 'existing'
+	throw new Error(readCloudBaseErrorMessage(payload, `注册失败 (${response.status})`))
+}
+
+async function activateLauncherAccount(accessToken: string): Promise<void> {
+	const controller = new AbortController()
+	const timeoutId = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS)
+	let response: Response
+	let payload: unknown
+	try {
+		response = await fetch(activateUrl, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				authorization: `Bearer ${accessToken}`,
+			},
+			body: JSON.stringify({}),
+			signal: controller.signal,
+		})
+		payload = await readResponsePayload(response)
+	} catch (error) {
+		throw new Error(readAuthorizedErrorMessage(error, strings.auth.error.register, accessToken))
+	} finally {
+		clearTimeout(timeoutId)
+	}
 	if (!response.ok) {
-		throw new Error(readCloudBaseErrorMessage(payload, `注册失败 (${response.status})`))
+		throw new Error(
+			readAuthorizedErrorMessage(payload, `账号激活失败 (${response.status})`, accessToken),
+		)
+	}
+}
+
+async function discardUnactivatedSession(authClient: CloudBaseAuthClient): Promise<void> {
+	try {
+		await withAuthRequestTimeout(authClient.signOut())
+	} catch {
+		// Activation failed, so cleanup is best-effort and must not replace that original error.
+	}
+}
+
+async function withAuthRequestTimeout<T>(request: Promise<T>): Promise<T> {
+	let timeoutId: ReturnType<typeof setTimeout> | undefined
+	const timeout = new Promise<never>((_resolve, reject) => {
+		timeoutId = setTimeout(() => {
+			const error = new Error(strings.auth.error.timeout)
+			error.name = 'AbortError'
+			reject(error)
+		}, AUTH_REQUEST_TIMEOUT_MS)
+	})
+
+	try {
+		return await Promise.race([request, timeout])
+	} finally {
+		if (timeoutId !== undefined) clearTimeout(timeoutId)
 	}
 }
 
@@ -190,6 +348,11 @@ async function readResponsePayload(response: Response): Promise<unknown> {
 	} catch {
 		return text
 	}
+}
+
+function readAuthorizedErrorMessage(value: unknown, fallback: string, accessToken: string): string {
+	const message = readCloudBaseErrorMessage(value, fallback)
+	return accessToken.length > 0 ? message.split(accessToken).join('[REDACTED]') : message
 }
 
 function readExpiresAt(session: Record<string, unknown>, now: () => number): number | null {
@@ -215,6 +378,10 @@ function readNumber(value: unknown): number | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null
+}
+
+function isAbortError(value: unknown): boolean {
+	return isRecord(value) && value.name === 'AbortError'
 }
 
 function readErrorMessage(value: unknown, seen: Set<object>): string | null {

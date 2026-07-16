@@ -3,8 +3,9 @@ import { createHash, createHmac, randomUUID } from 'node:crypto'
 export const DASHSCOPE_CHAT_COMPLETIONS_URL =
 	'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
+const REGISTRATION_TIMEOUT_MS = 10_000
+const ACTIVATION_TIMEOUT_MS = 10_000
 const TOKEN_USAGE_COLLECTION = 'token_usage'
-const USER_ACCOUNTS_COLLECTION = 'user_accounts'
 const TENCENTCLOUD_TCB_ENDPOINT = 'https://tcb.tencentcloudapi.com'
 const TENCENTCLOUD_TCB_SERVICE = 'tcb'
 const TENCENTCLOUD_TCB_VERSION = '2018-06-08'
@@ -13,7 +14,6 @@ const TENCENTCLOUD_TCB_VERSION = '2018-06-08'
 /** @typedef {{ uid: string }} GatewayUser */
 /** @typedef {{ [key: string]: unknown }} JsonRecord */
 /** @typedef {{ _id: string, ts: number, uid: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number, requestId: string, createdAt: string }} CloudUsageRecord */
-/** @typedef {{ _id: string, uid: string, active: boolean, status: 'active' | 'disabled', createdAt: string, updatedAt: string, note?: string }} UserAccount */
 /** @typedef {{ cloudbaseEnvId: string, cloudbaseRegion?: string, cloudbaseUsageApiKey?: string, tencentCloudSecretId?: string, tencentCloudSecretKey?: string, tencentCloudToken?: string, requestTimeoutMs?: number }} LauncherRegistrationEnv */
 
 export class GatewayError extends Error {
@@ -42,26 +42,39 @@ export function clearAuthorizationCache() {
  */
 export async function handleLauncherRegistration(input) {
 	const body = parseLauncherRegistrationBody(input.rawBody)
-	const created = await createCloudBaseExternalUser({
+	await createCloudBaseExternalUser({
 		username: body.username,
 		password: body.password,
 		env: input.env,
 		fetchImpl: input.fetchImpl,
 		now: input.now,
 	})
-	await createActiveUserAccount({
-		uid: created.uid,
-		envId: input.env.cloudbaseEnvId,
-		apiKey: input.env.cloudbaseUsageApiKey ?? '',
-		fetchImpl: input.fetchImpl,
-		timeoutMs: input.env.requestTimeoutMs,
-		now: input.now,
-	})
 	return {
 		ok: true,
-		userId: created.uid,
 		username: body.username,
 	}
+}
+
+/**
+ * Activate the authenticated CloudBase user only after the desktop has successfully signed in.
+ * The access token is the source of truth for the real uid assigned by CloudBase.
+ *
+ * @param {{
+ *   headers: Headers | Record<string, string | string[] | undefined>,
+ *   env: { cloudbaseEnvId: string, cloudbaseClientId: string, cloudbaseRegion?: string, tencentCloudSecretId?: string, tencentCloudSecretKey?: string, tencentCloudToken?: string, requestTimeoutMs?: number },
+ *   fetchImpl?: typeof fetch,
+ * }} input
+ */
+export async function handleLauncherActivation(input) {
+	const user = await resolveCloudBaseUser({
+		headers: input.headers,
+		env: {
+			...input.env,
+			requestTimeoutMs: activationTimeoutMs(input.env.requestTimeoutMs),
+		},
+		fetchImpl: input.fetchImpl,
+	})
+	return { ok: true, userId: user.uid }
 }
 
 /**
@@ -97,131 +110,16 @@ export async function createCloudBaseExternalUser(input) {
 		},
 		now: input.now,
 	})
-	const response = await fetchWithTimeout(
+	const { response, payload } = await fetchJsonWithTimeout(
 		input.fetchImpl ?? fetch,
 		TENCENTCLOUD_TCB_ENDPOINT,
 		request,
-		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+		registrationTimeoutMs(input.env.requestTimeoutMs),
 	)
-	const payload = /** @type {unknown} */ (await safeJson(response))
 	const responseBody = isRecord(payload) && isRecord(payload.Response) ? payload.Response : null
 	const apiError = responseBody && isRecord(responseBody.Error) ? responseBody.Error : null
 	if (!response.ok || apiError) {
 		throw createCloudBaseUserCreationError(response, apiError, payload)
-	}
-	const uid = readCloudBaseUserId(responseBody)
-	if (uid) return { uid }
-
-	const lookedUpUid = await lookupCloudBaseExternalUserUid({
-		username: input.username,
-		env: input.env,
-		fetchImpl: input.fetchImpl,
-		now: input.now,
-	})
-	if (!lookedUpUid) {
-		throw new GatewayError('CloudBase 创建用户成功但未返回用户 id', 502)
-	}
-	return { uid: lookedUpUid }
-}
-
-/**
- * @param {{
- *   username: string,
- *   env: LauncherRegistrationEnv,
- *   fetchImpl?: typeof fetch,
- *   now?: () => number,
- * }} input
- */
-async function lookupCloudBaseExternalUserUid(input) {
-	const secretId = readString(input.env.tencentCloudSecretId)
-	const secretKey = readString(input.env.tencentCloudSecretKey)
-	if (!secretId || !secretKey) {
-		throw new GatewayError('CloudBase 注册服务未配置 Tencent Cloud API 凭证', 500)
-	}
-
-	const request = buildTencentCloudSignedRequest({
-		secretId,
-		secretKey,
-		token: readString(input.env.tencentCloudToken) ?? undefined,
-		region: input.env.cloudbaseRegion ?? 'ap-shanghai',
-		action: 'DescribeUserList',
-		payload: {
-			EnvId: input.env.cloudbaseEnvId,
-			Name: input.username,
-			PageNo: 1,
-			PageSize: 10,
-		},
-		now: input.now,
-	})
-	const response = await fetchWithTimeout(
-		input.fetchImpl ?? fetch,
-		TENCENTCLOUD_TCB_ENDPOINT,
-		request,
-		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-	)
-	const payload = /** @type {unknown} */ (await safeJson(response))
-	const responseBody = isRecord(payload) && isRecord(payload.Response) ? payload.Response : null
-	const apiError = responseBody && isRecord(responseBody.Error) ? responseBody.Error : null
-	if (!response.ok || apiError) {
-		throw createCloudBaseUserLookupError(response, apiError, payload)
-	}
-
-	const data =
-		responseBody && isRecord(responseBody.Data)
-			? responseBody.Data
-			: isRecord(payload) && isRecord(payload.Data)
-				? payload.Data
-				: null
-	const list = data && Array.isArray(data.UserList) ? data.UserList : []
-	for (const item of list) {
-		if (!isRecord(item)) continue
-		const name = readString(item.Name)
-		if (name && name !== input.username) continue
-		const uid = readCloudBaseUserId(item)
-		if (uid) return uid
-	}
-	return null
-}
-
-/**
- * @param {{
- *   uid: string,
- *   envId: string,
- *   apiKey: string,
- *   fetchImpl?: typeof fetch,
- *   timeoutMs?: number,
- *   now?: () => number,
- * }} input
- */
-async function createActiveUserAccount(input) {
-	if (!input.apiKey) {
-		throw new GatewayError('CLOUDBASE_USAGE_API_KEY is not configured', 500)
-	}
-	const timestamp = new Date(input.now ? input.now() : Date.now()).toISOString()
-	const record = {
-		_id: input.uid,
-		uid: input.uid,
-		active: true,
-		firstSeenAt: timestamp,
-		lastSeenAt: timestamp,
-		createdAt: timestamp,
-		updatedAt: timestamp,
-	}
-	const response = await fetchWithTimeout(
-		input.fetchImpl ?? fetch,
-		collectionDocumentsUrl(input.envId, USER_ACCOUNTS_COLLECTION),
-		{
-			method: 'POST',
-			headers: {
-				authorization: `Bearer ${input.apiKey}`,
-				'content-type': 'application/json',
-			},
-			body: JSON.stringify({ data: [record] }),
-		},
-		input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-	)
-	if (!response.ok && response.status !== 409) {
-		throw new GatewayError(`CloudBase user account create failed with ${response.status}`, 502)
 	}
 }
 
@@ -520,10 +418,10 @@ export async function resolveCloudBaseUser(input) {
 		throw new GatewayError('登录已过期/无权限，请回到桌面端登录或重新启动浏览器。', 401)
 	}
 	const url = new URL(
-		`https://${input.env.cloudbaseEnvId}.api.tcloudbasegateway.com/auth/v1/token/introspect`,
+		`https://${input.env.cloudbaseEnvId}.api.tcloudbasegateway.com/auth/v1/user/me`,
 	)
 	url.searchParams.set('client_id', input.env.cloudbaseClientId)
-	const response = await fetchWithTimeout(
+	const { response, payload } = await fetchJsonWithTimeout(
 		input.fetchImpl ?? fetch,
 		url,
 		{
@@ -539,13 +437,15 @@ export async function resolveCloudBaseUser(input) {
 	if (!response.ok) {
 		throw new GatewayError('登录已过期/无权限，请回到桌面端登录或重新启动浏览器。', 401)
 	}
-	const payload = /** @type {unknown} */ (await response.json())
-	if (!isRecord(payload) || payload.active === false) {
+	if (!isRecord(payload)) {
 		throw new GatewayError('登录已过期/无权限，请回到桌面端登录或重新启动浏览器。', 401)
 	}
 	const uid = readString(payload.sub) ?? readString(payload.uid)
 	if (!uid) {
 		throw new GatewayError('登录已过期/无权限，请回到桌面端登录或重新启动浏览器。', 401)
+	}
+	if (readString(payload.status) !== 'ACTIVE') {
+		throw new GatewayError('无权限：当前用户未启用或已被禁用。', 403)
 	}
 	return { uid }
 }
@@ -559,63 +459,7 @@ export async function resolveCloudBaseUser(input) {
  * @returns {Promise<GatewayUser>}
  */
 export async function authorizeUserRequest(input) {
-	const user = await resolveCloudBaseUser(input)
-	const account = await readUserAccount({
-		uid: user.uid,
-		envId: input.env.cloudbaseEnvId,
-		apiKey: input.env.cloudbaseUsageApiKey,
-		fetchImpl: input.fetchImpl,
-		timeoutMs: input.env.requestTimeoutMs,
-	})
-	if (account.status !== 'active') {
-		throw new GatewayError('无权限：当前用户未启用或已被禁用。', 403)
-	}
-	return user
-}
-
-/**
- * @param {{
- *   uid: string,
- *   envId: string,
- *   apiKey: string,
- *   fetchImpl?: typeof fetch,
- *   timeoutMs?: number,
- * }} input
- * @returns {Promise<UserAccount>}
- */
-async function readUserAccount(input) {
-	if (!input.apiKey) {
-		throw new GatewayError('CLOUDBASE_USAGE_API_KEY is not configured', 500)
-	}
-	const url = collectionDocumentsUrl(input.envId, USER_ACCOUNTS_COLLECTION)
-	url.searchParams.set('query', JSON.stringify({ _id: input.uid }))
-	url.searchParams.set('limit', '1')
-	const response = await fetchWithTimeout(
-		input.fetchImpl ?? fetch,
-		url,
-		{
-			method: 'GET',
-			headers: {
-				authorization: `Bearer ${input.apiKey}`,
-			},
-		},
-		input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-	)
-	if (!response.ok) {
-		throw new GatewayError(`CloudBase user account query failed with ${response.status}`, 502)
-	}
-	const payload = /** @type {unknown} */ (await response.json())
-	const list =
-		isRecord(payload) && Array.isArray(payload.list)
-			? payload.list
-			: isRecord(payload) && Array.isArray(payload.data)
-				? payload.data
-				: []
-	const account = normalizeUserAccount(list[0])
-	if (!account) {
-		throw new GatewayError('无权限：当前用户未启用或已被禁用。', 403)
-	}
-	return account
+	return resolveCloudBaseUser(input)
 }
 
 /**
@@ -845,10 +689,31 @@ function buildMeasuredUsageRecord(input) {
  */
 function parseLauncherRegistrationBody(rawBody) {
 	const body = parseRequestBody(rawBody)
-	const username = readTrimmedString(body.username)
-	const password = readTrimmedString(body.password)
+	const username = typeof body.username === 'string' ? body.username : ''
+	const password = typeof body.password === 'string' ? body.password : ''
 	if (!username || !password) {
 		throw new GatewayError('用户名和密码不能为空', 400)
+	}
+	if (username.length < 5 || username.length > 24) {
+		throw new GatewayError('用户名长度必须为 5–24 位', 400)
+	}
+	if (!/^[A-Za-z][A-Za-z0-9]*$/.test(username)) {
+		throw new GatewayError('用户名只能包含英文字母和数字，且必须以英文字母开头', 400)
+	}
+	if (password.length < 9 || password.length > 32) {
+		throw new GatewayError('密码长度必须为 9–32 位', 400)
+	}
+	if (!/^[A-Za-z0-9]/.test(password)) {
+		throw new GatewayError('密码必须以英文字母或数字开头', 400)
+	}
+	if (!/^[A-Za-z0-9()!@#$%^&*|?><_-]+$/.test(password)) {
+		throw new GatewayError('密码包含不支持的字符', 400)
+	}
+	const categoryCount = [/[a-z]/, /[A-Z]/, /[0-9]/, /[()!@#$%^&*|?><_-]/].filter((pattern) =>
+		pattern.test(password),
+	).length
+	if (categoryCount < 3) {
+		throw new GatewayError('密码必须包含大写字母、小写字母、数字和特殊符号中的至少 3 类', 400)
 	}
 	return { username, password }
 }
@@ -920,20 +785,6 @@ function createCloudBaseUserCreationError(response, apiError, payload) {
 }
 
 /**
- * @param {Response} response
- * @param {JsonRecord | null} apiError
- * @param {unknown} payload
- */
-function createCloudBaseUserLookupError(response, apiError, payload) {
-	const message = apiError
-		? (readString(apiError.Message) ?? readString(apiError.message))
-		: readTencentCloudPayloadMessage(payload)
-	const status = response.ok ? 502 : response.status
-	const suffix = message ? `：${message}` : response.ok ? '' : ` (${response.status})`
-	return new GatewayError(`CloudBase 用户查询失败${suffix}`, status)
-}
-
-/**
  * @param {unknown} payload
  */
 function readTencentCloudPayloadMessage(payload) {
@@ -984,44 +835,6 @@ function isRecord(value) {
 }
 
 /**
- * @param {unknown} value
- * @returns {UserAccount | null}
- */
-function normalizeUserAccount(value) {
-	if (!isRecord(value)) {
-		return null
-	}
-	const id = readString(value._id) ?? readString(value.uid)
-	const uid = readString(value.uid) ?? id
-	const active = readBoolean(value.active)
-	const status =
-		active === null
-			? value.status === 'disabled'
-				? 'disabled'
-				: value.status === 'active'
-					? 'active'
-					: null
-			: active
-				? 'active'
-				: 'disabled'
-	const createdAt = readString(value.createdAt) ?? ''
-	const updatedAt = readString(value.updatedAt) ?? ''
-	const note = readString(value.note) ?? undefined
-	if (!id || !uid || !status) {
-		return null
-	}
-	return {
-		_id: id,
-		uid,
-		active: status === 'active',
-		status,
-		createdAt,
-		updatedAt,
-		note,
-	}
-}
-
-/**
  * @param {JsonRecord} value
  * @returns {JsonRecord}
  */
@@ -1043,37 +856,6 @@ function readNumber(value) {
  */
 function readString(value) {
 	return typeof value === 'string' && value.length > 0 ? value : null
-}
-
-/**
- * @param {unknown} value
- */
-function readBoolean(value) {
-	return typeof value === 'boolean' ? value : null
-}
-
-/**
- * @param {JsonRecord | null} value
- */
-function readCloudBaseUserId(value) {
-	if (!value) return null
-	return (
-		readString(value.Uid) ??
-		readString(value.UserId) ??
-		readString(value.uid) ??
-		readString(value.userId)
-	)
-}
-
-/**
- * @param {unknown} value
- */
-function readTrimmedString(value) {
-	if (typeof value !== 'string') {
-		return null
-	}
-	const trimmed = value.trim()
-	return trimmed.length > 0 ? trimmed : null
 }
 
 /**
@@ -1203,6 +985,26 @@ function roundCurrency(value) {
 }
 
 /**
+ * @param {number | undefined} timeoutMs
+ */
+function registrationTimeoutMs(timeoutMs) {
+	if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+		return REGISTRATION_TIMEOUT_MS
+	}
+	return Math.min(timeoutMs, REGISTRATION_TIMEOUT_MS)
+}
+
+/**
+ * @param {number | undefined} timeoutMs
+ */
+function activationTimeoutMs(timeoutMs) {
+	if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+		return ACTIVATION_TIMEOUT_MS
+	}
+	return Math.min(timeoutMs, ACTIVATION_TIMEOUT_MS)
+}
+
+/**
  * @param {typeof fetch} fetchImpl
  * @param {string | URL} url
  * @param {RequestInit} init
@@ -1223,6 +1025,45 @@ async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
 		throw error
 	} finally {
 		clearTimeout(timeout)
+	}
+}
+
+/**
+ * An upstream may deliver response headers before its JSON body. Keep one timeout active across
+ * both phases so a stalled body cannot hold a warm gateway instance indefinitely.
+ *
+ * @param {typeof fetch} fetchImpl
+ * @param {string | URL} url
+ * @param {RequestInit} init
+ * @param {number} timeoutMs
+ */
+async function fetchJsonWithTimeout(fetchImpl, url, init, timeoutMs) {
+	const controller = new AbortController()
+	/** @type {ReturnType<typeof setTimeout> | undefined} */
+	let timeout
+	const timeoutFailure = new Promise((_, reject) => {
+		timeout = setTimeout(() => {
+			controller.abort()
+			reject(new GatewayError('Upstream request timed out', 504))
+		}, timeoutMs)
+	})
+	try {
+		const requestAndBody = (async () => {
+			const response = await fetchImpl(url, {
+				...init,
+				signal: controller.signal,
+			})
+			const payload = /** @type {unknown} */ (await safeJson(response))
+			return { response, payload }
+		})()
+		return await Promise.race([requestAndBody, timeoutFailure])
+	} catch (error) {
+		if (controller.signal.aborted || isAbortError(error)) {
+			throw new GatewayError('Upstream request timed out', 504)
+		}
+		throw error
+	} finally {
+		if (timeout) clearTimeout(timeout)
 	}
 }
 

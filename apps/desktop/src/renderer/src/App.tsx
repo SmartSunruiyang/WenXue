@@ -39,6 +39,7 @@ import {
 	signInLauncher,
 	signOutLauncher,
 	toPublicUser,
+	validateLauncherCredentials,
 	type LauncherAuthSession,
 	type LauncherPublicUser,
 } from './cloudbase'
@@ -682,7 +683,7 @@ export default function App() {
 			const result = await window.wenxue.auth.clearSession()
 			if (!result.ok) throw new Error(result.error ?? '主进程 session 清理失败')
 		} catch (error) {
-			setMessage(readCloudBaseErrorMessage(error, strings.error.logout))
+			setMessage(readCloudBaseErrorMessage(error, strings.auth.error.logout))
 		} finally {
 			if (signedOut) {
 				setTokensLoading(false)
@@ -718,7 +719,7 @@ export default function App() {
 				<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
 				<div className="auth-loading">
 					<LoaderCircle className="spin" size={18} />
-					<span>正在检查登录状态</span>
+					<span>{strings.auth.loading}</span>
 				</div>
 			</main>
 		)
@@ -1008,26 +1009,30 @@ function AuthScreen({
 	const submit = async (event?: FormEvent<HTMLFormElement>) => {
 		event?.preventDefault()
 		if (busy) return
-		const nextUsername = username.trim()
 		setLocalError(null)
 		setMessage(null)
-		if (!nextUsername || !password) {
-			setLocalError('请输入用户 id 和密码')
+		const validationCode = validateLauncherCredentials(username, password)
+		if (validationCode) {
+			setLocalError(strings.auth.validation[validationCode])
+			return
+		}
+		if (isRegister && !confirmPassword) {
+			setLocalError(strings.auth.validation.confirmPasswordRequired)
 			return
 		}
 		if (isRegister && password !== confirmPassword) {
-			setLocalError('两次输入的密码不一致')
+			setLocalError(strings.auth.validation.passwordMismatch)
 			return
 		}
 		setBusy(true)
 		try {
 			if (isRegister) {
-				await onRegister(nextUsername, password)
+				await onRegister(username, password)
 			} else {
-				await onLogin(nextUsername, password)
+				await onLogin(username, password)
 			}
 		} catch (nextError) {
-			setLocalError(readCloudBaseErrorMessage(nextError, '账号操作失败'))
+			setLocalError(readCloudBaseErrorMessage(nextError, strings.auth.error.operation))
 		} finally {
 			setBusy(false)
 		}
@@ -1046,12 +1051,10 @@ function AuthScreen({
 					</div>
 				</div>
 				<div className="auth-card__head">
-					<h1>{isRegister ? '注册账号' : '登录账号'}</h1>
-					<p>
-						{isRegister ? '使用用户 id 和密码创建问学账号。' : '登录后才能进入工作台并启动浏览器。'}
-					</p>
+					<h1>{isRegister ? strings.auth.title.register : strings.auth.title.login}</h1>
+					<p>{isRegister ? strings.auth.description.register : strings.auth.description.login}</p>
 				</div>
-				<div className="segmented-control auth-card__modes" aria-label="账号入口">
+				<div className="segmented-control auth-card__modes" aria-label={strings.auth.modeLabel}>
 					<button
 						aria-pressed={!isRegister}
 						className={!isRegister ? 'segmented-control__active' : ''}
@@ -1063,7 +1066,7 @@ function AuthScreen({
 						type="button"
 					>
 						<LogIn size={15} />
-						登录
+						{strings.auth.mode.login}
 					</button>
 					<button
 						aria-pressed={isRegister}
@@ -1076,12 +1079,13 @@ function AuthScreen({
 						type="button"
 					>
 						<UserPlus size={15} />
-						注册
+						{strings.auth.mode.register}
 					</button>
 				</div>
 				<label className="auth-field">
-					<span>用户 id</span>
+					<span>{strings.auth.field.username}</span>
 					<input
+						aria-describedby="auth-username-hint"
 						autoComplete="username"
 						autoFocus
 						disabled={busy}
@@ -1089,20 +1093,27 @@ function AuthScreen({
 						type="text"
 						value={username}
 					/>
+					<span className="auth-field__hint" id="auth-username-hint">
+						{strings.auth.hint.username}
+					</span>
 				</label>
 				<label className="auth-field">
-					<span>密码</span>
+					<span>{strings.auth.field.password}</span>
 					<input
+						aria-describedby="auth-password-hint"
 						autoComplete={isRegister ? 'new-password' : 'current-password'}
 						disabled={busy}
 						onChange={(event) => setPassword(event.target.value)}
 						type="password"
 						value={password}
 					/>
+					<span className="auth-field__hint" id="auth-password-hint">
+						{strings.auth.hint.password}
+					</span>
 				</label>
 				{isRegister ? (
 					<label className="auth-field">
-						<span>确认密码</span>
+						<span>{strings.auth.field.confirmPassword}</span>
 						<input
 							autoComplete="new-password"
 							disabled={busy}
@@ -1117,11 +1128,7 @@ function AuthScreen({
 						{localError ?? error}
 					</div>
 				) : null}
-				<button
-					className="primary-button auth-submit"
-					disabled={busy || !username.trim() || !password || (isRegister && !confirmPassword)}
-					type="submit"
-				>
+				<button className="primary-button auth-submit" disabled={busy} type="submit">
 					{busy ? (
 						<LoaderCircle className="spin" size={16} />
 					) : isRegister ? (
@@ -1129,7 +1136,11 @@ function AuthScreen({
 					) : (
 						<LogIn size={16} />
 					)}
-					{busy ? '处理中' : isRegister ? '注册并登录' : '登录'}
+					{busy
+						? strings.auth.action.busy
+						: isRegister
+							? strings.auth.action.register
+							: strings.auth.action.login}
 				</button>
 			</form>
 		</main>

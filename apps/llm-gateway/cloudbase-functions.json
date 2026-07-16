@@ -21,6 +21,20 @@
 			"source": "index.mjs",
 			"target": "launcherRegister",
 			"triggerPath": "/v1/auth/register"
+		},
+		{
+			"name": "launcher-activate",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "launcherActivate",
+			"triggerPath": "/v1/auth/activate"
+		},
+		{
+			"name": "health-check",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "healthCheck",
+			"triggerPath": "/healthz"
 		}
 	]
 }
