@@ -15,33 +15,34 @@
   - 构建 AdminConsole 并验证 Functions Framework 的 Admin 页面、assets 与新增 API 路由
   - _Requirement: R1, R4_
 
-- [ ] 4. 灰度发布组合 Gateway
-  - 环境恢复后先回滚不完整的 0% 灰度版本 022
-  - 使用保留现有 EnvParams 的 GRAY 发布当前组合 staging
-  - 按 5% → 25% → 50% → 100% 验证与切流
-  - 当前阻塞：CloudBase 返回“环境已停服，请恢复环境后重试”
+- [x] 4. 灰度发布组合 Gateway
+  - 已回滚不完整且未承接流量的灰度版本 `022`
+  - 已在保留现有 EnvParams 的前提下发布组合运行时 `023`
+  - 已按 5% → 25% → 50% → 100% 完成验证与切流
   - _Requirement: R1, R2, R4_
 
-- [ ] 5. 切换后台 HTTP 路由
-  - 新 Gateway 达到 100% 后，先用直连域名验证 AdminConsole 与 AdminApi
-  - 将 `/admin*` 上游切到 `wenxue-llm-gateway`
-  - 将 `/api/admin/v1/*` 上游切到 `wenxue-llm-gateway`
-  - 验证原域名页面、资源与未登录 API 边界
+- [x] 5. 切换后台 HTTP 路由
+  - Gateway `023` 达到 100% 后，已用直连域名验证 AdminConsole 与 AdminApi
+  - 已将 `/admin`、`/admin/`、`/admin/assets/*` 上游切到 `wenxue-llm-gateway`
+  - 已将四条 `/api/admin/v1/*` 上游切到 `wenxue-llm-gateway`
+  - 原域名页面、资源与未登录 API 边界已通过线上回归
+  - 因无可用管理员凭据，浏览器验证止于登录页正常渲染，未执行真实登录和登录后操作
   - _Requirement: R1, R2_
 
-- [ ] 6. 缩容旧后台服务
-  - 把 `wenxue-admin-web` 调整为 `MinNum=0`
-  - 把 `wenxue-admin-api` 调整为 `MinNum=0`
-  - 每步验证主路径并保留回滚版本
+- [x] 6. 缩容旧后台服务
+  - 已把 `wenxue-admin-web` 版本 `006` 调整为 `MinNum=0`
+  - 已把 `wenxue-admin-api` 版本 `009` 调整为 `MinNum=0`
+  - 每步均验证主路径，服务和版本继续保留用于回滚
   - _Requirement: R2, R3_
 
-- [ ] 7. 下调唯一常驻 Gateway 规格
-  - 调整为 0.25C / 0.5GB、`MinNum=1`、`MaxNum=2`
-  - 验证所有主要入口与实例状态
+- [x] 7. 下调唯一常驻 Gateway 规格
+  - 配置发布 `024` 复用 `023` 镜像，已调整为 0.25C / 0.5GB、`MinNum=1`、`MaxNum=2`
+  - 所有主要入口与实例状态均已通过验证
+  - 约 21,420 点/月是固定计算配置估算；本次未购买资源包、未开启超限按量计费
   - _Requirement: R2, R3_
 
-- [x] 8. 同步文档、实施日志与提交本地准备
+- [x] 8. 同步文档、实施日志与提交记录
   - 更新 ARCHITECTURE、TECH-INFRA 与 ROADMAP
-  - 写入 execution log、目标资源点估算、当前阻塞和回滚方法
-  - 提交已完成的代码与文档；线上切流仍由 4–7 收口
+  - 写入 execution log、配置资源点估算、实际落地状态和回滚方法
+  - 提交组合运行时代码；线上实施记录随本次上线收口
   - _Requirement: R1, R2, R3, R4_

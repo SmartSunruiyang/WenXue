@@ -384,7 +384,7 @@ fork 应用层（apps/extension）：
 - 职责：内部后台登录页、受保护路由、tokens 看板、用户列表与状态调整表单
 - 不负责：不直接读写 `token_usage` / `user_accounts` / `admin_users`；不持久化管理员密码；不调用 LLM；不接收机器 token 登录
 - 输入：CloudBase Web Auth username/password session、AdminApi JSON 响应
-- 输出：`VITE_BASE_PATH=/admin/` 的静态构建产物；主入口为 CloudBase HTTP 网关默认域名 `/admin`。仓库目标架构由 CloudBaseLlmGateway 同实例提供，独立 `wenxue-admin-web` 服务只保留为回滚单元；截至 2026-07-17 线上切换尚因环境停服未执行
+- 输出：`VITE_BASE_PATH=/admin/` 的静态构建产物；主入口为 CloudBase HTTP 网关默认域名 `/admin`。线上七条后台 HTTP 路由均由 CloudBaseLlmGateway 同实例承接；2026-07-17 配置发布版本 024 复用 023 镜像并承接 100% 流量，Gateway 为 0.25C/0.5GB、`MinNum:1`、`MaxNum:2`，独立 `wenxue-admin-web` 006 与 `wenxue-admin-api` 009 均以 `MinNum:0` 保留为回滚单元
 - 关键类型/接口：signInWithPassword · getSession · adminApiFetch · AdminDashboard
 - 持有状态：浏览器 local auth session 与 UI 态
 ```

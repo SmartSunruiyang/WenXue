@@ -11,6 +11,8 @@
 `wenxue-admin-api` 与 `wenxue-admin-web` 保留为回滚服务，但 `MinNum=0`。
 统一 HTTP 域名继续暴露原 `/admin` 和 `/api/admin/v1/*` 路径。
 
+当前线上由 Gateway 配置发布版本 `024` 承载全部流量；该版本复用已完成灰度验证的组合运行时 `023` 镜像。旧后台服务分别保留 `wenxue-admin-api` 版本 `009` 与 `wenxue-admin-web` 版本 `006`，但不再保有常驻实例。
+
 ```mermaid
 flowchart LR
     Client["桌面端 / 插件"] --> Gateway["wenxue-llm-gateway\n0.25C / 0.5GB / MinNum 1"]
@@ -65,7 +67,7 @@ flowchart LR
 
 ### 灰度发布
 
-使用 CloudBase Manager 的 `deployInfo.ReleaseType=GRAY` 发布新版本，按以下阶段切流：
+组合运行时版本 `023` 按以下阶段完成灰度与切流；发布前先回滚了不完整且未承接流量的版本 `022`：
 
 1. 旧后台 HTTP 路由保持指向旧服务；新版本 5%，只验证既有 Gateway 路径、健康 revision 与回归指标。
 2. 新版本 25% 与 50%，重复验证既有 Gateway 路径并观察错误。
@@ -94,6 +96,8 @@ flowchart LR
 
 随后逐个把旧服务 `MinNum` 调整为 0。每次只变更一个服务，并在下一步前验证主路径。唯一 Gateway 始终保持 `MinNum=1`，不采用会影响 LLM、登录或后台首次请求的冷启动方案。
 
+生产实施中，Gateway 的规格调整通过配置发布版本 `024` 生效，并复用 `023` 的已验证镜像；最终保持 0.25C / 0.5GB、`MinNum=1`、`MaxNum=2` 以及 CPU/内存 60% 扩缩容阈值。`wenxue-admin-web` 版本 `006` 和 `wenxue-admin-api` 版本 `009` 的 `MinNum` 均已降为 0。按该最小实例配置估算，固定计算消耗约为 21,420 点/月；该数字不是账单实扣值。
+
 ## 安全与回滚
 
 - 不把任何 CloudRun `EnvParams`、Tencent Cloud 临时凭据或业务密钥写入代码、命令参数、日志和提交。
@@ -112,11 +116,11 @@ flowchart LR
   - 注册非法输入仍返回 400；激活无 bearer 仍返回 401；CORS preflight 仍返回 204。
   - AdminApi 四条路由无 bearer 均返回 401。
   - `/admin` 返回 200 HTML，引用的 JS/CSS 返回 200 且 MIME 正确。
-  - 不使用真实管理员凭据做自动化登录；登录点击验证如无可用测试凭据应明确记录为人工验证项。
+  - 不使用真实管理员凭据做自动化登录；本次因无可用管理员凭据，只验证登录页正常渲染，不把真实登录和登录后操作计入自动化通过项。
 
-## 当前上线阻塞（2026-07-17）
+## 生产落地状态（2026-07-17）
 
-- CloudRun 已构建 0% 流量的灰度版本 `022`，但该版本仅含 AdminApi 合并，不含最终 AdminConsole target。
-- CloudBase 在切 5% 流量和回滚 022 时均返回“环境已停服，请恢复环境后重试”；环境状态同时显示 `EnvActivated=no`。
-- 当前正式路由、稳定 Gateway 021 与三个服务规格均未改变，因此本轮尚未产生实际资源点下降，也未影响现有线上路径。
-- 环境恢复后必须先回滚 022，再用当前白名单 staging 发布新的组合版本，按上述顺序完成切流。
+- `022` 已回滚；组合运行时 `023` 已完成 5% → 25% → 50% → 100% 灰度并通过直连回归。
+- `/admin`、`/admin/`、`/admin/assets/*` 及四条 `/api/admin/v1/*` HTTP 路由均已切换至 `wenxue-llm-gateway`，原域名页面、静态资源和未登录 API 边界回归通过。
+- 配置发布 `024` 复用 `023` 镜像，Gateway 最终为 0.25C / 0.5GB、`MinNum=1`、`MaxNum=2`；旧 AdminWeb `006` 与 AdminApi `009` 均为 `MinNum=0`。
+- 服务和旧版本继续保留，回滚链路未删除；本次没有购买资源包，也没有开启超限按量计费。
