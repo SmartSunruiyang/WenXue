@@ -1,6 +1,7 @@
 # 完成 visual_observe question_solver 的本地实现与 fixture 验证
 
 - **日期**：2026-07-18
+- **最后更新**：2026-07-19
 - **关联**：
   - `docs/superpowers/specs/2026-07-17-visual-question-solver-design.md`
   - `docs/superpowers/plans/2026-07-17-visual-question-solver.md`
@@ -18,6 +19,11 @@
   仅投影题干 `name`。
 - 增加最终提交、protected interruption、任意 LLM JavaScript、图片/base64 持久化等运行时防线；
   `fill` 采用 snapshot、exact-state writer、verify/restore 与 document quarantine。
+- 合并前审查补齐 verify 结果与 fill command 指纹的一一对应校验；空、缺失、重复或未知 verify 结果
+  均进入完整 snapshot restore，不能再被空数组 `every()` 误判为 `filled_verified`。同时为 background
+  初始化、tab/navigation invalidation 与 lease 同步补齐异步错误记录。
+- 在 `UPSTREAM.md` 登记 `@page-agent/page-controller` 的 protected assessment action guard，并同步
+  QuestionSolver 的 vendor 边界说明。
 - 建立来源标注的 23-variant fixture factory，以及图片选项、图文混排 reader、任务/帧隔离、旧 DOM
   翻页、continuation/resume、service-worker recovery 等 synthetic 用例。
 - 本地页面 fixture 实际位于 `apps/extension/test-fixtures/question-solver/`，包括
@@ -26,13 +32,12 @@
 
 ## 提交
 
-- 未提交。当前功能分支仍保留完整工作树 diff，等待主任务统一复核、暂存与提交；本日志不代表已经
-  创建 commit。
+- `c71ce90` `feat(ext): add guarded visual question solver`
 
 ## 验证
 
 - Question-solver：32 files / 231 tests passed。
-- Extension 全量：80 files / 691 tests passed。
+- Extension 全量：80 files / 692 tests passed。
 - `@page-agent/page-controller`：2 files / 17 tests passed。
 - Image-only + mixed-reader：2 files / 7 tests passed；两个 suite 均分别覆盖 `inspect`、`answer`、`fill`。
 - Production solver / integration scope ESLint：passed。
