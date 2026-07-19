@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Cross-origin question surface</title>
+		<style>
+			.diagram {
+				background-image: url('./assets/sequence.svg');
+				height: 72px;
+				width: 160px;
+			}
+		</style>
+	</head>
+	<body>
+		<section data-question data-question-id="cross-origin-1" data-question-type="single">
+			<h2 data-question-stem>Choose the matching visible diagram.</h2>
+			<canvas width="96" height="72" aria-label="canvas option"></canvas>
+			<div class="diagram" aria-label="background-image option"></div>
+			<label data-option-key="A"><input type="radio" name="cross-origin-1" value="A" />A</label>
+			<label data-option-key="B"><input type="radio" name="cross-origin-1" value="B" />B</label>
+		</section>
+		<div class="captcha-dialog" hidden>Manual verification required</div>
+		<button type="button" data-final-submit>Submit assessment</button>
+	</body>
+</html>

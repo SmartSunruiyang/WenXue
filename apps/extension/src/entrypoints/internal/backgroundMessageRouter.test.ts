@@ -18,7 +18,7 @@ describe('routeBackgroundMessage', () => {
 					title: 'Example',
 				})),
 				update: vi.fn(),
-				captureVisibleTab: vi.fn(async () => 'data:image/jpeg;base64,SCREENSHOT'),
+				captureVisibleTab: vi.fn(async () => 'data:image/png;base64,SCREENSHOT'),
 				query: vi.fn(async () => [
 					{
 						id: 7,

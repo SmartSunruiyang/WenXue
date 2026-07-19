@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Cross-origin assessment shell</title>
+	</head>
+	<body>
+		<h1>Cross-origin assessment shell</h1>
+		<iframe
+			title="Cross-origin question surface"
+			src="{{CHILD_ORIGIN}}/cross-origin-frame.html"
+		></iframe>
+		<iframe
+			title="Opaque-origin question surface"
+			sandbox="allow-scripts"
+			srcdoc="<!doctype html><section data-question data-question-type='single'><h2 data-question-stem>Opaque frame prompt</h2><label data-option-key='A'><input type='radio' name='opaque'>A</label><label data-option-key='B'><input type='radio' name='opaque'>B</label></section>"
+		></iframe>
+	</body>
+</html>

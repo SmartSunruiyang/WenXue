@@ -2,7 +2,10 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { dispatchJsExecution } from './RemotePageController.content'
+import {
+	detectProtectedInterruptionInDocument,
+	dispatchJsExecution,
+} from './RemotePageController.content'
 
 afterEach(() => {
 	vi.useRealTimers()
@@ -54,5 +57,25 @@ describe('dispatchJsExecution', () => {
 			message: '❌ 执行超时（10s）',
 		})
 		expect((main.mock.calls[0][1] as AbortSignal).aborted).toBe(true)
+	})
+})
+
+describe('protected visual interruption probe', () => {
+	it('reports only the kind of visible verification or login-secret controls', () => {
+		document.body.innerHTML = `
+			<div class="yidun_slider"><span>Drag to verify 7391</span></div>
+			<input type="password" value="secret">
+		`
+
+		expect(detectProtectedInterruptionInDocument()).toEqual({
+			blocked: true,
+			kind: 'slider',
+		})
+	})
+
+	it('ignores hidden challenge templates', () => {
+		document.body.innerHTML = '<div class="captcha-dialog" hidden>1234</div>'
+
+		expect(detectProtectedInterruptionInDocument()).toEqual({ blocked: false })
 	})
 })

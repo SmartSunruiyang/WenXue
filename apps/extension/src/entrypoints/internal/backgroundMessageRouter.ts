@@ -1,4 +1,4 @@
-import { handleChaoxingControlMessage } from '@/agent/chaoxing/bridge.background'
+import { handleQuestionSolverBackgroundMessage } from '@/agent/questionSolver/bridge.background'
 import { handlePageControlMessage } from '@/agent/RemotePageController.background'
 import { handleTabControlMessage } from '@/agent/TabsController.background'
 import { handleVisualObserveMessage } from '@/agent/visualObserve.background'
@@ -14,6 +14,13 @@ export function routeBackgroundMessage(
 	if (!isRecord(message) || typeof message.type !== 'string') return
 
 	switch (message.type) {
+		case 'QUESTION_SOLVER_LEASE':
+		case 'QUESTION_SOLVER_RUN':
+		case 'QUESTION_SOLVER_DISCOVER':
+		case 'QUESTION_SOLVER_CONTROL':
+		case 'QUESTION_SOLVER_FRAME_HELLO_REGISTER':
+		case 'QUESTION_SOLVER_MAIN_WORLD':
+			return handleQuestionSolverBackgroundMessage(message, sender, sendResponse)
 		case 'TAB_CONTROL':
 			return handleTabControlMessage(
 				message as Parameters<typeof handleTabControlMessage>[0],
@@ -28,12 +35,6 @@ export function routeBackgroundMessage(
 			)
 		case 'VISUAL_OBSERVE':
 			return handleVisualObserveMessage(message, sender, sendResponse)
-		case 'CHAOXING_CONTROL':
-			return handleChaoxingControlMessage(
-				message as unknown as Parameters<typeof handleChaoxingControlMessage>[0],
-				sender,
-				sendResponse,
-			)
 		case 'WENXUE_GET_USER_SESSION':
 			loadExtensionUserSession(chrome.storage.local).then(
 				(session) => sendResponse({ ok: true, session }),

@@ -1,7 +1,7 @@
 # 用户数据迁移与回滚规范
 
 > - 状态：G2 前待评审
-> - 最后更新：2026-07-14
+> - 最后更新：2026-07-17（同步 VisualCapabilities / QuestionSolver 临时状态边界）
 > - 目标：把用户明确选择的旧运行时数据导入一个独立问学任务，同时保持其他任务干净、原始数据不变且失败可回滚。
 
 ## 1. 核心原则
@@ -33,6 +33,10 @@
 
 - 磁盘缓存、GPU 缓存、代码缓存；
 - Service Worker 运行时缓存与临时 worker 状态；
+- solver in-flight run / session effect ledger、tab mutation owner/quarantine、PendingControlJournal、
+  EphemeralImageStore、ResultStore continuation token、独立 ResumeCursorStore token、
+  logical/binding/question fingerprint、passive embedded candidate 与原始页面
+  response；迁移后必须重新 probe 当前页面；
 - 崩溃转储、临时文件和诊断日志；
 - 浏览器主密钥、问学账号主令牌、刷新令牌或开发者密钥；
 - 未识别扩展数据；
@@ -51,20 +55,21 @@
 
 ## 4. 数据映射
 
-| 旧数据            | 新目标                   | 策略                                              | 失败降级                 |
-| ----------------- | ------------------------ | ------------------------------------------------- | ------------------------ |
-| Bookmarks         | 导入任务书签模型         | 使用 Chromium 支持的模型/API 导入并校验计数与层级 | 导出 HTML 供用户手动导入 |
-| History           | 导入任务 HistoryService  | 规范化 URL/时间后批量写入                         | 跳过损坏记录并生成报告   |
-| Cookies           | 导入任务 CookieStore     | 仅在格式、域、安全属性和加密可验证时导入          | 要求重新登录             |
-| Login Data        | 导入任务密码库           | 经用户确认，通过平台安全存储解密/重加密           | 不复制，要求重新登录     |
-| Autofill          | 导入任务 Autofill 数据库 | schema 转换与字段白名单                           | 跳过不兼容字段           |
-| Preferences       | 问学允许列表偏好         | 逐字段映射，不复制整个 Preferences 文件           | 使用新默认值             |
-| Permissions       | 导入任务 ContentSettings | 显式允许列表与过期策略                            | 重新询问                 |
-| Tabs/Session      | 导入任务会话恢复         | 只迁移安全 URL 与顺序，不复用旧进程句柄           | 显示可重新打开列表       |
-| Extension storage | 内置问学扩展存储         | 按 schema 版本执行迁移器                          | 重置扩展设置并保留源备份 |
-| AI conversations  | 问学账号/本地会话索引    | 按数据所有权和服务协议迁移引用                    | 保留旧版可读或重新同步   |
-| Downloads history | 导入任务下载记录         | 仅记录元数据并检查路径存在性                      | 标记文件缺失             |
-| Cache/workers     | 不迁移                   | 新任务重新生成                                    | 无                       |
+| 旧数据                | 新目标                   | 策略                                                       | 失败降级                                               |
+| --------------------- | ------------------------ | ---------------------------------------------------------- | ------------------------------------------------------ |
+| Bookmarks             | 导入任务书签模型         | 使用 Chromium 支持的模型/API 导入并校验计数与层级          | 导出 HTML 供用户手动导入                               |
+| History               | 导入任务 HistoryService  | 规范化 URL/时间后批量写入                                  | 跳过损坏记录并生成报告                                 |
+| Cookies               | 导入任务 CookieStore     | 仅在格式、域、安全属性和加密可验证时导入                   | 要求重新登录                                           |
+| Login Data            | 导入任务密码库           | 经用户确认，通过平台安全存储解密/重加密                    | 不复制，要求重新登录                                   |
+| Autofill              | 导入任务 Autofill 数据库 | schema 转换与字段白名单                                    | 跳过不兼容字段                                         |
+| Preferences           | 问学允许列表偏好         | 逐字段映射，不复制整个 Preferences 文件                    | 使用新默认值                                           |
+| Permissions           | 导入任务 ContentSettings | 显式允许列表与过期策略                                     | 重新询问                                               |
+| Tabs/Session          | 导入任务会话恢复         | 只迁移安全 URL 与顺序，不复用旧进程句柄                    | 显示可重新打开列表                                     |
+| Extension storage     | 内置问学扩展存储         | 按 schema 版本执行迁移器                                   | 重置扩展设置并保留源备份                               |
+| AI conversations      | 问学账号/本地会话索引    | 按数据所有权和服务协议迁移引用                             | 保留旧版可读或重新同步                                 |
+| `chaoxing_solve` 历史 | 导入任务 AI history      | 原样保留只读工具事件；旧名称不注册到新 Agent，也不自动重放 | 通过新的 `visual_observe/question_solver` 调用重新运行 |
+| Downloads history     | 导入任务下载记录         | 仅记录元数据并检查路径存在性                               | 标记文件缺失                                           |
+| Cache/workers         | 不迁移                   | 新任务重新生成                                             | 无                                                     |
 
 不得以“复制整个 user-data-dir”替代字段级策略，除非 Spike 证明选定 revision、平台和加密模型完全兼容，并得到独立安全评审。
 
@@ -110,6 +115,8 @@ Chromium 的 Cookie、密码和部分敏感数据依赖操作系统密钥链或 
 - 站点数据只存在于目标导入任务；
 - 其他任务目录与数据摘要未变化；
 - 扩展升级和会话恢复可执行；
+- 旧 `chaoxing_solve` 历史可读但旧 tool schema 不可调用；未完成 solver run 不自动恢复写入，重新运行前必须通过 `visual_observe` capability 重新识别
+  tab/frame/attempt/page fingerprint；
 - 无明文凭证或源路径泄漏到日志；
 - 源 Profile 摘要未变化。
 

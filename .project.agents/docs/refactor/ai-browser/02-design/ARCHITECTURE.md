@@ -2,9 +2,9 @@
 
 | 项       | 内容                                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------------------ |
-| 状态     | G0 已批准，作为目标架构冻结基线                                                                        |
-| 日期     | 2026-07-18                                                                                             |
-| 上游需求 | [AI 浏览器重构 PRD v0.3](../01-product/PRD.md)                                                         |
+| 状态     | G0 已批准；已同步 v0.4 消息发布与通用视觉答题兼容修订                                                  |
+| 日期     | 2026-07-19                                                                                             |
+| 上游需求 | [AI 浏览器重构 PRD v0.4](../01-product/PRD.md)                                                         |
 | 配套计划 | [迁移实施计划](../03-delivery/PLAN.md)                                                                 |
 | 冻结基线 | extension 1.9.1 @ `8a29557797e9ffbbc7fbe1d88de463529c6f0820`；CfT `149.0.7827.55` / revision `1625079` |
 
@@ -247,6 +247,35 @@ revision 一致的 CfT 上，用于归因内核、构建与性能差异。两者
 - 当 G5 stable 产物发布时，官网应指向匹配发布清单的双平台签名产物和版本说明；官网 UI 重设计
   不属于本迁移。
 
+### AR-12 通用视觉答题能力
+
+- 当 Agent 使用视觉能力时，新旧运行时都应只公开正式入口 `visual_observe`；legacy Observe 输入 / 输出
+  保持兼容，`question_solver` 通过内部 capability registry 显式分派。
+- 当用户只要求读题、答案或明确填写时，系统应分别执行 `inspect | answer | fill`，前两者不得写入
+  页面；最终提交在所有动作下均由用户完成。
+- 当当前页面已经按正常业务流程收到 embedded answer 时，adapter 可在 attempt/question/option 映射
+  通过后优先使用；不得主动构造答案请求、伪造评分 / 提交状态或跨任务读取页面数据。
+- 当 production variant 没有已核实的正确答案字段契约时，其 embedded-answer allowlist 必须为空；
+  OCSJS 当前 23 个 variant 不得把未知 `answer` 字段猜成标准答案，zhs gxk 正常响应仅可投影题干 identity。
+- 当目标运行时迁移统一 solver 时，应保留标准 tabs、frame、scripting、webNavigation、
+  captureVisibleTab 与每 Profile 扩展隔离语义，不建立跨 Profile 私有答题 broker。
+- 当 solver 运行时，tab/frame RPC 应携带 taskEpoch/runId/requestId/cancel 和 document token；迟到结果
+  必须丢弃，navigation profile 由 route probe 冻结，翻页后必须重新发现 frame/profile；同 frame
+  adapter 冲突与多 frame 聚合分别判定，全 frame 防护扫描任一命中即取消整次 run。
+- 当 MV3 service worker 被回收时，最小 lease/run/effect ledger 应从 session storage 恢复；frame identity
+  必须重新 challenge，未结算写操作先按 canonical snapshot digest 从 caller/content journal
+  verify/restore；background-only recovery capability 不得包含业务写 operation，无法恢复就保持 document
+  quarantine。effectful content/MAIN operation 只可定向确切 documentId，MAIN request 必须绑定 active
+  parent request/control transaction；同 tab mutation owner、effect lock 与 screenshot 全局限速必须跨 task 生效。
+- 当题目含图时，image service 只接受 locator/anchor/binding，图片 bytes 只进入 task 内存 ephemeral asset
+  store；bound crop 由 background 在同一 image request 内 capture + finally restore，ResultStore/history
+  只保留标签；大结果通过 continuation/resume 无丢失分块，ResumeCursorStore
+  必须独立于 chunk store 并绑定原 tab/managed lease，续取不得重新访问页面或重放 fill。
+- 当后台任务需要 screenshot 而没有自己的当前可见 surface 时，应进入 `waiting_for_foreground`，不得
+  激活标签；cross-origin frame 只允许通过 parent-chain anchor 绑定最小 crop，无法定位时不得发送整屏。
+- 当真实平台环境缺失时，六个平台族及全部声明 variant 必须达到 `fixture_verified`，但不得标记
+  `live_verified`；两种成熟度都进入 CAP evidence。
+
 ## 4. 路线对比
 
 | 维度                     | Chromium `//chrome` 分支                      | CEF 自定义壳                                | Electron 内嵌                        |
@@ -468,10 +497,11 @@ interface TaskRuntimeGateway {
 - `WenXueTaskRuntimeGateway`：问学 Chromium 中调用 `chrome.wenxuePrivate`，由调用扩展自己的
   BrowserContext 推导 TaskId/Profile；同样不接管标准 tabs/page-control API。
 
-`TabsController`、`RemotePageController`、`visualObserve`、frame 路由和 `chaoxing` 保留现有标准
-Chrome API 语义。G2 browser tests 必须证明一个 Task Profile 的扩展实例无法通过 tabs、messaging、
-scripting、webNavigation、storage 或 runtime events 观察另一 Task Profile；若该前提不成立，才回到
-私有 page-control broker 方案，而不是预先重写全部页面控制。
+`TabsController`、`RemotePageController`、`VisualCapabilities`、`QuestionSolver`、adapter registry
+和 tab/frame RPC 保留现有标准 Chrome API 语义。G2 browser tests 必须证明一个 Task Profile 的扩展
+实例无法通过 tabs、messaging、scripting、webNavigation、captureVisibleTab、storage、embedded
+answer hook 或 runtime events 观察另一 Task Profile；若该前提不成立，才回到私有 page-control
+broker 方案，而不是预先重写全部页面控制。
 
 ## 9. 私有 API 最小契约
 
@@ -809,15 +839,15 @@ interface BrowserReleaseManifest {
 
 ### 15.1 测试层级
 
-| 层级                   | 必测内容                                                                                              |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| C++ unit tests         | TaskDirectoryStore、TaskProfileService、TaskBrowserHost、TaskRunScheduler、CredentialBroker、Importer |
-| Chromium browser tests | 两 Profile 的 Cookie/storage/History/permission/extension/tabs 隔离、Profile 恢复删除、并行租约       |
-| Extension vitest       | TaskRuntimeGateway、每任务运行状态、标准页面路由、账号配置快照、现有全部回归                          |
-| CAP 自动化             | CAP-01～CAP-13 的旧版基线与单任务/双任务 Profile 证据                                                 |
-| 迁移 fixtures          | 单画像、多画像、损坏数据、旧 schema、Cookie 加密、导入任务、干净第二任务、回滚                        |
-| 真机 E2E               | macOS arm64、Windows x64 的双任务登录隔离、并行 research/答题、下载/上传/权限/更新                    |
-| 性能                   | PRD F14 单 Profile 与同数量多 Profile 固定条件                                                        |
+| 层级                   | 必测内容                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| C++ unit tests         | TaskDirectoryStore、TaskProfileService、TaskBrowserHost、TaskRunScheduler、CredentialBroker、Importer                                |
+| Chromium browser tests | 两 Profile 的 Cookie/storage/History/permission/extension/tabs 隔离、Profile 恢复删除、并行租约                                      |
+| Extension vitest       | TaskRuntimeGateway、每任务运行状态、标准页面路由、VisualCapabilities/QuestionSolver 全部 adapter fixture、账号配置快照、现有全部回归 |
+| CAP 自动化             | CAP-01～CAP-13 的旧版基线、v0.4 CAP-07/CAP-13 扩展与单任务/双任务 Profile 证据                                                       |
+| 迁移 fixtures          | 单画像、多画像、损坏数据、旧 schema、Cookie 加密、导入任务、干净第二任务、回滚                                                       |
+| 真机 E2E               | macOS arm64、Windows x64 的双任务登录隔离、并行 research/答题、截图前台等待、下载/上传/权限/更新                                     |
+| 性能                   | PRD F14 单 Profile 与同数量多 Profile 固定条件                                                                                       |
 
 ### 15.2 能力矩阵记录
 

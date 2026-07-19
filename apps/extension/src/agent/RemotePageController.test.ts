@@ -69,7 +69,7 @@ describe('RemotePageController js execution routing', () => {
 				targetTabId: 5,
 				frameId: 9,
 				payload: ['return 1', { world: 'main' }],
-			})
+			}),
 		)
 	})
 
@@ -93,7 +93,7 @@ describe('RemotePageController js execution routing', () => {
 				type: 'PAGE_CONTROL',
 				action: 'list_frames',
 				targetTabId: 5,
-			})
+			}),
 		)
 	})
 
@@ -102,5 +102,29 @@ describe('RemotePageController js execution routing', () => {
 		const c = new RemotePageController({ currentTabId: null } as unknown as TabsController)
 
 		expect(await c.listFrames()).toEqual([])
+	})
+
+	it('probes every registered frame for protected visual interruptions', async () => {
+		const sendMessage = vi.fn(async (message: { action: string; frameId?: number }) => {
+			if (message.action === 'list_frames') {
+				return [
+					{ frameId: 0, parentFrameId: -1 },
+					{ frameId: 4, parentFrameId: 0 },
+				]
+			}
+			if (message.action === 'detect_protected_interruption' && message.frameId === 4) {
+				return { blocked: true, kind: 'captcha' }
+			}
+			return { blocked: false }
+		})
+		stubChrome(sendMessage)
+		const c = new RemotePageController({ currentTabId: 5 } as unknown as TabsController)
+
+		expect(await c.detectProtectedInterruption()).toEqual({ blocked: true, kind: 'captcha' })
+		expect(
+			sendMessage.mock.calls.some(
+				([message]) => message.action === 'detect_protected_interruption' && message.frameId === 4,
+			),
+		).toBe(true)
 	})
 })

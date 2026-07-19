@@ -136,12 +136,12 @@ export class RemotePageController {
 
 	async executeJavascript(
 		script: string,
-		opts?: { world?: 'isolated' | 'main'; frameId?: number }
+		opts?: { world?: 'isolated' | 'main'; frameId?: number },
 	): Promise<DomActionReturn> {
 		return this.remoteCallDomAction(
 			'execute_javascript',
 			[script, { world: opts?.world ?? 'isolated' }],
-			opts?.frameId
+			opts?.frameId,
 		)
 	}
 
@@ -153,6 +153,27 @@ export class RemotePageController {
 			targetTabId: this.currentTabId,
 		})
 		return Array.isArray(frames) ? frames : []
+	}
+
+	async detectProtectedInterruption(): Promise<ProtectedInterruptionResult> {
+		if (!this.currentTabId) return { blocked: false }
+		const frames = await this.listFrames()
+		const frameIds = new Set([0, ...frames.map((frame) => frame.frameId)])
+		const results = await Promise.all(
+			[...frameIds].map((frameId) =>
+				sendMessage({
+					type: 'PAGE_CONTROL',
+					action: 'detect_protected_interruption',
+					targetTabId: this.currentTabId!,
+					frameId,
+				}),
+			),
+		)
+		return (
+			results.find((result): result is ProtectedInterruptionResult =>
+				Boolean(result?.blocked && typeof result.kind === 'string'),
+			) ?? { blocked: false }
+		)
 	}
 
 	/** @note Managed by content script via storage polling. */
@@ -169,7 +190,7 @@ export class RemotePageController {
 	private async remoteCallDomAction(
 		action: string,
 		payload: any[],
-		frameId?: number
+		frameId?: number,
 	): Promise<DomActionReturn> {
 		if (!this.currentTabId) {
 			return { success: false, message: 'RemotePageController not initialized.' }
@@ -204,6 +225,11 @@ export interface FrameInfo {
 	origin: string
 	sameOriginWithTop: boolean
 	parentFrameId: number
+}
+
+export interface ProtectedInterruptionResult {
+	blocked: boolean
+	kind?: 'captcha' | 'slider' | 'face' | '2fa' | 'login_secret' | 'anti_abuse'
 }
 
 export function shouldShowAgentMask({

@@ -1,8 +1,14 @@
 import { isContentScriptAllowed } from './RemotePageController'
+import type { QuestionSolverTaskLease } from './questionSolver/bridge'
+import {
+	QUESTION_SOLVER_PROTOCOL_VERSION,
+	type QuestionSolverLeaseMessage,
+} from './questionSolver/protocol'
 
 const PREFIX = '[TabsController]'
 
 const debug = console.debug.bind(console, `\x1b[90m${PREFIX}\x1b[0m`)
+let nextQuestionSolverTaskEpoch = 0
 
 function sendMessage(message: {
 	type: 'TAB_CONTROL'
@@ -36,6 +42,10 @@ export class TabsController {
 	private activationRequestId = 0
 	private pendingActivation: { requestId: number; tabId: number } | null = null
 	private task: string = ''
+	private questionSolverTaskId = ''
+	private questionSolverTaskEpoch = 0
+	private questionSolverLeaseToken = ''
+	private questionSolverLeaseRegistered = false
 
 	async init(task: string, options: TabsInitOptions = {}) {
 		const { includeInitialTab = true, experimentalIncludeAllTabs = true } = options
@@ -44,6 +54,7 @@ export class TabsController {
 		if (this.disposed) {
 			throw new Error('TabsController already disposed')
 		}
+		if (this.questionSolverLeaseRegistered) await this.revokeQuestionSolverLease()
 
 		this.currentTabId = null
 		this.disposed = false
@@ -59,6 +70,10 @@ export class TabsController {
 		this.activationRequestId++
 		this.pendingActivation = null
 		this.task = task
+		this.questionSolverTaskId = crypto.randomUUID()
+		this.questionSolverTaskEpoch = ++nextQuestionSolverTaskEpoch
+		this.questionSolverLeaseToken = randomToken(32)
+		this.questionSolverLeaseRegistered = false
 
 		const activeTabResult = await sendMessage({
 			type: 'TAB_CONTROL',
@@ -126,6 +141,7 @@ export class TabsController {
 		}
 
 		await this.updateCurrentTabId(this.currentTabId)
+		await this.registerQuestionSolverLease()
 	}
 
 	async openNewTab(url: string): Promise<string> {
@@ -232,6 +248,7 @@ export class TabsController {
 					await this.updateCurrentTabId(null)
 				}
 			}
+			if (this.currentTabId !== tabId) await this.syncQuestionSolverLease()
 
 			return `✅ Closed tab ID ${tabId}.`
 		} else {
@@ -276,6 +293,11 @@ export class TabsController {
 		if (!targetTab) return
 
 		this.tabs = this.tabs.filter((tab) => tab.id !== tabId)
+		if (this.currentTabId !== tabId) {
+			void this.syncQuestionSolverLease().catch((error: unknown) => {
+				console.error(`${PREFIX} failed to sync question solver task lease`, error)
+			})
+		}
 		if (this.pendingActivation?.tabId === tabId) {
 			this.activationRequestId++
 			this.pendingActivation = null
@@ -299,6 +321,74 @@ export class TabsController {
 
 		this.currentTabId = tabId
 		await chrome.storage.local.set({ currentTabId: tabId })
+		await this.syncQuestionSolverLease()
+	}
+
+	getQuestionSolverLease(): QuestionSolverTaskLease {
+		if (
+			!this.questionSolverLeaseRegistered ||
+			this.currentTabId === null ||
+			!this.tabs.some((tab) => tab.id === this.currentTabId)
+		) {
+			throw new Error('Question solver has no active managed tab lease.')
+		}
+		return {
+			taskId: this.questionSolverTaskId,
+			taskEpoch: this.questionSolverTaskEpoch,
+			leaseToken: this.questionSolverLeaseToken,
+			managedTabIds: this.tabs.map((tab) => tab.id),
+			targetTabId: this.currentTabId,
+		}
+	}
+
+	private async registerQuestionSolverLease(): Promise<void> {
+		const message: QuestionSolverLeaseMessage = {
+			type: 'QUESTION_SOLVER_LEASE',
+			protocolVersion: QUESTION_SOLVER_PROTOCOL_VERSION,
+			operation: 'register',
+			taskId: this.questionSolverTaskId,
+			taskEpoch: this.questionSolverTaskEpoch,
+			leaseToken: this.questionSolverLeaseToken,
+			managedTabIds: this.tabs.map((tab) => tab.id),
+			targetTabId: this.currentTabId,
+		}
+		const response = await chrome.runtime.sendMessage(message)
+		if (!isQuestionSolverLeaseAck(response))
+			throw new Error('Failed to register question solver task lease.')
+		this.questionSolverLeaseRegistered = true
+	}
+
+	private async syncQuestionSolverLease(): Promise<void> {
+		if (!this.questionSolverLeaseRegistered) return
+		const message: QuestionSolverLeaseMessage = {
+			type: 'QUESTION_SOLVER_LEASE',
+			protocolVersion: QUESTION_SOLVER_PROTOCOL_VERSION,
+			operation: 'update',
+			taskId: this.questionSolverTaskId,
+			taskEpoch: this.questionSolverTaskEpoch,
+			leaseToken: this.questionSolverLeaseToken,
+			managedTabIds: this.tabs.map((tab) => tab.id),
+			targetTabId: this.currentTabId,
+		}
+		const response = await chrome.runtime.sendMessage(message)
+		if (!isQuestionSolverLeaseAck(response))
+			throw new Error('Failed to update question solver task lease.')
+	}
+
+	private async revokeQuestionSolverLease(): Promise<void> {
+		if (!this.questionSolverLeaseRegistered) return
+		this.questionSolverLeaseRegistered = false
+		const message: QuestionSolverLeaseMessage = {
+			type: 'QUESTION_SOLVER_LEASE',
+			protocolVersion: QUESTION_SOLVER_PROTOCOL_VERSION,
+			operation: 'revoke',
+			taskId: this.questionSolverTaskId,
+			taskEpoch: this.questionSolverTaskEpoch,
+			leaseToken: this.questionSolverLeaseToken,
+		}
+		const response = await chrome.runtime.sendMessage(message)
+		if (!isQuestionSolverLeaseAck(response))
+			throw new Error('Failed to revoke question solver task lease.')
 	}
 
 	private async switchToReplacementTab(tabId: number): Promise<void> {
@@ -451,12 +541,29 @@ export class TabsController {
 		this.pendingActivation = null
 		this.port?.disconnect()
 		this.port = undefined
+		void this.revokeQuestionSolverLease().catch((error: unknown) => {
+			console.error(`${PREFIX} failed to revoke question solver task lease`, error)
+		})
 	}
 }
 
 export interface TabsInitOptions {
 	includeInitialTab?: boolean
 	experimentalIncludeAllTabs?: boolean
+}
+
+function randomToken(bytes: number): string {
+	const value = new Uint8Array(bytes)
+	crypto.getRandomValues(value)
+	return Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function isQuestionSolverLeaseAck(value: unknown): boolean {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		((value as { ok?: unknown }).ok === true || (value as { success?: unknown }).success === true)
+	)
 }
 
 export type TabAction =

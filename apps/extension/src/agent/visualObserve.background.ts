@@ -1,3 +1,9 @@
+import {
+	CaptureError,
+	captureVisibleManagedTabPng,
+	type CaptureTabsApi,
+} from './questionSolver/capture'
+
 export const VISUAL_OBSERVE_PROTOCOL_VERSION = 2 as const
 
 export type VisualObserveMessage =
@@ -21,6 +27,7 @@ export const VISUAL_OBSERVE_CAPTURE_FAILURE_CODES = [
 	'protocol_mismatch',
 	'runtime_outdated',
 	'tab_changed',
+	'tab_not_visible',
 ] as const
 
 export type VisualObserveCaptureFailureCode = (typeof VISUAL_OBSERVE_CAPTURE_FAILURE_CODES)[number]
@@ -28,7 +35,7 @@ export type VisualObserveCaptureFailureCode = (typeof VISUAL_OBSERVE_CAPTURE_FAI
 export interface CapturedVisibleTab {
 	ok: true
 	protocolVersion: typeof VISUAL_OBSERVE_PROTOCOL_VERSION
-	dataUrl: string
+	dataUrl: `data:image/${'png' | 'jpeg'};base64,${string}`
 	tab: {
 		id: number
 		windowId: number
@@ -51,9 +58,7 @@ export interface VisualObserveProtocolResponse {
 	protocolVersion: typeof VISUAL_OBSERVE_PROTOCOL_VERSION
 }
 
-interface VisualObserveChromeApi {
-	tabs: Pick<typeof chrome.tabs, 'captureVisibleTab' | 'get' | 'query' | 'update'>
-}
+type VisualObserveChromeApi = CaptureTabsApi
 
 export function handleVisualObserveMessage(
 	message: unknown,
@@ -105,60 +110,33 @@ export async function captureCurrentVisibleTab({
 		return captureFailure('invalid_request', 'Visual observation requires a valid target tab id.')
 	}
 
-	let targetTab: chrome.tabs.Tab
 	try {
-		targetTab = await api.tabs.get(targetTabId)
-	} catch {
-		return captureFailure('no_active_tab', 'The target tab is no longer available.')
-	}
-
-	try {
-		if (targetTab?.id === undefined || targetTab.windowId === undefined) {
-			return captureFailure('no_active_tab', 'The target tab is no longer available.')
-		}
-
-		if (!targetTab.active) {
-			await api.tabs.update(targetTab.id, { active: true })
-		}
-
-		const dataUrl = await api.tabs.captureVisibleTab(targetTab.windowId, {
-			format: 'jpeg',
-			quality: 80,
+		const { dataUrl, tab } = await captureVisibleManagedTabPng({
+			targetTabId,
+			api,
+			retryLimit: 0,
 		})
-		if (!dataUrl) {
-			return captureFailure('capture_failed', 'Browser returned an empty screenshot.')
-		}
-
-		const activeTab = (await api.tabs.query({ active: true, windowId: targetTab.windowId }))[0]
-		if (activeTab?.id !== targetTab.id) {
-			return captureFailure(
-				'tab_changed',
-				'The active tab changed while the screenshot was being captured.',
-			)
-		}
-		if (
-			typeof targetTab.url === 'string' &&
-			typeof activeTab.url === 'string' &&
-			activeTab.url !== targetTab.url
-		) {
-			return captureFailure(
-				'tab_changed',
-				'The target tab changed while the screenshot was being captured.',
-			)
-		}
 
 		return {
 			ok: true,
 			protocolVersion: VISUAL_OBSERVE_PROTOCOL_VERSION,
 			dataUrl,
 			tab: {
-				id: activeTab.id,
-				windowId: activeTab.windowId,
-				url: activeTab.url,
-				title: activeTab.title,
+				id: tab.id as number,
+				windowId: tab.windowId,
+				url: tab.url,
+				title: tab.title,
 			},
 		}
 	} catch (error) {
+		if (error instanceof CaptureError) {
+			const code = VISUAL_OBSERVE_CAPTURE_FAILURE_CODES.includes(
+				error.code as VisualObserveCaptureFailureCode,
+			)
+				? (error.code as VisualObserveCaptureFailureCode)
+				: 'capture_failed'
+			return captureFailure(code, error.message)
+		}
 		return captureFailure('capture_failed', errorMessage(error))
 	}
 }

@@ -16,20 +16,21 @@
 
 ## 本地补丁清单（相对 pristine）
 
-| #   | 文件                                                                          | 改动                                                                            | 原因                                                                                      |
-| --- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| P1  | apps/extension/package.json                                                   | name → `extension`                                                              | 对齐 `pnpm -F extension`；应用层 fork 不受 I5 约束                                        |
-| P2  | apps/extension/package.json                                                   | `@page-agent/*` 依赖 → `workspace:*`                                            | 指向本仓 vendor 包                                                                        |
-| P3  | apps/extension/package.json                                                   | +devDep `zod@^4.4.3`                                                            | peer 依赖在 pnpm 隔离下无提升来源                                                         |
-| P4  | packages/llms/package.json                                                    | +devDep `vitest@^4.1.8`                                                         | 同上，test 脚本所需                                                                       |
-| P5  | 根 package.json                                                               | `pnpm.overrides: { "wxt>vite": "^6.3.4" }`                                      | WXT 0.20.26 的 download 插件用 Vite 6+ hook filter 语法，Vite 5 不支持导致 wxt build 失败 |
-| P6  | apps/extension/package.json                                                   | +script `"build": "wxt build"`                                                  | 对齐根 `pnpm -r build` 聚合脚本                                                           |
-| P7  | packages/{core,llms,page-controller,ui}/package.json                          | +devDep `vite@^8.0.16`                                                          | 各包 `build` 脚本直接执行 `vite build`；pnpm 隔离下必须显式声明 CLI 与 config import      |
-| P8  | packages/{core,llms,page-controller,ui}/package.json                          | +devDep `unplugin-dts@^1.0.2`                                                   | 各包 `vite.config.js` 直接 import `unplugin-dts/vite`                                     |
-| P9  | packages/{core,page-controller,ui}/package.json                               | +devDep `vite-plugin-css-injected-by-js@^5.0.1`                                 | 对齐各包 `vite.config.js` 的 CSS 注入插件 import                                          |
-| P10 | packages/{page-controller,ui}/package.json                                    | +devDep `chalk@^5.6.2`                                                          | 对齐各包 `vite.config.js` 的构建日志 import                                               |
-| P11 | packages/page-controller/src/mask/{SimulatorMask.ts,SimulatorMask.module.css} | 页面遮罩边框由 ai-motion WebGL 跑马灯替换为自绘流体玻璃（Liquid Glass）CSS 边框 | 问学品牌动效（UIUX §5）；纯 CSS 实现，去除 WebGL2 依赖                                    |
-| P12 | packages/page-controller/package.json                                         | 移除 dependency `ai-motion`                                                     | P11 后该包无引用（原唯一运行时依赖）                                                      |
+| #   | 文件                                                                          | 改动                                                                                  | 原因                                                                                                 |
+| --- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| P1  | apps/extension/package.json                                                   | name → `extension`                                                                    | 对齐 `pnpm -F extension`；应用层 fork 不受 I5 约束                                                   |
+| P2  | apps/extension/package.json                                                   | `@page-agent/*` 依赖 → `workspace:*`                                                  | 指向本仓 vendor 包                                                                                   |
+| P3  | apps/extension/package.json                                                   | +devDep `zod@^4.4.3`                                                                  | peer 依赖在 pnpm 隔离下无提升来源                                                                    |
+| P4  | packages/llms/package.json                                                    | +devDep `vitest@^4.1.8`                                                               | 同上，test 脚本所需                                                                                  |
+| P5  | 根 package.json                                                               | `pnpm.overrides: { "wxt>vite": "^6.3.4" }`                                            | WXT 0.20.26 的 download 插件用 Vite 6+ hook filter 语法，Vite 5 不支持导致 wxt build 失败            |
+| P6  | apps/extension/package.json                                                   | +script `"build": "wxt build"`                                                        | 对齐根 `pnpm -r build` 聚合脚本                                                                      |
+| P7  | packages/{core,llms,page-controller,ui}/package.json                          | +devDep `vite@^8.0.16`                                                                | 各包 `build` 脚本直接执行 `vite build`；pnpm 隔离下必须显式声明 CLI 与 config import                 |
+| P8  | packages/{core,llms,page-controller,ui}/package.json                          | +devDep `unplugin-dts@^1.0.2`                                                         | 各包 `vite.config.js` 直接 import `unplugin-dts/vite`                                                |
+| P9  | packages/{core,page-controller,ui}/package.json                               | +devDep `vite-plugin-css-injected-by-js@^5.0.1`                                       | 对齐各包 `vite.config.js` 的 CSS 注入插件 import                                                     |
+| P10 | packages/{page-controller,ui}/package.json                                    | +devDep `chalk@^5.6.2`                                                                | 对齐各包 `vite.config.js` 的构建日志 import                                                          |
+| P11 | packages/page-controller/src/mask/{SimulatorMask.ts,SimulatorMask.module.css} | 页面遮罩边框由 ai-motion WebGL 跑马灯替换为自绘流体玻璃（Liquid Glass）CSS 边框       | 问学品牌动效（UIUX §5）；纯 CSS 实现，去除 WebGL2 依赖                                               |
+| P12 | packages/page-controller/package.json                                         | 移除 dependency `ai-motion`                                                           | P11 后该包无引用（原唯一运行时依赖）                                                                 |
+| P13 | packages/page-controller/src/{PageController.ts,assessmentSafety.ts}          | 在通用 click/input 边界拒绝题目最终提交、交卷与受保护答案控件，并保留普通题目控件操作 | QuestionSolver 之外的通用 PageController 也必须 fail closed；避免其他 Agent 工具绕过人工最终提交边界 |
 
 ## 已知差异与遗留
 
@@ -78,3 +79,10 @@
 - 内容：收紧 `ask_user` schema、工具说明与提示词，只用于页面无法确定的必要用户信息或歧义选项；登录、验证码、滑块、2FA、权限等受保护动作立即进入 `request_user_takeover`。Sidepanel 绑定 `onAskUser`，用独立可取消控制器把回答返回原工具调用，并保留既有人工接管提示与暂停/恢复链路。
 - 配套测试：覆盖两类工具的动态可用性与提示词隔离、`ask_user` 工具输出和 AbortSignal、回答一次性结算、重复问题覆盖、stop 清理、Hub 禁用、侧栏运行态输入解锁，以及登录/验证码接管提示。
 - Upstream sync note：vendor 改动仅位于 `packages/core/src/tools/index.ts`、两份 system prompt 同步内容及 `PageAgentCore` 测试；升级上游时应保留工具动态裁剪测试，避免不可用工具名残留在 prompt/schema 中。
+
+## Local patch: protected assessment action guard
+
+- Scope: `packages/page-controller`
+- 内容：新增零依赖 `assessmentSafety` 判定，并在 `PageController.click()` / `inputText()` 的最终 DOM 动作前拒绝最终提交、交卷及答案泄漏型受保护控件；QuestionSolver 自身仍使用更严格的 snapshot/verify/restore 与 no-submit adapter 契约。
+- 配套测试：`assessmentSafety.test.ts` 覆盖最终提交/交卷、受保护答案字段与普通题目控件；`PageController` 既有测试继续覆盖正常 click/input。
+- Upstream sync note：升级 alibaba/page-agent 时保留该边界测试；若上游提供等价的受保护评估动作策略，再用上游公开策略替换本补丁。

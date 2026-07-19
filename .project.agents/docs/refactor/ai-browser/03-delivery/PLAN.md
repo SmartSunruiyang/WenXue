@@ -3,7 +3,8 @@
 > 文档入口：[AI 浏览器重构文档体系](../README.md)
 >
 > **状态：G0 已批准，等待开工就绪度门禁。** 本计划依据
-> [目标架构](../02-design/ARCHITECTURE.md)；阶段 0.3 与 READINESS 硬门禁未完成前不得进入代码实施。
+> [目标架构](../02-design/ARCHITECTURE.md)；已同步 PRD v0.4 通用视觉答题能力；阶段 0.3 与 READINESS
+> 硬门禁未完成前不得进入目标 Chromium 代码实施。
 
 **目标：** 将当前“Electron 启动器 + Chrome for Testing + MV3 插件”迁移为问学自有 Chromium
 AI 工作浏览器。在不拆分用户任务的前提下，每个任务使用独立持久化浏览器 Profile，完整隔离网站
@@ -127,7 +128,9 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
   - 固定 extension 1.9.1 / commit `8a295577...` 与 `apps/desktop/browser.lock.json` 的 CfT
     `149.0.7827.55` / revision `1625079`，保存可重建扩展 artifact hash；该组合是功能语义基线。
   - 先覆盖 CAP-04/05/06/07/10/13 的高风险用例。
-  - _Requirements: AR-02；PRD F6-F9_
+  - CAP-07/13 另纳入 v0.4 `visual_observe` capability、全部 question adapter variant、
+    `fixture_verified/live_verified` 和 embedded answer/no-submit 证据字段。
+  - _Requirements: AR-02, AR-12；PRD F6-F9_
 
 - [ ] 1.2 固定同 revision CfT 单/双 Profile 性能基线
   - 另建与目标 Chromium 相同 Stable revision 的 CfT 引擎对照，不覆盖 1.1 的语义基线。
@@ -142,6 +145,7 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
   - 准备同域不同账号、Cookie、LocalStorage、IndexedDB、Service Worker、权限、History、密码、
     extension storage 和 Session Restore 的跨 Profile 泄漏用例。
   - 准备两个 Agent 同时 research/答题、其中一个等待用户/停止/崩溃/重载的确定性用例。
+  - 断言两个任务的 screenshot、frame、adapter、被动 embedded answer 候选和 solver 结果不串扰。
   - fixtures 不包含真实账号、凭据或用户数据。
   - _Requirements: AR-03, AR-04；PRD F3, F7, F13_
 
@@ -220,11 +224,11 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
   - _Requirements: AR-06, AR-11；PRD F10, F13, F15_
 
 - [ ] 3.6 跑高风险 CAP Spike
-  - 验证 CAP-04 JS worlds/frame、CAP-05 tabs、CAP-06 webNavigation frames、CAP-07 截图、CAP-10
-    暂停/接管和 CAP-13 学习通内容脚本链。
+  - 验证 CAP-04 JS worlds/frame、CAP-05 tabs、CAP-06 webNavigation frames、CAP-07
+    VisualCapabilities/target screenshot、CAP-10 暂停/接管和 CAP-13 QuestionSolver tab/frame 内容脚本链。
   - 每个 case 同时保存冻结 CfT 与新 Chromium 单/双 Profile 证据。
   - 任一能力失败时先判断 component → allowlisted 预装扩展能否解决；不能解决则回到架构评审。
-  - _Requirements: AR-02, AR-04；PRD F6-F9_
+  - _Requirements: AR-02, AR-04, AR-12；PRD F6-F9_
 
 **阶段出口：G2。** 两个持久 Task Profile、独立扩展、宿主切换、标准 API 隔离、并行租约、后台行为
 和短期凭据均由代码与 browser tests 证明，不靠推测。
@@ -435,19 +439,32 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
   - _Requirements: AR-02；PRD F6 CAP-01..04_
 
 - [ ] 10.2 CAP-05～CAP-07 多标签、Frame 与视觉观察
-  - 验证任务内标签创建/切换/加载、frame discovery、目标截图 TOCTOU 和图片不落盘。
+  - 验证任务内标签创建/切换/加载、frame discovery、legacy Observe 兼容、scene suggestion、capability
+    registry、目标截图 TOCTOU 和图片不落盘。
   - 验证后台任务不会抢占当前任务；无法截图时只进入 `waiting_for_foreground`。
-  - _Requirements: AR-02, AR-04；PRD F6 CAP-05..07, F7_
+  - _Requirements: AR-02, AR-04, AR-12；PRD F6 CAP-05..07, F7_
 
 - [ ] 10.3 CAP-08～CAP-12 上下文、历史、接管、模型与日志用量
   - 验证续接、压缩、recall、恢复、暂停、模型切换限制、任务凭据、日志脱敏与 tokens 对账。
   - 两个任务同时运行时，任一 stop/reset/ask_user/takeover 不改变另一任务。
   - _Requirements: AR-02, AR-04, AR-06；PRD F8, F10, F12-F13_
 
-- [ ] 10.4 CAP-13 学习通
-  - 覆盖 PRD 题型矩阵、当前/全部页、视觉题、needsReview、翻页上限、人工中断和绝不提交。
-  - 并行运行普通 research 任务，证明学习通 Agent 不访问或暂停另一任务。
-  - _Requirements: AR-02, AR-04；PRD F9_
+- [ ] 10.4 CAP-13 统一 QuestionSolver
+  - 覆盖 `inspect/answer/fill`、六个平台族全部声明 adapter variant、generic visible fallback、题型矩阵、
+    当前/全部页、图片/混合题、snapshot/exact fill/verify/restore、翻页上限、全 frame 人工中断和绝不提交。
+  - 覆盖 taskEpoch/runId/requestId/cancel/document token、迟到结果丢弃、导航后 frame 重发现、前台截图
+    所有权、cross-origin 最小 crop 与滚动恢复。
+  - 覆盖 nonce frame bootstrap（含 inherited-origin frames）、documentId-only effect、parent-bound MAIN 子 RPC、
+    request lane、cancel cleanup + late-effect quarantine、caller/content snapshot rehydrate、logical/binding
+    fingerprints、route navigation profile、多 frame 聚合、tab mutation owner/effect lock、capture 550ms
+    limiter、anchor-bound ephemeral image assets，以及彼此独立的 ResultStore continuation / 同 tab lease resume。
+  - 用 synthetic contract adapter 覆盖 embedded answer 正确映射、乱序、旧 attempt、跨题、冲突和跳过
+    LLM；23 个 production variant 的 answer allowlist 必须为空，zhs gxk 只投影题干 identity；覆盖越权
+    请求禁止和原始 response 不入日志。
+  - 所有无真实环境 variant 达到 `fixture_verified`；只有真实账号 / 浏览器 smoke 后才标记
+    `live_verified`。
+  - 并行运行普通 research 任务，证明 solver 不访问或暂停另一任务。
+  - _Requirements: AR-02, AR-04, AR-12；PRD F9_
 
 - [ ] 10.5 完成能力证据审计
   - 任一 case 缺 baseline/expected/target/evidence 均视为失败。
@@ -580,6 +597,7 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
 
 - PRD F1～F17 中属于 P0/配套系统的验收标准均有证据。
 - CAP-01～CAP-13 通过率 100%，旧/新两侧证据完整。
+- CAP-13 六个平台族与全部声明 variant 的 `fixture_verified` 覆盖率 100%，`live_verified` 状态如实记录。
 - 任务 A 的标签、Cookie、登录态、站点存储、权限、History、密码、Session、扩展数据和凭据不会出现在
   任务 B，跨任务泄漏次数为 0。
 - 至少两个任务 Agent 可同时运行；任一任务切换、停止、失败、重载、排队或人工接管不改变另一任务。

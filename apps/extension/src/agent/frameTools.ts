@@ -12,10 +12,7 @@ export function createFrameTools(pageController: RemotePageController): Record<s
 	return {
 		list_frames: {
 			description:
-				'List all frames (including cross-origin iframes) in the current tab: frameId, url, origin, ' +
-				'and whether each is same-origin with the top frame. Pass a frameId to execute_javascript ' +
-				'(frame_id) to run code inside that specific frame; this is how to reach cross-origin ' +
-				'iframe content.',
+				'List frame metadata (including cross-origin iframes) in the current tab: frameId, URL, origin, parent, and whether each frame is same-origin with the top frame. This tool is read-only; assessment frame handling belongs to visual_observe.question_solver.',
 			inputSchema: z.object({}),
 			execute: async () => {
 				const frames = await pageController.listFrames()

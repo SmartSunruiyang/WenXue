@@ -47,6 +47,11 @@ interface LiveNamedToolChoiceCapability {
 export interface RuntimeAgentModels {
 	active: LLMConfig
 	vision: LLMConfig
+	questionSolverModels: {
+		text: LLMConfig
+		vision: LLMConfig
+	}
+	/** @deprecated Use questionSolverModels. */
 	chaoxingModels: {
 		text: LLMConfig
 		vision: LLMConfig
@@ -96,13 +101,15 @@ export function buildRuntimeAgentModels(
 	const active = resolveRuntimeSelectedConfig(selectedModelId, customModels, options)
 	const vision = resolveRuntimeVisionConfig(visionModelId, customModels, options)
 
+	const questionSolverModels = {
+		text: active,
+		vision,
+	}
 	return {
 		active,
 		vision,
-		chaoxingModels: {
-			text: active,
-			vision,
-		},
+		questionSolverModels,
+		chaoxingModels: questionSolverModels,
 	}
 }
 
@@ -261,13 +268,15 @@ function attachNamedToolChoiceCapabilities(
 	const active = withCapability(models.active)
 	const vision = withCapability(models.vision)
 
+	const questionSolverModels = {
+		text: active,
+		vision,
+	}
 	return {
 		active,
 		vision,
-		chaoxingModels: {
-			text: active,
-			vision,
-		},
+		questionSolverModels,
+		chaoxingModels: questionSolverModels,
 	}
 }
 

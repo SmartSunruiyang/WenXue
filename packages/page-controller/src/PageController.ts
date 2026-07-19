@@ -14,6 +14,7 @@ import {
 	scrollVertically,
 	selectOptionElement,
 } from './actions'
+import { assessmentAutomationBlockReason } from './assessmentSafety'
 import * as dom from './dom'
 import type { FlatDomTree, InteractiveElementDomNode } from './dom/dom_tree/type'
 import { getPageInfo } from './dom/getPageInfo'
@@ -197,7 +198,7 @@ export class PageController extends EventTarget {
 		this.simplifiedHTML = dom.flatTreeToString(
 			this.flatTree,
 			this.config.includeAttributes,
-			this.config.keepSemanticTags
+			this.config.keepSemanticTags,
 		)
 
 		this.selectorMap.clear()
@@ -247,6 +248,8 @@ export class PageController extends EventTarget {
 			this.assertIndexed()
 			const element = getElementByIndex(this.selectorMap, index)
 			const elemText = this.elementTextMap.get(index)
+			const blocked = assessmentAutomationBlockReason(element, 'click')
+			if (blocked) throw new Error(`protected_assessment_action_requires_takeover:${blocked}`)
 			await clickElement(element)
 
 			// Handle links that open in new tabs
@@ -277,6 +280,8 @@ export class PageController extends EventTarget {
 			this.assertIndexed()
 			const element = getElementByIndex(this.selectorMap, index)
 			const elemText = this.elementTextMap.get(index)
+			const blocked = assessmentAutomationBlockReason(element, 'input')
+			if (blocked) throw new Error(`protected_assessment_action_requires_takeover:${blocked}`)
 			await inputTextElement(element, text)
 
 			return {
@@ -379,10 +384,7 @@ export class PageController extends EventTarget {
 	/**
 	 * Execute arbitrary JavaScript on the page
 	 */
-	async executeJavascript(
-		script: string,
-		_opts?: { world?: 'isolated' | 'main'; frameId?: number }
-	): Promise<ActionResult> {
+	async executeJavascript(script: string): Promise<ActionResult> {
 		try {
 			// Wrap script in async function to support await
 			const asyncFunction = eval(`(async () => { ${script} })`)

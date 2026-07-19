@@ -38,7 +38,8 @@
 
 - **BrowserStatus 状态机**：`idle | launching | running | error`，由 BrowserSupervisor 对子进程事件归约，仅存于主进程内存，经 IPC 事件推送 UI。
 - **DOM 快照**：page-controller 每轮 Agent 循环对页面的文本化表示，用完即弃。
-- **VisualObservation**：Agent 主动调用 `visual_observe` 后，由当前可见视口截图经视觉模型生成的结构化 JSON；图片本体用完即弃，不进入历史、IndexedDB 或日志，JSON 作为工具结果进入任务历史。
+- **VisualObservation**：Agent 以 Observe mode 调用 `visual_observe` 后，由当前可见视口截图经视觉模型生成的结构化 JSON；图片本体用完即弃，不进入历史、IndexedDB 或日志，JSON 作为工具结果进入任务历史。
+- **VisualCapabilityResult**：Agent 显式调用 `visual_observe` capability mode 后，由注册能力返回的判别式 JSON；`question_solver` 结果包含有界的题目文本/图片标签摘要、结构化答案、证据、状态和完整计数，不含 screenshot/data URL、DOM 引用、attempt 原值、embedded answer 原始对象或页面响应正文；总 wire budget 为 96 KiB，截断时保留完整 counts。
 - **版本三元组**（app / browser / extension）：由打包资源与 lock 文件即时计算。
 - **AnnouncementQueue**：当前账号待展示消息的内存队列；重要消息优先，同级按发布时间从旧到新；登出即清空。
 - **UpdateState 状态机**：`idle | checking | available | downloading | ready | opening | handedOff | error`，由
@@ -394,7 +395,7 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：MultiPageAgent（L5）
-- 职责：多标签编排（当前插件基线默认纳入当前窗口全部可操作、非固定标签页，允许设置显式关闭）、当前标签加载等待、向 PageAgentCore 透传压缩配置、注入 `visual_observe` / `chaoxing_solve` / 多标签工具、问学产品层卡住检测（连续 3 次重复动作触发人工接管，done/ask_user/request_user_takeover/recall_steps 不计入重复）
+- 职责：多标签编排（当前插件基线默认纳入当前窗口全部可操作、非固定标签页，允许设置显式关闭）、当前标签加载等待、向 PageAgentCore 透传压缩配置、只向 Agent 注入正式入口 `visual_observe` 与多标签工具、为每次 task 提供 taskEpoch/managed-tab lease、问学产品层卡住检测（连续 3 次重复动作触发人工接管，done/ask_user/request_user_takeover/recall_steps 不计入重复）
 - 不负责：不渲染 UI
 - 输入：@page-agent/core、@page-agent/page-controller、ExtensionSettingsConfig 解析出的文本/视觉模型配置
 - 输出：SidepanelApp
@@ -402,30 +403,28 @@ fork 应用层（apps/extension）：
 ```
 
 ```
-## 模块名：VisualObservation（L5）
-- 职责：向 Agent 暴露 `visual_observe` 工具；以 `VISUAL_OBSERVE` v2 协议强制绑定 `TabsController.currentTabId` 截取当前可见视口；调用配置的视觉模型获取 schema 校验后的页面控件/遮挡/确认审计 JSON；初始化时用 origin-wide Web Lock 单飞探测 background 协议并最多自刷新一次；内置网关无 session token 时在截图前阻断
-- 不负责：不自动触发截图；不保存图片本体；不把 tab URL/title 发送给视觉模型；不输出 DOM index、点击坐标或动作命令；不绕过特权页、登录、验证码或页面安全限制
-- 输入：MultiPageAgent 的视觉模型配置、ExtensionEntrypoints 的 `VISUAL_OBSERVE` v2 截图桥、Agent 管理的当前 tab id
-- 输出：`visual_observe` 工具 JSON 字符串结果，进入 PageAgentCore step history
-- 关键类型/接口：createVisualObserveTools · ensureVisualObserveBackgroundReady · askVisualObservation · handleVisualObserveMessage · captureCurrentVisibleTab
-- 持有状态：background 协议 reload-attempt 标记；截图 data URL 仅存在于单次工具调用内存中。输出 schema/总 JSON 有上限并拒绝 data URI/长 base64 回灌
+## 模块名：VisualCapabilities（L5）
+- 职责：向 Agent 暴露唯一正式视觉入口 `visual_observe`；legacy / Observe mode 保持现有结构化观察语义并可返回题目场景建议；capability mode 经内部 registry 显式分派 `question_solver`；截图绑定当前 task 的 managed-tab lease，只有 target 正是用户当前可见 tab 才捕获，无损 PNG 源按实测 bitmap/viewport 比例裁剪；初始化时用 origin-wide Web Lock 单飞探测 background 协议并最多自刷新一次
+- 不负责：不因观察到题目自动回答或填写；不保存图片本体；不把 tab URL/title 发送给视觉模型；普通 Observe 不输出 DOM index、点击坐标或动作命令；不绕过特权页、登录、验证码或页面安全限制
+- 输入：MultiPageAgent 的文本/视觉模型配置、ExtensionEntrypoints 的截图桥、Agent 管理的当前 tab id、VisualCapabilityRegistry
+- 输出：向后兼容的 VisualObservation JSON 或判别式 VisualCapabilityResult，进入 PageAgentCore step history
+- 关键类型/接口：createVisualObserveTools · VisualCapabilityRegistry · VisualCapability · ensureVisualObserveBackgroundReady · askVisualObservation · captureCurrentVisibleTab
+- 持有状态：background 协议 reload-attempt 标记；截图 data URL 仅存在于单次工具 / 题块处理内存中。输出 schema/总 JSON 有上限并拒绝 data URI/长 base64 回灌
 ```
 
 ```
-## 模块名：chaoxing/*（L5）
-- 职责：学习通作业/考试求解器。solve.ts 智能域编排「读题→并发 LLM 生成结构化答案→回填→翻页→汇总」；
-  adapter.content.ts 内容脚本持有学习通 DOM 读取/回填，经与 RemotePageController 同传输的 RPC 与智能域通信；
-  工具经 customTools 注入，向 Agent 暴露单一高层工具 chaoxing_solve
-- 不负责：不自动提交（交卷由用户完成）；不绕过登录/验证码/人脸识别/字体反爬等任何防护；不改 vendor packages/*（I5）
-- 输入：@page-agent/llms（仅 zodToOpenAITool）、RemotePageController、学习通页面 DOM
-- 输出：经 customTools 注入 ExtensionEntrypoints 的 Agent 工具集
-- 关键类型/接口：createChaoxingTools(deps) → chaoxing_solve · extractQuestions / fillAnswers / gotoNextPage
-- 持有状态：单次求解的运行中流水线状态
+## 模块名：QuestionSolver（L5）
+- 职责：实现 `question_solver` visual capability；按 `inspect | answer | fill` 授权编排「task/run/request 隔离→全 frame 防护扫描→frame/adapter 检测→结构化读题→embedded answer 映射→文本/视觉模型补全→写前快照→精确回填→DOM/runtime/按需视觉验证→恢复→指纹稳定翻页→重新发现 frame→汇总」；以 adapter registry 覆盖超星、智慧树、ZJY、ICVE、iCourse、U校园和保守 generic HTML；代码级旧 Chaoxing facade 可转发但不注册为 Agent 工具
+- 不负责：不注册新的正式平级 Agent 工具；不自动提交；不伪造作答/评分状态或越权探测答案；不绕过登录/验证码/滑块/人脸/2FA；不执行 LLM 生成的 JavaScript；不修改未在 UPSTREAM.md 登记的 vendor packages/*（I5）或随仓 OCSJS 研究源码
+- 输入：VisualCapabilities、独立 `questionSolverModels{text,vision?}`（旧 `chaoxingModels` 仅一版 config alias，普通 `visualObservationModel` 不作隐式 fallback）、@page-agent/llms、RemotePageController、TabsController、ExtensionEntrypoints 的 `QUESTION_SOLVER_CONTROL` v1 tab/frame RPC、平台页面 DOM/runtime/当前页面已收到的 allowlist embedded answer
+- 输出：QuestionSolverResult（有界题目/答案摘要，不含图片本体 / 原始页面响应）；代码级 Chaoxing facade 的兼容汇总
+- 关键类型/接口：QuestionSolverCapability · QuestionPlatformAdapter/AdapterManifest/NavigationProfile · QuestionSolverBridge/QuestionImageService · RunIdentity/FrameRef · Question/StructuredAnswer/AnswerEvidence/QuestionOutcomeStatus · MainWorldRequest
+- 持有状态：background task lease、tab mutation owner/effect lock 与 `active→cancelling→cleanup→(closed|quarantined→closed)` run registry；最小 lease/run/effect ledger 进 `chrome.storage.session` 供 MV3 rehydrate，不含题目/答案/图片，未 settle effect 持有 document quarantine。单次 run 持有 adapter/frame/document token、所选 navigation profile、logical/binding fingerprint、题目状态、caller EphemeralImageStore（2 MiB/asset、16 MiB/run）与 content PendingControlJournal；ResultStore 以 96 KiB chunks 暂存最多 8 MiB/2,000 个脱敏 outcomes，独立 ResumeCursorStore 绑定原 tab/managed lease。passive hook 只在 active run 临时启用；OCSJS 23 个 production variant 当前没有经核实的正确答案字段 allowlist，zhs gxk response 只投影题干 identity
 ```
 
 ```
 ## 模块名：ExtensionEntrypoints（L6/组装根）
-- 职责：background service worker、content scripts、main-world 注入、sidepanel/hub/options 页面入口的装配与集中式消息路由、按 frameId 路由 PAGE_CONTROL、main-world JS 执行通道、`webNavigation` frame 发现、`list_frames` 工具、版本化 `VISUAL_OBSERVE` 当前视口截图桥、newtab 页面装配；接收 localhost `WENXUE_USER_SESSION` 外部消息并保存插件侧用户 session；未知内部消息不抢占其他 listener 响应
+- 职责：background service worker、content scripts、sidepanel/hub/options 页面入口的装配与集中式消息路由、challenge→content 主动注册的 frame bootstrap（all frames + inherited-origin fallback）、`QUESTION_SOLVER_CONTROL` v1 task/run/request/lane/cancel/cleanup envelope、content→background `QUESTION_SOLVER_MAIN_WORLD` parent-bound 子 RPC、effectful operation 的 documentId-only 定向、`chrome.scripting.executeScript({world:'MAIN'})` 固定 operation allowlist、`webNavigation` frame 发现、cross-origin parent-chain anchor、tab effect lock/quarantine、全扩展 screenshot ≤2 次/秒、版本化前台截图桥、每 frame 轻量 adapter host、newtab 页面装配；接收 localhost `WENXUE_USER_SESSION` 外部消息并保存插件侧用户 session；未知内部消息不抢占其他 listener 响应
 - 不负责：业务决策
 - 持有状态：会话级路由表
 ```
@@ -847,6 +846,7 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 - **UserSessionStore / UserSessionHandoff / UsageCloudClient**：覆盖 session 字段校验、未登录拒绝启动/云端 summary、按 userId 读取与缓存云端 summary、云端失败时读同 userId 缓存、一次性 localhost handoff 成功/失败与重复完成保护。
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1/v2→v3 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
 - **VisualObservation**：覆盖 v2 协议握手与单次自刷新、跨 extension realm 的 Web Lock 单飞、v1 明确不兼容、目标 tab 必填及切换/导航 TOCTOU、旧 background/消息拒绝结构化降级、AbortError 传播、Qwen 强制工具参数与重试消息顺序、CloudBase 错误 envelope、自定义无鉴权端点/内置网关鉴权前置、输出/日志禁止 data URI 回灌；发布前以真实 CfT 走协议握手 + 截图 data URL + tab id 一致性 smoke。
+- **VisualCapabilities / QuestionSolver**：覆盖 legacy Observe 输入/输出兼容、scene suggestion 不自动回答、`inspect/answer/fill` 写权限、capability registry、23 个 production variant source-attributed fixture、task lease/run/request/cancel 与 stale-result、全 frame interruption、attempt/question/page fingerprint、synthetic embedded-answer 映射及 production allowlist 为空、text/vision 路由、exact-state + snapshot/restore、DOM/视觉验证状态机、导航后 frame 重发现、no-submit 与 maturity；本地双 loopback origin fixture server 与 synthetic RPC 覆盖 cross-origin 结构、前台所有权和两任务隔离，真实 Chromium 扩展 smoke 仍是发布前门禁。
 - **模型 tool_choice 兼容**：`@page-agent/llms` 覆盖严格错误匹配、named→required 单次重建、无关/思考模式错误不学习与回调失败不阻断；`RuntimeAgentModels` 覆盖 endpoint/model 隔离、TTL、过期裁剪及无敏感字段；视觉观察与学习通直连请求覆盖等价降级路径。
 - **CloudBaseLlmGateway**：TDD 覆盖注册格式与允许字符校验、CreateUser 显式提交 `UserStatus=ACTIVE`、成功但无 uid 仍返回成功、重复用户名不写业务库、注册限流、TCB 响应体超时、`/healthz` 无凭据就绪、激活缺少/无效 token 拒绝、`/auth/v1/user/me` 真实 uid 与严格 `ACTIVE` 校验、`BLOCKED` 在 DashScope 前拒绝、user profile 响应体超时与敏感 token 不泄露、流式请求注入 `stream_options.include_usage`、SSE 末块 usage 解析、计量记录无正文/Key/敏感头；组合运行时另覆盖 AdminApi target 同一实现、AdminConsole HTML/assets、MIME/cache、HEAD/405/404/路径穿越及白名单 staging。
 - **AdminApi / AdminConsole**：现有 legacy AdminApi 覆盖未登录/非 admin_users/禁用管理员拒绝、viewer 只读、`user_accounts` 状态修改、tokens 聚合总数等于明细求和、响应不含敏感字段；AdminConsole 至少通过 `tsc --noEmit` 与 `vite build`。用户封禁尚未迁移到 TCB `ModifyUser ACTIVE/BLOCKED`，因此状态表单当前不构成网关授权验收证据。
@@ -880,9 +880,11 @@ WenXue/
 │   │   ├── scripts/                 # fetch-browser.ts / smoke-launch.ts（构建工具，非运行时模块）
 │   │   ├── browser.lock.json        # BrowserRuntimeDescriptor 版本来源
 │   │   └── electron-builder.yml
-│   ├── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · Logging · chaoxing/* · ExtensionEntrypoints
+│   ├── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · Logging · VisualCapabilities · QuestionSolver · ExtensionEntrypoints
 │       ├── src/entrypoints/         # background / content / main-world / sidepanel / hub / newtab
-│       ├── src/agent/chaoxing/      # chaoxing/*：solve.ts · adapter.content.ts · tools.ts（学习通求解器）
+│       ├── src/agent/visualObserve.ts    # 唯一公开工具、legacy Observe、capability 分派与 scene suggestion
+│       ├── src/agent/questionSolver/     # capability、统一流水线、RPC、模型/图片/指纹、adapter registry
+│       ├── src/agent/chaoxing/      # 不注册到 Agent 的代码级旧 facade；实现转入 QuestionSolver adapter
 │       ├── src/components/
 │       │   ├── LogViewer.tsx        # legacy：入口已下线，桌面启动器日志页接管
 │       │   └── ContextBanner.tsx    # 侧边栏近溢出上下文提示横幅

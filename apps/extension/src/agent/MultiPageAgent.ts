@@ -4,8 +4,8 @@ import type { LLMConfig } from '@page-agent/llms'
 import { logger } from '@/lib/logger'
 
 import { createActionSignature, StuckActionGuard } from './actionSignature'
-import { createChaoxingTools } from './chaoxing/tools'
 import { createFrameTools } from './frameTools'
+import { QuestionSolverOrchestrator } from './questionSolver/orchestrator'
 import { RemotePageController } from './RemotePageController'
 import SYSTEM_PROMPT from './system_prompt.md?raw'
 import { TabsController } from './TabsController'
@@ -22,10 +22,12 @@ interface MultiPageAgentConfig extends AgentConfig {
 	includeInitialTab?: boolean
 	experimentalIncludeAllTabs?: boolean
 	/**
-	 * 系统级文本 + 视觉模型；学习通流水线据此路由(text 用于纯文本题，vision 用于含图题)。
+	 * 系统级文本 + 视觉模型；统一题目流水线据此路由(text 用于纯文本题，vision 用于含图题)。
 	 * 不传则回退到 agent 自身的模型作为 text、vision 留空(含图题进入人工)。
 	 */
-	chaoxingModels?: { text: LLMConfig; vision: LLMConfig }
+	questionSolverModels?: { text: LLMConfig; vision?: LLMConfig }
+	/** @deprecated Use questionSolverModels. */
+	chaoxingModels?: { text: LLMConfig; vision?: LLMConfig }
 	visualObservationModel?: VisualModelConfig
 }
 
@@ -86,26 +88,31 @@ export class MultiPageAgent extends PageAgentCore {
 		const tabsController = new TabsController()
 		const pageController = new RemotePageController(tabsController)
 
-		// Chaoxing (超星学习通) solve tool. Prefer the system-level text + vision
-		// models; fall back to the agent's own LLM config as the text model
-		// with vision undefined (image questions become needsReview) when unset.
+		// Unified assessment solver. Prefer system-level text + vision models;
+		// image questions become needsReview when no vision model is configured.
 		const fallbackTextModel = {
 			baseURL: config.baseURL,
 			model: config.model,
 			apiKey: config.apiKey,
 		}
-		const chaoxingTools = createChaoxingTools({
-			tabsController,
-			getModels: () => config.chaoxingModels ?? { text: fallbackTextModel, vision: undefined },
+		const questionSolver = new QuestionSolverOrchestrator({
+			getLease: () => tabsController.getQuestionSolverLease(),
+			getModels: () =>
+				config.questionSolverModels ??
+				config.chaoxingModels ?? { text: fallbackTextModel, vision: undefined },
 		})
 		const visualObserveTools = createVisualObserveTools({
 			getVisionModel: () => config.visualObservationModel,
 			getTargetTabId: () => tabsController.currentTabId,
+			detectProtectedInterruption: () => pageController.detectProtectedInterruption(),
+			questionSolver: {
+				execute: (request, context) =>
+					questionSolver.execute(request, context.signal ?? new AbortController().signal),
+			},
 		})
 		const customTools = {
 			...createTabTools(tabsController),
 			...createFrameTools(pageController),
-			...chaoxingTools,
 			...visualObserveTools,
 		}
 
@@ -132,7 +139,10 @@ export class MultiPageAgent extends PageAgentCore {
 
 		super({
 			...config,
-			pageController: pageController as any,
+			experimentalScriptExecutionTool: false,
+			pageController: pageController as unknown as ConstructorParameters<
+				typeof PageAgentCore
+			>[0]['pageController'],
 			customTools: customTools,
 			customSystemPrompt: systemPrompt,
 			compaction,

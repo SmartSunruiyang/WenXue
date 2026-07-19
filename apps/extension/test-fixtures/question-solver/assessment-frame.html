@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Question surface</title>
+		<style>
+			body {
+				font:
+					16px/1.5 system-ui,
+					sans-serif;
+				margin: 20px;
+			}
+			.question {
+				border: 1px solid #ddd;
+				border-radius: 8px;
+				margin: 0 0 20px;
+				padding: 16px;
+			}
+			.option {
+				align-items: center;
+				display: flex;
+				gap: 8px;
+				margin: 8px 0;
+			}
+			.option img,
+			.stem img {
+				height: 72px;
+				max-width: 120px;
+				object-fit: contain;
+			}
+		</style>
+	</head>
+	<body>
+		<section class="question" data-question data-question-id="mixed-1" data-question-type="single">
+			<h2 class="question-stem" data-question-stem>
+				Choose the option that continues
+				<img src="./assets/sequence.svg" alt="a circle followed by a square" />
+				the visible sequence.
+			</h2>
+			<label class="option" data-option-key="A">
+				<input type="radio" name="mixed-1" value="A" checked />
+				<span>Option A</span>
+				<img src="./assets/circle.svg" alt="blue circle" />
+			</label>
+			<label class="option" data-option-key="B">
+				<input type="radio" name="mixed-1" value="B" />
+				<img src="./assets/square.svg" alt="orange square" />
+			</label>
+		</section>
+
+		<section
+			class="question"
+			data-question
+			data-question-id="image-only-1"
+			data-question-type="single"
+		>
+			<h2 class="question-stem" data-question-stem>Select the requested diagram.</h2>
+			<label class="option" data-option-key="A">
+				<input type="radio" name="image-only-1" value="A" />
+				<img src="./assets/circle.svg" />
+			</label>
+			<label class="option" data-option-key="B">
+				<input type="radio" name="image-only-1" value="B" />
+				<img src="./assets/square.svg" />
+			</label>
+			<label class="option" data-option-key="C">
+				<input type="radio" name="image-only-1" value="C" />
+				<img src="./assets/sequence.svg" />
+			</label>
+			<label class="option" data-option-key="D">
+				<input type="radio" name="image-only-1" value="D" />
+				<img src="./assets/circle.svg" />
+			</label>
+		</section>
+
+		<section
+			class="question"
+			data-question
+			data-question-id="completion-1"
+			data-question-type="completion"
+		>
+			<h2 class="question-stem" data-question-stem>Describe the visual pattern.</h2>
+			<textarea data-blank-key="response">original draft</textarea>
+		</section>
+
+		<div class="captcha-dialog" hidden>Manual verification required</div>
+		<button type="button" data-final-submit>Submit assessment</button>
+	</body>
+</html>

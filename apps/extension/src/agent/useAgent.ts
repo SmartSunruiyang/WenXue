@@ -609,12 +609,13 @@ export function createAgentForConfig(
 	runtimeModels?: RuntimeAgentModels,
 ): MultiPageAgent {
 	const customModels = config.customModels ?? []
-	// 系统级文本 + 视觉模型；学习通流水线跟随这两个系统模型。
-	const chaoxingModels = runtimeModels?.chaoxingModels ?? {
-		text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
-		vision: resolveVisionLLMConfig(config.visionModelId, customModels),
-	}
-	const resolvedVisualObservationModel = runtimeModels?.vision ?? chaoxingModels.vision
+	// 系统级文本 + 视觉模型；统一题目求解器跟随这两个系统模型。
+	const questionSolverModels = runtimeModels?.questionSolverModels ??
+		runtimeModels?.chaoxingModels ?? {
+			text: resolveSelectedLLMConfig(config.selectedModelId, customModels),
+			vision: resolveVisionLLMConfig(config.visionModelId, customModels),
+		}
+	const resolvedVisualObservationModel = runtimeModels?.vision ?? questionSolverModels.vision
 	const resolvedVisionModelId = normalizeVisionModelId(config.visionModelId, customModels)
 	const visualObservationModel = {
 		...resolvedVisualObservationModel,
@@ -635,7 +636,8 @@ export function createAgentForConfig(
 		getNamedToolChoiceDisabled: activeModel.getNamedToolChoiceDisabled,
 		onNamedToolChoiceUnsupported: activeModel.onNamedToolChoiceUnsupported,
 		compaction: config.compaction,
-		chaoxingModels,
+		questionSolverModels,
+		chaoxingModels: questionSolverModels,
 		visualObservationModel,
 		instructions: config.systemInstruction ? { system: config.systemInstruction } : undefined,
 	})

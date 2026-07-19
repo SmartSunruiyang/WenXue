@@ -62,6 +62,8 @@ describe('MultiPageAgent visual observe tool', () => {
 		})
 
 		expect(agent.tools.has('visual_observe')).toBe(true)
+		expect(agent.tools.has('chaoxing_solve')).toBe(false)
+		expect(agent.tools.has('execute_javascript')).toBe(false)
 	})
 })
 

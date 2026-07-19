@@ -1,63 +1,39 @@
 /**
- * 超星学习通「agent 工具」(Spec §7)。
+ * 超星学习通旧工具的代码级兼容 facade。
  *
- * 暴露单个 agent 工具 `chaoxing_solve`：在超星作业 / 考试页一次性「读全部题 → LLM 生成
- * 结构化答案 → 自动回填」，由 {@link solveChaoxing} 流水线完成，**不自动提交**。
- *
- * 与 `tabTools.ts` 同构(自带一个本地的工具接口而非耦合 core 内部类型)。工具被
- * PageAgentCore 以 `execute.bind(this)(input, { signal })` 调用，故第二参 ctx 携带
- * 取消信号；这里把它透传给流水线，让 LLM 请求可随任务取消而中止。
+ * 新 Agent 不再注册 `chaoxing_solve`；唯一公开入口是 visual_observe.question_solver。
+ * 仍直接导入本模块的旧调用方可通过 `runLegacyChaoxingSolve` 转发到统一内核，且
+ * 始终**不自动提交**。本模块不再导出任何 PageAgent tool schema。
  */
 import type { LLMConfig } from '@page-agent/llms'
-import * as z from 'zod/v4'
-
 import type { TabsController } from '../TabsController'
-import { ChaoxingBridge } from './bridge'
-import { solveChaoxing } from './solve'
-
-/** 与 PageAgentCore customTools 兼容的工具形状(对齐 tabTools 的本地接口)。 */
-interface ChaoxingTool {
-	description: string
-	inputSchema: z.ZodType
-	execute: (input: unknown, ctx?: { signal?: AbortSignal }) => Promise<string>
-}
+import { QuestionSolverOrchestrator } from '../questionSolver/orchestrator'
 
 export interface ChaoxingToolsDeps {
 	tabsController: TabsController
 	getModels: () => { text?: LLMConfig; vision?: LLMConfig }
 }
 
-/**
- * 构造超星工具集，绑定到一个 {@link TabsController} 与模型提供器。
- * 经 MultiPageAgent 的 customTools 注入。
- */
-export function createChaoxingTools(deps: ChaoxingToolsDeps): Record<string, ChaoxingTool> {
-	return {
-		chaoxing_solve: {
-			description:
-				'在超星学习通(chaoxing.com)作业/考试页：读取全部题目→用 LLM 生成结构化答案→自动回填。不会自动提交，最终提交由用户完成。',
-			inputSchema: z.object({
-				scope: z
-					.enum(['current_page', 'all_pages'])
-					.default('all_pages')
-					.describe('current_page 只做当前页；all_pages 自动翻页直至最后一页。'),
-			}),
-			execute: async (input: unknown, ctx?: { signal?: AbortSignal }) => {
-				const tabId = deps.tabsController.currentTabId
-				if (!tabId) return '❌ 没有可操作的标签页'
-
-				const { scope } = input as { scope: 'current_page' | 'all_pages' }
-				const bridge = new ChaoxingBridge(tabId)
-
-				try {
-					return await solveChaoxing(
-						{ bridge, getModels: deps.getModels, signal: ctx?.signal },
-						{ scope },
-					)
-				} catch (error) {
-					return `❌ 解题失败：${error instanceof Error ? error.message : String(error)}`
-				}
-			},
-		},
+/** @deprecated 新代码应调用 visual_observe 的 question_solver capability。 */
+export async function runLegacyChaoxingSolve(
+	deps: ChaoxingToolsDeps,
+	scope: 'current_page' | 'all_pages' = 'all_pages',
+	signal?: AbortSignal,
+): Promise<string> {
+	try {
+		const solver = new QuestionSolverOrchestrator({
+			getLease: () => deps.tabsController.getQuestionSolverLease(),
+			getModels: deps.getModels,
+		})
+		const result = await solver.execute(
+			{ action: 'fill', scope },
+			signal ?? new AbortController().signal,
+		)
+		if (result.platform !== 'chaoxing' && result.platform !== 'unknown') {
+			return '❌ 当前页面不是超星学习通题目环境'
+		}
+		return JSON.stringify(result, null, 2)
+	} catch (error) {
+		return `❌ 解题失败：${error instanceof Error ? error.message : String(error)}`
 	}
 }
