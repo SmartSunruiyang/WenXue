@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { resetGlobalCaptureStateForTests } from './questionSolver/capture'
 import { handleVisualObserveMessage } from './visualObserve.background'
 
 afterEach(() => {
 	vi.restoreAllMocks()
 	vi.unstubAllGlobals()
+	resetGlobalCaptureStateForTests()
 })
 
 describe('handleVisualObserveMessage', () => {
@@ -44,11 +46,10 @@ describe('handleVisualObserveMessage', () => {
 				get: vi.fn(async () => ({
 					id: 7,
 					windowId: 2,
-					active: false,
+					active: true,
 					url: 'https://example.com',
 					title: 'Example',
 				})),
-				update: vi.fn(async () => ({ id: 7, windowId: 2, active: true })),
 				query: vi.fn(async () => [
 					{
 						id: 7,
@@ -58,7 +59,7 @@ describe('handleVisualObserveMessage', () => {
 						title: 'Example',
 					},
 				]),
-				captureVisibleTab: vi.fn(async () => 'data:image/jpeg;base64,SCREENSHOT'),
+				captureVisibleTab: vi.fn(async () => 'data:image/png;base64,SCREENSHOT'),
 			},
 		})
 		const respond = vi.fn()
@@ -76,13 +77,12 @@ describe('handleVisualObserveMessage', () => {
 		await new Promise((resolve) => setTimeout(resolve, 0))
 
 		expect(chrome.tabs.captureVisibleTab).toHaveBeenCalledWith(2, {
-			format: 'jpeg',
-			quality: 80,
+			format: 'png',
 		})
 		expect(respond).toHaveBeenCalledWith({
 			ok: true,
 			protocolVersion: 2,
-			dataUrl: 'data:image/jpeg;base64,SCREENSHOT',
+			dataUrl: 'data:image/png;base64,SCREENSHOT',
 			tab: {
 				id: 7,
 				windowId: 2,
@@ -97,7 +97,6 @@ describe('handleVisualObserveMessage', () => {
 			tabs: {
 				query: vi.fn(async () => []),
 				get: vi.fn(),
-				update: vi.fn(),
 				captureVisibleTab: vi.fn(),
 			},
 		})
@@ -124,7 +123,6 @@ describe('handleVisualObserveMessage', () => {
 			tabs: {
 				query: vi.fn(async () => [{ id: 7, windowId: 2, active: true }]),
 				get: vi.fn(async () => ({ id: 7, windowId: 2, active: true })),
-				update: vi.fn(),
 				captureVisibleTab: vi.fn(async () => {
 					throw new Error('Cannot capture chrome:// pages')
 				}),
@@ -156,9 +154,11 @@ describe('handleVisualObserveMessage', () => {
 		vi.stubGlobal('chrome', {
 			tabs: {
 				get: vi.fn(async () => ({ id: 7, windowId: 2, active: true })),
-				update: vi.fn(),
-				captureVisibleTab: vi.fn(async () => 'data:image/jpeg;base64,SCREENSHOT'),
-				query: vi.fn(async () => [{ id: 8, windowId: 2, active: true }]),
+				captureVisibleTab: vi.fn(async () => 'data:image/png;base64,SCREENSHOT'),
+				query: vi
+					.fn()
+					.mockResolvedValueOnce([{ id: 7, windowId: 2, active: true }])
+					.mockResolvedValue([{ id: 8, windowId: 2, active: true }]),
 			},
 		})
 		const respond = vi.fn()
@@ -193,8 +193,7 @@ describe('handleVisualObserveMessage', () => {
 					active: true,
 					url: 'https://example.com/before',
 				})),
-				update: vi.fn(),
-				captureVisibleTab: vi.fn(async () => 'data:image/jpeg;base64,SCREENSHOT'),
+				captureVisibleTab: vi.fn(async () => 'data:image/png;base64,SCREENSHOT'),
 				query: vi.fn(async () => [
 					{
 						id: 7,

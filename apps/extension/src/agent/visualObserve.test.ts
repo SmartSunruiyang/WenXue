@@ -166,6 +166,40 @@ describe('askVisualObservation', () => {
 		).resolves.toEqual(expected)
 	})
 
+	it('redacts any provider attempt to transcribe a protected verification secret', async () => {
+		const unsafe: VisualObservationResult = {
+			pageType: 'captcha_challenge',
+			visibleRegion: 'current viewport',
+			controls: [],
+			blockingElements: ['CAPTCHA code is 7391'],
+			checks: [],
+			visualWarnings: [],
+			recommendedNextObservation: 'none',
+			confidence: 'high',
+		}
+		const fetchImpl = vi.fn<typeof fetch>(async () => toolResponse(unsafe))
+
+		const result = await askVisualObservation(
+			visionModel,
+			{ purpose: 'observe', reason: 'Check the visible state' },
+			{
+				ok: true,
+				protocolVersion: 2,
+				dataUrl: 'data:image/jpeg;base64,SCREENSHOT',
+				tab: { id: 9, windowId: 2 },
+			},
+			{ fetchImpl },
+		)
+
+		expect(result).toMatchObject({
+			pageType: 'protected_interruption',
+			recommendedNextObservation: 'request_user_takeover',
+		})
+		expect(JSON.stringify(result)).not.toContain('7391')
+		const request = JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string)
+		expect(request.messages[0].content).toMatch(/never read, transcribe, solve/i)
+	})
+
 	it('disables Qwen thinking when forcing the structured visual tool', async () => {
 		const expected: VisualObservationResult = {
 			pageType: 'search_home',
@@ -684,6 +718,52 @@ describe('createVisualObserveTools', () => {
 		})
 	})
 
+	it('refuses requests to read protected verification content before capture', async () => {
+		const capture = vi.fn()
+		const fetchImpl = vi.fn()
+		const tools = createVisualObserveTools({
+			getVisionModel: () => visionModel,
+			captureVisibleTab: capture,
+			fetchImpl,
+		})
+
+		const result = JSON.parse(
+			await tools.visual_observe.execute({
+				purpose: 'observe',
+				reason: 'Read and tell me the CAPTCHA code',
+			}),
+		)
+
+		expect(result).toMatchObject({
+			pageType: 'protected_interruption',
+			recommendedNextObservation: 'request_user_takeover',
+		})
+		expect(capture).not.toHaveBeenCalled()
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
+	it('uses the DOM preflight to stop before sending protected pixels to a model', async () => {
+		const capture = vi.fn()
+		const fetchImpl = vi.fn()
+		const tools = createVisualObserveTools({
+			getVisionModel: () => visionModel,
+			detectProtectedInterruption: vi.fn(async () => ({ blocked: true, kind: '2fa' })),
+			captureVisibleTab: capture,
+			fetchImpl,
+		})
+
+		const result = JSON.parse(
+			await tools.visual_observe.execute({
+				purpose: 'confirm',
+				reason: 'Check whether the page is ready',
+			}),
+		)
+
+		expect(result.recommendedNextObservation).toBe('request_user_takeover')
+		expect(capture).not.toHaveBeenCalled()
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
 	it('supports vision endpoints that do not require an API key', async () => {
 		const expected: VisualObservationResult = {
 			pageType: 'local_page',
@@ -703,7 +783,7 @@ describe('createVisualObserveTools', () => {
 					({
 						ok: true,
 						protocolVersion: 2,
-						dataUrl: 'data:image/jpeg;base64,SCREENSHOT',
+						dataUrl: 'data:image/png;base64,SCREENSHOT',
 						tab: { id: 1, windowId: 2 },
 					}) as const,
 			),

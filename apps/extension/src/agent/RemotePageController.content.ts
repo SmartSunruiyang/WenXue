@@ -4,10 +4,89 @@
 import { PageController } from '@page-agent/page-controller'
 import { injectScript } from 'wxt/utils/inject-script'
 
-import { shouldShowAgentMask } from './RemotePageController'
+import { shouldShowAgentMask, type ProtectedInterruptionResult } from './RemotePageController'
 
 type JsResult = { success: boolean; message: string }
 type MainWorldRunner = (script: string, signal?: AbortSignal) => Promise<JsResult>
+
+export function detectProtectedInterruptionInDocument(
+	doc: Document = document,
+): ProtectedInterruptionResult {
+	const candidates = Array.from(
+		doc.querySelectorAll<HTMLElement>(
+			[
+				'input[type="password"]',
+				'input[autocomplete="one-time-code"]',
+				'[class*="captcha" i]',
+				'[id*="captcha" i]',
+				'[class*="yidun" i]',
+				'[id*="yidun" i]',
+				'[class*="slide-verify" i]',
+				'[class*="slider-verify" i]',
+				'[class*="face-recogn" i]',
+				'[name*="otp" i]',
+				'[id*="otp" i]',
+				'[aria-label*="验证码"]',
+				'[aria-label*="人脸"]',
+			].join(','),
+		),
+	)
+	for (const element of candidates) {
+		if (!isRenderedForProtectedProbe(element)) continue
+		if (element instanceof HTMLInputElement && element.type.toLowerCase() === 'password') {
+			return { blocked: true, kind: 'login_secret' }
+		}
+		const semantics = [
+			element.textContent,
+			element.id,
+			element.className,
+			element.getAttribute('name'),
+			element.getAttribute('autocomplete'),
+			element.getAttribute('aria-label'),
+			element.getAttribute('title'),
+		]
+			.filter((value): value is string => typeof value === 'string')
+			.join(' ')
+		if (/(?:face.?recogn|人脸识别|活体检测)/i.test(semantics)) {
+			return { blocked: true, kind: 'face' }
+		}
+		if (/(?:one.?time.?code|\botp\b|two.?factor|\b2fa\b|短信验证码|动态口令)/i.test(semantics)) {
+			return { blocked: true, kind: '2fa' }
+		}
+		if (/(?:slider|slide.?verify|滑块)/i.test(semantics)) {
+			return { blocked: true, kind: 'slider' }
+		}
+		if (/(?:captcha|yidun|验证码|易盾)/i.test(semantics)) {
+			return { blocked: true, kind: 'captcha' }
+		}
+		if (/(?:anti.?abuse|风控|安全校验)/i.test(semantics)) {
+			return { blocked: true, kind: 'anti_abuse' }
+		}
+	}
+	return { blocked: false }
+}
+
+function isRenderedForProtectedProbe(element: HTMLElement): boolean {
+	for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+		if (
+			current.hidden ||
+			current.hasAttribute('inert') ||
+			current.getAttribute('aria-hidden') === 'true'
+		) {
+			return false
+		}
+		const style = current.ownerDocument.defaultView?.getComputedStyle(current)
+		if (
+			style?.display === 'none' ||
+			style?.visibility === 'hidden' ||
+			style?.visibility === 'collapse' ||
+			style?.opacity === '0'
+		) {
+			return false
+		}
+	}
+	return true
+}
 
 export async function dispatchJsExecution(
 	pc: { executeJavascript: (script: string) => Promise<JsResult> },
@@ -28,13 +107,10 @@ export async function dispatchJsExecution(
 function withTimeout(p: Promise<JsResult>, ms: number, onTimeout?: () => void): Promise<JsResult> {
 	let timer: ReturnType<typeof setTimeout>
 	const timeout = new Promise<JsResult>((resolve) => {
-		timer = setTimeout(
-			() => {
-				onTimeout?.()
-				resolve({ success: false, message: `❌ 执行超时（${ms / 1000}s）` })
-			},
-			ms,
-		)
+		timer = setTimeout(() => {
+			onTimeout?.()
+			resolve({ success: false, message: `❌ 执行超时（${ms / 1000}s）` })
+		}, ms)
 	})
 	return Promise.race([p.finally(() => clearTimeout(timer)), timeout])
 }
@@ -69,11 +145,11 @@ export function initPageController() {
 	async function ensureMainWorldExecutor(): Promise<void> {
 		if (mainWorldExecutorInjected) return
 		if (!mainWorldExecutorInjection) {
-			mainWorldExecutorInjection = injectScript('/main-world-executor.js', { keepInDom: true }).then(
-				() => {
-					mainWorldExecutorInjected = true
-				},
-			)
+			mainWorldExecutorInjection = injectScript('/main-world-executor.js', {
+				keepInDom: true,
+			}).then(() => {
+				mainWorldExecutorInjected = true
+			})
 		}
 
 		try {
@@ -177,6 +253,10 @@ export function initPageController() {
 		}
 
 		const { action, payload } = message
+		if (action === 'detect_protected_interruption') {
+			sendResponse(detectProtectedInterruptionInDocument())
+			return
+		}
 		const methodName = getMethodName(action)
 
 		const pc = getPC() as any

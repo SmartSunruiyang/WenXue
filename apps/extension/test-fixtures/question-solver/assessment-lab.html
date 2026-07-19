@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>WenXue assessment fixture</title>
+		<style>
+			body {
+				font:
+					16px/1.5 system-ui,
+					sans-serif;
+				margin: 24px;
+			}
+			iframe {
+				border: 1px solid #aaa;
+				height: 760px;
+				width: min(960px, 100%);
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Assessment shell</h1>
+		<p>The actual question surface is intentionally isolated in a child frame.</p>
+		<iframe
+			title="Question surface"
+			src="./assessment-frame.html"
+			data-question-fixture-frame
+		></iframe>
+	</body>
+</html>

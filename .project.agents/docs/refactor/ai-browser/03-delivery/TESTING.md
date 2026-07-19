@@ -1,7 +1,7 @@
 # AI 浏览器重构测试与验收策略
 
 > - 状态：G1 前待评审
-> - 最后更新：2026-07-14
+> - 最后更新：2026-07-17（同步 PRD v0.4 通用视觉答题能力）
 > - 原则：首版“插件完整迁移”必须由行为等价证据证明，不以代码复用比例或人工主观体验判定。
 
 ## 1. 测试目标
@@ -35,6 +35,51 @@
 
 “现有全部入口”必须通过代码和用户流程盘点展开为子项；任何未盘点能力不能默认为已迁移。
 
+### 2.1 PRD v0.4 扩展能力门禁
+
+本文件上表是目标浏览器交付域的 CAP 分类；下列 `EXT-CAP-*` 明确引用 PRD F6 的插件能力编号，
+避免两个矩阵同名误配：
+
+| PRD 能力     | 必测内容                                                                                                                                                                                                                                                                             |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `EXT-CAP-07` | `visual_observe` legacy/Observe 输入输出兼容；题目 scene 只建议；capability registry；截图仅当前可见 target tab、waiting_foreground、cross-frame 最小 crop 与 scroll restore；图片不持久化                                                                                           |
+| `EXT-CAP-13` | `question_solver` 的 `inspect/answer/fill` 权限、23 个 production variant、task/run/request/cancel 隔离、全 frame interruption、synthetic embedded-answer 映射与 production allowlist 为空、text/vision、snapshot/exact fill/verify/restore、导航后 frame 重发现、no-submit 与成熟度 |
+
+`EXT-CAP-13` 必须逐 variant 记录 `implemented | fixture_verified | live_verified`。没有真实账号 / 页面时
+允许 `fixture_verified` 通过当前实现门禁，但报告和 UI 不得将其写成 `live_verified`。
+
+最少 fixture 组：
+
+- 超星 modern work/exam、chapter test；
+- 智慧树 gxk、xnk、smart work、smart exam、fusioncourse、hike work、hike homework；
+- ZJY legacy work/exam；
+- ICVE standard、AI work；
+- iCourse chapter、work、exam；
+- U校园 reading fill/choice、normal choice、completion/translation、两类 banked cloze、free fill、line matching；
+- generic standard HTML visible fallback。
+
+每组覆盖其适用的纯文本、图片选项、图文混排、受控输入、翻页 / 保存和中断行为。synthetic
+embedded-answer 公共用例必须包含正确映射、option shuffle、旧 attempt、跨题错配、多来源冲突、
+通过后零 LLM 调用；production 23 variant 必须断言 answer projection 为空，zhs gxk 只允许
+`questionDtos[].name`。原始响应、session、签名参数不得进入测试快照或日志。
+
+结果 delivery 必须覆盖 96 KiB chunk/continuation、8 MiB/2,000 outcome 上限前 resume、token 的
+task/action/scope/TTL 绑定；ResultStore 最后一 chunk 清理后 ResumeCursorStore 仍可用，且 resume 只允许
+原 managed lease 的同一 tab、原子单 claim。不得丢弃或重复 `inspect/answer all_pages` 的成功题目，
+continuation 续取结果时页面、模型和 write 调用必须为 0。
+
+隔离测试必须覆盖 nonce→active frame registration、`match_origin_as_fallback` 特殊 frame、documentId
+effect gate、parent-bound MAIN 子 RPC、request lane 乱序、`active→cancelling→cleanup→quarantined/closed`、
+写后 cancel restore、迟到 setter 不穿透 quarantine、caller/content/no-snapshot 三类 session rehydrate、
+同 tab mutation owner/effect lock、550ms capture limiter、logical page cycle 与 binding TOCTOU。同 frame
+probe 冲突、多 frame 稳定聚合/双 navigation owner，以及 Chaoxing preview/serial profile 必须单测。
+图片通道只接受 locator/anchor/binding，并覆盖 inline→asset、bound crop→restore、2 MiB/16 MiB 上限、
+hash/尺寸校验、跨题/跨 run ref 拒绝和 raw base64 日志 hard-omit。
+
+至少两条 known-adapter 强制全链路：Chaoxing image-only options 走 fetch 403→bound screenshot→fake
+vision→清除旧选项→exact fill→verify；Chaoxing mixed reader 保留 material/stem/option/subquestion 的交错
+顺序、共享图只发送一次、错误 path/缺图时零页面修改。两条都断言最终提交 0、base64/history 0。
+
 ## 3. 测试层级
 
 | 层级                  | 范围                                                       | 典型证据                      |
@@ -52,24 +97,25 @@
 
 至少对两个同时存在的任务 A、B 验证：
 
-| 维度                  | 操作                        | 必须结果                           |
-| --------------------- | --------------------------- | ---------------------------------- |
-| Cookie                | A 登录站点，B 打开同站点    | B 保持未登录                       |
-| HTTP Cache            | A 产生缓存，B 首次访问      | B 不读取 A 的私有缓存状态          |
-| local/session storage | A 写入，B 查询              | B 不可见                           |
-| IndexedDB             | A 创建数据库，B 查询        | B 不可见                           |
-| Service Worker        | A 注册并激活，B 访问        | 生命周期与存储分别归属各 Profile   |
-| Permissions           | A 允许/拒绝摄像头等权限     | B 独立询问，不继承 A 选择          |
-| History               | A 访问 URL                  | B 历史中不存在                     |
-| Passwords/autofill    | A 保存凭证                  | B 不可查询、不自动填充             |
-| Downloads             | A 下载文件                  | 记录、路径策略和事件不归入 B       |
-| Extension storage     | A 修改问学扩展状态          | B 的状态不变化                     |
-| MV3 worker            | 终止或重载 A 的 worker      | B 的 worker 与任务不受影响         |
-| Session restore       | 分别关闭并重启              | A、B 只恢复自己的标签页和状态      |
-| Agent handles         | A/B 同时创建标签页          | 句柄只能在所属 taskId 内使用       |
-| Gateway credentials   | 撤销 A 短时凭证             | B 凭证继续有效且内容不同           |
-| Crash                 | 使 A 的页面/扩展/承载层失败 | B 继续运行，可独立完成任务         |
-| Delete                | 删除 A                      | A 数据按策略清除，B 数据哈希不变化 |
+| 维度                  | 操作                        | 必须结果                                                   |
+| --------------------- | --------------------------- | ---------------------------------------------------------- |
+| Cookie                | A 登录站点，B 打开同站点    | B 保持未登录                                               |
+| HTTP Cache            | A 产生缓存，B 首次访问      | B 不读取 A 的私有缓存状态                                  |
+| local/session storage | A 写入，B 查询              | B 不可见                                                   |
+| IndexedDB             | A 创建数据库，B 查询        | B 不可见                                                   |
+| Service Worker        | A 注册并激活，B 访问        | 生命周期与存储分别归属各 Profile                           |
+| Permissions           | A 允许/拒绝摄像头等权限     | B 独立询问，不继承 A 选择                                  |
+| History               | A 访问 URL                  | B 历史中不存在                                             |
+| Passwords/autofill    | A 保存凭证                  | B 不可查询、不自动填充                                     |
+| Downloads             | A 下载文件                  | 记录、路径策略和事件不归入 B                               |
+| Extension storage     | A 修改问学扩展状态          | B 的状态不变化                                             |
+| MV3 worker            | 终止或重载 A 的 worker      | B 的 worker 与任务不受影响                                 |
+| Session restore       | 分别关闭并重启              | A、B 只恢复自己的标签页和状态                              |
+| Agent handles         | A/B 同时创建标签页          | 句柄只能在所属 taskId 内使用                               |
+| Visual/solver state   | A/B 同时截图并运行答题      | 截图、frame、adapter、embedded answer 与结果只属于各自任务 |
+| Gateway credentials   | 撤销 A 短时凭证             | B 凭证继续有效且内容不同                                   |
+| Crash                 | 使 A 的页面/扩展/承载层失败 | B 继续运行，可独立完成任务                                 |
+| Delete                | 删除 A                      | A 数据按策略清除，B 数据哈希不变化                         |
 
 隔离测试应同时包含正向证明与越权攻击用例，例如伪造 taskId、复用旧标签页句柄、跨任务回放事件和在任务切换瞬间发起操作。
 

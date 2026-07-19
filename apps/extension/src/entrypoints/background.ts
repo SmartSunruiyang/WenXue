@@ -1,3 +1,4 @@
+import { installQuestionSolverBackgroundLifecycle } from '@/agent/questionSolver/bridge.background'
 import { setupTabEventsPort } from '@/agent/TabsController.background'
 import { configureLogger } from '@/lib/logger'
 import { purge } from '@/lib/logStore'
@@ -27,6 +28,7 @@ export default defineBackground(() => {
 	// tab change events
 
 	setupTabEventsPort()
+	installQuestionSolverBackgroundLifecycle()
 
 	// message proxy
 

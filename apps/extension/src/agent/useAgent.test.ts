@@ -304,6 +304,7 @@ describe('useAgent user session reload', () => {
 			{
 				active,
 				vision,
+				questionSolverModels: { text: active, vision },
 				chaoxingModels: { text: active, vision },
 			},
 		)

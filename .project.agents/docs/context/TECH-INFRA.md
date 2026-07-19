@@ -168,20 +168,25 @@ extraResources:
 
 ## 6. 插件（fork 自 page-agent）改造清单
 
-| #   | 改造项                                | 说明                                                                                                                                            |
-| --- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | 品牌化                                | 名称/图标/`_locales`（zh_CN、en）/侧边栏标题 → 问学 WenXue · ask for everything                                                                 |
-| 2   | 固定插件 ID                           | manifest 增加 `key` 字段（自生成 RSA 公钥），保证未打包加载时 ID 稳定，存储与权限跨版本不漂移                                                   |
-| 3   | 默认模型预置                          | 配置面板默认值：内置文本 `qwen3.7-max` + 内置视觉 `qwen3.7-plus`，经 CloudBase Gateway 使用用户 session；自定义模型仍由用户填写 baseURL/API Key |
-| 4   | 权限审计                              | 收敛 `host_permissions` 与可选权限到 Demo 必需集合；逐项记录保留理由                                                                            |
-| 5   | 页面级 API（`window.PAGE_AGENT_EXT`） | 上游的 token 鉴权对外 API，Demo 不需要 → 默认关闭（编译开关保留，正式版再评估）                                                                 |
-| 6   | 遥测确认                              | 审计上游是否有任何外发统计/Demo LLM 端点残留，全部移除或指向空实现                                                                              |
-| 7   | 历史与存储                            | 沿用 IndexedDB 历史、`chrome.storage.local` 存配置（含 API Key，不出本机）                                                                      |
-| 8   | 视觉观察工具                          | `visual_observe` 由 Agent 自主调用，截取当前可见视口并经视觉模型返回结构化 JSON；图片本体不落盘、不入历史、不入日志                             |
+| #   | 改造项                                | 说明                                                                                                                                                                                                                     |
+| --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | 品牌化                                | 名称/图标/`_locales`（zh_CN、en）/侧边栏标题 → 问学 WenXue · ask for everything                                                                                                                                          |
+| 2   | 固定插件 ID                           | manifest 增加 `key` 字段（自生成 RSA 公钥），保证未打包加载时 ID 稳定，存储与权限跨版本不漂移                                                                                                                            |
+| 3   | 默认模型预置                          | 配置面板默认值：内置文本 `qwen3.7-max` + 内置视觉 `qwen3.7-plus`，经 CloudBase Gateway 使用用户 session；自定义模型仍由用户填写 baseURL/API Key                                                                          |
+| 4   | 权限审计                              | 收敛 `host_permissions` 与可选权限到 Demo 必需集合；逐项记录保留理由                                                                                                                                                     |
+| 5   | 页面级 API（`window.PAGE_AGENT_EXT`） | 上游的 token 鉴权对外 API，Demo 不需要 → 默认关闭（编译开关保留，正式版再评估）                                                                                                                                          |
+| 6   | 遥测确认                              | 审计上游是否有任何外发统计/Demo LLM 端点残留，全部移除或指向空实现                                                                                                                                                       |
+| 7   | 历史与存储                            | 沿用 IndexedDB 历史、`chrome.storage.local` 存配置（含 API Key，不出本机）                                                                                                                                               |
+| 8   | 通用视觉能力入口                      | `visual_observe` legacy/Observe 保持结构化观察；capability mode 经内部 registry 显式分派；图片本体不落盘、不入历史、不入日志                                                                                             |
+| 9   | 统一答题 capability                   | `question_solver` 通过 `QUESTION_SOLVER_CONTROL` v1 task/run/request/cancel envelope 精确路由 managed tab/frame/document；DOM/runtime 优先、bound screenshot、结构化模型、写前快照、精确填写/验证/恢复；最终提交永远人工 |
 
 - 权限审计补充：保留 `webNavigation` 权限，用于 `list_frames` 获取 frame 元数据，并支撑按 `frame_id` 执行 JavaScript；这是跨 frame JS 能力对权限最小化原则的显式权衡。
-- 权限审计补充：`visual_observe` 使用 `chrome.tabs.captureVisibleTab` 截取 Agent 当前管理 tab 的可见视口。v2 capture 消息必须携带逻辑 targetTabId，background 在截图后复核 active tab id 与 URL，目标不存在时 fail closed，不回退截图任意活动 tab；该必填约束相对旧 wire contract 不兼容，所以显式升为 v2。Chrome Tabs API 文档说明匹配 host permissions 可支持该能力；本项目已有 `<all_urls>` host permission，首版不新增 manifest 权限。特权页、浏览器 UI、不可截图页面等失败时返回结构化错误并建议改用 DOM 检查或人工处理。
-- 页面级 API 补充：本期 main-world executor 是独立 eval 通道，仅服务 `execute_javascript` 的 `world: 'main'`，不启用上游 `window.PAGE_AGENT_EXT`。
+- 权限审计补充：`visual_observe` 使用 `chrome.tabs.captureVisibleTab`，但只在 target managed tab 同时是 last-focused window 的 active 可见 tab 时捕获；否则 `waiting_for_foreground`，禁止 `tabs.update/windows.update` 抢焦点。源格式 PNG，crop 以 bitmap/top-viewport 实测比例计算并编码 JPEG 0.85；截图前后复核 task lease、URL/page/frame binding。特权页、浏览器 UI 或不可截图页面 fail closed。
+- QuestionSolver 不新增 host 权限（沿用 `<all_urls>`），但为固定 MAIN-world operation 新增 manifest `scripting` permission。content script 使用 `allFrames:true + matchOriginAsFallback:true`；background 以 task lease + run/request + frame/document token 路由。content host 只能经 parent-bound `QUESTION_SOLVER_MAIN_WORLD` 子 RPC 请求源码内 exhaustive allowlist，再由 background 调用 `chrome.scripting.executeScript({world:'MAIN'})`；不接受脚本字符串。
+- frame bootstrap 使用 background nonce challenge + content host 主动 registration，以真实 MessageSender 建立 FrameRef；effectful content/MAIN operation 只按 Chrome documentId 定向。run 最小 lease/lifecycle/effect ledger（含 snapshot digest）写 `chrome.storage.session` 供 MV3 worker rehydrate，题目、答案、图片和凭据不进入该存储；完整 control snapshot 只在 caller 内存与 content PendingControlJournal 暂存，background-only recovery capability 只能驱动 restore/verify cleanup。
+- 同一 tab 的 fill/navigation 由 run-scoped mutation owner 独占，capture/scroll/write/restore 经过 tab effect lock；cleanup 用户侧超时但 effect 未 settle 时 owner 转为 document quarantine，直到 settle+恢复或 document 权威失效。全扩展 `captureVisibleTab` 起始间隔至少 550ms。图片请求只接受 locator/anchor/binding；fetch 失败的 bound crop 由 background 在同一 authenticated request 内 one-shot capture + finally restore，字节再通过 hard-omitted internal envelope 进入 caller EphemeralImageStore（2 MiB/asset、16 MiB/run），普通 RPC/ResultStore/history 仅见 asset ref 或图片标签。
+- 当前题 screenshot 通过 child→parent `postMessage/event.source` anchor 逐层换算 cross-origin iframe rect，保存/恢复各层 scroll，只接受 translate/scale；无法完整绑定时 review，不发送整屏兜底，也不发送 tab URL/title。
+- 页面级 API 补充：现有 main-world eval executor 仍只服务显式 `execute_javascript` 的 `world:'main'`；QuestionSolver 不调用该通道，也不启用上游 `window.PAGE_AGENT_EXT`。
 
 构建：`pnpm -F extension build` → WXT 产出 `.output/chrome-mv3/`，被 desktop 打包步骤消费。仓库根 `pnpm dev` 先构建 extension 再启动 desktop，避免持久画像注册旧 MV3 service worker；修改 background 后必须重启该开发链。专用画像启动前由 ProfileStore 开启 Developer Mode，使 unpacked extension 的 service worker 能从当前目录重新注册；sidepanel/hub 再以 v2 握手探测，并用 Web Locks 在 extension origin 内互斥、最多调用一次 `chrome.runtime.reload()`，失败时仅视觉工具降级，不阻断 DOM Agent。
 
@@ -255,16 +260,20 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ## 9. 错误处理与可观测性
 
-| 故障                                      | 检测                                            | 处置                                                                    |
-| ----------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
-| CfT 启动失败（二进制缺失/被杀毒拦截）     | spawn `error` 事件                              | UI 明确报错 + 指引（日志路径、重装提示）                                |
-| CfT 运行中崩溃                            | 非 0 退出码                                     | 系统通知 + 一键重启；日志留档                                           |
-| 插件未加载                                | 冒烟测试期 CDP 校验；运行期用户反馈             | 属发布门禁问题，不做运行时自动修复                                      |
-| 插件页面与旧 service worker 协议不一致    | sidepanel `VISUAL_OBSERVE` 版本握手             | 单飞 reload 一次；仍失败则视觉工具结构化降级，DOM Agent 保持可用        |
-| 注册网关 / CloudBase Auth 网络或服务失败  | fetch 超时/网络错误或 Web Auth SDK 返回网络错误 | 登录/注册页停止处理中并提示检查网络后重试；不显示原始 `Failed to fetch` |
-| LLM 401/限流/超时                         | 插件内（上游已有处理）/ CloudBase LLM Gateway   | 侧边栏内联错误与重试引导；网关记录无敏感信息的状态码与延迟              |
-| 页面不可操作（sandbox/CSP/canvas/验证码） | Agent 自报告；`execute_javascript` 超时或错误   | 提示人工接管，任务可完成后继续或暂停并保留上下文                        |
-| 日志                                      | `<userData>/logs/` 滚动文件                     | Demo 不上报云端；M1 评估接入上报                                        |
+| 故障                                      | 检测                                               | 处置                                                                    |
+| ----------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------- |
+| CfT 启动失败（二进制缺失/被杀毒拦截）     | spawn `error` 事件                                 | UI 明确报错 + 指引（日志路径、重装提示）                                |
+| CfT 运行中崩溃                            | 非 0 退出码                                        | 系统通知 + 一键重启；日志留档                                           |
+| 插件未加载                                | 冒烟测试期 CDP 校验；运行期用户反馈                | 属发布门禁问题，不做运行时自动修复                                      |
+| 插件页面与旧 service worker 协议不一致    | sidepanel `VISUAL_OBSERVE` 版本握手                | 单飞 reload 一次；仍失败则视觉工具结构化降级，DOM Agent 保持可用        |
+| QuestionSolver adapter / 页面版本漂移     | probe signature、adapter version、page fingerprint | 不写页面；返回 unsupported variant / needsReview，并保留非敏感诊断      |
+| Solver task/frame 串扰或迟到结果          | taskEpoch/runId/requestId/lease/documentToken 门禁 | cancel/丢弃 stale 结果；不进入模型、状态机或页面写入                    |
+| 截图 tab 非前台或 cross-frame anchor 失败 | 前台所有权、parent-chain rect、截图前后 binding    | waiting_for_foreground 或 needsReview；不激活 tab、不发整屏             |
+| Embedded answer 旧缓存 / 乱序 / 跨题      | attempt、question、题干与 option 映射门禁          | 丢弃候选并回退 LLM；仍冲突则人工复核                                    |
+| 注册网关 / CloudBase Auth 网络或服务失败  | fetch 超时/网络错误或 Web Auth SDK 返回网络错误    | 登录/注册页停止处理中并提示检查网络后重试；不显示原始 `Failed to fetch` |
+| LLM 401/限流/超时                         | 插件内（上游已有处理）/ CloudBase LLM Gateway      | 侧边栏内联错误与重试引导；网关记录无敏感信息的状态码与延迟              |
+| 页面不可操作（sandbox/CSP/canvas/验证码） | Agent 自报告；`execute_javascript` 超时或错误      | 提示人工接管，任务可完成后继续或暂停并保留上下文                        |
+| 日志                                      | `<userData>/logs/` 滚动文件                        | Demo 不上报云端；M1 评估接入上报                                        |
 
 ## 10. 安全与隐私基线
 
@@ -274,17 +283,18 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 - CfT 日常启动不开远程调试端口/管道；
 - 插件权限最小化（改造清单 #4），页面级 API 默认关闭（#5）；
 - `visual_observe` 的截图 data URL 仅在插件内存中用于单次视觉模型请求；内置视觉网关缺少用户 session token 时在截图前失败，自定义无鉴权端点仍可用；不向供应商额外发送 tab URL/title；成功输出有字段/数组/总长度上限并拒绝 data URI/长 base64，错误诊断按当前 API key 精确去密；LLM fetch 日志对视觉请求体和响应体分别只记录 omitted 概要，不记录图片本体或模型回显；
+- `question_solver` 的题目截图 / 内联图片沿用相同边界；passive hook 只在 active run 由 manifest endpoint/projection allowlist 临时 arm，最多 64 candidates/256 KiB/10 分钟，结束/cancel/navigation 即恢复 wrapper 并清空。OCSJS 23 个 production variant 当前没有已核实的正确答案字段 allowlist；zhs gxk response 只投影 `questionDtos[].name` 作为题干 identity。原始响应、Cookie、Authorization、session、签名 URL、无关题目与用户数据用完即弃；
 - `execute_javascript` 默认启用以满足真实网页排障/动态 DOM/iframe 场景；高风险部署可通过 `experimentalScriptExecutionTool: false` 关闭。`world: 'main'` 与 `frame_id` 仍受 sandbox、CSP、特权页、跨源隔离和执行超时约束，不承诺绕过页面安全边界；
 - 画像目录权限沿用 OS 用户级隔离；不写入任何系统级配置（无需管理员权限安装）。
 
 ## 11. 测试策略
 
-| 层         | 手段                                         | 范围                                                      |
-| ---------- | -------------------------------------------- | --------------------------------------------------------- |
-| vendor 库  | 上游 vitest 套件原样保留                     | core 的 Agent 循环、llms 客户端、page-controller DOM 处理 |
-| 插件 UI    | Demo 期手动验收（PRD F2–F4 验收标准）        | 侧边栏、配置面板、历史                                    |
-| 桌面端     | 单测（状态机、参数组装、路径解析）+ CDP 冒烟 | F1 验收标准自动化覆盖核心段                               |
-| 端到端演示 | 演示脚本（research + 答题样例页）人工演练    | PRD 第 9 节成功指标                                       |
+| 层         | 手段                                              | 范围                                                              |
+| ---------- | ------------------------------------------------- | ----------------------------------------------------------------- |
+| vendor 库  | 上游 vitest 套件原样保留                          | core 的 Agent 循环、llms 客户端、page-controller DOM 处理         |
+| 插件 UI    | Demo 期手动验收（PRD F2–F4 验收标准）             | 侧边栏、配置面板、历史                                            |
+| 桌面端     | 单测（状态机、参数组装、路径解析）+ CDP 冒烟      | F1 验收标准自动化覆盖核心段                                       |
+| 端到端演示 | 演示脚本（research + 多平台答题 fixture）人工演练 | PRD 第 9 节成功指标；adapter 在真实 smoke 前仅 `fixture_verified` |
 
 ## 12. 关键决策记录（ADR 摘要）
 
