@@ -1,7 +1,9 @@
 import cloudbase from '@cloudbase/js-sdk'
 import { strings } from './strings'
 
-const WENXUE_GATEWAY_BASE_URL =
+declare const __WENXUE_GATEWAY_BASE_URL__: string
+
+const DEFAULT_WENXUE_GATEWAY_BASE_URL =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
 const USERNAME_MIN_LENGTH = 5
 const USERNAME_MAX_LENGTH = 24
@@ -30,7 +32,10 @@ const DEFAULT_CLOUDBASE_ACCESS_KEY = [
 const envId = import.meta.env.VITE_CLOUDBASE_ENV_ID ?? 'wenxue-d8gz76tacc3659f05'
 const region = import.meta.env.VITE_CLOUDBASE_REGION ?? 'ap-shanghai'
 const accessKey = import.meta.env.VITE_CLOUDBASE_ACCESS_KEY || DEFAULT_CLOUDBASE_ACCESS_KEY
-const gatewayBaseUrl = import.meta.env.VITE_WENXUE_GATEWAY_BASE_URL ?? WENXUE_GATEWAY_BASE_URL
+const gatewayBaseUrl =
+	typeof __WENXUE_GATEWAY_BASE_URL__ === 'string'
+		? __WENXUE_GATEWAY_BASE_URL__
+		: (import.meta.env.VITE_WENXUE_GATEWAY_BASE_URL ?? DEFAULT_WENXUE_GATEWAY_BASE_URL)
 const registerUrl =
 	import.meta.env.VITE_WENXUE_REGISTER_URL ??
 	`${normalizeGatewayBaseUrl(gatewayBaseUrl)}/v1/auth/register`
@@ -52,11 +57,30 @@ interface CloudBaseAuthClient {
 		password: string
 	}): Promise<{ data?: unknown; error?: CloudBaseAuthError | null }>
 	getSession(): Promise<{ data?: unknown; error?: CloudBaseAuthError | null }>
+	refreshSession(
+		refreshToken?: string,
+	): Promise<{ data?: unknown; error?: CloudBaseAuthError | null }>
 	signOut(): Promise<{ error?: CloudBaseAuthError | null }>
 }
 
 interface CloudBaseApp {
 	auth(options: { persistence: 'local' }): CloudBaseAuthClient
+	database(): CloudBaseDatabase
+}
+
+interface CloudBaseDatabase {
+	collection(name: string): {
+		where(query: Record<string, unknown>): {
+			watch(callbacks: {
+				onChange: (snapshot: unknown) => void
+				onError: (error: unknown) => void
+			}): DesktopSignalWatcher
+		}
+	}
+}
+
+export interface DesktopSignalWatcher {
+	close(): void | Promise<void>
 }
 
 export interface LauncherAuthSession {
@@ -90,7 +114,25 @@ export const cloudbaseConfig = {
 	hasAccessKey: Boolean(accessKey),
 }
 
+let app: CloudBaseApp | null | undefined
 let auth: CloudBaseAuthClient | null | undefined
+
+export function watchDesktopSignal(
+	collectionName: 'desktop_announcement_signal' | 'desktop_release_signal',
+	documentId: string,
+	callbacks: {
+		onChange: (snapshot: unknown) => void
+		onError: (error: unknown) => void
+	},
+): DesktopSignalWatcher {
+	const cloudbaseApp = getApp()
+	if (!cloudbaseApp) throw new Error(strings.auth.error.publishableKey)
+	return cloudbaseApp
+		.database()
+		.collection(collectionName)
+		.where({ _id: documentId })
+		.watch(callbacks)
+}
 
 export function validateLauncherCredentials(
 	username: string,
@@ -167,6 +209,20 @@ export async function getLauncherSession(): Promise<LauncherAuthSession | null> 
 	return readLauncherAuthSession(data)
 }
 
+export async function refreshLauncherSession(refreshToken?: string): Promise<LauncherAuthSession> {
+	const authClient = getAuth()
+	if (!authClient) throw new Error(strings.auth.error.publishableKey)
+	try {
+		const { data, error } = await withAuthRequestTimeout(authClient.refreshSession(refreshToken))
+		if (error) throw error
+		const session = readLauncherAuthSession(data)
+		if (!session) throw new Error(strings.auth.error.loginSession)
+		return session
+	} catch (error) {
+		throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.loginSession))
+	}
+}
+
 export async function signOutLauncher(): Promise<void> {
 	const authClient = getAuth()
 	if (!authClient) return
@@ -240,21 +296,28 @@ function isConnectivityError(value: unknown): boolean {
 
 function getAuth(): CloudBaseAuthClient | null {
 	if (auth !== undefined) return auth
+	const cloudbaseApp = getApp()
+	auth = cloudbaseApp?.auth({ persistence: 'local' }) ?? null
+	return auth
+}
+
+function getApp(): CloudBaseApp | null {
+	if (app !== undefined) return app
 	if (!accessKey) {
-		auth = null
-		return auth
+		app = null
+		return app
 	}
 
 	try {
-		const app = cloudbase.init({
+		app = cloudbase.init({
 			env: envId,
 			region,
 			accessKey,
 			auth: { detectSessionInUrl: true },
 		}) as unknown as CloudBaseApp
-		auth = app.auth({ persistence: 'local' })
-		return auth
+		return app
 	} catch {
+		app = null
 		return null
 	}
 }

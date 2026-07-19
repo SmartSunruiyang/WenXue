@@ -1,0 +1,8 @@
+cos:
+  base:
+    secretid: ''
+    secretkey: ''
+    sessiontoken: ''
+    protocol: https
+    mode: SecretKey
+  buckets: []

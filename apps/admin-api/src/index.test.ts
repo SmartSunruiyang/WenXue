@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { me, userStatus } from './index.mjs'
+import { clientUpdatePolicy, me, userStatus } from './index.mjs'
 
 afterEach(() => {
 	vi.unstubAllEnvs()
@@ -14,7 +14,7 @@ describe('Admin API CloudBase adapter', () => {
 				headers: {
 					origin: 'https://wenxue-admin.example.test',
 					'access-control-request-method': 'GET',
-					'access-control-request-headers': 'authorization,content-type',
+					'access-control-request-headers': 'authorization,content-type,idempotency-key',
 				},
 			},
 			{},
@@ -22,6 +22,7 @@ describe('Admin API CloudBase adapter', () => {
 
 		expect(response.statusCode).toBe(204)
 		expect(response.headers['access-control-allow-methods']).toContain('OPTIONS')
+		expect(response.headers['access-control-allow-headers']).toContain('idempotency-key')
 		expect(response.body).toBe('')
 	})
 
@@ -71,5 +72,38 @@ describe('Admin API CloudBase adapter', () => {
 			status: 'disabled',
 		})
 		expect(fetchImpl).toHaveBeenCalledTimes(5)
+	})
+
+	it('reads client update query parameters from the Functions Framework URL', async () => {
+		vi.stubEnv('CLOUDBASE_ADMIN_API_KEY', 'test-admin-key')
+		vi.stubEnv(
+			'WENXUE_RELEASE_EVENT_TOKEN_SECRET',
+			'test-release-event-token-secret-32-bytes-minimum',
+		)
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(new Response(null, { status: 404 }))
+			.mockResolvedValueOnce(Response.json({ list: [] }))
+		vi.stubGlobal('fetch', fetchImpl)
+
+		const response = await clientUpdatePolicy(
+			{},
+			{
+				httpContext: {
+					httpMethod: 'GET',
+					headers: { 'x-real-ip': '203.0.113.20' },
+					url: `https://example.test/v1/client/update-policy?runtime=electron&platform=darwin&arch=arm64&channel=stable&version=0.1.0&installIdHash=${'a'.repeat(64)}`,
+				},
+			},
+		)
+
+		expect(response.statusCode).toBe(200)
+		expect(JSON.parse(response.body)).toEqual({ policy: null })
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+		const requestUrl = new URL(String(fetchImpl.mock.calls[1]?.[0]))
+		expect(JSON.parse(requestUrl.searchParams.get('query') ?? '')).toEqual({
+			runtime: 'electron',
+			channel: 'stable',
+		})
 	})
 })

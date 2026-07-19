@@ -1,15 +1,17 @@
+import type { UpdateState } from '@wenxue/client-operations'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { BrowserProfileStore } from './BrowserProfileStore'
 import type { BrowserResources } from './BrowserResources'
 import type { BrowserStatus, BrowserSupervisor } from './BrowserSupervisor'
+import type { DesktopUpdateService } from './DesktopUpdateService'
 import type { LauncherLogStore } from './LauncherLogStore'
 import type { DeepPartial, LauncherSettings, LauncherSettingsStore } from './LauncherSettingsStore'
 import type { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import type { TokenUsageStore } from './TokenUsageStore'
 import type { UsageCloudClient } from './UsageCloudClient'
 import type { UserSessionHandoff } from './UserSessionHandoff'
-import type { PublicUserSession, UserSession, UserSessionStore } from './UserSessionStore'
+import type { PublicUserSession, UserSessionStore } from './UserSessionStore'
 
 export interface IpcMainLike {
 	handle(channel: string, handler: (...args: unknown[]) => unknown): void
@@ -56,16 +58,23 @@ export interface DesktopBridgeOptions {
 	usageCloudClient: Pick<UsageCloudClient, 'summary'>
 	userSessionStore: Pick<UserSessionStore, 'setSession' | 'current' | 'requireSession' | 'clear'>
 	userSessionHandoff: Pick<UserSessionHandoff, 'run'>
+	updateService: Pick<
+		DesktopUpdateService,
+		'state' | 'check' | 'download' | 'openInstaller' | 'subscribe' | 'assertWorkspaceAllowed'
+	>
 	resources: BrowserResources
 	getAppVersion: () => string
 	getShellInfo: () => AppShellInfo
 	openLogs: () => Promise<void>
+	openExternal: (url: string) => Promise<void>
 	openPath: (path: string) => Promise<string>
+	quitApp: () => Promise<void>
 	minimizeWindow: () => void
 	toggleMaximizeWindow: () => void
 	requestClose: () => void
 	sendStatus: (status: BrowserStatus) => void
 	sendProfileStatus: (payload: { profileId: string; status: BrowserStatus }) => void
+	sendUpdateState: (state: UpdateState) => void
 }
 
 export function registerDesktopBridge(options: DesktopBridgeOptions): () => void {
@@ -219,6 +228,20 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		}
 	})
 
+	options.ipcMain.handle(
+		'app:openExternal',
+		async (_event: unknown, value: unknown): Promise<LaunchResult> => {
+			try {
+				const url = new URL(requireStringArg(value, 'url'))
+				if (url.protocol !== 'https:') throw new Error('只能打开 HTTPS 链接')
+				await options.openExternal(url.toString())
+				return { ok: true }
+			} catch (error) {
+				return { ok: false, error: toUserSafeMessage(error) }
+			}
+		},
+	)
+
 	options.ipcMain.handle('app:minimizeWindow', async (): Promise<LaunchResult> => {
 		options.minimizeWindow()
 		return { ok: true }
@@ -232,6 +255,15 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	options.ipcMain.handle('app:requestClose', async (): Promise<LaunchResult> => {
 		options.requestClose()
 		return { ok: true }
+	})
+
+	options.ipcMain.handle('app:quit', async (): Promise<LaunchResult> => {
+		try {
+			await options.quitApp()
+			return { ok: true }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
 	})
 
 	options.ipcMain.handle('logs:query', async (_event: unknown, filter?: unknown) => {
@@ -294,6 +326,50 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		return { ok: true }
 	})
 
+	options.ipcMain.handle('updates:getState', async (): Promise<UpdateState> => {
+		return options.updateService.state()
+	})
+
+	options.ipcMain.handle(
+		'updates:check',
+		async (_event: unknown, reason?: unknown): Promise<UpdateMutationResult> => {
+			try {
+				const checkReason = reason === undefined ? 'manual' : requireUpdateCheckReason(reason)
+				return { ok: true, state: await options.updateService.check(checkReason) }
+			} catch (error) {
+				return {
+					ok: false,
+					state: options.updateService.state(),
+					error: toUserSafeMessage(error),
+				}
+			}
+		},
+	)
+
+	options.ipcMain.handle('updates:download', async (): Promise<UpdateMutationResult> => {
+		try {
+			return { ok: true, state: await options.updateService.download() }
+		} catch (error) {
+			return {
+				ok: false,
+				state: options.updateService.state(),
+				error: toUserSafeMessage(error),
+			}
+		}
+	})
+
+	options.ipcMain.handle('updates:openInstaller', async (): Promise<UpdateMutationResult> => {
+		try {
+			return { ok: true, state: await options.updateService.openInstaller() }
+		} catch (error) {
+			return {
+				ok: false,
+				state: options.updateService.state(),
+				error: toUserSafeMessage(error),
+			}
+		}
+	})
+
 	options.ipcMain.handle('telemetry:ingest', async (_event: unknown, payload?: unknown) => {
 		try {
 			return { ok: true, result: await options.telemetryIngest.ingest(payload) }
@@ -306,10 +382,12 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	const unsubscribeProfileStatus = options.supervisor.onProfileStatusChange((profileId, status) => {
 		options.sendProfileStatus({ profileId, status })
 	})
+	const unsubscribeUpdateState = options.updateService.subscribe(options.sendUpdateState)
 
 	return () => {
 		unsubscribeStatus()
 		unsubscribeProfileStatus()
+		unsubscribeUpdateState()
 	}
 }
 
@@ -317,6 +395,7 @@ async function launchProfileWithUserSession(
 	options: DesktopBridgeOptions,
 	profileId: string,
 ): Promise<void> {
+	await options.updateService.assertWorkspaceAllowed()
 	const session = options.userSessionStore.requireSession()
 	const result = await options.userSessionHandoff.run(session, async (url) => {
 		await options.supervisor.launch(profileId, { startUrl: url })
@@ -326,19 +405,16 @@ async function launchProfileWithUserSession(
 	}
 }
 
-async function launcherStartUrl(
-	settingsStore: Pick<LauncherSettingsStore, 'get'>,
-): Promise<string | undefined> {
-	const startUrl = (await settingsStore.get()).launch.startUrl.trim()
-	return startUrl.length > 0 ? startUrl : undefined
-}
-
 interface ProfileMutationResult extends LaunchResult {
 	profile?: Awaited<ReturnType<BrowserProfileStore['create']>>
 }
 
 interface SettingsMutationResult extends LaunchResult {
 	settings?: LauncherSettings
+}
+
+interface UpdateMutationResult extends LaunchResult {
+	state: UpdateState
 }
 
 function readExtensionVersion(extensionDir: string): string {
@@ -379,4 +455,9 @@ function requireStringArg(value: unknown, label: string): string {
 		throw new Error(`Invalid ${label}`)
 	}
 	return value
+}
+
+function requireUpdateCheckReason(value: unknown): 'manual' | 'signal' {
+	if (value === 'manual' || value === 'signal') return value
+	throw new Error('Invalid update check reason')
 }

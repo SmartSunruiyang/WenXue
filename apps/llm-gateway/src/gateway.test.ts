@@ -1006,7 +1006,11 @@ describe('CloudBase LLM gateway behavior', () => {
 			'utf8',
 		)
 
+		expect(dockerfile).toContain('WORKDIR /app\n')
 		expect(dockerfile).toContain('WORKDIR /app/apps/llm-gateway')
+		expect(dockerfile).toContain(
+			'CMD ["node", "/app/node_modules/@cloudbase/functions-framework/bin/tcb-ff.js"',
+		)
 		expect(dockerfile).toContain('COPY apps/llm-gateway/src ./src')
 		expect(dockerfile).toContain('COPY apps/admin-api/src /app/apps/admin-api/src')
 		expect(dockerfile).toContain('COPY apps/admin/dist /app/apps/admin/dist')

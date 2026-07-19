@@ -1,9 +1,11 @@
 import {
 	Activity,
 	BarChart3,
+	BellRing,
 	CheckCircle2,
 	CircleAlert,
 	LogOut,
+	PackageCheck,
 	RefreshCw,
 	Save,
 	Shield,
@@ -12,7 +14,9 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 
 import { fetchMe, fetchUsageSummary, fetchUsers, patchUserStatus } from './adminApi'
+import { AnnouncementPage } from './AnnouncementPage'
 import { cloudbaseConfig, getAdminSession, signInAdmin, signOutAdmin } from './cloudbase'
+import { ReleasePage } from './ReleasePage'
 import type {
 	AdminMe,
 	AdminSession,
@@ -37,6 +41,15 @@ const EMPTY_SUMMARY: AdminUsageSummary = {
 	},
 }
 
+type AdminView = 'dashboard' | 'users' | 'announcements' | 'releases'
+
+const VIEW_COPY: Record<AdminView, { title: string; description: string }> = {
+	dashboard: { title: 'Tokens 看板', description: '用量、模型和最近调用概览' },
+	users: { title: '用户', description: '账号状态与内置模型访问设置' },
+	announcements: { title: '消息推送', description: '编辑固定弹窗并向目标账号立即推送' },
+	releases: { title: '版本更新', description: '选择 CI 候选并控制灰度发布' },
+}
+
 export default function App() {
 	const [session, setSession] = useState<AdminSession | null>(null)
 	const [me, setMe] = useState<AdminMe | null>(null)
@@ -44,6 +57,8 @@ export default function App() {
 	const [users, setUsers] = useState<UserAccountView[]>([])
 	const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
 	const [userStatusFilter, setUserStatusFilter] = useState<UserStatus | 'all'>('all')
+	const [view, setView] = useState<AdminView>(readAdminView)
+	const [dispatchRefreshToken, setDispatchRefreshToken] = useState(0)
 	const [loading, setLoading] = useState(true)
 	const [refreshing, setRefreshing] = useState(false)
 	const [error, setError] = useState<string | null>(null)
@@ -51,7 +66,7 @@ export default function App() {
 	const selectedUser = users.find((user) => user.userId === selectedUserId) ?? users[0]
 
 	const refresh = useCallback(
-		async (activeSession: AdminSession, status: UserStatus | 'all' = userStatusFilter) => {
+		async (activeSession: AdminSession, status: UserStatus | 'all' = 'all') => {
 			setRefreshing(true)
 			setError(null)
 			try {
@@ -74,7 +89,7 @@ export default function App() {
 				setLoading(false)
 			}
 		},
-		[userStatusFilter],
+		[],
 	)
 
 	useEffect(() => {
@@ -92,6 +107,13 @@ export default function App() {
 			cancelled = true
 		}
 	}, [refresh])
+
+	useEffect(() => {
+		const handleHashChange = () => setView(readAdminView())
+		window.addEventListener('hashchange', handleHashChange)
+		if (!window.location.hash) window.history.replaceState(null, '', '#dashboard')
+		return () => window.removeEventListener('hashchange', handleHashChange)
+	}, [])
 
 	const handleLogin = async (username: string, password: string) => {
 		setError(null)
@@ -112,6 +134,15 @@ export default function App() {
 	const handleStatusFilterChange = async (status: UserStatus | 'all') => {
 		setUserStatusFilter(status)
 		if (session) await refresh(session, status)
+	}
+
+	const handleRefresh = async () => {
+		if (!session) return
+		if (view === 'announcements' || view === 'releases') {
+			setDispatchRefreshToken((current) => current + 1)
+			return
+		}
+		await refresh(session, userStatusFilter)
 	}
 
 	const handleUserStatusSave = async (patch: {
@@ -153,8 +184,11 @@ export default function App() {
 		return <LoginScreen error={error} onLogin={handleLogin} />
 	}
 
+	const canEdit = me?.role === 'admin'
+	const viewCopy = VIEW_COPY[view]
+
 	return (
-		<div className="admin-shell">
+		<div className={`admin-shell${view === 'users' ? ' admin-shell--inspector' : ''}`}>
 			<aside className="sidebar">
 				<div className="brand">
 					<div className="brand-mark">问</div>
@@ -164,13 +198,37 @@ export default function App() {
 					</div>
 				</div>
 				<nav className="nav-list" aria-label="后台导航">
-					<a className="active" href="#dashboard">
+					<a
+						className={view === 'dashboard' ? 'active' : ''}
+						href="#dashboard"
+						aria-current={view === 'dashboard' ? 'page' : undefined}
+					>
 						<BarChart3 size={18} />
 						看板
 					</a>
-					<a href="#users">
+					<a
+						className={view === 'users' ? 'active' : ''}
+						href="#users"
+						aria-current={view === 'users' ? 'page' : undefined}
+					>
 						<Users size={18} />
 						用户
+					</a>
+					<a
+						className={view === 'announcements' ? 'active' : ''}
+						href="#announcements"
+						aria-current={view === 'announcements' ? 'page' : undefined}
+					>
+						<BellRing size={18} />
+						消息推送
+					</a>
+					<a
+						className={view === 'releases' ? 'active' : ''}
+						href="#releases"
+						aria-current={view === 'releases' ? 'page' : undefined}
+					>
+						<PackageCheck size={18} />
+						版本更新
 					</a>
 				</nav>
 			</aside>
@@ -178,9 +236,9 @@ export default function App() {
 			<main className="workspace">
 				<header className="topbar">
 					<div>
-						<h1>Tokens 看板</h1>
+						<h1>{viewCopy.title}</h1>
 						<p>
-							{cloudbaseConfig.envId} · {cloudbaseConfig.region}
+							{viewCopy.description} · {cloudbaseConfig.envId} · {cloudbaseConfig.region}
 						</p>
 					</div>
 					<div className="topbar-actions">
@@ -189,11 +247,16 @@ export default function App() {
 							{me?.displayName ?? me?.uid ?? session.userId}
 							{me?.role ? ` · ${me.role}` : ''}
 						</span>
-						<button className="icon-button" onClick={() => refresh(session)} disabled={refreshing}>
+						<button
+							className="icon-button"
+							type="button"
+							onClick={() => void handleRefresh()}
+							disabled={refreshing}
+						>
 							<RefreshCw size={16} className={refreshing ? 'spin' : ''} />
 							刷新
 						</button>
-						<button className="icon-button ghost" onClick={handleLogout}>
+						<button className="icon-button ghost" type="button" onClick={handleLogout}>
 							<LogOut size={16} />
 							退出
 						</button>
@@ -207,94 +270,131 @@ export default function App() {
 					</div>
 				)}
 
-				<section className="metric-grid" aria-label="tokens 汇总">
-					<MetricCard
-						label="输入 Tokens"
-						value={summary.totalInputTokens}
-						icon={<Activity size={18} />}
+				{view === 'dashboard' && <DashboardPage summary={summary} />}
+				{view === 'users' && (
+					<UsersPage
+						users={users}
+						selectedUserId={selectedUser?.userId}
+						statusFilter={userStatusFilter}
+						onFilterChange={handleStatusFilterChange}
+						onSelect={setSelectedUserId}
 					/>
-					<MetricCard
-						label="输出 Tokens"
-						value={summary.totalOutputTokens}
-						icon={<Activity size={18} />}
+				)}
+				{view === 'announcements' && (
+					<AnnouncementPage
+						session={session}
+						canEdit={canEdit}
+						refreshToken={dispatchRefreshToken}
 					/>
-					<MetricCard
-						label="总 Tokens"
-						value={summary.totalTokens}
-						icon={<BarChart3 size={18} />}
-					/>
-					<MetricCard
-						label="活跃用户"
-						value={summary.userStatus.active}
-						icon={<CheckCircle2 size={18} />}
-						subtle={`${summary.userStatus.total} 个总计`}
-					/>
-				</section>
-
-				<div className="content-grid">
-					<section className="panel chart-panel" id="dashboard">
-						<div className="panel-header">
-							<div>
-								<h2>每日用量</h2>
-								<p>按云端 `token_usage` 实时聚合</p>
-							</div>
-						</div>
-						<UsageChart buckets={summary.byDay} />
-					</section>
-
-					<section className="panel">
-						<div className="panel-header">
-							<div>
-								<h2>模型分布</h2>
-								<p>内置模型调用占比</p>
-							</div>
-						</div>
-						<BucketTable buckets={summary.byModel} />
-					</section>
-
-					<section className="panel user-panel" id="users">
-						<div className="panel-header">
-							<div>
-								<h2>用户状态</h2>
-								<p>按用户启用或禁用内置模型访问</p>
-							</div>
-							<div className="segmented">
-								{(['all', 'active', 'disabled'] as const).map((status) => (
-									<button
-										key={status}
-										className={userStatusFilter === status ? 'selected' : ''}
-										onClick={() => handleStatusFilterChange(status)}
-									>
-										{status === 'all' ? '全部' : status === 'active' ? '启用' : '禁用'}
-									</button>
-								))}
-							</div>
-						</div>
-						<UserTable
-							users={users}
-							selectedUserId={selectedUser?.userId}
-							onSelect={setSelectedUserId}
-						/>
-					</section>
-
-					<section className="panel recent-panel">
-						<div className="panel-header">
-							<div>
-								<h2>最近调用</h2>
-								<p>不展示正文与敏感头</p>
-							</div>
-						</div>
-						<RecentTable summary={summary} />
-					</section>
-				</div>
+				)}
+				{view === 'releases' && (
+					<ReleasePage session={session} canEdit={canEdit} refreshToken={dispatchRefreshToken} />
+				)}
 			</main>
 
-			<UserInspector
-				user={selectedUser}
-				canEdit={me?.role === 'admin'}
-				onSave={handleUserStatusSave}
-			/>
+			{view === 'users' && (
+				<UserInspector
+					key={selectedUser?.userId ?? 'no-user'}
+					user={selectedUser}
+					canEdit={canEdit}
+					onSave={handleUserStatusSave}
+				/>
+			)}
 		</div>
+	)
+}
+
+function DashboardPage({ summary }: { summary: AdminUsageSummary }) {
+	return (
+		<>
+			<section className="metric-grid" aria-label="tokens 汇总">
+				<MetricCard
+					label="输入 Tokens"
+					value={summary.totalInputTokens}
+					icon={<Activity size={18} />}
+				/>
+				<MetricCard
+					label="输出 Tokens"
+					value={summary.totalOutputTokens}
+					icon={<Activity size={18} />}
+				/>
+				<MetricCard label="总 Tokens" value={summary.totalTokens} icon={<BarChart3 size={18} />} />
+				<MetricCard
+					label="活跃用户"
+					value={summary.userStatus.active}
+					icon={<CheckCircle2 size={18} />}
+					subtle={`${summary.userStatus.total} 个总计`}
+				/>
+			</section>
+
+			<div className="content-grid">
+				<section className="panel chart-panel">
+					<div className="panel-header">
+						<div>
+							<h2>每日用量</h2>
+							<p>按云端 `token_usage` 实时聚合</p>
+						</div>
+					</div>
+					<UsageChart buckets={summary.byDay} />
+				</section>
+				<section className="panel">
+					<div className="panel-header">
+						<div>
+							<h2>模型分布</h2>
+							<p>内置模型调用占比</p>
+						</div>
+					</div>
+					<BucketTable buckets={summary.byModel} />
+				</section>
+				<section className="panel recent-panel dashboard-recent">
+					<div className="panel-header">
+						<div>
+							<h2>最近调用</h2>
+							<p>不展示正文与敏感头</p>
+						</div>
+					</div>
+					<RecentTable summary={summary} />
+				</section>
+			</div>
+		</>
+	)
+}
+
+function UsersPage({
+	users,
+	selectedUserId,
+	statusFilter,
+	onFilterChange,
+	onSelect,
+}: {
+	users: UserAccountView[]
+	selectedUserId?: string
+	statusFilter: UserStatus | 'all'
+	onFilterChange: (status: UserStatus | 'all') => Promise<void>
+	onSelect: (userId: string) => void
+}) {
+	return (
+		<section className="panel user-panel">
+			<div className="panel-header">
+				<div>
+					<h2>用户状态</h2>
+					<p>按用户启用或禁用内置模型访问</p>
+				</div>
+				<div className="segmented">
+					{(['all', 'active', 'disabled'] as const).map((status) => (
+						<button
+							key={status}
+							type="button"
+							className={statusFilter === status ? 'selected' : ''}
+							onClick={() => void onFilterChange(status)}
+						>
+							{status === 'all' ? '全部' : status === 'active' ? '启用' : '禁用'}
+						</button>
+					))}
+				</div>
+			</div>
+			<UserTable users={users} selectedUserId={selectedUserId} onSelect={onSelect} />
+		</section>
 	)
 }
 
@@ -542,22 +642,11 @@ function UserInspector({
 		reason: string
 	}) => Promise<void>
 }) {
-	const [status, setStatus] = useState<UserStatus>('active')
-	const [note, setNote] = useState('')
+	const [status, setStatus] = useState<UserStatus>(user?.status ?? 'active')
+	const [note, setNote] = useState(user?.note ?? '')
 	const [reason, setReason] = useState('')
 	const [saving, setSaving] = useState(false)
 	const [message, setMessage] = useState<string | null>(null)
-
-	useEffect(() => {
-		if (!user) return
-		setStatus(user.status)
-		setNote(user.note ?? '')
-	}, [user?.note, user?.status, user?.userId])
-
-	useEffect(() => {
-		setReason('')
-		setMessage(null)
-	}, [user?.userId])
 
 	const handleSave = async () => {
 		if (!user) return
@@ -622,6 +711,7 @@ function UserInspector({
 							{(['active', 'disabled'] as const).map((item) => (
 								<button
 									key={item}
+									type="button"
 									className={status === item ? 'selected' : ''}
 									onClick={() => setStatus(item)}
 									disabled={!canEdit}
@@ -648,7 +738,12 @@ function UserInspector({
 							disabled={!canEdit}
 						/>
 					</label>
-					<button className="primary-button" onClick={handleSave} disabled={!canEdit || saving}>
+					<button
+						className="primary-button"
+						type="button"
+						onClick={handleSave}
+						disabled={!canEdit || saving}
+					>
 						<Save size={16} />
 						{saving ? '保存中' : '保存状态'}
 					</button>
@@ -688,4 +783,10 @@ function formatDate(value: string | number) {
 
 function shortUserId(value: string) {
 	return value.length > 22 ? `${value.slice(0, 14)}…${value.slice(-6)}` : value
+}
+
+function readAdminView(): AdminView {
+	const hash = window.location.hash.replace(/^#\/?/, '').split(/[/?]/)[0]
+	if (hash === 'users' || hash === 'announcements' || hash === 'releases') return hash
+	return 'dashboard'
 }

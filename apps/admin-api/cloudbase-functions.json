@@ -63,6 +63,83 @@
 			"source": "index.mjs",
 			"target": "userStatus",
 			"triggerPath": "/api/admin/v1/user-status"
+		},
+		{
+			"name": "admin-announcements",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "announcements",
+			"triggerPath": "/api/admin/v1/announcements"
+		},
+		{
+			"name": "admin-announcement-withdraw",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "announcementWithdraw",
+			"triggerPath": "/api/admin/v1/announcement-withdraw"
+		},
+		{
+			"name": "admin-release-candidates",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "releaseCandidates",
+			"triggerPath": "/api/admin/v1/release-candidates"
+		},
+		{
+			"name": "admin-releases",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "releases",
+			"triggerPath": "/api/admin/v1/releases"
+		},
+		{
+			"name": "admin-release-publish",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "releasePublish",
+			"triggerPath": "/api/admin/v1/release-publish"
+		},
+		{
+			"name": "admin-release-state",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "releaseState",
+			"triggerPath": "/api/admin/v1/release-state"
+		},
+		{
+			"name": "release-candidate-register",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "releaseCandidateRegister",
+			"triggerPath": "/api/internal/v1/release-candidates/register"
+		},
+		{
+			"name": "client-announcements-pending",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "clientAnnouncementsPending",
+			"triggerPath": "/v1/client/announcements/pending"
+		},
+		{
+			"name": "client-announcement-ack",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "clientAnnouncementAck",
+			"triggerPath": "/v1/client/announcement-ack"
+		},
+		{
+			"name": "client-update-policy",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "clientUpdatePolicy",
+			"triggerPath": "/v1/client/update-policy"
+		},
+		{
+			"name": "client-update-events",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "clientUpdateEvents",
+			"triggerPath": "/v1/client/update-events"
 		}
 	]
 }

@@ -3,7 +3,7 @@
 | 项       | 内容                                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------------------ |
 | 状态     | G0 已批准，作为目标架构冻结基线                                                                        |
-| 日期     | 2026-07-14                                                                                             |
+| 日期     | 2026-07-18                                                                                             |
 | 上游需求 | [AI 浏览器重构 PRD v0.3](../01-product/PRD.md)                                                         |
 | 配套计划 | [迁移实施计划](../03-delivery/PLAN.md)                                                                 |
 | 冻结基线 | extension 1.9.1 @ `8a29557797e9ffbbc7fbe1d88de463529c6f0820`；CfT `149.0.7827.55` / revision `1625079` |
@@ -205,6 +205,11 @@ revision 一致的 CfT 上，用于归因内核、构建与性能差异。两者
 - 当任一发布构建时，发布清单应锁定并校验所有源码与内置扩展输入。
 - 当更新安装失败时，更新器应保留可启动的上一版本并禁止破坏用户画像。
 - 当 Chromium revision 变化时，CAP 等价、迁移、性能和安全测试应自动重新进入发布门禁。
+- 当 CI 注册 Ed25519 清单保护、且产物通过 Chromium G5 平台签名门禁的不可变候选后，管理员应只通过
+  既有后台选择候选并发布动态 rollout；后台不得上传二进制。客户端沿用 Electron 已建立的
+  runtime/channel/platform/version/稳定分桶协议，但不复用其 `manual-unsigned` 安装包下载器。
+- 当强制策略超过 24 小时且服务不可达时，浏览器不得无限锁死工作区；更新安装前必须成功完成实时策略复核，
+  缓存 mandatory 策略只能维持 24 小时内的离线警告/门禁，不得授权安装。
 
 ### AR-09 平台与性能
 
@@ -237,6 +242,8 @@ revision 一致的 CfT 上，用于归因内核、构建与性能差异。两者
   汇总；浏览器来源字段和版本字段不得改变既有计量语义。
 - 当管理员操作用户状态时，现有后台应继续要求内部管理员登录并写审计记录，且不得展示 prompt、
   response、API Key 或用户 session。
+- 当管理员推送消息时，Gateway 应按 uid、平台和版本过滤并只向匹配账号返回正文；Chromium 客户端
+  复用既有 announcement/ack/signal 协议和固定展示语义。
 - 当 G5 stable 产物发布时，官网应指向匹配发布清单的双平台签名产物和版本说明；官网 UI 重设计
   不属于本迁移。
 
@@ -293,6 +300,7 @@ flowchart TB
         PrivateApi["chrome.wenxuePrivate\n任务上下文 · 运行租约"]
         Importer["LegacyProfileImporter"]
         Update["WenXueUpdatePolicy"]
+        Announcement["WenXueAnnouncementFeed"]
 
         Shell --> Host
         Shell --> Profiles
@@ -301,6 +309,7 @@ flowchart TB
         PrivateApi --> Scheduler
         PrivateApi --> Credentials
         Importer --> Profiles
+        Shell --> Announcement
     end
 
     subgraph A["Task A — persistent Profile/BrowserContext"]
@@ -329,6 +338,7 @@ flowchart TB
     AgentB --> Cloud
     Update --> ProfileA
     Update --> ProfileB
+    Announcement --> Cloud
 ```
 
 ### 6.1 运行时进程边界
@@ -415,10 +425,21 @@ flowchart TB
 
 ### 7.9 `WenXueUpdatePolicy`
 
-- 职责：品牌化 Chromium Updater 注册、通道、签名更新清单、版本回退保护和更新后健康检查。
+- 职责：品牌化 Chromium Updater 注册；消费服务端 `UpdatePolicy`、通道、Ed25519 候选清单、稳定灰度、
+  暂停/撤回、24 小时强制策略 freshness、安装前实时复核、版本回退保护和更新后健康检查。
 - 不负责：不决定 Agent 功能，不修改用户画像 schema。
+- 遥测边界：事件 token 只能减少未先取得 policy 的随意写入，不证明安装真实性；更新健康率是 advisory，
+  不能作为无人监督的自动 rollout 依据。
 - 基础：优先复用 Chromium Updater 与平台 installer，而不是另起一套进程更新器。
   [Chromium Updater 规范](https://chromium.googlesource.com/chromium/src/+/main/docs/updater/functional_spec.md)
+
+### 7.10 `WenXueAnnouncementFeed`
+
+- 职责：在账号控制域监听无正文 announcement revision，经用户 bearer 拉取 pending、维护固定优先级
+  队列并幂等 ack；不把消息注入任一 Task Profile。
+- 不负责：不读取其他账号目标清单，不允许远端配置视觉/CTA，不控制 Agent 或网站权限。
+- 兼容：wire schema、匹配/确认规则和固定 UI 语义以当前 Electron 的
+  `@wenxue/client-operations` fixtures 为准；Chromium 实现不依赖该 TypeScript 包运行时。
 
 ## 8. 扩展侧适配边界
 
@@ -616,6 +637,16 @@ Restore。新任务从干净 Profile 创建，不克隆其他任务目录。
 3. 使用 Chromium Profile deletion 路径删除任务 Profile 目录，成功后写 `deleted` tombstone。
 4. 任一步崩溃后，启动恢复器从 `deleting` 继续；不得访问或删除其他任务 Profile 与账号控制域。
 
+### 10.5 跨运行时分发数据
+
+CloudBase 的 `client_announcements` / receipts、release candidates / rollouts / events、announcement /
+release signals 与 dispatch audit 继续作为服务端权威；Chromium 不复制集合。信号只含 revision，消息
+正文经用户鉴权 API，候选清单按 runtime 隔离且由 CI Ed25519 签名。匿名事件以 `expiresAt` TTL 保留 30 天；
+其 event token 不构成可信安装证明。`desktop_release_rollouts` 内的 `recordType=release-slot` 保留文档继续维护
+每个 runtime/channel 的 active/current/highestVersion，不进入列表；`admin_dispatch_audit` 仍为纯追加审计，
+不参与 release 互斥。字段与 API 兼容基线见
+[`desktop-update-announcements design`](../../../superpowers/specs/2026-07-17-desktop-update-announcements-design.md)。
+
 ## 11. 关键状态流程
 
 ### 11.1 新建任务
@@ -749,6 +780,10 @@ interface BrowserReleaseManifest {
 - dev：每次可用构建，保留更多诊断。
 - beta：通过 CAP、迁移和性能自动门禁后小范围发布。
 - stable：签名清单、分阶段百分比、健康检查、可回滚上一版本。
+- candidate 由 CI 上传专用 COS 并注册，后台“版本更新”只发布动态 rollout；dev/beta/stable 均沿用
+  runtime/channel/platform/arch/version wire schema，防止 Electron 与 Chromium 候选交叉消费。
+- 专用 COS 桶必须从未启用过版本控制；已暂停版本控制的桶不可用。版本路径和候选标记写入后不可变。
+- optional 只在用户点击后下载并显式安装；mandatory 只允许 100%，且安装前必须成功完成实时策略复核。
 - updater 只替换程序文件，不对 Profile 数据执行不可回滚降级；schema migration 必须前向兼容上一
   稳定版本的程序回退窗口。
 

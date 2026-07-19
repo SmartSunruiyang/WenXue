@@ -342,6 +342,10 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
   - 当前任务 Logo 打开/收起该 Profile 固定扩展的 Side Panel；收起不停止 Agent。
   - 任务切换显示目标 Profile 的 AI 会话；新 AI 会话不创建任务或关闭标签。
   - 后台任务只通过任务列表状态通知，不把 Side Panel 注入当前任务。
+
+- [ ] 7.4 接入固定应用消息/更新中断面
+  - `WenXueAnnouncementFeed` 复用既有 pending/ack/signal wire fixtures，消息不进入 Task Profile。
+  - 固定弹窗语义沿用 UIUX；除该跨运行时中断面外，本阶段仍不扩展整体视觉设计。
   - _Requirements: AR-02, AR-04；PRD F5, F8_
 
 - [ ] 7.3 接入问学新标签页
@@ -488,10 +492,22 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
 - [ ] 12.2 完成可复现发布构建
   - 发布清单锁两仓 commit、扩展 hash、工具链、PGO 和平台产物。
   - 签名、公证、SBOM、许可证与第三方 notices 随产物生成。
+  - 拆分 signing build 与 production publish：build 封存至少 30 天的原字节/seal，publish 只允许
+    同 commit 成功首轮 source run，并重验 `artifactSetSha512` / `buildRunUrl`。
   - _Requirements: AR-08, AR-09_
 
 - [ ] 12.3 完成 Chromium Updater dev/beta/stable 通道
-  - 签名 update manifest、分阶段 rollout、健康检查、失败回滚和上一稳定版本保留。
+  - 复用当前控制面的 Ed25519 candidate manifest + dynamic rollout 协议，候选 runtime 固定
+    `chromium`；后台只选候选并控制比例/模式/暂停/撤回，Chromium 侧由 `WenXueUpdatePolicy` 适配
+    Updater。当前 Electron 的 `manual-unsigned` 下载/打开安装包适配器不进入 Chromium 正式产物。
+  - 签名 update manifest、分阶段 rollout、24 小时策略 freshness、安装前实时策略复核、失败回滚和上一稳定版本保留；
+    缓存 mandatory 不得授权安装。
+  - 发布桶必须从未启用版本控制且使用不可变路径；event token 只防随意伪造，健康率只作
+    advisory 人工交叉验证信号，不能单独授权自动扩大 rollout。
+  - 接入前为 Chromium updater/平台安装 tests 明确受评审的 evidence schema 版本；不得静默改变 Electron
+    v1 固定的 `quality`、`manual-installer-integrity`、`manifest-tamper-rejection` 三项同 run 约束，也不
+    接收外部 evidence 公钥/URL/签名。COSCLI 必须证明 versioning `Closed` 并使用 `--forbid-overwrite`；
+    Chromium 平台签名身份与 production 仍分属受保护边界。
   - 更新后自动运行最小双 Profile 隔离、并行租约、CAP 与迁移 smoke，再允许扩大比例。
   - _Requirements: AR-08, AR-10_
 

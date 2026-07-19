@@ -1,3 +1,4 @@
+import type { UpdateState } from '@wenxue/client-operations'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -40,10 +41,12 @@ function createBridgeHarness() {
 	const launch = vi.fn(async () => undefined)
 	const stop = vi.fn(async () => undefined)
 	const openLogs = vi.fn(async () => undefined)
+	const openExternal = vi.fn(async () => undefined)
 	const openPath = vi.fn(async () => '')
 	const minimizeWindow = vi.fn()
 	const toggleMaximizeWindow = vi.fn()
 	const requestClose = vi.fn()
+	const quitApp = vi.fn(async () => undefined)
 	const sampleSession: UserSession = {
 		userId: 'user_123',
 		accessToken: 'user-access-token',
@@ -65,10 +68,7 @@ function createBridgeHarness() {
 	const userSessionRequire = vi.fn(() => sampleSession)
 	const userSessionClear = vi.fn()
 	const userSessionHandoffRun = vi.fn(
-		async (
-			_session: UserSession,
-			openUrl: (url: string) => Promise<void>,
-		) => {
+		async (_session: UserSession, openUrl: (url: string) => Promise<void>) => {
 			await openUrl('http://127.0.0.1:1234/wenxue-user-session-handoff/test')
 			return { ok: true }
 		},
@@ -77,6 +77,30 @@ function createBridgeHarness() {
 	const unsubscribeProfile = vi.fn()
 	const sendStatus = vi.fn()
 	const sendProfileStatus = vi.fn()
+	const sendUpdateState = vi.fn()
+	let updateState: UpdateState = { phase: 'idle' }
+	let updateStateListener: ((state: UpdateState) => void) | undefined
+	const updateCheck = vi.fn(async () => updateState)
+	const updateDownload = vi.fn(async () => updateState)
+	const updateOpenInstaller = vi.fn(async () => updateState)
+	const unsubscribeUpdate = vi.fn()
+	const assertWorkspaceAllowed = vi.fn(async () => {
+		if ('release' in updateState && updateState.release?.mode === 'mandatory') {
+			throw new Error('当前版本必须完成更新后才能启动问学工作区。')
+		}
+	})
+	const updateService = {
+		state: () => updateState,
+		assertWorkspaceAllowed,
+		check: updateCheck,
+		download: updateDownload,
+		openInstaller: updateOpenInstaller,
+		subscribe: (listener: (state: UpdateState) => void) => {
+			updateStateListener = listener
+			listener(updateState)
+			return unsubscribeUpdate
+		},
+	}
 	const sampleProfile: BrowserProfile = {
 		id: 'research',
 		displayName: '资料采集',
@@ -212,6 +236,7 @@ function createBridgeHarness() {
 		usageCloudClient,
 		userSessionStore,
 		userSessionHandoff,
+		updateService,
 		resources,
 		getAppVersion: () => '0.0.0',
 		getShellInfo: () => ({
@@ -221,12 +246,15 @@ function createBridgeHarness() {
 			isMaximized: false,
 		}),
 		openLogs,
+		openExternal,
 		openPath,
+		quitApp,
 		minimizeWindow,
 		toggleMaximizeWindow,
 		requestClose,
 		sendStatus,
 		sendProfileStatus,
+		sendUpdateState,
 	})
 
 	return {
@@ -234,10 +262,12 @@ function createBridgeHarness() {
 		launch,
 		stop,
 		openLogs,
+		openExternal,
 		openPath,
 		minimizeWindow,
 		toggleMaximizeWindow,
 		requestClose,
+		quitApp,
 		profileStore,
 		logStore,
 		settingsStore,
@@ -246,22 +276,33 @@ function createBridgeHarness() {
 		usageCloudClient,
 		userSessionStore,
 		userSessionHandoff,
+		updateService,
+		assertWorkspaceAllowed,
 		sampleSession,
 		userSessionSet,
 		userSessionCurrent,
 		userSessionRequire,
 		userSessionClear,
 		userSessionHandoffRun,
+		updateCheck,
+		updateDownload,
+		updateOpenInstaller,
 		sendStatus,
 		sendProfileStatus,
+		sendUpdateState,
 		unsubscribe,
 		unsubscribeProfile,
+		unsubscribeUpdate,
 		emitStatus(next: BrowserStatus) {
 			status = next
 			statusListener?.(next)
 		},
 		emitProfileStatus(profileId: string, next: BrowserStatus) {
 			profileStatusListener?.(profileId, next)
+		},
+		emitUpdateState(next: UpdateState) {
+			updateState = next
+			updateStateListener?.(next)
 		},
 	}
 }
@@ -275,7 +316,9 @@ describe('registerDesktopBridge', () => {
 				'app:getVersions',
 				'app:getShellInfo',
 				'app:minimizeWindow',
+				'app:openExternal',
 				'app:openLogs',
+				'app:quit',
 				'app:requestClose',
 				'app:toggleMaximizeWindow',
 				'browser:addProfile',
@@ -298,6 +341,10 @@ describe('registerDesktopBridge', () => {
 				'settings:update',
 				'telemetry:ingest',
 				'tokens:getSummary',
+				'updates:check',
+				'updates:download',
+				'updates:getState',
+				'updates:openInstaller',
 			].sort(),
 		)
 	})
@@ -310,6 +357,50 @@ describe('registerDesktopBridge', () => {
 
 		launch.mockRejectedValueOnce(new Error('boom'))
 		await expect(handler?.()).resolves.toEqual({ ok: false, error: 'boom' })
+	})
+
+	it('blocks every browser launch path in the main process during a mandatory update', async () => {
+		const harness = createBridgeHarness()
+		harness.emitUpdateState({
+			phase: 'available',
+			release: {
+				releaseId: 'electron:stable:0.1.1',
+				version: '0.1.1',
+				channel: 'stable',
+				mode: 'mandatory',
+				distribution: { mode: 'manual-unsigned' },
+				title: '必须更新',
+				notes: '安全更新',
+				size: 1024,
+			},
+		})
+
+		await expect(harness.ipcMain.handlers.get('browser:launch')?.()).resolves.toEqual({
+			ok: false,
+			error: '当前版本必须完成更新后才能启动问学工作区。',
+		})
+		await expect(
+			harness.ipcMain.handlers.get('browser:launchProfile')?.({}, 'research'),
+		).resolves.toEqual({
+			ok: false,
+			error: '当前版本必须完成更新后才能启动问学工作区。',
+		})
+		expect(harness.launch).not.toHaveBeenCalled()
+	})
+
+	it('waits for update policy restoration before launching a workspace', async () => {
+		const harness = createBridgeHarness()
+		let allowWorkspace: (() => void) | undefined
+		harness.assertWorkspaceAllowed.mockImplementationOnce(
+			() => new Promise<void>((resolve) => (allowWorkspace = resolve)),
+		)
+		const launchResult = harness.ipcMain.handlers.get('browser:launch')?.()
+
+		await Promise.resolve()
+		expect(harness.launch).not.toHaveBeenCalled()
+		allowWorkspace?.()
+		await expect(launchResult).resolves.toEqual({ ok: true })
+		expect(harness.launch).toHaveBeenCalledOnce()
 	})
 
 	it('returns current browser status', async () => {
@@ -487,6 +578,47 @@ describe('registerDesktopBridge', () => {
 		await expect(handler?.()).resolves.toEqual({ ok: false, error: 'cannot open logs' })
 	})
 
+	it('opens only validated HTTPS links in the system browser', async () => {
+		const { ipcMain, openExternal } = createBridgeHarness()
+
+		await expect(
+			ipcMain.handlers.get('app:openExternal')?.({}, 'https://example.test/path'),
+		).resolves.toEqual({ ok: true })
+		await expect(
+			ipcMain.handlers.get('app:openExternal')?.({}, 'http://example.test/path'),
+		).resolves.toEqual({ ok: false, error: '只能打开 HTTPS 链接' })
+		expect(openExternal).toHaveBeenCalledWith('https://example.test/path')
+		expect(openExternal).toHaveBeenCalledOnce()
+	})
+
+	it('exposes a graceful whole-app quit action for mandatory updates', async () => {
+		const { ipcMain, quitApp } = createBridgeHarness()
+
+		await expect(ipcMain.handlers.get('app:quit')?.()).resolves.toEqual({ ok: true })
+		expect(quitApp).toHaveBeenCalledOnce()
+	})
+
+	it('translates update state checks downloads and explicit installer handoff', async () => {
+		const { ipcMain, updateCheck, updateDownload, updateOpenInstaller } = createBridgeHarness()
+
+		await expect(ipcMain.handlers.get('updates:getState')?.()).resolves.toEqual({ phase: 'idle' })
+		await expect(ipcMain.handlers.get('updates:check')?.({}, 'signal')).resolves.toEqual({
+			ok: true,
+			state: { phase: 'idle' },
+		})
+		await expect(ipcMain.handlers.get('updates:download')?.()).resolves.toEqual({
+			ok: true,
+			state: { phase: 'idle' },
+		})
+		await expect(ipcMain.handlers.get('updates:openInstaller')?.()).resolves.toEqual({
+			ok: true,
+			state: { phase: 'idle' },
+		})
+		expect(updateCheck).toHaveBeenCalledWith('signal')
+		expect(updateDownload).toHaveBeenCalledOnce()
+		expect(updateOpenInstaller).toHaveBeenCalledOnce()
+	})
+
 	it('broadcasts supervisor status changes and returns the unsubscribe function', () => {
 		const { emitStatus, emitProfileStatus, sendStatus, sendProfileStatus, unsubscribe } =
 			createBridgeHarness()
@@ -515,6 +647,7 @@ describe('registerDesktopBridge', () => {
 			usageCloudClient: harness.usageCloudClient,
 			userSessionStore: harness.userSessionStore,
 			userSessionHandoff: harness.userSessionHandoff,
+			updateService: harness.updateService,
 			resources: {
 				browserBinary: () => '/browsers/cft',
 				extensionDir: () => tempDir,
@@ -528,12 +661,15 @@ describe('registerDesktopBridge', () => {
 				isMaximized: false,
 			}),
 			openLogs: vi.fn(async () => undefined),
+			openExternal: vi.fn(async () => undefined),
 			openPath: vi.fn(async () => ''),
+			quitApp: vi.fn(async () => undefined),
 			minimizeWindow: vi.fn(),
 			toggleMaximizeWindow: vi.fn(),
 			requestClose: vi.fn(),
 			sendStatus,
 			sendProfileStatus,
+			sendUpdateState: harness.sendUpdateState,
 		})
 
 		expect(sendStatus).toHaveBeenCalledWith('launching')
@@ -542,6 +678,7 @@ describe('registerDesktopBridge', () => {
 		emitProfileStatus('research', 'running')
 		unregister()
 		expect(unsubscribe).toHaveBeenCalledTimes(2)
+		expect(harness.unsubscribeUpdate).toHaveBeenCalledOnce()
 	})
 
 	it('returns app browser and extension versions with missing-manifest fallback', async () => {

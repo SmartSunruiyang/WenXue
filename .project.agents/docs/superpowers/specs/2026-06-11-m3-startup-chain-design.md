@@ -194,7 +194,8 @@ Do not add files outside these modules unless an upstream doc is updated first.
 ## 5. Non-goals
 
 - M4 branding, icons, locales, manifest `key`, default model, permission audit;
-- M5 packaged-app CDP smoke test, installers, signing, notarization, auto-update;
+- M5 packaged-app CDP smoke test、安装包与更新分发；当前 Electron 的 `manual-unsigned` 下载/打开流程以
+  2026-07-17 desktop update spec 为准；
 - desktop-plugin runtime communication;
 - cloud account, LLM gateway, billing;
 - multi-profile UI or multiple simultaneous browser instances;

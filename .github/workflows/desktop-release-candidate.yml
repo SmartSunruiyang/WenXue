@@ -1,0 +1,258 @@
+name: Desktop release build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version already committed in apps/desktop/package.json
+        required: true
+        type: string
+      channel:
+        description: Update channel
+        required: true
+        default: beta
+        type: choice
+        options:
+          - dev
+          - beta
+          - stable
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-build-${{ github.repository_id }}-${{ inputs.channel }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9.15.0'
+  PUPPETEER_DOWNLOAD_BASE_URL: https://storage.googleapis.com/chrome-for-testing-public
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4.2.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Require a protected release ref
+        run: test "$GITHUB_REF_PROTECTED" = true
+        env:
+          GITHUB_REF_PROTECTED: ${{ github.ref_protected }}
+      - name: Validate requested version
+        run: >-
+          node -e 'const actual=require("./apps/desktop/package.json").version;
+          if (actual !== process.env.RELEASE_VERSION) {
+          throw new Error(`package version ${actual} does not match requested ${process.env.RELEASE_VERSION}`) }'
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+      - run: pnpm lint:desktop-release
+      - run: pnpm -r test
+      - name: Type-check release services and desktop
+        run: |
+          pnpm -F admin-api typecheck
+          pnpm -F llm-gateway typecheck
+          pnpm -F desktop typecheck
+      - run: pnpm -F admin build
+      - name: Build update-aware desktop bundle
+        run: |
+          test -n "$WENXUE_RELEASE_ED25519_PUBLIC_KEY"
+          pnpm -F desktop build
+          node apps/desktop/scripts/verify-embedded-release-key.mjs \
+            --bundle apps/desktop/out/main/index.js
+        env:
+          WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
+          WENXUE_UPDATE_CHANNEL: ${{ inputs.channel }}
+
+  macos:
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            browser_platform: mac-arm64
+          - arch: x64
+            browser_platform: mac-x64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4.2.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Fetch managed browser
+        run: pnpm -F desktop fetch-browser -- --platform "$BROWSER_PLATFORM"
+        env:
+          BROWSER_PLATFORM: ${{ matrix.browser_platform }}
+      - run: pnpm -F extension build
+      - name: Build update-aware desktop bundle
+        run: |
+          test -n "$WENXUE_RELEASE_ED25519_PUBLIC_KEY"
+          test -n "$WENXUE_GATEWAY_BASE_URL"
+          pnpm -F desktop build
+          node apps/desktop/scripts/verify-embedded-release-key.mjs \
+            --bundle apps/desktop/out/main/index.js \
+            --gateway-base-url "$WENXUE_GATEWAY_BASE_URL" \
+            --renderer-dir apps/desktop/out/renderer
+        env:
+          WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
+          WENXUE_GATEWAY_BASE_URL: ${{ vars.WENXUE_GATEWAY_BASE_URL }}
+          WENXUE_UPDATE_CHANNEL: ${{ inputs.channel }}
+      - name: Package unsigned DMG
+        run: pnpm -F desktop exec electron-builder --mac dmg "--$DESKTOP_ARCH" --publish never
+        env:
+          DESKTOP_ARCH: ${{ matrix.arch }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify packaged version
+        run: >-
+          node apps/desktop/scripts/verify-packaged-version.mjs
+          --release-dir apps/desktop/release
+          --expected-version "$RELEASE_VERSION"
+          --platform darwin
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+      - name: Bind the packaged app release key to the installer artifact
+        run: |
+          packaged_bundle="$(find apps/desktop/release -type f -path '*/Contents/Resources/app.asar' -print -quit)"
+          test -n "$packaged_bundle"
+          node apps/desktop/scripts/verify-embedded-release-key.mjs \
+            --bundle "$packaged_bundle" \
+            --fingerprint-output apps/desktop/release/release-public-key-fingerprint.txt
+        env:
+          WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-darwin-${{ matrix.arch }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/release-public-key-fingerprint.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  windows:
+    needs: quality
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4.2.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -F desktop fetch-browser -- --platform win64
+      - run: pnpm -F extension build
+      - name: Build update-aware desktop bundle
+        shell: pwsh
+        run: |
+          if (-not $env:WENXUE_RELEASE_ED25519_PUBLIC_KEY) {
+            throw 'WENXUE_RELEASE_ED25519_PUBLIC_KEY repository variable is required'
+          }
+          if (-not $env:WENXUE_GATEWAY_BASE_URL) {
+            throw 'WENXUE_GATEWAY_BASE_URL protected environment variable is required'
+          }
+          pnpm -F desktop build
+          node apps/desktop/scripts/verify-embedded-release-key.mjs `
+            --bundle apps/desktop/out/main/index.js `
+            --gateway-base-url "$env:WENXUE_GATEWAY_BASE_URL" `
+            --renderer-dir apps/desktop/out/renderer
+        env:
+          WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
+          WENXUE_GATEWAY_BASE_URL: ${{ vars.WENXUE_GATEWAY_BASE_URL }}
+          WENXUE_UPDATE_CHANNEL: ${{ inputs.channel }}
+      - name: Package unsigned NSIS installer
+        shell: pwsh
+        run: pnpm -F desktop exec electron-builder --win nsis --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify packaged version
+        shell: pwsh
+        run: >-
+          node apps/desktop/scripts/verify-packaged-version.mjs
+          --release-dir apps/desktop/release
+          --expected-version "$env:RELEASE_VERSION"
+          --platform win32
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+      - name: Bind the packaged app release key to the installer artifact
+        shell: pwsh
+        run: |
+          $packagedBundles = @(Get-ChildItem -Path apps/desktop/release -Recurse -File -Filter app.asar)
+          if ($packagedBundles.Count -ne 1) {
+            throw "Expected exactly one packaged app.asar, found $($packagedBundles.Count)"
+          }
+          node apps/desktop/scripts/verify-embedded-release-key.mjs `
+            --bundle "$($packagedBundles[0].FullName)" `
+            --fingerprint-output apps/desktop/release/release-public-key-fingerprint.txt
+        env:
+          WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-win32-x64
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/release-public-key-fingerprint.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  seal-artifacts:
+    needs:
+      - macos
+      - windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4.2.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: desktop-darwin-arm64
+          path: candidate/darwin/arm64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: desktop-darwin-x64
+          path: candidate/darwin/x64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: desktop-win32-x64
+          path: candidate/win32/x64
+      - name: Seal the exact unsigned installer set
+        run: |
+          release_created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
+          test -n "$release_created_at"
+          test -n "$WENXUE_RELEASE_ED25519_PUBLIC_KEY"
+          WENXUE_RELEASE_CREATED_AT="$release_created_at" \
+            node apps/desktop/scripts/release-build-seal.mjs create \
+              --release-dir candidate \
+              --output candidate/release-build.json
+        env:
+          WENXUE_RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-release-seal
+          path: candidate/release-build.json
+          if-no-files-found: error
+          retention-days: 30

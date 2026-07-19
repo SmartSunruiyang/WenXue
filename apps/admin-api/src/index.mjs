@@ -35,6 +35,61 @@ export function userStatus(event, context) {
 	return dispatch(event, context, '/admin/v1/users/status')
 }
 
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function announcements(event, context) {
+	return dispatch(event, context, '/admin/v1/announcements')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function announcementWithdraw(event, context) {
+	return dispatch(event, context, '/admin/v1/announcement-withdraw')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function releaseCandidates(event, context) {
+	return dispatch(event, context, '/admin/v1/release-candidates')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function releases(event, context) {
+	return dispatch(event, context, '/admin/v1/releases')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function releasePublish(event, context) {
+	return dispatch(event, context, '/admin/v1/release-publish')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function releaseState(event, context) {
+	return dispatch(event, context, '/admin/v1/release-state')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function releaseCandidateRegister(event, context) {
+	return dispatch(event, context, '/internal/v1/release-candidates/register')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function clientAnnouncementsPending(event, context) {
+	return dispatch(event, context, '/v1/client/announcements/pending')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function clientAnnouncementAck(event, context) {
+	return dispatch(event, context, '/v1/client/announcement-ack')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function clientUpdatePolicy(event, context) {
+	return dispatch(event, context, '/v1/client/update-policy')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
+export function clientUpdateEvents(event, context) {
+	return dispatch(event, context, '/v1/client/update-events')
+}
+
 /**
  * @param {unknown} event
  * @param {CloudBaseContext} context
@@ -46,7 +101,7 @@ function dispatch(event, context, path) {
 	return handleAdminRequest({
 		method: readEventMethod(event, context, headers),
 		path,
-		query: readEventQuery(event),
+		query: readEventQuery(event, context),
 		headers,
 		rawBody: readEventBody(event),
 		env,
@@ -64,6 +119,13 @@ function readRuntimeEnv() {
 		cloudbaseClientId: process.env.CLOUDBASE_AUTH_CLIENT_ID ?? 'wenxue-d8gz76tacc3659f05',
 		cloudbaseAdminApiKey:
 			process.env.CLOUDBASE_ADMIN_API_KEY ?? process.env.CLOUDBASE_USAGE_API_KEY ?? '',
+		releaseCiToken: process.env.WENXUE_RELEASE_CI_TOKEN ?? '',
+		releaseManifestPublicKey:
+			process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY ??
+			process.env.WENXUE_RELEASE_MANIFEST_PUBLIC_KEY ??
+			'',
+		releaseEventTokenSecret: process.env.WENXUE_RELEASE_EVENT_TOKEN_SECRET ?? '',
+		releaseEventDailyQuota: Number(process.env.WENXUE_RELEASE_EVENT_DAILY_QUOTA ?? 100_000),
 		allowedOrigins: (process.env.WENXUE_ADMIN_ALLOWED_ORIGINS ?? '*')
 			.split(',')
 			.map((origin) => origin.trim())
@@ -120,20 +182,33 @@ function readHeader(headers, name) {
 
 /**
  * @param {unknown} event
+ * @param {CloudBaseContext} context
  * @returns {Record<string, string | undefined>}
  */
-function readEventQuery(event) {
-	if (!isRecord(event)) return {}
-	const source = isRecord(event.queryStringParameters)
-		? event.queryStringParameters
-		: isRecord(event.query)
-			? event.query
-			: {}
+function readEventQuery(event, context) {
+	const source =
+		isRecord(event) && isRecord(event.queryStringParameters)
+			? event.queryStringParameters
+			: isRecord(event) && isRecord(event.query)
+				? event.query
+				: readUrlQuery(context.httpContext?.url)
 	return Object.fromEntries(
 		Object.entries(source).flatMap(([key, value]) => {
 			return typeof value === 'string' ? [[key, value]] : []
 		}),
 	)
+}
+
+/**
+ * @param {string | undefined} value
+ */
+function readUrlQuery(value) {
+	if (!value) return {}
+	try {
+		return Object.fromEntries(new URL(value, 'http://localhost').searchParams)
+	} catch {
+		return {}
+	}
 }
 
 /**

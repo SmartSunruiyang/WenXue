@@ -31,7 +31,12 @@ class FakeBrowserProcess extends EventEmitter {
 	}
 }
 
-function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
+function createSupervisorHarness(
+	options: {
+		child?: FakeBrowserProcess
+		closeGracefully?: (userDataDir: string) => boolean | Promise<boolean>
+	} = {},
+) {
 	const firstChild = options.child ?? new FakeBrowserProcess()
 	const queuedChildren: FakeBrowserProcess[] = [firstChild]
 	const spawns: Array<{ binary: string; argv: string[] }> = []
@@ -63,6 +68,7 @@ function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
 		focusExisting: async (binary, argv) => {
 			focusCalls.push({ binary, argv })
 		},
+		closeGracefully: options.closeGracefully ?? (() => false),
 	})
 
 	supervisor.onStatusChange((status) => events.push(status))
@@ -86,11 +92,14 @@ function createSupervisorHarness(options: { child?: FakeBrowserProcess } = {}) {
 
 describe('BrowserSupervisor', () => {
 	it('starts idle and emits launching then running during launch', async () => {
-		const { supervisor, child, events, profiles } = createSupervisorHarness()
+		const { supervisor, child, events, profiles, spawns } = createSupervisorHarness()
 
 		expect(supervisor.status()).toBe('idle')
 		await supervisor.launch()
 		expect(profiles.prepareForUnpackedExtension).toHaveBeenCalledWith('default')
+		expect(spawns[0].argv).toEqual(
+			expect.arrayContaining(['--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0']),
+		)
 		expect(events).toEqual(['launching'])
 
 		child.emit('spawn')
@@ -298,6 +307,23 @@ describe('BrowserSupervisor', () => {
 		expect(supervisor.status()).toBe('idle')
 	})
 
+	it('uses CDP Browser.close before falling back to process signals', async () => {
+		const child = new FakeBrowserProcess(null)
+		const closeGracefully = vi.fn(() => {
+			queueMicrotask(() => child.emit('exit', 0, null))
+			return true
+		})
+		const { supervisor } = createSupervisorHarness({ child, closeGracefully })
+
+		await supervisor.launch('research')
+		child.emit('spawn')
+		await supervisor.stop('research')
+
+		expect(closeGracefully).toHaveBeenCalledWith('/profiles/research')
+		expect(child.killSignals).toEqual([])
+		expect(supervisor.status()).toBe('idle')
+	})
+
 	it('force kills a profile when graceful shutdown does not exit', async () => {
 		vi.useFakeTimers()
 		try {
@@ -337,6 +363,16 @@ describe('BrowserSupervisor', () => {
 
 		expect(supervisor.status()).toBe('idle')
 		expect(events).toEqual(['launching', 'running', 'idle'])
+	})
+
+	it('treats a non-zero exit code during requested shutdown as a completed stop', async () => {
+		const child = new FakeBrowserProcess({ code: 1, signal: null })
+		const { supervisor } = createSupervisorHarness({ child })
+
+		await supervisor.launch()
+		child.emit('spawn')
+		await expect(supervisor.requestShutdown()).resolves.toBeUndefined()
+		expect(supervisor.status()).toBe('idle')
 	})
 
 	it('resolves shutdown without throwing when idle', async () => {

@@ -1,7 +1,7 @@
 # Chromium 基础设施与交付规范
 
 > - 状态：G1 前待评审
-> - 最后更新：2026-07-14
+> - 最后更新：2026-07-18
 > - 适用平台：macOS arm64、Windows x64
 
 ## 1. 目标
@@ -148,9 +148,48 @@ G1 前必须记录：
 - Windows 产物必须使用受控代码签名证书，并通过 SmartScreen/安装验证流程。
 - 更新清单必须签名，客户端验证来源、版本单调性、产物哈希和通道。
 - 自动更新需支持分批灰度、暂停、撤回和回滚到已验证版本。
+- 复用当前 Electron 建立的控制面：CI 把 runtime=`chromium` 的不可变候选上传专用 COS、以 Ed25519
+  签署并注册；后台“版本更新”只发布 dynamic rollout，不持有上传能力或私钥。
+- Chromium 流水线复用 Electron 已硬化的“原字节 build → protected publish”完整性模式。当前 Electron
+  publish 只消费当前 commit 的成功首轮 source run，要求 `quality`、`manual-installer-integrity`、
+  `manifest-tamper-rejection` 三项 passed tests 都绑定同一 `buildRunUrl`，再签署 Ed25519 candidate
+  manifest、上传和注册；共享协议不定义外部 evidence 公钥、URL 或签名输入。Chromium 接入前必须以
+  受评审的 schema 版本明确其 updater/平台安装 tests，不得静默改变 Electron v1 的固定三项约束。
+  此外 Chromium G5 必须在 build 与 publish 之间增加隔离的平台签名阶段，
+  并使用 Chromium 自己的受保护 signing 身份；不得把当前
+  Electron 的 `manual-unsigned` 安装包下载器当作正式分发适配器。
+- `WenXueUpdatePolicy` 消费共同的 runtime/channel/platform/arch/version/policy schema，但以 Chromium
+  Updater/平台 installer 执行。mandatory 只允许 100%，安装前必须实时复核策略成功，
+  缓存策略不能授权安装；stale 超过 24 小时且离线时不锁死工作区。
+- COS 必须使用从未启用过版本控制的新桶，COSCLI 必须证明 versioning 为 `Closed`（已暂停不可接受）；
+  对象公开读、禁止列目录、CI-only write，每次写入使用 `--forbid-overwrite`；版本路径与候选标记写入后不可变；
+  Apple/Windows 平台签名、manifest
+  签名和 artifact digest 均是 G5 门禁。
+- 匿名 update event token 只防未取得 policy 的随意写入，不证明下载/安装真实性；事件通过
+  `expiresAt` TTL 保留 30 天，健康统计只作 advisory 运营信号，不得单独触发自动扩大 rollout。
 - Chromium 安全公告、CVE 和高风险上游提交需有明确值班与升级 SLA。
 - 崩溃转储、日志和遥测遵循最小采集原则，不收集任务页面正文、Cookie 或用户凭证。
 - 符号和诊断数据按版本、平台和构建哈希管理。
+
+### 9.1 可复用 Electron 控制面快照（2026-07-17）
+
+这是 Chromium G5 将复用的现有控制面现状，不代表 Chromium 客户端已实施：
+
+- CloudBase 环境查询为 `NORMAL`，当前个人版有效期至 2027-02-01；账单侧仍为
+  `EnvActivated=no`、`EnableOverrun=false`。
+- 8 个分发 collection、索引/规则、4 个 Electron signal seed 与 `desktop_release_events.expiresAt`
+  `expireAfterSeconds=0` TTL 已创建；新增 `release_created_cursor` 与 `runtime_channel_published` 索引。
+- `desktop_release_rollouts` 内部 `recordType=release-slot` 文档保留 active/current/highestVersion 通道状态，
+  `admin_dispatch_audit` 只追加审计。
+- 统一 HTTPSERVICE 网关只有 `/admin`、assets 和 4 个旧 admin API 路由；本功能新增 11 条路由不存在，
+  当前所有路由 `QPSPolicy` 为空。三个 CloudRun 默认域名仍为 `PUBLIC`，可绕过 Gateway；新控制面实现未部署。
+- Gateway/AdminApi 尚未配置 release CI token、candidate manifest 验签公钥和 event HMAC secret；
+  这些安全配置齐备前不得部署新 target。
+- GitHub 受保护 Environment `desktop-release-production` 和其 candidate manifest Ed25519/COS/register 配置
+  尚未就绪；当前 Electron 两阶段流水线因此仍被生产条件阻塞。
+- 独立 COS 桶、CI/Ed25519 凭据和 Electron 三平台 `manual-unsigned` 下载/打开安装包 E2E 均未就绪。
+  这些前置项完成后只证明共享控制面与完整性链路可用；Chromium 仍须在 G5 单独完成双平台正式签名、
+  updater 和真实升级门禁。
 
 ## 10. 性能基线方法
 

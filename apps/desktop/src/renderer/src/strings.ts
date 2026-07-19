@@ -91,6 +91,27 @@ export const strings = {
 			logout: '退出登录失败，请重新打开问学后重试。',
 		},
 	},
+	announcement: {
+		syncError: '消息同步失败，请检查网络后重试。',
+		ackError: '消息确认失败，请稍后重试。',
+		openDetailError: '无法打开消息详情，请稍后重试。',
+	},
+	update: {
+		checkError: '更新检查失败，请检查网络后重试。',
+		downloadError: '更新下载失败，请检查网络后重试。',
+		installError: '无法打开安装包，请稍后重试。',
+		checkAction: '检查更新',
+		checkingAction: '正在检查',
+		status: {
+			idle: '当前未发现可用更新。',
+			checking: '正在检查可用更新。',
+			available: '发现可用更新',
+			downloading: '正在下载更新',
+			ready: '更新已下载，等待打开安装包',
+			opening: '正在打开安装包。',
+			handedOff: '安装包已打开，请按系统提示完成安装。',
+		},
+	},
 	errorFallback: '浏览器启动或运行异常。请重新启动；若仍失败，请查看主进程日志定位原因。',
 	openLogsFallback: '无法打开日志目录。请在系统的应用数据目录中手动查看问学日志。',
 	error: {

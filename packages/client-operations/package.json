@@ -1,0 +1,33 @@
+{
+	"name": "@wenxue/client-operations",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"main": "./index.mjs",
+	"types": "./index.d.ts",
+	"exports": {
+		".": {
+			"types": "./index.d.ts",
+			"import": "./index.mjs",
+			"default": "./index.mjs"
+		},
+		"./react": {
+			"types": "./react.d.ts",
+			"import": "./react.mjs",
+			"default": "./react.mjs"
+		},
+		"./styles.css": "./styles.css"
+	},
+	"sideEffects": [
+		"./styles.css"
+	],
+	"scripts": {
+		"build": "node --check index.mjs && node --check react.mjs",
+		"test": "node --test *.test.mjs"
+	},
+	"peerDependencies": {
+		"lucide-react": "^1.16.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0"
+	}
+}

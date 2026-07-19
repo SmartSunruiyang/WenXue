@@ -5,7 +5,12 @@ const cloudbaseMock = vi.hoisted(() => ({
 	signInWithPassword: vi.fn(),
 	signOut: vi.fn(),
 	getSession: vi.fn(),
+	refreshSession: vi.fn(),
 	fetch: vi.fn(),
+	database: vi.fn(),
+	collection: vi.fn(),
+	where: vi.fn(),
+	watch: vi.fn(),
 }))
 
 vi.mock('@cloudbase/js-sdk', () => ({
@@ -18,9 +23,11 @@ import {
 	cloudbaseConfig,
 	readCloudBaseErrorMessage,
 	readLauncherAuthSession,
+	refreshLauncherSession,
 	registerLauncher,
 	signInLauncher,
 	validateLauncherCredentials,
+	watchDesktopSignal,
 } from './cloudbase'
 import { strings } from './strings'
 
@@ -53,12 +60,23 @@ describe('desktop CloudBase auth session parsing', () => {
 				signInWithPassword: cloudbaseMock.signInWithPassword,
 				signOut: cloudbaseMock.signOut,
 				getSession: cloudbaseMock.getSession,
+				refreshSession: cloudbaseMock.refreshSession,
 			}),
+			database: cloudbaseMock.database,
 		})
 		cloudbaseMock.signInWithPassword.mockReset()
 		cloudbaseMock.signOut.mockReset()
 		cloudbaseMock.getSession.mockReset()
+		cloudbaseMock.refreshSession.mockReset()
 		cloudbaseMock.fetch.mockReset()
+		cloudbaseMock.database.mockReset()
+		cloudbaseMock.collection.mockReset()
+		cloudbaseMock.where.mockReset()
+		cloudbaseMock.watch.mockReset()
+		cloudbaseMock.database.mockReturnValue({ collection: cloudbaseMock.collection })
+		cloudbaseMock.collection.mockReturnValue({ where: cloudbaseMock.where })
+		cloudbaseMock.where.mockReturnValue({ watch: cloudbaseMock.watch })
+		cloudbaseMock.watch.mockReturnValue({ close: vi.fn() })
 		cloudbaseMock.signOut.mockResolvedValue({ error: null })
 		cloudbaseMock.getSession.mockResolvedValue({ data: null, error: null })
 		vi.stubGlobal('fetch', cloudbaseMock.fetch)
@@ -72,6 +90,17 @@ describe('desktop CloudBase auth session parsing', () => {
 
 	it('initializes auth with the bundled publishable key when env override is absent', () => {
 		expect(cloudbaseConfig.hasAccessKey).toBe(true)
+	})
+
+	it('watches only the selected public-safe desktop signal document', () => {
+		const callbacks = { onChange: vi.fn(), onError: vi.fn() }
+
+		const watcher = watchDesktopSignal('desktop_release_signal', 'electron:stable', callbacks)
+
+		expect(cloudbaseMock.collection).toHaveBeenCalledWith('desktop_release_signal')
+		expect(cloudbaseMock.where).toHaveBeenCalledWith({ _id: 'electron:stable' })
+		expect(cloudbaseMock.watch).toHaveBeenCalledWith(callbacks)
+		expect(watcher).toBe(cloudbaseMock.watch.mock.results[0]?.value)
 	})
 
 	it('validates username boundaries without trimming input into validity', () => {
@@ -131,6 +160,27 @@ describe('desktop CloudBase auth session parsing', () => {
 		await expectation
 
 		expect(vi.getTimerCount()).toBe(0)
+	})
+
+	it('refreshes an expired launcher session through the CloudBase SDK', async () => {
+		cloudbaseMock.refreshSession.mockResolvedValue({
+			data: {
+				session: {
+					access_token: 'fresh-access-token',
+					refresh_token: 'fresh-refresh-token',
+					expires_in: 3600,
+					user: { id: 'user_123', username: 'Alice1' },
+				},
+			},
+			error: null,
+		})
+
+		await expect(refreshLauncherSession('old-refresh-token')).resolves.toMatchObject({
+			userId: 'user_123',
+			accessToken: 'fresh-access-token',
+			refreshToken: 'fresh-refresh-token',
+		})
+		expect(cloudbaseMock.refreshSession).toHaveBeenCalledWith('old-refresh-token')
 	})
 
 	it('rejects invalid credentials before calling the SDK or registration gateway', async () => {

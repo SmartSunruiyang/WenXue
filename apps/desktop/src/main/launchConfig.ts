@@ -3,6 +3,7 @@ export interface LaunchOptions {
 	extensionDir: string
 	startUrl?: string
 	debugPipe?: boolean
+	remoteDebuggingPort?: number
 }
 
 export function buildArgv(opts: LaunchOptions): string[] {
@@ -17,6 +18,10 @@ export function buildArgv(opts: LaunchOptions): string[] {
 
 	if (opts.debugPipe) {
 		argv.push('--remote-debugging-pipe')
+	}
+	if (opts.remoteDebuggingPort !== undefined) {
+		argv.push('--remote-debugging-address=127.0.0.1')
+		argv.push(`--remote-debugging-port=${opts.remoteDebuggingPort}`)
 	}
 
 	if (opts.startUrl) {

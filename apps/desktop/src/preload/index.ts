@@ -44,10 +44,23 @@ contextBridge.exposeInMainWorld('wenxue', {
 		getSession: () => ipcRenderer.invoke('auth:getSession'),
 		clearSession: () => ipcRenderer.invoke('auth:clearSession'),
 	},
+	updates: {
+		getState: () => ipcRenderer.invoke('updates:getState'),
+		check: (reason: 'manual' | 'signal' = 'manual') => ipcRenderer.invoke('updates:check', reason),
+		download: () => ipcRenderer.invoke('updates:download'),
+		openInstaller: () => ipcRenderer.invoke('updates:openInstaller'),
+		onStateChange: (cb: (state: unknown) => void) => {
+			const listener = (_event: IpcRendererEvent, state: unknown) => cb(state)
+			ipcRenderer.on('updates:state-changed', listener)
+			return () => ipcRenderer.off('updates:state-changed', listener)
+		},
+	},
 	app: {
 		getVersions: () => ipcRenderer.invoke('app:getVersions'),
 		getShellInfo: () => ipcRenderer.invoke('app:getShellInfo'),
 		openLogs: () => ipcRenderer.invoke('app:openLogs'),
+		openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+		quit: () => ipcRenderer.invoke('app:quit'),
 		minimizeWindow: () => ipcRenderer.invoke('app:minimizeWindow'),
 		toggleMaximizeWindow: () => ipcRenderer.invoke('app:toggleMaximizeWindow'),
 		requestClose: () => ipcRenderer.invoke('app:requestClose'),

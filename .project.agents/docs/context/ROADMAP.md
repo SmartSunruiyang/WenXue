@@ -21,8 +21,10 @@
 | M3.5      | 启动器 App 化重构                                    | 无边框白色 App 工作台可管理多画像、查看日志、tokens 与设置 |
 | M4.5      | CloudBase LLM Gateway M0 Spike                       | 真实流式网关调用 usage 非 0，并记录延迟基线                |
 | M4.6      | 后台管理系统                                         | 内部账号密码登录后台，可查看 tokens 看板并调整用户状态     |
+| M4.7      | 消息与版本发布控制面                                 | 定向消息可确认，后台可选择 CI 候选并控制 rollout           |
 | M4        | 品牌化与默认配置                                     | 全新 profile 首启只填 Key，示例页全链路任务成功            |
 | M5        | 打包分发与冒烟                                       | 双端安装包在干净机器通过 PRD F1–F4 验收                    |
+| M5.1      | 手动更新提示闭环                                     | 旧版可发现并下载未签名候选，再显式打开系统安装包           |
 
 ## 2. 里程碑详细
 
@@ -104,6 +106,22 @@
 - **执行记录**：环境恢复后完成上述发布与配置切换；未购买额外资源点、未开启超限。真实浏览器确认后台登录页正常渲染且无控制台错误，本轮未使用真实管理员凭据登录。
 - **结果**：按配置估算，固定计算从约 107100 点/月降至约 21420 点/月（约 80%）；该数值不是账单实测。唯一 Gateway 保持 `MinNum=1`，LLM、登录与后台正常首请求不进入冷启动路径。
 
+### M4.7 — 消息与版本发布控制面（依赖 M4.6）
+
+- [x] `@wenxue/client-operations` 落地分发契约、纯校验/匹配与固定弹窗组件
+- [x] AdminApi/Gateway 落地消息、回执、候选、rollout、signal、匿名事件与审计 API
+- [x] AdminConsole 增加“消息推送”“版本更新”；后台不能上传或改写候选二进制
+- [x] renderer 增加 DesktopAnnouncementService 与 DesktopReleaseSignalService；后者只 watch 公开
+      revision 并经 IPC 触发更新检查，main 不加载 CloudBase Web SDK
+- **资源进度（2026-07-18）**：8 个 collection、索引/规则、4 个 signal seed、两个 TTL 与
+  `release_created_cursor` / `runtime_channel_published` 索引已创建。Gateway 030、AdminApi 012、
+  AdminWeb 007 和包含 11 条新增精确路由的 18 条公开 routes 已上线；独立 COS 桶与 CloudRun 服务端
+  release 配置已就绪。环境查询为 `NORMAL`，账单侧仍为 `EnvActivated=no`、`EnableOverrun=false`。
+- **剩余阻塞**：Gateway/WAF QPS 与 CloudRun 直达收口仍需确认；GitHub 受保护 Environment、最小权限
+  CAM CI 身份、真实候选发布和三平台手动安装交接 E2E 未完成。
+- **验收**：目标账号收到固定弹窗且跨设备不重复；非目标账号不可见；只有匹配发布策略的客户端报告
+  available。
+
 ### M4 — 品牌化与默认配置（依赖 M3）
 
 - [ ] 插件品牌化：名称 / 图标 / `_locales`（zh_CN、en）→ 问学 WenXue · ask for everything
@@ -118,6 +136,26 @@
 - [ ] `scripts/smoke-launch.ts`：`--remote-debugging-pipe` 启动打包产物 → CDP 断言问学插件 service worker 存在 → 退出无残留
 - [ ] 干净机器走查 PRD §9 成功指标（含 macOS 未签名放行说明文档）
 - **验收**：双端安装包在干净机器完成 PRD §5 F1–F4 全部验收标准；冒烟脚本本地双平台绿。
+
+### M5.1 — 手动更新提示闭环（依赖 M4.7 + M5）
+
+- [x] DesktopUpdateService 实现 `manual-unsigned` 状态机，接入 typed IPC、稳定分桶、Ed25519 清单与
+      SHA-512/size 校验、策略 freshness 和打开前实时复核；离线缓存不能授权打开安装包
+- [ ] 双流水线代码已落地：`desktop-release-candidate.yml` 生成并保留 30 天原字节/seal，
+      `desktop-release-publish.yml` 只消费同 commit 成功首轮 build run，校验 `artifactSetSha512`，并要求
+      `quality`、`manual-installer-integrity`、`manifest-tamper-rejection` 三项 tests 均绑定同一
+      `buildRunUrl`，再签署 candidate manifest、以 COS `Closed` + `--forbid-overwrite` 上传并注册。
+      candidate 段在受保护分支构建未签名 DMG/NSIS 且不接触发布凭据；待受保护
+      `desktop-release-production` Environment 与 candidate manifest Ed25519/COS/注册配置就绪后才能实际发布；
+      CI 只注册候选，后台发起 rollout
+- [ ] 完成三平台 `manual-unsigned` `0.1.0 → 0.1.1` 下载、SHA-512 拒绝、系统安装器交接、画像无损、
+      pause/withdraw 和更高版本 hotfix 演练
+- **阻塞**：COS 桶已就绪，但 GitHub/CAM CI 身份、Ed25519 私钥、Gateway/WAF QPS、CloudRun 直达收口、
+  真实候选和三平台安装交接完成前不得标记真实分发完成。
+- **遥测边界**：event token 只防随意伪造，下载/安装包交接失败率只作 advisory 运营信号，不能单独授权
+  自动扩大 rollout。
+- **验收**：只在用户点击后下载，SHA-512/size 校验通过并再次点击后才打开安装包；beta 可按
+  5% → 25% → 50% → 100% 暂停/恢复。
 
 ## 3. 并行轨道（与代码 milestone 解耦）
 

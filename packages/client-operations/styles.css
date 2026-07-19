@@ -1,0 +1,339 @@
+.wx-ops-backdrop,
+.wx-ops-preview {
+	--wx-ops-background: var(--background, var(--wx-surface, Canvas));
+	--wx-ops-foreground: var(--foreground, var(--wx-foreground, CanvasText));
+	--wx-ops-muted: var(--muted-foreground, var(--wx-muted, GrayText));
+	--wx-ops-muted-surface: var(--muted, var(--wx-surface-subtle, Canvas));
+	--wx-ops-border: var(--border, var(--wx-border, ButtonBorder));
+	--wx-ops-primary: var(--primary, var(--wx-primary, CanvasText));
+	--wx-ops-primary-foreground: var(--primary-foreground, var(--wx-primary-foreground, Canvas));
+	--wx-ops-destructive: var(--destructive, var(--wx-coral-pulse, Mark));
+	--wx-ops-ring: var(--ring, var(--wx-focus, Highlight));
+	font-family: system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+	color: var(--wx-ops-foreground);
+}
+
+.wx-ops-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 2147483000;
+	display: grid;
+	place-items: center;
+	padding: 20px;
+	overflow: auto;
+	background: color-mix(in srgb, var(--wx-ops-foreground) 24%, transparent);
+	animation: wx-ops-fade 160ms ease-out;
+}
+
+.wx-ops-preview {
+	display: grid;
+	min-height: 310px;
+	place-items: center;
+	padding: 24px;
+	border: 1px dashed var(--wx-ops-border);
+	border-radius: 8px;
+	background: var(--wx-ops-muted-surface);
+}
+
+.wx-ops-dialog {
+	position: relative;
+	display: grid;
+	grid-template-columns: 4px 40px minmax(0, 1fr);
+	width: min(100%, 560px);
+	max-height: calc(100dvh - 40px);
+	overflow: hidden;
+	border: 1px solid var(--wx-ops-border);
+	border-radius: 8px;
+	background: var(--wx-ops-background);
+	box-shadow: 0 18px 60px color-mix(in srgb, var(--wx-ops-foreground) 16%, transparent);
+	animation: wx-ops-enter 180ms ease-out;
+}
+
+.wx-ops-backdrop .wx-ops-dialog {
+	width: clamp(520px, 52vw, 560px);
+	max-width: calc(100vw - 40px);
+}
+
+.wx-ops-rail {
+	grid-row: 1;
+	grid-column: 1;
+	background: var(--wx-ops-muted);
+}
+
+.wx-ops-dialog--important .wx-ops-rail,
+.wx-ops-dialog--mandatory .wx-ops-rail {
+	background: var(--wx-ops-destructive);
+}
+
+.wx-ops-dialog--update .wx-ops-rail {
+	background: var(--wx-ops-primary);
+}
+
+.wx-ops-icon {
+	display: flex;
+	grid-column: 2;
+	align-items: flex-start;
+	justify-content: center;
+	padding-top: 25px;
+	color: var(--wx-ops-muted);
+}
+
+.wx-ops-dialog--important .wx-ops-icon,
+.wx-ops-dialog--mandatory .wx-ops-icon {
+	color: var(--wx-ops-destructive);
+}
+
+.wx-ops-dialog--update .wx-ops-icon {
+	color: var(--wx-ops-primary);
+}
+
+.wx-ops-content {
+	position: relative;
+	display: grid;
+	grid-column: 3;
+	gap: 12px;
+	min-width: 0;
+	max-height: calc(100dvh - 40px);
+	padding: 24px 24px 20px 12px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.wx-ops-eyebrow {
+	color: var(--wx-ops-muted);
+	font-size: 12px;
+	font-weight: 650;
+	letter-spacing: 0.04em;
+}
+
+.wx-ops-content h2 {
+	margin: 0;
+	padding-right: 30px;
+	font-size: 18px;
+	font-weight: 650;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.wx-ops-body {
+	margin: 0;
+	color: var(--wx-ops-foreground);
+	font-size: 14px;
+	line-height: 1.75;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.wx-ops-close {
+	position: absolute;
+	top: 18px;
+	right: 18px;
+	display: grid;
+	width: 30px;
+	height: 30px;
+	place-items: center;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--wx-ops-muted);
+}
+
+.wx-ops-close:hover {
+	background: var(--wx-ops-muted-surface);
+	color: var(--wx-ops-foreground);
+}
+
+.wx-ops-detail {
+	display: inline-flex;
+	width: fit-content;
+	align-items: center;
+	gap: 7px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--wx-ops-primary);
+	font-size: 13px;
+	font-weight: 650;
+}
+
+.wx-ops-detail small {
+	color: var(--wx-ops-muted);
+	font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+	font-size: 11px;
+	font-weight: 400;
+}
+
+.wx-ops-version,
+.wx-ops-required {
+	display: inline-flex;
+	width: fit-content;
+	min-height: 24px;
+	align-items: center;
+	padding: 0 9px;
+	border: 1px solid var(--wx-ops-border);
+	border-radius: 999px;
+	background: var(--wx-ops-muted-surface);
+	font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+	font-size: 11px;
+}
+
+.wx-ops-update-meta {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--wx-ops-muted);
+	font-size: 12px;
+}
+
+.wx-ops-required {
+	min-height: 22px;
+	margin-left: 4px;
+	border-color: color-mix(in srgb, var(--wx-ops-destructive) 45%, var(--wx-ops-border));
+	background: color-mix(in srgb, var(--wx-ops-destructive) 8%, var(--wx-ops-background));
+	color: var(--wx-ops-destructive);
+	font-family: inherit;
+}
+
+.wx-ops-unsigned-notice {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr);
+	gap: 8px;
+	align-items: start;
+	padding: 10px 12px;
+	border: 1px solid color-mix(in srgb, var(--wx-ops-destructive) 38%, var(--wx-ops-border));
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--wx-ops-destructive) 7%, var(--wx-ops-background));
+	color: var(--wx-ops-foreground);
+	font-size: 12px;
+	line-height: 1.55;
+}
+
+.wx-ops-unsigned-notice > svg {
+	margin-top: 1px;
+	color: var(--wx-ops-destructive);
+}
+
+.wx-ops-progress {
+	display: grid;
+	gap: 7px;
+}
+
+.wx-ops-progress__labels {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	color: var(--wx-ops-muted);
+	font-size: 12px;
+}
+
+.wx-ops-progress__track {
+	height: 5px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: var(--wx-ops-muted-surface);
+}
+
+.wx-ops-progress__track span {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--wx-ops-primary);
+	transition: width 160ms ease-out;
+}
+
+.wx-ops-progress small {
+	color: var(--wx-ops-muted);
+	font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+	font-size: 11px;
+}
+
+.wx-ops-actions {
+	position: sticky;
+	bottom: -20px;
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-bottom: -20px;
+	padding: 6px 0 20px;
+	background: var(--wx-ops-background);
+}
+
+.wx-ops-button {
+	display: inline-flex;
+	min-height: 36px;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	padding: 0 14px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 650;
+	cursor: pointer;
+}
+
+.wx-ops-button--primary {
+	background: var(--wx-ops-primary);
+	color: var(--wx-ops-primary-foreground);
+}
+
+.wx-ops-button--secondary {
+	border-color: var(--wx-ops-border);
+	background: var(--wx-ops-background);
+	color: var(--wx-ops-foreground);
+}
+
+.wx-ops-button:disabled {
+	cursor: wait;
+	opacity: 0.62;
+}
+
+.wx-ops-button:focus-visible,
+.wx-ops-close:focus-visible,
+.wx-ops-detail:focus-visible {
+	outline: 2px solid var(--wx-ops-ring);
+	outline-offset: 2px;
+}
+
+@keyframes wx-ops-fade {
+	from {
+		opacity: 0;
+	}
+}
+
+@keyframes wx-ops-enter {
+	from {
+		opacity: 0;
+		transform: translateY(5px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wx-ops-backdrop,
+	.wx-ops-dialog {
+		animation: none;
+	}
+
+	.wx-ops-progress__track span {
+		transition: none;
+	}
+}
+
+@media (max-width: 580px) {
+	.wx-ops-dialog {
+		grid-template-columns: 4px 34px minmax(0, 1fr);
+	}
+
+	.wx-ops-content {
+		padding-right: 18px;
+	}
+
+	.wx-ops-actions {
+		flex-direction: column-reverse;
+	}
+
+	.wx-ops-button {
+		width: 100%;
+	}
+}

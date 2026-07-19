@@ -1,3 +1,5 @@
+import type { UpdateState } from '@wenxue/client-operations'
+
 export type BrowserStatus = 'idle' | 'launching' | 'running' | 'error'
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -51,6 +53,10 @@ export interface PublicUserSession {
 
 export interface UserSessionResult extends LaunchResult {
 	session?: PublicUserSession
+}
+
+export interface UpdateMutationResult extends LaunchResult {
+	state: UpdateState
 }
 
 export interface LauncherLogEntry {
@@ -181,10 +187,19 @@ declare global {
 				getSession(): Promise<UserSessionResult>
 				clearSession(): Promise<LaunchResult>
 			}
+			updates: {
+				getState(): Promise<UpdateState>
+				check(reason?: 'manual' | 'signal'): Promise<UpdateMutationResult>
+				download(): Promise<UpdateMutationResult>
+				openInstaller(): Promise<UpdateMutationResult>
+				onStateChange(cb: (state: UpdateState) => void): () => void
+			}
 			app: {
 				getVersions(): Promise<AppVersions>
 				getShellInfo(): Promise<AppShellInfo>
 				openLogs(): Promise<OpenLogsResult>
+				openExternal(url: string): Promise<LaunchResult>
+				quit(): Promise<LaunchResult>
 				minimizeWindow(): Promise<LaunchResult>
 				toggleMaximizeWindow(): Promise<LaunchResult>
 				requestClose(): Promise<LaunchResult>

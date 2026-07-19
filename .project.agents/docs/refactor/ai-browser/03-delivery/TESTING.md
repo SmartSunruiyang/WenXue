@@ -1,7 +1,7 @@
 # AI 浏览器重构测试与验收策略
 
 > - 状态：G1 前待评审
-> - 最后更新：2026-07-14
+> - 最后更新：2026-07-18
 > - 原则：首版“插件完整迁移”必须由行为等价证据证明，不以代码复用比例或人工主观体验判定。
 
 ## 1. 测试目标
@@ -32,6 +32,7 @@
 | CAP-11 | 登录与凭证安全   | 问学账号控制面、任务站点登录、短时令牌、BYO 授权与吊销            |
 | CAP-12 | 插件平台等价     | MV3 service worker、storage、消息、权限、命令、菜单及现有全部入口 |
 | CAP-13 | 恢复、更新与迁移 | 崩溃恢复、版本升级、数据导入、失败回滚、旧运行时保留              |
+| CAP-14 | 应用消息与发布   | 定向消息/确认/撤回、签名候选、灰度、暂停、强制策略 freshness      |
 
 “现有全部入口”必须通过代码和用户流程盘点展开为子项；任何未盘点能力不能默认为已迁移。
 
@@ -156,6 +157,29 @@
 
 每个 fixture 验证未选择任务不受影响、原始数据不被破坏、导入任务可独立登录和回滚。详细流程见 [迁移与回滚](MIGRATION.md)。
 
+### 8.1 分发协议兼容
+
+- 用同一 fixture 分别驱动 Electron `DesktopAnnouncementService` 与 Chromium
+  `WenXueAnnouncementFeed`，断言 uid/platform/version 匹配、重要确认、跨设备回执与撤回一致。
+- 用 runtime 隔离候选验证 Electron/Chromium 不交叉消费；覆盖 Ed25519/SHA-512 篡改、稳定分桶、
+  pause/withdraw、mandatory=100%、离线超过 24 小时不锁死和执行前实时策略复核；要求断网时即使存在
+  fresh mandatory 缓存，Electron 也不得打开安装包，Chromium 也不得进入安装。
+- 覆盖 event token 对 release/install/runtime/platform/arch/fromVersion/过期时间的绑定与篡改拒绝、
+  `desktop_release_events.expiresAt` BSON Date 与 30 天 TTL。报告必须明确标记“token 不证明安装真实性”，
+  健康率只作 advisory，不把匿名事件当成无人监督的自动 rollout 证据。
+- 发布演练需证明 COS 桶从未启用版本控制、目标版本路径及候选标记无法覆盖；已暂停版本控制的桶不构成合格证据。
+- 共享发布供应链测试必须从成功首轮 source build run 下载保留 30 天的原字节产物与 seal，重算
+  `artifactSetSha512`，并拒绝 commit/version/channel/`buildRunUrl` 不一致或任一字节改变。Electron 基线
+  产物明确为 `manual-unsigned`，其 candidate build 不使用发布 Environment。
+- Electron v1 的 `quality`、`manual-installer-integrity`、`manifest-tamper-rejection` 三项 tests 必须覆盖
+  完整 Electron 平台矩阵、status 均为 passed 且 URL 都等于同一成功 `buildRunUrl`；不要求外部 evidence
+  公钥、URL 或签名。Chromium 接入时必须以新 schema 版本登记 updater/平台安装 tests，并继续覆盖同一
+  source run/原字节绑定。COS 验收记录 versioning `Closed`、`--forbid-overwrite`、公开源逐字节复核；
+  共享 publish 使用受保护 `desktop-release-production`。Chromium G5 另外要求平台签名阶段的独立身份、
+  审批和最小权限证据。
+- G5 必须用 macOS arm64、Windows x64 签名 Chromium 包做上一版本 → 下一版本与更高版本 hotfix；
+  mock Updater 或开发构建不构成发布证据。
+
 ## 9. 测试证据格式
 
 每次门禁报告必须记录：
@@ -179,11 +203,11 @@
 
 ## 10. 门禁映射
 
-| 门禁 | 测试出口                                                   |
-| ---- | ---------------------------------------------------------- |
-| G1   | 双平台可重复构建、启动/安装冒烟、发布清单与安全构建检查    |
-| G2   | CAP-01/02/03/04/10/11 的隔离、并发、恢复和威胁测试         |
-| G3   | CAP-05 至 CAP-12 全量行为等价，多标签页与多任务 Agent 通过 |
-| G4   | CAP-13、迁移/回滚、对称性能、8 小时长稳与故障注入通过      |
-| G5   | 签名、更新、灰度、遥测隐私、线上回滚演练通过               |
-| G6   | 稳定窗口数据满足退场标准，旧运行时无必要回滚依赖           |
+| 门禁 | 测试出口                                                       |
+| ---- | -------------------------------------------------------------- |
+| G1   | 双平台可重复构建、启动/安装冒烟、发布清单与安全构建检查        |
+| G2   | CAP-01/02/03/04/10/11 的隔离、并发、恢复和威胁测试             |
+| G3   | CAP-05 至 CAP-12 全量行为等价，多标签页与多任务 Agent 通过     |
+| G4   | CAP-13、迁移/回滚、对称性能、8 小时长稳与故障注入通过          |
+| G5   | CAP-14、签名、更新、灰度、遥测隐私、消息定向与线上回滚演练通过 |
+| G6   | 稳定窗口数据满足退场标准，旧运行时无必要回滚依赖               |

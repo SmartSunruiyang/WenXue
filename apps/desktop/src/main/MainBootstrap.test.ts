@@ -3,6 +3,7 @@ import {
 	buildControlWindowOptions,
 	desktopIconFile,
 	handleBrowserRunningClose,
+	updateChannel,
 } from './MainBootstrap'
 
 describe('desktopIconFile', () => {
@@ -13,6 +14,15 @@ describe('desktopIconFile', () => {
 
 	it('uses the PNG fallback on other platforms', () => {
 		expect(desktopIconFile('linux')).toBe('app-icon-windows-256.png')
+	})
+})
+
+describe('updateChannel', () => {
+	it('accepts release channels and falls back to stable for an invalid build value', () => {
+		expect(updateChannel('dev')).toBe('dev')
+		expect(updateChannel('beta')).toBe('beta')
+		expect(updateChannel('stable')).toBe('stable')
+		expect(updateChannel('nightly')).toBe('stable')
 	})
 })
 

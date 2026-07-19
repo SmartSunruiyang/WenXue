@@ -9,10 +9,21 @@ import {
 } from './gateway.mjs'
 
 export {
+	announcements as adminAnnouncements,
+	announcementWithdraw as adminAnnouncementWithdraw,
 	me as adminMe,
+	releaseCandidates as adminReleaseCandidates,
+	releasePublish as adminReleasePublish,
+	releases as adminReleases,
+	releaseState as adminReleaseState,
 	usageSummary as adminUsageSummary,
 	users as adminUsers,
 	userStatus as adminUserStatus,
+	clientAnnouncementAck,
+	clientAnnouncementsPending,
+	clientUpdateEvents,
+	clientUpdatePolicy,
+	releaseCandidateRegister,
 } from '../../admin-api/src/index.mjs'
 export { adminConsole } from './adminConsole.mjs'
 

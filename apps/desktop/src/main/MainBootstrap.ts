@@ -11,6 +11,7 @@ import { BrowserProfileStore } from './BrowserProfileStore'
 import { createBrowserResources } from './BrowserResources'
 import { BrowserSupervisor, type BrowserStatus } from './BrowserSupervisor'
 import { registerDesktopBridge } from './DesktopBridge'
+import { DesktopUpdateService } from './DesktopUpdateService'
 import { LauncherLogStore } from './LauncherLogStore'
 import { LauncherSettingsStore, type LauncherSettings } from './LauncherSettingsStore'
 import { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
@@ -18,7 +19,10 @@ import { ProfileStore } from './ProfileStore'
 import { TokenUsageStore } from './TokenUsageStore'
 import { UsageCloudClient } from './UsageCloudClient'
 import { UserSessionHandoff } from './UserSessionHandoff'
-import { UserSessionStore } from './UserSessionStore'
+import { UserSessionStore, WENXUE_GATEWAY_BASE_URL } from './UserSessionStore'
+
+declare const __WENXUE_RELEASE_ED25519_PUBLIC_KEY__: string
+declare const __WENXUE_UPDATE_CHANNEL__: string
 
 type ElectronModule = typeof import('electron')
 export type CloseDecision = 'allow' | 'prevented'
@@ -94,6 +98,18 @@ export async function startMainBootstrap(): Promise<void> {
 	const logger = createAppLogger(paths, logStore)
 	const supervisor = new BrowserSupervisor({ resources, profiles, logger })
 	let currentWindow: BrowserWindow | undefined
+	const updateService = new DesktopUpdateService({
+		paths,
+		openPath: (targetPath) => electron.shell.openPath(targetPath),
+		isPackaged: electron.app.isPackaged,
+		currentVersion: electron.app.getVersion(),
+		platform: process.platform,
+		arch: process.arch,
+		channel: updateChannel(__WENXUE_UPDATE_CHANNEL__),
+		policyBaseUrl: WENXUE_GATEWAY_BASE_URL,
+		manifestPublicKey: __WENXUE_RELEASE_ED25519_PUBLIC_KEY__,
+		onError: (message) => logger.log('DesktopUpdateService', 'warn', message),
+	})
 
 	registerDesktopBridge({
 		ipcMain: electron.ipcMain,
@@ -106,6 +122,7 @@ export async function startMainBootstrap(): Promise<void> {
 		usageCloudClient,
 		userSessionStore,
 		userSessionHandoff,
+		updateService,
 		resources,
 		getAppVersion: () => electron.app.getVersion(),
 		getShellInfo: () => ({
@@ -120,7 +137,17 @@ export async function startMainBootstrap(): Promise<void> {
 				throw new Error(message)
 			}
 		},
+		openExternal: async (url) => {
+			await electron.shell.openExternal(url)
+		},
 		openPath: (targetPath) => electron.shell.openPath(targetPath),
+		quitApp: async () => {
+			try {
+				await supervisor.requestShutdown()
+			} finally {
+				electron.app.quit()
+			}
+		},
 		minimizeWindow: () => currentWindow?.minimize(),
 		toggleMaximizeWindow: () => {
 			if (!currentWindow) return
@@ -134,6 +161,7 @@ export async function startMainBootstrap(): Promise<void> {
 		sendStatus: (status) => currentWindow?.webContents.send('browser:status-changed', status),
 		sendProfileStatus: (payload) =>
 			currentWindow?.webContents.send('browser:profile-status-changed', payload),
+		sendUpdateState: (state) => currentWindow?.webContents.send('updates:state-changed', state),
 	})
 
 	const createWindow = () => {
@@ -146,6 +174,8 @@ export async function startMainBootstrap(): Promise<void> {
 	}
 
 	createWindow()
+	updateService.start()
+	electron.app.on('before-quit', () => updateService.stop())
 
 	electron.app.on('window-all-closed', () => {
 		if (process.platform !== 'darwin') {
@@ -259,4 +289,9 @@ export function desktopIconFile(platform: NodeJS.Platform): string {
 		return DESKTOP_ICON_FILES[platform]
 	}
 	return DESKTOP_ICON_FILES.fallback
+}
+
+export function updateChannel(value: string): 'dev' | 'beta' | 'stable' {
+	if (value === 'dev' || value === 'beta' || value === 'stable') return value
+	return 'stable'
 }

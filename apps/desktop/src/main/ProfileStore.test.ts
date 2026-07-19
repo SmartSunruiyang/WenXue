@@ -49,7 +49,7 @@ describe('ProfileStore', () => {
 		await expect(store.prepareForUnpackedExtension('research')).resolves.toBe(profileDir)
 		const preferences = JSON.parse(
 			await readFile(path.join(defaultDir, 'Preferences'), 'utf8'),
-		) as Record<string, any>
+		) as Record<string, unknown>
 
 		expect(preferences).toMatchObject({
 			homepage: 'https://example.com',

@@ -1,3 +1,5 @@
+import type { ClientAnnouncementView, UpdateState } from '@wenxue/client-operations'
+import { AnnouncementDialog, UpdateDialog } from '@wenxue/client-operations/react'
 import type { LucideIcon } from 'lucide-react'
 import {
 	Activity,
@@ -35,6 +37,7 @@ import { createPortal } from 'react-dom'
 import {
 	getLauncherSession,
 	readCloudBaseErrorMessage,
+	refreshLauncherSession,
 	registerLauncher,
 	signInLauncher,
 	signOutLauncher,
@@ -43,6 +46,11 @@ import {
 	type LauncherAuthSession,
 	type LauncherPublicUser,
 } from './cloudbase'
+import {
+	DesktopAnnouncementService,
+	type DesktopAnnouncementSnapshot,
+} from './DesktopAnnouncementService'
+import { DesktopReleaseSignalService } from './DesktopReleaseSignalService'
 import { strings } from './strings'
 import type {
 	AppShellInfo,
@@ -58,6 +66,7 @@ import type {
 } from './wenxue'
 
 const isMacPlatform = navigator.userAgent.includes('Macintosh')
+declare const __WENXUE_UPDATE_CHANNEL__: string
 
 type RouteId = 'browsers' | 'logs' | 'tokens' | 'settings'
 type SettingsSectionId = 'launch' | 'behavior' | 'logs' | 'kernel' | 'about'
@@ -178,11 +187,15 @@ export default function App() {
 	const [tokensLoading, setTokensLoading] = useState(false)
 	const [savedTick, setSavedTick] = useState(false)
 	const [message, setMessage] = useState<string | null>(null)
+	const [announcement, setAnnouncement] = useState<ClientAnnouncementView | null>(null)
+	const [updateState, setUpdateState] = useState<UpdateState>({ phase: 'idle' })
+	const [dismissedUpdate, setDismissedUpdate] = useState<string | null>(null)
 	const avatarButtonRef = useRef<HTMLButtonElement>(null)
 	const addingProfileRef = useRef(false)
 	const batchLaunchingRef = useRef(false)
 	const logoutBusyRef = useRef(false)
 	const logRefreshErrorRef = useRef<string | null>(null)
+	const announcementErrorRef = useRef<string | null>(null)
 	const logsMutationBusyRef = useRef(false)
 	const pendingProfileActionsRef = useRef(new Set<string>())
 	const settingsErrorRef = useRef<string | null>(null)
@@ -191,6 +204,18 @@ export default function App() {
 	const savedTimerRef = useRef<number | null>(null)
 	const tokenRequestIdRef = useRef(0)
 	const workspaceGenerationRef = useRef(0)
+	const announcementServiceRef = useRef<DesktopAnnouncementService | null>(null)
+	const releaseSignalServiceRef = useRef<DesktopReleaseSignalService | null>(null)
+	announcementServiceRef.current ??= new DesktopAnnouncementService({
+		refreshSession: async (current) => {
+			const refreshed = await refreshLauncherSession()
+			if (refreshed.userId !== current.userId) return null
+			const synced = await window.wenxue.auth.setSession(refreshed)
+			if (!synced.ok) throw new Error(synced.error ?? '账号 session 刷新失败')
+			return refreshed
+		},
+	})
+	releaseSignalServiceRef.current ??= new DesktopReleaseSignalService()
 
 	const beginProfileAction = useCallback((profileId: string) => {
 		if (logoutBusyRef.current || pendingProfileActionsRef.current.has(profileId)) return false
@@ -280,6 +305,46 @@ export default function App() {
 		setSettings(nextSettings)
 		setTokens(nextTokens)
 		setVersions(nextVersions)
+		return nextVersions
+	}, [])
+
+	useEffect(() => {
+		const service = announcementServiceRef.current
+		if (!service) return
+		return service.subscribe((snapshot: DesktopAnnouncementSnapshot) => {
+			setAnnouncement(snapshot.current)
+			const previousError = announcementErrorRef.current
+			const nextError = snapshot.error ?? null
+			announcementErrorRef.current = nextError
+			if (nextError) {
+				setMessage(nextError)
+			} else if (previousError) {
+				setMessage((current) => (current === previousError ? null : current))
+			}
+		})
+	}, [])
+
+	useEffect(() => {
+		let mounted = true
+		const releaseSignalService = releaseSignalServiceRef.current
+		const unsubscribe = window.wenxue.updates.onStateChange((state) => {
+			setUpdateState(state)
+		})
+		void window.wenxue.updates
+			.getState()
+			.then((state) => {
+				if (mounted) setUpdateState(state)
+			})
+			.catch((error: unknown) => {
+				if (mounted) setMessage(readCloudBaseErrorMessage(error, strings.update.checkError))
+			})
+		releaseSignalService?.start('electron', readUpdateChannel(__WENXUE_UPDATE_CHANNEL__))
+		return () => {
+			mounted = false
+			unsubscribe()
+			releaseSignalService?.stop()
+			announcementServiceRef.current?.stop()
+		}
 	}, [])
 
 	useEffect(() => {
@@ -299,10 +364,15 @@ export default function App() {
 			if (!synced.ok) {
 				throw new Error(synced.error ?? '账号 session 同步失败')
 			}
-			await loadWorkspaceData()
+			const nextVersions = await loadWorkspaceData()
 			if (mounted) {
 				setAuthUser(toPublicUser(session))
 				setAuthReady(true)
+				void announcementServiceRef.current
+					?.start(session, desktopPlatform(nextShellInfo.platform), nextVersions.app)
+					.catch((error: unknown) =>
+						setMessage(readCloudBaseErrorMessage(error, strings.announcement.syncError)),
+					)
 			}
 		}
 
@@ -635,10 +705,15 @@ export default function App() {
 			if (!result.ok) {
 				throw new Error(result.error ?? '账号 session 同步失败')
 			}
-			await loadWorkspaceData()
+			const nextVersions = await loadWorkspaceData()
 			setAuthUser(toPublicUser(session))
+			void announcementServiceRef.current
+				?.start(session, desktopPlatform(shellInfo.platform), nextVersions.app)
+				.catch((error: unknown) =>
+					setMessage(readCloudBaseErrorMessage(error, strings.announcement.syncError)),
+				)
 		},
-		[loadWorkspaceData],
+		[loadWorkspaceData, shellInfo.platform],
 	)
 
 	const handleLogin = useCallback(
@@ -686,6 +761,7 @@ export default function App() {
 			setMessage(readCloudBaseErrorMessage(error, strings.auth.error.logout))
 		} finally {
 			if (signedOut) {
+				announcementServiceRef.current?.stop()
 				setTokensLoading(false)
 				setAuthUser(null)
 				setProfiles([])
@@ -712,29 +788,108 @@ export default function App() {
 		}
 	}, [])
 
+	const acknowledgeAnnouncement = useCallback(async () => {
+		const current = announcementServiceRef.current?.current()
+		if (!current) return
+		try {
+			await announcementServiceRef.current?.acknowledge(current.id)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.announcement.ackError))
+		}
+	}, [])
+
+	const openAnnouncementDetail = useCallback(async (url: string) => {
+		try {
+			const result = await window.wenxue.app.openExternal(url)
+			if (!result.ok) throw new Error(result.error ?? strings.announcement.openDetailError)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.announcement.openDetailError))
+		}
+	}, [])
+
+	const checkForUpdates = useCallback(async () => {
+		setDismissedUpdate(null)
+		setMessage(null)
+		try {
+			const result = await window.wenxue.updates.check('manual')
+			if (!result.ok) throw new Error(result.error ?? strings.update.checkError)
+			setUpdateState(result.state)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.update.checkError))
+		}
+	}, [])
+
+	const downloadUpdate = useCallback(async () => {
+		setMessage(null)
+		try {
+			const result = await window.wenxue.updates.download()
+			if (!result.ok) throw new Error(result.error ?? strings.update.downloadError)
+			setUpdateState(result.state)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.update.downloadError))
+		}
+	}, [])
+
+	const openUpdateInstaller = useCallback(async () => {
+		setMessage(null)
+		try {
+			const result = await window.wenxue.updates.openInstaller()
+			if (!result.ok) throw new Error(result.error ?? strings.update.installError)
+			setUpdateState(result.state)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.update.installError))
+		}
+	}, [])
+
+	const exitForUpdate = useCallback(async () => {
+		const result = await window.wenxue.app.quit()
+		if (!result.ok) setMessage(result.error ?? strings.error.closeWindow)
+	}, [])
+
+	const interruptionLayer = (
+		<DesktopInterruptionLayer
+			announcement={authUser ? announcement : null}
+			dismissedUpdate={dismissedUpdate}
+			onAcknowledge={() => void acknowledgeAnnouncement()}
+			onDismissUpdate={(key) => setDismissedUpdate(key)}
+			onDownload={() => void downloadUpdate()}
+			onExit={() => void exitForUpdate()}
+			onOpenInstaller={() => void openUpdateInstaller()}
+			onOpenDetail={(url) => void openAnnouncementDetail(url)}
+			onRetry={() => void checkForUpdates()}
+			updateState={updateState}
+		/>
+	)
+
 	if (!authReady) {
 		return (
-			<main className={`auth-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
-				<div className="top-drag-zone drag-region" />
-				<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
-				<div className="auth-loading">
-					<LoaderCircle className="spin" size={18} />
-					<span>{strings.auth.loading}</span>
-				</div>
-			</main>
+			<>
+				<main className={`auth-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
+					<div className="top-drag-zone drag-region" />
+					<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
+					<div className="auth-loading">
+						<LoaderCircle className="spin" size={18} />
+						<span>{strings.auth.loading}</span>
+					</div>
+				</main>
+				{interruptionLayer}
+			</>
 		)
 	}
 
 	if (!authUser) {
 		return (
-			<AuthScreen
-				error={message}
-				onLogin={handleLogin}
-				onRegister={handleRegister}
-				shellInfo={shellInfo}
-				setMessage={setMessage}
-				setShellInfo={setShellInfo}
-			/>
+			<>
+				<AuthScreen
+					error={message}
+					onLogin={handleLogin}
+					onRegister={handleRegister}
+					shellInfo={shellInfo}
+					setMessage={setMessage}
+					setShellInfo={setShellInfo}
+				/>
+				{interruptionLayer}
+			</>
 		)
 	}
 
@@ -878,19 +1033,111 @@ export default function App() {
 				) : null}
 				{route === 'settings' ? (
 					<SettingsPage
+						checkForUpdates={checkForUpdates}
 						savedTick={savedTick}
 						saving={savingSettings}
 						section={settingsSection}
 						setMessage={setMessage}
 						setSection={setSettingsSection}
 						settings={settings}
+						updateState={updateState}
 						updateSettings={updateSettings}
 						versions={versions}
 					/>
 				) : null}
 			</section>
+			{interruptionLayer}
 		</main>
 	)
+}
+
+function DesktopInterruptionLayer({
+	announcement,
+	dismissedUpdate,
+	onAcknowledge,
+	onDismissUpdate,
+	onDownload,
+	onExit,
+	onOpenInstaller,
+	onOpenDetail,
+	onRetry,
+	updateState,
+}: {
+	announcement: ClientAnnouncementView | null
+	dismissedUpdate: string | null
+	onAcknowledge: () => void
+	onDismissUpdate: (key: string) => void
+	onDownload: () => void
+	onExit: () => void
+	onOpenInstaller: () => void
+	onOpenDetail: (url: string) => void
+	onRetry: () => void
+	updateState: UpdateState
+}) {
+	const release = 'release' in updateState ? updateState.release : undefined
+	const updateKey = release ? `${release.releaseId}:${release.mode}:${updateState.phase}` : null
+	const mandatory = release?.mode === 'mandatory'
+	const updateVisible = Boolean(
+		updateKey &&
+		dismissedUpdate !== updateKey &&
+		(updateState.phase === 'available' ||
+			updateState.phase === 'downloading' ||
+			updateState.phase === 'ready' ||
+			updateState.phase === 'opening' ||
+			updateState.phase === 'handedOff' ||
+			updateState.phase === 'error'),
+	)
+
+	if (mandatory && updateVisible) {
+		return (
+			<UpdateDialog
+				onDismiss={updateKey ? () => onDismissUpdate(updateKey) : undefined}
+				onDownload={onDownload}
+				onExit={onExit}
+				onOpenInstaller={onOpenInstaller}
+				onRetry={onRetry}
+				state={updateState}
+			/>
+		)
+	}
+	if (announcement) {
+		return (
+			<AnnouncementDialog
+				announcement={announcement}
+				onAcknowledge={onAcknowledge}
+				onDismiss={announcement.importance === 'normal' ? onAcknowledge : undefined}
+				onOpenDetail={onOpenDetail}
+			/>
+		)
+	}
+	if (updateVisible) {
+		return (
+			<UpdateDialog
+				onDismiss={updateKey ? () => onDismissUpdate(updateKey) : undefined}
+				onDownload={onDownload}
+				onExit={onExit}
+				onOpenInstaller={onOpenInstaller}
+				onRetry={onRetry}
+				state={updateState}
+			/>
+		)
+	}
+	if (updateState.phase === 'error' && !updateState.release) {
+		return createPortal(
+			<div aria-live="polite" className="desktop-update-warning no-drag" role="status">
+				<Info aria-hidden size={16} />
+				<span>{updateState.message}</span>
+				{updateState.retryable ? (
+					<button onClick={onRetry} type="button">
+						<RefreshCw aria-hidden size={14} />
+						重新检查
+					</button>
+				) : null}
+			</div>,
+			document.body,
+		)
+	}
+	return null
 }
 
 interface RailButtonProps {
@@ -2074,21 +2321,25 @@ function TokenPanel({
 }
 
 function SettingsPage({
+	checkForUpdates,
 	savedTick,
 	saving,
 	section,
 	setMessage,
 	setSection,
 	settings,
+	updateState,
 	updateSettings,
 	versions,
 }: {
+	checkForUpdates: () => Promise<void>
 	savedTick: boolean
 	saving: boolean
 	section: SettingsSectionId
 	setMessage: (message: string | null) => void
 	setSection: (section: SettingsSectionId) => void
 	settings: LauncherSettings
+	updateState: UpdateState
 	updateSettings: (patch: LauncherSettingsPatch) => Promise<boolean>
 	versions: AppVersions
 }) {
@@ -2264,6 +2515,29 @@ function SettingsPage({
 								<span>Extension</span>
 								<strong>{versions.extension}</strong>
 							</div>
+							<p aria-live="polite" className="settings-panel__note">
+								<Info size={15} />
+								{describeUpdateState(updateState)}
+							</p>
+							<button
+								className="primary-button"
+								disabled={
+									updateState.phase === 'checking' ||
+									updateState.phase === 'downloading' ||
+									updateState.phase === 'opening'
+								}
+								onClick={() => void checkForUpdates()}
+								type="button"
+							>
+								{updateState.phase === 'checking' ? (
+									<LoaderCircle className="spin" size={15} />
+								) : (
+									<RefreshCw size={15} />
+								)}
+								{updateState.phase === 'checking'
+									? strings.update.checkingAction
+									: strings.update.checkAction}
+							</button>
 							<button
 								className="soft-button"
 								onClick={() => {
@@ -2318,6 +2592,8 @@ function NumberSetting({
 
 	useEffect(() => {
 		canonicalValueRef.current = value
+		// Persisted settings can change outside this input, so its local editing buffer must follow.
+		// eslint-disable-next-line @eslint-react/hooks-extra/no-direct-set-state-in-use-effect
 		setDraft(String(value))
 	}, [value])
 
@@ -2503,18 +2779,39 @@ function formatTime(ts: number): string {
 	}).format(ts)
 }
 
-function formatDate(ts: number): string {
-	return new Intl.DateTimeFormat('zh-CN', {
-		year: 'numeric',
-		month: '2-digit',
-		day: '2-digit',
-		hour: '2-digit',
-		minute: '2-digit',
-	}).format(ts)
-}
-
 function formatNumber(value: number): string {
 	return new Intl.NumberFormat('zh-CN').format(value)
+}
+
+function readUpdateChannel(value: string): 'dev' | 'beta' | 'stable' {
+	if (value === 'dev' || value === 'beta' || value === 'stable') return value
+	return 'stable'
+}
+
+function desktopPlatform(value: string): 'darwin' | 'win32' {
+	if (value === 'darwin' || value === 'win32') return value
+	return isMacPlatform ? 'darwin' : 'win32'
+}
+
+function describeUpdateState(state: UpdateState): string {
+	switch (state.phase) {
+		case 'idle':
+			return strings.update.status.idle
+		case 'checking':
+			return strings.update.status.checking
+		case 'available':
+			return `${strings.update.status.available} v${state.release.version}`
+		case 'downloading':
+			return `${strings.update.status.downloading} ${Math.round(state.progress.percent)}%`
+		case 'ready':
+			return `${strings.update.status.ready} v${state.release.version}`
+		case 'opening':
+			return strings.update.status.opening
+		case 'handedOff':
+			return strings.update.status.handedOff
+		case 'error':
+			return state.message
+	}
 }
 
 function exportLauncherLogs(

@@ -414,12 +414,14 @@ textarea {
 	position: absolute;
 	top: 0;
 	right: 0;
-	z-index: 80;
+	z-index: 2147483647;
 	display: grid;
 	width: 138px;
 	height: 38px;
 	grid-template-columns: repeat(3, 46px);
 	align-items: stretch;
+	background: var(--wx-surface);
+	box-shadow: 0 1px 0 var(--wx-border);
 }
 
 .window-controls button {
@@ -1612,6 +1614,49 @@ textarea {
 .toast > svg {
 	margin-top: 2px;
 	color: var(--wx-error-red);
+}
+
+.desktop-update-warning {
+	position: fixed;
+	top: 48px;
+	left: 50%;
+	z-index: 2147482000;
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	width: min(680px, calc(100vw - 48px));
+	align-items: center;
+	gap: 10px;
+	padding: 11px 12px;
+	transform: translateX(-50%);
+	border: 1px solid color-mix(in srgb, var(--wx-coral-pulse) 35%, var(--wx-border));
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--wx-coral-pulse) 7%, var(--wx-surface));
+	box-shadow: 0 4px 8px var(--wx-shadow);
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.desktop-update-warning > svg {
+	color: var(--wx-coral-pulse);
+}
+
+.desktop-update-warning span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.desktop-update-warning button {
+	display: inline-flex;
+	min-height: 30px;
+	align-items: center;
+	gap: 6px;
+	padding: 0 10px;
+	border: 1px solid var(--wx-border-strong);
+	border-radius: 7px;
+	background: var(--wx-surface);
+	color: var(--wx-foreground);
+	font-size: 12px;
+	font-weight: 650;
 }
 
 .empty-state {

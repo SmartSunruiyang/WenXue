@@ -1,8 +1,39 @@
+appId: com.wenxue.launcher
+productName: 问学
+asar: true
+# v1 ships manual installers. Authenticity comes from the embedded Ed25519 release key,
+# while platform code signing/notarization remains deliberately disabled.
+forceCodeSigning: false
+
+directories:
+  output: release
+
+artifactName: WenXue-${version}-${os}-${arch}.${ext}
+
+extraResources:
+  - from: ../../.browsers
+    to: browser
+  - from: ../extension/.output/chrome-mv3
+    to: extension
+
 mac:
   icon: resources/app-icon-macos.icns
+  category: public.app-category.productivity
+  identity: null
+  hardenedRuntime: false
+  notarize: false
+  target: dmg
 
 dmg:
   icon: resources/app-icon-macos.icns
 
 win:
   icon: resources/app-icon-windows.ico
+  signExecutable: false
+  target: nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false

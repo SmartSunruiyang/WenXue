@@ -1,5 +1,12 @@
-export const WENXUE_GATEWAY_BASE_URL =
+declare const __WENXUE_GATEWAY_BASE_URL__: string
+
+const DEFAULT_GATEWAY_BASE_URL =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
+export const WENXUE_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(
+	typeof __WENXUE_GATEWAY_BASE_URL__ === 'string'
+		? __WENXUE_GATEWAY_BASE_URL__
+		: DEFAULT_GATEWAY_BASE_URL,
+)
 
 export interface UserSession {
 	userId: string
@@ -13,18 +20,21 @@ export type PublicUserSession = Pick<UserSession, 'userId' | 'expiresAt' | 'gate
 
 export interface UserSessionStoreOptions {
 	now?: () => number
+	gatewayBaseUrl?: string
 }
 
 export class UserSessionStore {
 	private readonly now: () => number
+	private readonly gatewayBaseUrl: string
 	private session: UserSession | null = null
 
 	constructor(options: UserSessionStoreOptions = {}) {
 		this.now = options.now ?? Date.now
+		this.gatewayBaseUrl = normalizeGatewayBaseUrl(options.gatewayBaseUrl ?? WENXUE_GATEWAY_BASE_URL)
 	}
 
 	setSession(value: unknown): PublicUserSession {
-		const session = normalizeUserSession(value, this.now())
+		const session = normalizeUserSession(value, this.now(), this.gatewayBaseUrl)
 		this.session = session
 		return toPublicSession(session)
 	}
@@ -54,7 +64,7 @@ export class UserSessionStore {
 	}
 }
 
-function normalizeUserSession(value: unknown, now: number): UserSession {
+function normalizeUserSession(value: unknown, now: number, gatewayBaseUrl: string): UserSession {
 	if (!isRecord(value)) {
 		throw new Error('用户 session 无效')
 	}
@@ -62,7 +72,6 @@ function normalizeUserSession(value: unknown, now: number): UserSession {
 	const accessToken = readString(value.accessToken)
 	const refreshToken = readString(value.refreshToken)
 	const expiresAt = typeof value.expiresAt === 'number' ? value.expiresAt : null
-	const gatewayBaseUrl = readString(value.gatewayBaseUrl) ?? WENXUE_GATEWAY_BASE_URL
 	if (!userId || !accessToken || !refreshToken || !expiresAt || !Number.isFinite(expiresAt)) {
 		throw new Error('用户 session 无效')
 	}
@@ -74,7 +83,9 @@ function normalizeUserSession(value: unknown, now: number): UserSession {
 		accessToken,
 		refreshToken,
 		expiresAt,
-		gatewayBaseUrl: normalizeGatewayBaseUrl(gatewayBaseUrl),
+		// This endpoint is embedded by the signed build. Never trust a renderer-supplied
+		// address with account credentials.
+		gatewayBaseUrl,
 	}
 }
 
@@ -88,11 +99,9 @@ function toPublicSession(session: UserSession): PublicUserSession {
 
 function normalizeGatewayBaseUrl(value: string): string {
 	const trimmed = value.trim().replace(/\/+$/, '')
-	if (!trimmed) return WENXUE_GATEWAY_BASE_URL
+	if (!trimmed) throw new Error('问学服务地址无效')
 	const parsed = new URL(trimmed)
-	if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-		throw new Error('用户 session 无效')
-	}
+	if (parsed.protocol !== 'https:') throw new Error('问学服务地址必须使用 HTTPS')
 	return trimmed.endsWith('/v1') ? trimmed.slice(0, -3).replace(/\/+$/, '') : trimmed
 }
 

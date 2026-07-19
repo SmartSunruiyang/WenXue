@@ -30,14 +30,17 @@ secrets.*
 tmp/
 .cache/
 .codegraph/
+.cloudbase-deploy/
 .worktrees/
 
 # --- Build output (ADS: append stack-specific rules below) ---
 # e.g. node: node_modules/ dist/ ; python: __pycache__/ .venv/ *.pyc ;
 #      rust: target/ ; java: build/ *.class ; swift/xcode: DerivedData/ *.xcuserstate
-node_modules/
+node_modules
 dist/
 dist-electron/
+apps/desktop/out/
+apps/desktop/release/
 .output/
 .wxt/
 .browsers/

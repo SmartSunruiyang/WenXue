@@ -9,7 +9,8 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@cloudbase/functions-framework": "^1.18.2"
+		"@cloudbase/functions-framework": "^1.18.2",
+		"@cloudbase/node-sdk": "^3.18.3"
 	},
 	"devDependencies": {
 		"@types/node": "^22.0.0",
