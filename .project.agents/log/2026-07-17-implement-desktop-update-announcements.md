@@ -38,6 +38,11 @@
   绑定到 seal、candidate 与发布时配置；版本脚本统一复用共享的严格 SemVer 校验。
 - 发布 rollout 使用确定性 idempotency key：首次发布响应丢失后，相同 key 与相同内容可安全重试并返回
   同一 rollout；相同 key 配不同内容仍返回冲突，且检查顺序不会被“该版本已发布”门禁提前截断。
+- 合并前审查修复 renderer 公告错误提示生命周期：watch/轮询恢复成功后只清除同一条旧公告错误，
+  不再让“正在自动重连/同步失败”覆盖后续成功状态，也不会误清除其他用户操作错误。
+- 依据权威生产快照同步 spec、plan 与 ROADMAP：Gateway 030、AdminApi 012、AdminWeb 007、18 条公开
+  routes、CloudRun 服务端配置与独立 COS 桶已上线；仍只把 GitHub/CAM 发布身份、QPS/直达收口、
+  真实候选和三平台安装交接列为未完成。
 
 ## CloudBase 数据资源实际状态
 
@@ -100,8 +105,7 @@
 
 ## 提交
 
-- 未提交。本轮工作是用户要求的大型实施会话，当前工作树中包含全部功能实现、资源宣告、文档与测试变更；
-  用户未要求 stage/commit，因此未执行任何 Git 写操作。
+- `2b67163` `feat(desktop): add release and announcement control plane`
 
 ## 验证状态
 
