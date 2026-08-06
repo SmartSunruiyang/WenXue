@@ -28,7 +28,7 @@
     signOut 结果未知或 clear 失败时保持保护并要求重启。
   - _Requirements: R1, R3, R4_
 
-- [ ] 5. 验证并交付
+- [x] 5. 验证并交付
   - 运行 desktop test、typecheck、build，并检查 diff。
   - 写执行日志，提交独立 `codex/account-scoped-profiles` 分支。
   - _Requirements: R1–R6_
