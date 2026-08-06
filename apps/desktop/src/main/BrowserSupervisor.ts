@@ -36,6 +36,7 @@ type StatusListener = (status: BrowserStatus) => void
 type ProfileStatusListener = (profileId: string, status: BrowserStatus) => void
 const GRACEFUL_SHUTDOWN_MS = 2000
 const FORCE_SHUTDOWN_MS = 5000
+const UNTRACKED_SHUTDOWN_POLL_MS = 100
 
 interface BrowserInstance {
 	child: BrowserProcessLike
@@ -43,6 +44,7 @@ interface BrowserInstance {
 	argv: string[]
 	userDataDir: string
 	shutdownRequested: boolean
+	spawned: boolean
 }
 
 export class BrowserSupervisor {
@@ -53,6 +55,7 @@ export class BrowserSupervisor {
 	private readonly profileListeners = new Set<ProfileStatusListener>()
 	private readonly instances = new Map<string, BrowserInstance>()
 	private readonly pendingLaunches = new Map<string, object>()
+	private readonly launchMarkerCleanups = new Map<string, Promise<void>>()
 	private readonly statusValues = new Map<string, BrowserStatus>()
 
 	constructor(private readonly deps: BrowserSupervisorDeps) {
@@ -62,10 +65,16 @@ export class BrowserSupervisor {
 	}
 
 	async launch(profileId = 'default', options: BrowserLaunchOptions = {}): Promise<void> {
+		const pendingMarkerCleanup = this.launchMarkerCleanups.get(profileId)
+		if (pendingMarkerCleanup) await pendingMarkerCleanup
+
 		const status = this.profileStatus(profileId)
 		if (status === 'launching') return
 
 		const current = this.instances.get(profileId)
+		if (current?.shutdownRequested) {
+			throw new Error(`浏览器配置 ${profileId} 仍在关闭中，请先重试停止。`)
+		}
 		if (status === 'running' && current) {
 			const focusArgv = options.startUrl
 				? buildArgv({
@@ -77,6 +86,9 @@ export class BrowserSupervisor {
 			await this.focusExisting(current.binary, focusArgv)
 			return
 		}
+		if (current) {
+			throw new Error(`浏览器配置 ${profileId} 仍有未退出进程，请先停止后重试。`)
+		}
 
 		this.setProfileStatus(profileId, 'launching')
 		this.deps.logger.log('BrowserSupervisor', 'info', `launching profile ${profileId}`)
@@ -87,9 +99,16 @@ export class BrowserSupervisor {
 		let binary: string
 		let argv: string[]
 		let userDataDir: string
+		let launchMarkerWritten = false
 		try {
 			userDataDir = await this.deps.profiles.prepareForUnpackedExtension(profileId)
 			if (this.pendingLaunches.get(profileId) !== launchToken) return
+			await this.deps.profiles.markProfileLaunching(profileId)
+			launchMarkerWritten = true
+			if (this.pendingLaunches.get(profileId) !== launchToken) {
+				await this.clearLaunchMarker(profileId)
+				return
+			}
 			binary = this.deps.resources.browserBinary()
 			argv = buildArgv({
 				userDataDir,
@@ -99,6 +118,9 @@ export class BrowserSupervisor {
 			})
 			child = this.spawnBrowser(binary, argv)
 		} catch (error) {
+			if (launchMarkerWritten) {
+				await this.clearLaunchMarker(profileId).catch(() => undefined)
+			}
 			if (this.pendingLaunches.get(profileId) !== launchToken) return
 			this.pendingLaunches.delete(profileId)
 			this.instances.delete(profileId)
@@ -113,16 +135,21 @@ export class BrowserSupervisor {
 			argv: [...argv],
 			userDataDir,
 			shutdownRequested: false,
+			spawned: false,
 		})
 		this.attachBrowserLogs(profileId, child)
 		this.bindChildEvents(profileId, child)
 	}
 
 	async stop(profileId: string): Promise<void> {
-		this.pendingLaunches.delete(profileId)
+		const cancelledPendingLaunch = this.pendingLaunches.delete(profileId)
 		const current = this.instances.get(profileId)
 		if (!current) {
-			this.setProfileStatus(profileId, 'idle')
+			if (cancelledPendingLaunch) {
+				this.setProfileStatus(profileId, 'idle')
+				return
+			}
+			await this.stopUntrackedProfile(profileId)
 			return
 		}
 		this.deps.logger.log('BrowserSupervisor', 'info', `stopping profile ${profileId}`)
@@ -144,26 +171,30 @@ export class BrowserSupervisor {
 					return
 				}
 				this.deps.logger.log('BrowserSupervisor', 'warn', `force stopping profile ${profileId}`)
-				current.child.kill('SIGKILL')
+				if (!current.child.kill('SIGKILL')) {
+					this.setProfileStatus(profileId, 'error')
+				}
 			}
 			const forceTimer = setTimeout(forceShutdown, GRACEFUL_SHUTDOWN_MS)
 			const timeoutTimer = setTimeout(() => {
 				const latest = this.instances.get(profileId)
 				if (latest?.child === current.child) {
-					this.instances.delete(profileId)
 					this.setProfileStatus(profileId, 'error')
 				}
 				settle(new Error(`浏览器配置 ${profileId} 未能安全关闭，请重试。`))
 			}, FORCE_SHUTDOWN_MS)
 
-			current.child.on('exit', () => settle())
+			current.child.on('exit', () => {
+				void this.clearLaunchMarker(profileId).then(
+					() => settle(),
+					() => settle(new Error(`浏览器配置 ${profileId} 已退出，但启动保护清理失败。`)),
+				)
+			})
 			current.shutdownRequested = true
 			const fallBackToProcessSignal = () => {
 				if (settled || this.instances.get(profileId)?.child !== current.child) return
 				if (!current.child.kill('SIGTERM')) {
-					this.instances.delete(profileId)
-					this.setProfileStatus(profileId, 'idle')
-					settle()
+					this.setProfileStatus(profileId, 'error')
 				}
 			}
 			try {
@@ -181,6 +212,47 @@ export class BrowserSupervisor {
 		})
 	}
 
+	private async stopUntrackedProfile(profileId: string): Promise<void> {
+		if (await this.profileIsStablyIdle(profileId)) {
+			this.setProfileStatus(profileId, 'idle')
+			return
+		}
+
+		const userDataDir = this.deps.profiles.profilePath(profileId)
+		let closeRequested = false
+		try {
+			closeRequested = await this.closeGracefully(userDataDir)
+		} catch {
+			closeRequested = false
+		}
+		if (!closeRequested) {
+			if (!(await this.deps.profiles.isProfileInUse(profileId))) {
+				this.setProfileStatus(profileId, 'idle')
+				return
+			}
+			this.setProfileStatus(profileId, 'error')
+			throw new Error(`浏览器配置 ${profileId} 仍在运行，无法安全退出账号。`)
+		}
+
+		const deadline = Date.now() + FORCE_SHUTDOWN_MS
+		while (Date.now() < deadline) {
+			await wait(UNTRACKED_SHUTDOWN_POLL_MS)
+			if (!(await this.deps.profiles.isProfileInUse(profileId))) {
+				this.setProfileStatus(profileId, 'idle')
+				return
+			}
+		}
+
+		this.setProfileStatus(profileId, 'error')
+		throw new Error(`浏览器配置 ${profileId} 未能安全关闭，请重试。`)
+	}
+
+	private async profileIsStablyIdle(profileId: string): Promise<boolean> {
+		if (await this.deps.profiles.isProfileInUse(profileId)) return false
+		await wait(UNTRACKED_SHUTDOWN_POLL_MS)
+		return !(await this.deps.profiles.isProfileInUse(profileId))
+	}
+
 	status(): BrowserStatus {
 		const statuses = Array.from(this.statusValues.values())
 		if (statuses.includes('error')) return 'error'
@@ -191,6 +263,10 @@ export class BrowserSupervisor {
 
 	statuses(): Record<string, BrowserStatus> {
 		return Object.fromEntries(this.statusValues.entries())
+	}
+
+	hasActiveProfiles(): boolean {
+		return this.instances.size > 0 || this.pendingLaunches.size > 0
 	}
 
 	onStatusChange(cb: StatusListener): () => void {
@@ -217,16 +293,24 @@ export class BrowserSupervisor {
 
 	private bindChildEvents(profileId: string, child: BrowserProcessLike): void {
 		child.on('spawn', () => {
-			if (this.instances.get(profileId)?.child === child) {
+			const current = this.instances.get(profileId)
+			if (current?.child === child) {
+				current.spawned = true
 				this.deps.logger.log('BrowserSupervisor', 'info', `profile ${profileId} running`)
 				this.setProfileStatus(profileId, 'running')
 			}
 		})
 		child.on('error', (error) => {
-			if (this.instances.get(profileId)?.child !== child) return
+			const current = this.instances.get(profileId)
+			if (current?.child !== child) return
 
 			this.deps.logger.log('BrowserSupervisor', 'error', error.message)
-			this.instances.delete(profileId)
+			if (!current.spawned && !current.shutdownRequested) {
+				this.instances.delete(profileId)
+				void this.clearLaunchMarker(profileId).catch((cleanupError) => {
+					this.logLaunchMarkerCleanupError(profileId, cleanupError)
+				})
+			}
 			this.setProfileStatus(profileId, 'error')
 		})
 		child.on('exit', (code, signal) => {
@@ -236,6 +320,10 @@ export class BrowserSupervisor {
 			const wasRequestedShutdown = current.shutdownRequested
 			const wasNormalExit = (code === 0 || code === null) && signal === null
 			this.instances.delete(profileId)
+			void this.clearLaunchMarker(profileId).catch((cleanupError) => {
+				this.logLaunchMarkerCleanupError(profileId, cleanupError)
+				this.setProfileStatus(profileId, 'error')
+			})
 			this.deps.logger.log(
 				'BrowserSupervisor',
 				wasRequestedShutdown || wasNormalExit ? 'info' : 'error',
@@ -243,6 +331,37 @@ export class BrowserSupervisor {
 			)
 			this.setProfileStatus(profileId, wasRequestedShutdown || wasNormalExit ? 'idle' : 'error')
 		})
+	}
+
+	private clearLaunchMarker(profileId: string): Promise<void> {
+		const current = this.launchMarkerCleanups.get(profileId)
+		if (current) return current
+
+		const cleanup = Promise.resolve().then(() =>
+			this.deps.profiles.clearProfileLaunching(profileId),
+		)
+		this.launchMarkerCleanups.set(profileId, cleanup)
+		void cleanup.then(
+			() => {
+				if (this.launchMarkerCleanups.get(profileId) === cleanup) {
+					this.launchMarkerCleanups.delete(profileId)
+				}
+			},
+			() => {
+				if (this.launchMarkerCleanups.get(profileId) === cleanup) {
+					this.launchMarkerCleanups.delete(profileId)
+				}
+			},
+		)
+		return cleanup
+	}
+
+	private logLaunchMarkerCleanupError(profileId: string, error: unknown): void {
+		this.deps.logger.log(
+			'BrowserSupervisor',
+			'error',
+			`failed to clear launch marker for ${profileId}: ${errorMessage(error)}`,
+		)
 	}
 
 	private attachBrowserLogs(profileId: string, child: BrowserProcessLike): void {
@@ -273,6 +392,14 @@ export class BrowserSupervisor {
 			})
 		}
 	}
+}
+
+function wait(delayMs: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, delayMs))
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error && error.message ? error.message : String(error)
 }
 
 function defaultSpawnBrowser(binary: string, argv: string[]): BrowserProcessLike {

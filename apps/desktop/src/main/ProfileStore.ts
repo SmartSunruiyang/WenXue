@@ -6,6 +6,8 @@ import path from 'node:path'
 import { AppPaths } from './AppPaths'
 
 const PROFILE_ID = /^[a-zA-Z0-9_-]+$/
+const PROFILE_LAUNCH_MARKER = '.wenxue-launching.json'
+const PROFILE_LAUNCH_MARKER_MAX_AGE_MS = 60_000
 
 export class ProfileStore {
 	constructor(private readonly paths: AppPaths) {}
@@ -14,6 +16,25 @@ export class ProfileStore {
 		const dir = this.profileDir(id)
 		await mkdir(dir, { recursive: true })
 		return dir
+	}
+
+	async createProfile(id: string): Promise<string> {
+		const dir = this.profileDir(id)
+		await mkdir(dir)
+		return dir
+	}
+
+	async markProfileLaunching(id: string): Promise<void> {
+		const markerPath = path.join(this.profileDir(id), PROFILE_LAUNCH_MARKER)
+		await atomicWriteFile(
+			markerPath,
+			`${JSON.stringify({ host: hostname(), ownerPid: process.pid, createdAt: Date.now() })}\n`,
+			0o600,
+		)
+	}
+
+	async clearProfileLaunching(id: string): Promise<void> {
+		await rm(path.join(this.profileDir(id), PROFILE_LAUNCH_MARKER), { force: true })
 	}
 
 	async prepareForUnpackedExtension(id = 'default'): Promise<string> {
@@ -38,7 +59,7 @@ export class ProfileStore {
 		const extensions = isRecord(preferences.extensions) ? preferences.extensions : {}
 		const ui = isRecord(extensions.ui) ? extensions.ui : {}
 		if (ui.developer_mode === true) return dir
-		await assertProfileNotInUse(dir)
+		if (await isProfileInUse(dir)) throw profileInUseError(dir)
 
 		await atomicWriteFile(
 			preferencesPath,
@@ -52,6 +73,14 @@ export class ProfileStore {
 			preferencesMode,
 		)
 		return dir
+	}
+
+	async isProfileInUse(id = 'default'): Promise<boolean> {
+		return isProfileInUse(this.profileDir(id))
+	}
+
+	profilePath(id = 'default'): string {
+		return this.profileDir(id)
 	}
 
 	listProfiles(): string[] {
@@ -68,6 +97,7 @@ export class ProfileStore {
 			force: false,
 			recursive: true,
 		})
+		await rm(path.join(targetDir, PROFILE_LAUNCH_MARKER), { force: true })
 		return targetDir
 	}
 
@@ -109,10 +139,12 @@ async function atomicWriteFile(filePath: string, content: string, mode: number):
 	}
 }
 
-async function assertProfileNotInUse(profileDir: string): Promise<void> {
+async function isProfileInUse(profileDir: string): Promise<boolean> {
+	if (await hasRecentLaunchMarker(profileDir)) return true
+
 	try {
 		await stat(path.join(profileDir, 'lockfile'))
-		throw profileInUseError(profileDir)
+		return true
 	} catch (error) {
 		if (!isMissingFile(error)) throw error
 	}
@@ -122,9 +154,9 @@ async function assertProfileNotInUse(profileDir: string): Promise<void> {
 	try {
 		target = await readlink(lockPath)
 	} catch (error) {
-		if (isMissingFile(error)) return
+		if (isMissingFile(error)) return false
 		if (hasErrorCode(error, 'EINVAL') || hasErrorCode(error, 'UNKNOWN')) {
-			throw profileInUseError(profileDir)
+			return true
 		}
 		throw error
 	}
@@ -132,10 +164,35 @@ async function assertProfileNotInUse(profileDir: string): Promise<void> {
 	const separator = target.lastIndexOf('-')
 	const pid = Number(target.slice(separator + 1))
 	if (separator <= 0 || !Number.isInteger(pid) || pid <= 0) {
-		throw profileInUseError(profileDir)
+		return true
 	}
-	if (target.slice(0, separator) !== hostname()) throw profileInUseError(profileDir)
-	if (isProcessRunning(pid)) throw profileInUseError(profileDir)
+	if (target.slice(0, separator) !== hostname()) return true
+	return isProcessRunning(pid)
+}
+
+async function hasRecentLaunchMarker(profileDir: string): Promise<boolean> {
+	const markerPath = path.join(profileDir, PROFILE_LAUNCH_MARKER)
+	try {
+		const markerStat = await stat(markerPath)
+		let createdAt = markerStat.mtimeMs
+		try {
+			const parsed: unknown = JSON.parse(await readFile(markerPath, 'utf8'))
+			if (
+				isRecord(parsed) &&
+				typeof parsed.createdAt === 'number' &&
+				Number.isFinite(parsed.createdAt)
+			) {
+				createdAt = parsed.createdAt
+			}
+		} catch {
+			// A recently written but partial/corrupt launch marker remains fail-closed.
+		}
+		const age = Date.now() - createdAt
+		return age < 0 || age <= PROFILE_LAUNCH_MARKER_MAX_AGE_MS
+	} catch (error) {
+		if (isMissingFile(error)) return false
+		throw error
+	}
 }
 
 function isProcessRunning(pid: number): boolean {

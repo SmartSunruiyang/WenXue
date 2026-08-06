@@ -82,6 +82,12 @@
 
 - [x] M1 网关硬化：文本/视觉/工具透传、usage 写 `token_usage`、无正文落库、缺失/无效 token 拒绝、PUBLIC + `MinNum≥1` 部署
 - [x] M2 启动器用户账号：恢复 CloudBase Auth 用户 id + 密码登录/注册；桌面校验用户名/密码并通过 CreateUser → Web SDK 验密 → `/auth/v1/user/me` ACTIVE 校验完成真实公网冒烟
+- [x] M2.1 账号隔离本地画像：`browsers.json` 记录 `AccountNamespace`；所有画像 IPC 在主进程按当前
+      网关验证后的 session 校验归属；退出前停止当前账号画像但保留 Profile，切回原账号恢复列表；
+      Electron 单实例与跨进程启动标记覆盖 CfT 建锁前窗口
+  - 验收：A→B 不展示 A 且已知 A profileId 失败；B→A 恢复原列表/扩展数据；停止失败不切号；首次
+    session 不遗留其他账号 live 浏览器；伪造 userId/token 不匹配失败；Cloud signOut 结果未知不解除保护；
+    desktop 账号隔离测试、typecheck、build 通过
 - [ ] M2 session 交接：启动器经一次性 localhost `externally_connectable` 页面把 CloudBase 用户 session 交给插件 background，插件保存 `WenXueUserSession`
 - [ ] M3 内置模型切网关：默认文本 `qwen3.7-max`、视觉 `qwen3.7-plus` 经 CloudBase Gateway 使用用户 session
 - [ ] M4 tokens 页读网关计量：CloudBase Run 暴露 `GET /v1/usage/summary`，启动器 `UsageCloudClient` 云优先读取并按 userId 缓存，本地用量作为失败兜底

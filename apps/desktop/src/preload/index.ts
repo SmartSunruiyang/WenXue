@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('wenxue', {
 	auth: {
 		setSession: (session: unknown) => ipcRenderer.invoke('auth:setSession', session),
 		getSession: () => ipcRenderer.invoke('auth:getSession'),
+		prepareSignOut: () => ipcRenderer.invoke('auth:prepareSignOut'),
+		cancelSignOut: () => ipcRenderer.invoke('auth:cancelSignOut'),
 		clearSession: () => ipcRenderer.invoke('auth:clearSession'),
 	},
 	updates: {

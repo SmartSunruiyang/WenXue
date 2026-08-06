@@ -36,6 +36,15 @@ describe('ProfileStore', () => {
 		)
 	})
 
+	it('creates a new profile directory exclusively', async () => {
+		const store = new ProfileStore(appPaths)
+
+		await expect(store.createProfile('research')).resolves.toBe(
+			path.join(appPaths.profilesRoot(), 'research'),
+		)
+		await expect(store.createProfile('research')).rejects.toMatchObject({ code: 'EEXIST' })
+	})
+
 	it('enables extension developer mode without overwriting existing Chrome preferences', async () => {
 		const store = new ProfileStore(appPaths)
 		const profileDir = await store.ensureProfile('research')
@@ -100,9 +109,31 @@ describe('ProfileStore', () => {
 		const profileDir = await store.ensureProfile('research')
 		await writeFile(path.join(profileDir, 'lockfile'), 'locked')
 
+		await expect(store.isProfileInUse('research')).resolves.toBe(true)
 		await expect(store.prepareForUnpackedExtension('research')).rejects.toThrow(
 			/Browser profile is already in use/i,
 		)
+	})
+
+	it('reports an unlocked profile as not in use', async () => {
+		const store = new ProfileStore(appPaths)
+		await store.ensureProfile('research')
+
+		await expect(store.isProfileInUse('research')).resolves.toBe(false)
+	})
+
+	it('uses a recent cross-process launch marker until it is explicitly cleared', async () => {
+		const store = new ProfileStore(appPaths)
+		await store.ensureProfile('research')
+
+		await store.markProfileLaunching('research')
+		await expect(store.isProfileInUse('research')).resolves.toBe(true)
+		await expect(store.prepareForUnpackedExtension('research')).rejects.toThrow(
+			/Browser profile is already in use/i,
+		)
+
+		await store.clearProfileLaunching('research')
+		await expect(store.isProfileInUse('research')).resolves.toBe(false)
 	})
 
 	it.skipIf(process.platform === 'win32')(
@@ -145,11 +176,13 @@ describe('ProfileStore', () => {
 		const store = new ProfileStore(appPaths)
 		const sourceDir = await store.ensureProfile('source')
 		await writeFile(path.join(sourceDir, 'Preferences'), 'profile-data')
+		await store.markProfileLaunching('source')
 
 		const copiedDir = await store.copyProfile('source', 'copy')
 
 		expect(copiedDir).toBe(path.join(appPaths.profilesRoot(), 'copy'))
 		expect(store.listProfiles()).toEqual(['copy', 'source'])
+		await expect(store.isProfileInUse('copy')).resolves.toBe(false)
 
 		await store.deleteProfile('source')
 

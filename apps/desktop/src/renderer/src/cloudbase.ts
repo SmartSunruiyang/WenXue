@@ -98,6 +98,17 @@ export interface LauncherPublicUser {
 	expiresAt: number
 }
 
+export class CloudSignOutOutcomeUnknownError extends Error {
+	readonly cloudSignOutOutcome = 'unknown' as const
+}
+
+class AuthRequestTimeoutError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = 'AbortError'
+	}
+}
+
 export type LauncherCredentialValidationCode =
 	| 'usernameRequired'
 	| 'usernameLength'
@@ -204,9 +215,16 @@ export async function registerLauncher(
 export async function getLauncherSession(): Promise<LauncherAuthSession | null> {
 	const authClient = getAuth()
 	if (!authClient) return null
-	const { data, error } = await authClient.getSession()
-	if (error) return null
-	return readLauncherAuthSession(data)
+	try {
+		const { data, error } = await withAuthRequestTimeout(authClient.getSession())
+		if (error) throw error
+		const session = readLauncherAuthSession(data)
+		if (session) return session
+		if (data == null || (isRecord(data) && data.session == null)) return null
+		throw new Error(strings.auth.error.loginSession)
+	} catch (error) {
+		throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.loginSession))
+	}
 }
 
 export async function refreshLauncherSession(refreshToken?: string): Promise<LauncherAuthSession> {
@@ -226,8 +244,16 @@ export async function refreshLauncherSession(refreshToken?: string): Promise<Lau
 export async function signOutLauncher(): Promise<void> {
 	const authClient = getAuth()
 	if (!authClient) return
-	const { error } = await authClient.signOut()
-	if (error) throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.logout))
+	try {
+		const { error } = await withAuthRequestTimeout(authClient.signOut())
+		if (error) throw error
+	} catch (error) {
+		const message = readCloudBaseErrorMessage(error, strings.auth.error.logout)
+		if (error instanceof AuthRequestTimeoutError) {
+			throw new CloudSignOutOutcomeUnknownError(message)
+		}
+		throw new Error(message)
+	}
 }
 
 export function toPublicUser(session: LauncherAuthSession): LauncherPublicUser {
@@ -390,9 +416,7 @@ async function withAuthRequestTimeout<T>(request: Promise<T>): Promise<T> {
 	let timeoutId: ReturnType<typeof setTimeout> | undefined
 	const timeout = new Promise<never>((_resolve, reject) => {
 		timeoutId = setTimeout(() => {
-			const error = new Error(strings.auth.error.timeout)
-			error.name = 'AbortError'
-			reject(error)
+			reject(new AuthRequestTimeoutError(strings.auth.error.timeout))
 		}, AUTH_REQUEST_TIMEOUT_MS)
 	})
 

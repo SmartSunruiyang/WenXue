@@ -59,7 +59,7 @@ function createBridgeHarness() {
 		expiresAt: sampleSession.expiresAt,
 		gatewayBaseUrl: sampleSession.gatewayBaseUrl,
 	}
-	const userSessionSet = vi.fn((session: UserSession) => ({
+	const userSessionSet = vi.fn(async (session: UserSession) => ({
 		userId: session.userId,
 		expiresAt: session.expiresAt,
 		gatewayBaseUrl: session.gatewayBaseUrl,
@@ -114,7 +114,7 @@ function createBridgeHarness() {
 		launch,
 		stop,
 		status: () => status,
-		statuses: () => ({ default: status, research: 'idle' as BrowserStatus }),
+		statuses: () => ({ research: status, foreign: 'running' as BrowserStatus }),
 		onStatusChange: (cb: (next: BrowserStatus) => void) => {
 			statusListener = cb
 			return unsubscribe
@@ -127,7 +127,16 @@ function createBridgeHarness() {
 	}
 	const profileStore = {
 		list: vi.fn(async () => [sampleProfile]),
+		listForReconciliation: vi.fn(async () => [
+			{ id: sampleProfile.id, accountNamespace: sampleSession.userId },
+		]),
 		create: vi.fn(async () => sampleProfile),
+		get: vi.fn(async (_accountNamespace: string, profileId: string) => {
+			if (profileId !== sampleProfile.id) {
+				throw new Error(`Unknown browser profile: ${profileId}`)
+			}
+			return sampleProfile
+		}),
 		duplicate: vi.fn(async () => ({ ...sampleProfile, id: 'research_copy' })),
 		rename: vi.fn(async () => sampleProfile),
 		remove: vi.fn(async () => sampleProfile),
@@ -334,8 +343,10 @@ describe('registerDesktopBridge', () => {
 				'browser:stopProfile',
 				'logs:clear',
 				'logs:query',
+				'auth:cancelSignOut',
 				'auth:clearSession',
 				'auth:getSession',
+				'auth:prepareSignOut',
 				'auth:setSession',
 				'settings:get',
 				'settings:update',
@@ -412,6 +423,15 @@ describe('registerDesktopBridge', () => {
 		await expect(handler?.()).resolves.toBe('running')
 	})
 
+	it('filters browser statuses to the current account', async () => {
+		const { ipcMain } = createBridgeHarness()
+
+		await expect(ipcMain.handlers.get('browser:getStatuses')?.()).resolves.toEqual({
+			research: 'idle',
+		})
+		await expect(ipcMain.handlers.get('browser:getStatus')?.()).resolves.toBe('idle')
+	})
+
 	it('lists creates renames duplicates removes opens launches and stops browser profiles', async () => {
 		const { ipcMain, launch, openPath, stop, profileStore, userSessionHandoffRun } =
 			createBridgeHarness()
@@ -449,11 +469,12 @@ describe('registerDesktopBridge', () => {
 			ok: true,
 		})
 
-		expect(profileStore.create).toHaveBeenCalledOnce()
-		expect(profileStore.rename).toHaveBeenCalledWith('research', '研究主号')
-		expect(profileStore.duplicate).toHaveBeenCalledWith('research')
-		expect(profileStore.remove).toHaveBeenCalledWith('research')
-		expect(profileStore.touch).toHaveBeenCalledWith('research')
+		expect(profileStore.create).toHaveBeenCalledWith('user_123')
+		expect(profileStore.rename).toHaveBeenCalledWith('user_123', 'research', '研究主号')
+		expect(profileStore.duplicate).toHaveBeenCalledWith('user_123', 'research')
+		expect(profileStore.remove).toHaveBeenCalledWith('user_123', 'research')
+		expect(profileStore.touch).toHaveBeenCalledWith('user_123', 'research')
+		expect(profileStore.get).toHaveBeenCalledWith('user_123', 'research')
 		expect(openPath).toHaveBeenCalledWith('/profiles/research')
 		expect(launch).toHaveBeenCalledWith('research', {
 			startUrl: 'http://127.0.0.1:1234/wenxue-user-session-handoff/test',
@@ -463,6 +484,53 @@ describe('registerDesktopBridge', () => {
 			expect.any(Function),
 		)
 		expect(stop).toHaveBeenCalledWith('research')
+	})
+
+	it('rejects a renderer-supplied profile id that is not owned by the active account', async () => {
+		const { ipcMain, launch, openPath, profileStore, stop } = createBridgeHarness()
+		vi.mocked(profileStore.get).mockRejectedValue(new Error('Unknown browser profile: foreign'))
+
+		await expect(ipcMain.handlers.get('browser:launchProfile')?.({}, 'foreign')).resolves.toEqual({
+			ok: false,
+			error: 'Unknown browser profile: foreign',
+		})
+		await expect(
+			ipcMain.handlers.get('browser:openProfileFolder')?.({}, 'foreign'),
+		).resolves.toEqual({ ok: false, error: 'Unknown browser profile: foreign' })
+		await expect(ipcMain.handlers.get('browser:stopProfile')?.({}, 'foreign')).resolves.toEqual({
+			ok: false,
+			error: 'Unknown browser profile: foreign',
+		})
+
+		expect(launch).not.toHaveBeenCalled()
+		expect(openPath).not.toHaveBeenCalled()
+		expect(stop).not.toHaveBeenCalled()
+	})
+
+	it('stops a profile before removing its metadata and keeps it when stop fails', async () => {
+		const { ipcMain, profileStore, stop } = createBridgeHarness()
+		const order: string[] = []
+		stop.mockImplementationOnce(async () => {
+			order.push('stop')
+		})
+		vi.mocked(profileStore.remove).mockImplementationOnce(async () => {
+			order.push('remove')
+			return (await profileStore.get('user_123', 'research')) as BrowserProfile
+		})
+
+		await expect(ipcMain.handlers.get('browser:removeProfile')?.({}, 'research')).resolves.toEqual({
+			ok: true,
+			profile: expect.objectContaining({ id: 'research' }),
+		})
+		expect(order).toEqual(['stop', 'remove'])
+
+		vi.mocked(profileStore.remove).mockClear()
+		stop.mockRejectedValueOnce(new Error('still running'))
+		await expect(ipcMain.handlers.get('browser:removeProfile')?.({}, 'research')).resolves.toEqual({
+			ok: false,
+			error: 'still running',
+		})
+		expect(profileStore.remove).not.toHaveBeenCalled()
 	})
 
 	it('returns shell info and controls the launcher window', async () => {
@@ -536,8 +604,8 @@ describe('registerDesktopBridge', () => {
 		expect(tokenUsageStore.summary).toHaveBeenCalledOnce()
 	})
 
-	it('sets returns and clears the current user session', async () => {
-		const { ipcMain, sampleSession, userSessionSet, userSessionCurrent, userSessionClear } =
+	it('sets returns and safely clears the current user session', async () => {
+		const { ipcMain, sampleSession, stop, userSessionSet, userSessionCurrent, userSessionClear } =
 			createBridgeHarness()
 
 		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
@@ -552,7 +620,237 @@ describe('registerDesktopBridge', () => {
 
 		expect(userSessionSet).toHaveBeenCalledWith(sampleSession)
 		expect(userSessionCurrent).toHaveBeenCalledOnce()
+		expect(stop).toHaveBeenCalledWith('research')
 		expect(userSessionClear).toHaveBeenCalledOnce()
+	})
+
+	it('prepares sign-out by stopping every owned profile before clearing the session', async () => {
+		const { ipcMain, profileStore, stop, userSessionClear } = createBridgeHarness()
+
+		await expect(ipcMain.handlers.get('auth:prepareSignOut')?.()).resolves.toEqual({ ok: true })
+		expect(profileStore.list).toHaveBeenCalledWith('user_123')
+		expect(stop).toHaveBeenCalledWith('research')
+		expect(userSessionClear).not.toHaveBeenCalled()
+		await expect(ipcMain.handlers.get('browser:listProfiles')?.()).rejects.toThrow(
+			'正在安全退出问学账号',
+		)
+
+		await expect(ipcMain.handlers.get('auth:clearSession')?.()).resolves.toEqual({ ok: true })
+		expect(stop).toHaveBeenCalledOnce()
+		expect(userSessionClear).toHaveBeenCalledOnce()
+	})
+
+	it('keeps the account active when a profile cannot be closed during sign-out', async () => {
+		const { ipcMain, stop, userSessionClear } = createBridgeHarness()
+		stop.mockRejectedValueOnce(new Error('still running'))
+
+		await expect(ipcMain.handlers.get('auth:prepareSignOut')?.()).resolves.toEqual({
+			ok: false,
+			error: '退出登录前未能安全关闭浏览器：资料采集：still running',
+		})
+		expect(userSessionClear).not.toHaveBeenCalled()
+		await expect(ipcMain.handlers.get('browser:listProfiles')?.()).resolves.toEqual([
+			expect.objectContaining({ id: 'research' }),
+		])
+	})
+
+	it('can cancel a prepared sign-out when cloud authentication fails', async () => {
+		const { ipcMain } = createBridgeHarness()
+
+		await expect(ipcMain.handlers.get('auth:prepareSignOut')?.()).resolves.toEqual({ ok: true })
+		await expect(ipcMain.handlers.get('auth:cancelSignOut')?.()).resolves.toEqual({ ok: true })
+		await expect(ipcMain.handlers.get('browser:listProfiles')?.()).resolves.toEqual([
+			expect.objectContaining({ id: 'research' }),
+		])
+	})
+
+	it('does not allow cancelling while browser shutdown preparation is still running', async () => {
+		const { ipcMain, launch, stop } = createBridgeHarness()
+		let finishStop!: () => void
+		stop.mockImplementationOnce(
+			() =>
+				new Promise<undefined>((resolve) => {
+					finishStop = () => resolve(undefined)
+				}),
+		)
+
+		const prepareResult = ipcMain.handlers.get('auth:prepareSignOut')?.()
+		await vi.waitFor(() => expect(stop).toHaveBeenCalledWith('research'))
+		await expect(ipcMain.handlers.get('auth:cancelSignOut')?.()).resolves.toEqual({
+			ok: false,
+			error: '浏览器仍在安全关闭中，暂时无法取消退出。',
+		})
+		await expect(ipcMain.handlers.get('browser:launchProfile')?.({}, 'research')).resolves.toEqual({
+			ok: false,
+			error: '正在安全退出问学账号，请稍候。',
+		})
+		expect(launch).not.toHaveBeenCalled()
+
+		finishStop()
+		await expect(prepareResult).resolves.toEqual({ ok: true })
+	})
+
+	it('closes foreign and unowned live profiles before accepting the first account session', async () => {
+		const { ipcMain, profileStore, sampleSession, stop } = createBridgeHarness()
+		vi.mocked(profileStore.listForReconciliation).mockResolvedValueOnce([
+			{ id: 'research', accountNamespace: 'user_123' },
+			{ id: 'foreign', accountNamespace: 'user_456' },
+			{ id: 'legacy', accountNamespace: null },
+		])
+
+		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
+			ok: true,
+			session: expect.objectContaining({ userId: 'user_123' }),
+		})
+		expect(stop).toHaveBeenCalledTimes(2)
+		expect(stop).toHaveBeenCalledWith('foreign')
+		expect(stop).toHaveBeenCalledWith('legacy')
+		expect(stop).not.toHaveBeenCalledWith('research')
+	})
+
+	it('uses the gateway-verified session owner instead of the renderer claim', async () => {
+		const { ipcMain, profileStore, sampleSession, stop, userSessionSet } = createBridgeHarness()
+		userSessionSet.mockResolvedValueOnce({
+			userId: 'user_123',
+			expiresAt: sampleSession.expiresAt,
+			gatewayBaseUrl: sampleSession.gatewayBaseUrl,
+		})
+		vi.mocked(profileStore.listForReconciliation).mockResolvedValueOnce([
+			{ id: 'research', accountNamespace: 'user_123' },
+			{ id: 'renderer-claimed', accountNamespace: 'user_456' },
+		])
+
+		await expect(
+			ipcMain.handlers.get('auth:setSession')?.({}, { ...sampleSession, userId: 'user_456' }),
+		).resolves.toEqual({
+			ok: true,
+			session: expect.objectContaining({ userId: 'user_123' }),
+		})
+		expect(stop).toHaveBeenCalledWith('renderer-claimed')
+		expect(stop).not.toHaveBeenCalledWith('research')
+	})
+
+	it('blocks profile and account operations while token ownership verification is pending', async () => {
+		const { ipcMain, launch, sampleSession, userSessionSet } = createBridgeHarness()
+		let finishVerification!: () => void
+		userSessionSet.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishVerification = () =>
+						resolve({
+							userId: sampleSession.userId,
+							expiresAt: sampleSession.expiresAt,
+							gatewayBaseUrl: sampleSession.gatewayBaseUrl,
+						})
+				}),
+		)
+
+		const firstSet = ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)
+		await vi.waitFor(() => expect(userSessionSet).toHaveBeenCalledOnce())
+		await expect(ipcMain.handlers.get('browser:launchProfile')?.({}, 'research')).resolves.toEqual({
+			ok: false,
+			error: '问学账号状态切换中，请稍候。',
+		})
+		await expect(ipcMain.handlers.get('auth:prepareSignOut')?.()).resolves.toEqual({
+			ok: false,
+			error: '问学账号状态切换中，请稍候。',
+		})
+		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
+			ok: false,
+			error: '问学账号状态切换中，请稍候。',
+		})
+		await expect(ipcMain.handlers.get('browser:launchProfile')?.({}, 'research')).resolves.toEqual({
+			ok: false,
+			error: '问学账号状态切换中，请稍候。',
+		})
+		await expect(ipcMain.handlers.get('auth:prepareSignOut')?.()).resolves.toEqual({
+			ok: false,
+			error: '问学账号状态切换中，请稍候。',
+		})
+		expect(launch).not.toHaveBeenCalled()
+
+		finishVerification()
+		await expect(firstSet).resolves.toEqual({
+			ok: true,
+			session: expect.objectContaining({ userId: 'user_123' }),
+		})
+	})
+
+	it('keeps the transition locked while foreign-profile reconciliation is pending', async () => {
+		const { ipcMain, launch, profileStore, sampleSession } = createBridgeHarness()
+		let finishReconciliation!: () => void
+		vi.mocked(profileStore.listForReconciliation).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishReconciliation = () =>
+						resolve([{ id: 'research', accountNamespace: sampleSession.userId }])
+				}),
+		)
+
+		const firstSet = ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)
+		await vi.waitFor(() => expect(profileStore.listForReconciliation).toHaveBeenCalledOnce())
+		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
+			ok: false,
+			error: '问学账号状态切换中，请稍候。',
+		})
+		await expect(ipcMain.handlers.get('browser:launchProfile')?.({}, 'research')).resolves.toEqual({
+			ok: false,
+			error: '问学账号状态切换中，请稍候。',
+		})
+		expect(launch).not.toHaveBeenCalled()
+
+		finishReconciliation()
+		await expect(firstSet).resolves.toEqual({
+			ok: true,
+			session: expect.objectContaining({ userId: 'user_123' }),
+		})
+	})
+
+	it('keeps an established account active when a verified refresh fails', async () => {
+		const { ipcMain, sampleSession, userSessionClear, userSessionSet } = createBridgeHarness()
+		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
+			ok: true,
+			session: expect.objectContaining({ userId: 'user_123' }),
+		})
+		userSessionSet.mockRejectedValueOnce(new Error('问学账号身份校验失败，请重新登录'))
+
+		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
+			ok: false,
+			error: '问学账号身份校验失败，请重新登录',
+		})
+		await expect(ipcMain.handlers.get('browser:listProfiles')?.()).resolves.toEqual([
+			expect.objectContaining({ id: 'research' }),
+		])
+		expect(userSessionClear).not.toHaveBeenCalled()
+	})
+
+	it('rejects the first account session when a foreign live profile cannot close', async () => {
+		const { ipcMain, profileStore, sampleSession, stop, userSessionClear } = createBridgeHarness()
+		vi.mocked(profileStore.listForReconciliation).mockResolvedValueOnce([
+			{ id: 'foreign', accountNamespace: 'user_456' },
+		])
+		stop.mockRejectedValueOnce(new Error('still running'))
+
+		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
+			ok: false,
+			error: '检测到其他账号仍在运行的浏览器，无法进入工作台。请关闭所有问学浏览器后重试。',
+		})
+		expect(userSessionClear).toHaveBeenCalledOnce()
+	})
+
+	it('can safely stop and clear an expired session by its retained account ownership', async () => {
+		const { ipcMain, sampleSession, stop, userSessionRequire } = createBridgeHarness()
+		await expect(ipcMain.handlers.get('auth:setSession')?.({}, sampleSession)).resolves.toEqual({
+			ok: true,
+			session: expect.objectContaining({ userId: 'user_123' }),
+		})
+		userSessionRequire.mockImplementation(() => {
+			throw new Error('用户登录已过期，请重新登录')
+		})
+
+		await expect(ipcMain.handlers.get('auth:prepareSignOut')?.()).resolves.toEqual({ ok: true })
+		await expect(ipcMain.handlers.get('auth:clearSession')?.()).resolves.toEqual({ ok: true })
+		expect(stop).toHaveBeenCalledWith('research')
 	})
 
 	it('rejects browser launch when no user session is synced', async () => {
@@ -565,6 +863,33 @@ describe('registerDesktopBridge', () => {
 			ok: false,
 			error: '请先登录问学账号',
 		})
+		expect(launch).not.toHaveBeenCalled()
+	})
+
+	it('rechecks the active account after an asynchronous session handoff', async () => {
+		const { ipcMain, launch, userSessionHandoffRun } = createBridgeHarness()
+		let continueHandoff!: () => void
+		userSessionHandoffRun.mockImplementationOnce(
+			async (_session: UserSession, openUrl: (url: string) => Promise<void>) => {
+				await new Promise<void>((resolve) => {
+					continueHandoff = resolve
+				})
+				await openUrl('http://127.0.0.1:1234/wenxue-user-session-handoff/test')
+				return { ok: true }
+			},
+		)
+
+		const launchResult = ipcMain.handlers.get('browser:launchProfile')?.({}, 'research')
+		await vi.waitFor(() => expect(userSessionHandoffRun).toHaveBeenCalledOnce())
+		const prepareResult = ipcMain.handlers.get('auth:prepareSignOut')?.()
+		await Promise.resolve()
+		continueHandoff()
+
+		await expect(launchResult).resolves.toEqual({
+			ok: false,
+			error: '正在安全退出问学账号，请稍候。',
+		})
+		await expect(prepareResult).resolves.toEqual({ ok: true })
 		expect(launch).not.toHaveBeenCalled()
 	})
 
@@ -619,23 +944,28 @@ describe('registerDesktopBridge', () => {
 		expect(updateOpenInstaller).toHaveBeenCalledOnce()
 	})
 
-	it('broadcasts supervisor status changes and returns the unsubscribe function', () => {
-		const { emitStatus, emitProfileStatus, sendStatus, sendProfileStatus, unsubscribe } =
-			createBridgeHarness()
+	it('broadcasts only owned supervisor status changes and returns the unsubscribe function', async () => {
+		const {
+			emitStatus,
+			emitProfileStatus,
+			profileStore,
+			sendStatus,
+			sendProfileStatus,
+			unsubscribe,
+		} = createBridgeHarness()
 		const harness = createBridgeHarness()
 		const unregister = registerDesktopBridge({
 			ipcMain: new FakeIpcMain(),
 			supervisor: {
 				launch: vi.fn(async () => undefined),
 				stop: vi.fn(async () => undefined),
-				status: () => 'idle',
 				statuses: () => ({}),
 				onStatusChange: (cb: (status: BrowserStatus) => void) => {
 					cb('launching')
 					return unsubscribe
 				},
 				onProfileStatusChange: (cb: (profileId: string, status: BrowserStatus) => void) => {
-					cb('default', 'launching')
+					cb('research', 'launching')
 					return unsubscribe
 				},
 			},
@@ -672,10 +1002,22 @@ describe('registerDesktopBridge', () => {
 			sendUpdateState: harness.sendUpdateState,
 		})
 
-		expect(sendStatus).toHaveBeenCalledWith('launching')
-		expect(sendProfileStatus).toHaveBeenCalledWith({ profileId: 'default', status: 'launching' })
+		await vi.waitFor(() => expect(sendStatus).toHaveBeenCalledWith('idle'))
+		await vi.waitFor(() =>
+			expect(sendProfileStatus).toHaveBeenCalledWith({
+				profileId: 'research',
+				status: 'launching',
+			}),
+		)
 		emitStatus('running')
 		emitProfileStatus('research', 'running')
+		await vi.waitFor(() =>
+			expect(sendProfileStatus).toHaveBeenCalledWith({ profileId: 'research', status: 'running' }),
+		)
+		const ownedEventCount = sendProfileStatus.mock.calls.length
+		emitProfileStatus('foreign', 'running')
+		await vi.waitFor(() => expect(profileStore.get).toHaveBeenCalledWith('user_123', 'foreign'))
+		expect(sendProfileStatus).toHaveBeenCalledTimes(ownedEventCount)
 		unregister()
 		expect(unsubscribe).toHaveBeenCalledTimes(2)
 		expect(harness.unsubscribeUpdate).toHaveBeenCalledOnce()

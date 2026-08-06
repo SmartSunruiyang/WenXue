@@ -9,7 +9,7 @@ import { createAppLogger } from './AppLogger'
 import { AppPaths } from './AppPaths'
 import { BrowserProfileStore } from './BrowserProfileStore'
 import { createBrowserResources } from './BrowserResources'
-import { BrowserSupervisor, type BrowserStatus } from './BrowserSupervisor'
+import { BrowserSupervisor } from './BrowserSupervisor'
 import { registerDesktopBridge } from './DesktopBridge'
 import { DesktopUpdateService } from './DesktopUpdateService'
 import { LauncherLogStore } from './LauncherLogStore'
@@ -35,37 +35,57 @@ const DESKTOP_ICON_FILES: Record<'darwin' | 'win32' | 'fallback', string> = {
 }
 
 export interface ClosePromptDeps {
-	status: () => BrowserStatus
+	hasActiveProfiles: () => boolean
 	exitWithBrowsers?: () => Promise<ExitWithBrowsers> | ExitWithBrowsers
 	showMessageBox: () => Promise<{ response: number }>
 	requestShutdown: () => Promise<void>
+	onError?: (error: unknown) => void
 }
 
 export async function handleBrowserRunningClose(deps: ClosePromptDeps): Promise<CloseDecision> {
-	const status = deps.status()
-	if (status === 'idle' || status === 'error') {
-		return 'allow'
-	}
+	try {
+		if (!deps.hasActiveProfiles()) {
+			return 'allow'
+		}
 
-	const exitWithBrowsers = (await deps.exitWithBrowsers?.()) ?? 'ask'
-	if (exitWithBrowsers === 'launcherOnly') {
-		return 'allow'
-	}
-	if (exitWithBrowsers === 'closeBrowsers') {
-		await deps.requestShutdown()
-		return 'allow'
-	}
+		const exitWithBrowsers = (await deps.exitWithBrowsers?.()) ?? 'ask'
+		if (exitWithBrowsers === 'launcherOnly') {
+			return 'allow'
+		}
+		if (exitWithBrowsers === 'closeBrowsers') {
+			await deps.requestShutdown()
+			return 'allow'
+		}
 
-	const { response } = await deps.showMessageBox()
-	if (response === 1) {
-		await deps.requestShutdown()
-	}
+		const { response } = await deps.showMessageBox()
+		if (response === 1) {
+			await deps.requestShutdown()
+		}
 
-	return 'allow'
+		return 'allow'
+	} catch (error) {
+		try {
+			deps.onError?.(error)
+		} catch {
+			// The close boundary must remain fail-closed even if error reporting itself fails.
+		}
+		return 'prevented'
+	}
 }
 
 export async function startMainBootstrap(): Promise<void> {
 	const electron = await import('electron')
+	let currentWindow: BrowserWindow | undefined
+	if (!electron.app.requestSingleInstanceLock()) {
+		electron.app.quit()
+		return
+	}
+	electron.app.on('second-instance', () => {
+		if (!currentWindow || currentWindow.isDestroyed()) return
+		if (currentWindow.isMinimized()) currentWindow.restore()
+		currentWindow.show()
+		currentWindow.focus()
+	})
 	await electron.app.whenReady()
 
 	const paths = new AppPaths(electron.app.getPath('userData'))
@@ -97,7 +117,6 @@ export async function startMainBootstrap(): Promise<void> {
 	const userSessionHandoff = new UserSessionHandoff()
 	const logger = createAppLogger(paths, logStore)
 	const supervisor = new BrowserSupervisor({ resources, profiles, logger })
-	let currentWindow: BrowserWindow | undefined
 	const updateService = new DesktopUpdateService({
 		paths,
 		openPath: (targetPath) => electron.shell.openPath(targetPath),
@@ -165,7 +184,7 @@ export async function startMainBootstrap(): Promise<void> {
 	})
 
 	const createWindow = () => {
-		currentWindow = createControlWindow(electron, supervisor, settingsStore, iconPath)
+		currentWindow = createControlWindow(electron, supervisor, settingsStore, logger, iconPath)
 		currentWindow.on('closed', () => {
 			if (currentWindow?.isDestroyed()) {
 				currentWindow = undefined
@@ -209,6 +228,7 @@ function createControlWindow(
 	electron: ElectronModule,
 	supervisor: BrowserSupervisor,
 	settingsStore: LauncherSettingsStore,
+	logger: ReturnType<typeof createAppLogger>,
 	iconPath: string | undefined,
 ): BrowserWindow {
 	const win = new electron.BrowserWindow(
@@ -221,13 +241,13 @@ function createControlWindow(
 	let allowClose = false
 
 	win.on('close', (event: ElectronEvent) => {
-		if (allowClose || supervisor.status() === 'idle' || supervisor.status() === 'error') {
+		if (allowClose || !supervisor.hasActiveProfiles()) {
 			return
 		}
 
 		event.preventDefault()
 		void handleBrowserRunningClose({
-			status: () => supervisor.status(),
+			hasActiveProfiles: () => supervisor.hasActiveProfiles(),
 			exitWithBrowsers: async () => (await settingsStore.get()).behavior.exitWithBrowsers,
 			showMessageBox: () =>
 				electron.dialog.showMessageBox(win, {
@@ -240,6 +260,29 @@ function createControlWindow(
 					cancelId: 0,
 				}),
 			requestShutdown: () => supervisor.requestShutdown(),
+			onError: (error) => {
+				logger.log(
+					'MainBootstrap',
+					'error',
+					`failed to close active browsers: ${errorMessage(error)}`,
+				)
+				if (win.isDestroyed()) return
+				void electron.dialog
+					.showMessageBox(win, {
+						type: 'error',
+						title: '浏览器未能安全关闭',
+						message: '问学暂未退出',
+						detail: '仍有浏览器进程未能安全关闭，请稍后重试。',
+						buttons: ['知道了'],
+					})
+					.catch((dialogError) => {
+						logger.log(
+							'MainBootstrap',
+							'error',
+							`failed to show close error: ${errorMessage(dialogError)}`,
+						)
+					})
+			},
 		}).then((decision) => {
 			if (decision === 'allow' && !win.isDestroyed()) {
 				allowClose = true
@@ -294,4 +337,8 @@ export function desktopIconFile(platform: NodeJS.Platform): string {
 export function updateChannel(value: string): 'dev' | 'beta' | 'stable' {
 	if (value === 'dev' || value === 'beta' || value === 'stable') return value
 	return 'stable'
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error && error.message ? error.message : String(error)
 }

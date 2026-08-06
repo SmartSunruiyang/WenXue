@@ -120,6 +120,13 @@ vision→清除旧选项→exact fill→verify；Chaoxing mixed reader 保留 ma
 
 隔离测试应同时包含正向证明与越权攻击用例，例如伪造 taskId、复用旧标签页句柄、跨任务回放事件和在任务切换瞬间发起操作。
 
+### 4.1 账号生命周期验收
+
+在同一安装内执行 A→B→A：A 创建 Profile，并记录网站状态与扩展 AI/IndexedDB 摘要；退出 A 后，B
+不得列出 A、不得用已知 A profileId 打开/启动/删除，也不得收到 A 的延迟状态事件；退出 B 并重新登录
+A 后，原列表与数据摘要必须恢复且不变。A 的 stop/卸载或退出事务失败时不得清账号状态或进入 B；应用
+重启后若仍有 A 的 live Profile，接受 B session 前必须安全协调或失败关闭。
+
 ## 5. 并发 Agent 测试
 
 ### 5.1 核心场景
@@ -200,6 +207,11 @@ vision→清除旧选项→exact fill→verify；Chaoxing mixed reader 保留 ma
 - 迁移中断、磁盘不足、文件锁定和权限拒绝；
 - 已迁移后再次运行；
 - 新版本失败后回滚至旧运行时。
+- Electron `electron-account-scoped-v1` fixture：同一 `browsers.json` 含 A/B 两账号记录，A 登录时只
+  发现 A，renderer 伪造 `userId=A` 但提交 B token 时失败，已知 B 的 profileId 和伪造 `userDataDir`
+  均不能进入选择或 staging，失败提示不暴露 B 的 profileId；
+- Electron `electron-legacy-unowned-v0` fixture：缺少 `accountNamespace` 时不自动认领，只有完成独立
+  风险确认后才能选择，取消时源目录和元数据摘要不变。
 
 每个 fixture 验证未选择任务不受影响、原始数据不被破坏、导入任务可独立登录和回滚。详细流程见 [迁移与回滚](MIGRATION.md)。
 

@@ -150,7 +150,9 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
   - _Requirements: AR-03, AR-04；PRD F3, F7, F13_
 
 - [ ] 1.4 建立旧版迁移 fixtures
-  - 生成单画像、多画像、旧 IndexedDB schema、损坏 JSON/LevelDB、含账号数据和无账号数据样本。
+  - 生成单画像、多画像、旧 IndexedDB schema、损坏 JSON/LevelDB，以及逐记录
+    `accountNamespace` present/absent/畸形的样本；同一 `browsers.json` 混合 A/B/unowned，并覆盖元数据
+    缺失但目录存在、伪造或越界 `userDataDir`、renderer userId 与受信 token uid 不一致。
   - macOS 与 Windows 分别准备 Cookie/OSCrypt 测试画像，不提交真实凭据。
   - _Requirements: AR-07；PRD F11_
 
@@ -406,6 +408,8 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
 
 - [ ] 9.1 实现只读画像发现与选择清单
   - 枚举旧启动器画像、版本、占用状态、数据类型和大小；不静默选择 default。
+  - 识别 `electron-account-scoped-v1` 与 `electron-legacy-unowned-v0`；有归属记录只向匹配的已验证
+    账号展示，无归属记录不得自动认领，元数据中的目录必须规范化到旧 profiles 根目录内。
   - 未选画像只写保留清单，不修改内容。
   - _Requirements: AR-07；PRD F11_
 

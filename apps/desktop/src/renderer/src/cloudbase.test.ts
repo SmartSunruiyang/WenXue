@@ -21,11 +21,13 @@ vi.mock('@cloudbase/js-sdk', () => ({
 
 import {
 	cloudbaseConfig,
+	getLauncherSession,
 	readCloudBaseErrorMessage,
 	readLauncherAuthSession,
 	refreshLauncherSession,
 	registerLauncher,
 	signInLauncher,
+	signOutLauncher,
 	validateLauncherCredentials,
 	watchDesktopSignal,
 } from './cloudbase'
@@ -90,6 +92,45 @@ describe('desktop CloudBase auth session parsing', () => {
 
 	it('initializes auth with the bundled publishable key when env override is absent', () => {
 		expect(cloudbaseConfig.hasAccessKey).toBe(true)
+	})
+
+	it('times out a stalled CloudBase sign-out request', async () => {
+		vi.useFakeTimers()
+		cloudbaseMock.signOut.mockReturnValueOnce(new Promise(() => undefined))
+
+		const result = expect(signOutLauncher()).rejects.toMatchObject({
+			message: strings.auth.error.timeout,
+			cloudSignOutOutcome: 'unknown',
+		})
+		await vi.advanceTimersByTimeAsync(12_000)
+		await result
+	})
+
+	it('fails closed when reading the current CloudBase session returns an error', async () => {
+		cloudbaseMock.getSession.mockResolvedValueOnce({
+			data: null,
+			error: { message: 'session lookup failed' },
+		})
+
+		await expect(getLauncherSession()).rejects.toThrow('session lookup failed')
+	})
+
+	it('fails closed when the SDK reports a malformed non-empty session', async () => {
+		cloudbaseMock.getSession.mockResolvedValueOnce({
+			data: { session: { access_token: 'partial-token' } },
+			error: null,
+		})
+
+		await expect(getLauncherSession()).rejects.toThrow(strings.auth.error.loginSession)
+	})
+
+	it('times out a stalled current-session lookup', async () => {
+		vi.useFakeTimers()
+		cloudbaseMock.getSession.mockReturnValueOnce(new Promise(() => undefined))
+
+		const result = expect(getLauncherSession()).rejects.toThrow(strings.auth.error.timeout)
+		await vi.advanceTimersByTimeAsync(12_000)
+		await result
 	})
 
 	it('watches only the selected public-safe desktop signal document', () => {
