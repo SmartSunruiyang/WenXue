@@ -39,8 +39,8 @@ export class DesktopReleaseSignalService {
 			options.watchSignal ??
 			((documentId, callbacks) =>
 				watchDesktopSignal('desktop_release_signal', documentId, callbacks))
-		this.setTimeoutImpl = options.setTimeoutImpl ?? setTimeout
-		this.clearTimeoutImpl = options.clearTimeoutImpl ?? clearTimeout
+		this.setTimeoutImpl = options.setTimeoutImpl ?? globalThis.setTimeout.bind(globalThis)
+		this.clearTimeoutImpl = options.clearTimeoutImpl ?? globalThis.clearTimeout.bind(globalThis)
 		this.random = options.random ?? Math.random
 	}
 

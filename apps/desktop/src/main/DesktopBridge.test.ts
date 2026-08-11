@@ -619,6 +619,17 @@ describe('registerDesktopBridge', () => {
 		expect(updateOpenInstaller).toHaveBeenCalledOnce()
 	})
 
+	it('returns manual update unavailability without replacing the current update state', async () => {
+		const { ipcMain, updateCheck } = createBridgeHarness()
+		updateCheck.mockRejectedValueOnce(new Error('开发模式不支持桌面更新，请安装桌面版本后检查。'))
+
+		await expect(ipcMain.handlers.get('updates:check')?.({}, 'manual')).resolves.toEqual({
+			ok: false,
+			state: { phase: 'idle' },
+			error: '开发模式不支持桌面更新，请安装桌面版本后检查。',
+		})
+	})
+
 	it('broadcasts supervisor status changes and returns the unsubscribe function', () => {
 		const { emitStatus, emitProfileStatus, sendStatus, sendProfileStatus, unsubscribe } =
 			createBridgeHarness()

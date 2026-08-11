@@ -1,0 +1,27 @@
+问学官网与后台管理系统网址
+
+最后核验：2026-07-29（Asia/Shanghai）
+
+一、线上正式地址
+
+问学官网：
+https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/
+
+问学后台管理系统：
+https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com/admin
+
+问学网关健康检查：
+https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com/healthz
+
+二、本地检查地址
+
+问学官网：
+http://localhost:5175/
+
+问学后台管理系统：
+http://localhost:5176/
+
+说明：
+1. 线上官网、后台和网关健康检查已于上述日期确认返回 HTTP 200。
+2. 后台管理系统需要已登记且处于 active 状态的管理员账号登录。
+3. 本地地址仅在对应开发服务已经启动时可访问。

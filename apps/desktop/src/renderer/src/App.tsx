@@ -189,6 +189,7 @@ export default function App() {
 	const [message, setMessage] = useState<string | null>(null)
 	const [announcement, setAnnouncement] = useState<ClientAnnouncementView | null>(null)
 	const [updateState, setUpdateState] = useState<UpdateState>({ phase: 'idle' })
+	const [updateCheckNotice, setUpdateCheckNotice] = useState<string | null>(null)
 	const [dismissedUpdate, setDismissedUpdate] = useState<string | null>(null)
 	const avatarButtonRef = useRef<HTMLButtonElement>(null)
 	const addingProfileRef = useRef(false)
@@ -807,15 +808,24 @@ export default function App() {
 		}
 	}, [])
 
-	const checkForUpdates = useCallback(async () => {
+	const checkForUpdates = useCallback(async (surface: 'global' | 'about' = 'global') => {
 		setDismissedUpdate(null)
-		setMessage(null)
+		if (surface === 'about') {
+			setUpdateCheckNotice(null)
+		} else {
+			setMessage(null)
+		}
 		try {
 			const result = await window.wenxue.updates.check('manual')
 			if (!result.ok) throw new Error(result.error ?? strings.update.checkError)
 			setUpdateState(result.state)
 		} catch (error) {
-			setMessage(readCloudBaseErrorMessage(error, strings.update.checkError))
+			const nextMessage = readCloudBaseErrorMessage(error, strings.update.checkError)
+			if (surface === 'about') {
+				setUpdateCheckNotice(nextMessage)
+			} else {
+				setMessage(nextMessage)
+			}
 		}
 	}, [])
 
@@ -1033,13 +1043,14 @@ export default function App() {
 				) : null}
 				{route === 'settings' ? (
 					<SettingsPage
-						checkForUpdates={checkForUpdates}
+						checkForUpdates={() => checkForUpdates('about')}
 						savedTick={savedTick}
 						saving={savingSettings}
 						section={settingsSection}
 						setMessage={setMessage}
 						setSection={setSettingsSection}
 						settings={settings}
+						updateCheckNotice={updateCheckNotice}
 						updateState={updateState}
 						updateSettings={updateSettings}
 						versions={versions}
@@ -2328,6 +2339,7 @@ function SettingsPage({
 	setMessage,
 	setSection,
 	settings,
+	updateCheckNotice,
 	updateState,
 	updateSettings,
 	versions,
@@ -2339,6 +2351,7 @@ function SettingsPage({
 	setMessage: (message: string | null) => void
 	setSection: (section: SettingsSectionId) => void
 	settings: LauncherSettings
+	updateCheckNotice: string | null
 	updateState: UpdateState
 	updateSettings: (patch: LauncherSettingsPatch) => Promise<boolean>
 	versions: AppVersions
@@ -2517,7 +2530,7 @@ function SettingsPage({
 							</div>
 							<p aria-live="polite" className="settings-panel__note">
 								<Info size={15} />
-								{describeUpdateState(updateState)}
+								{updateCheckNotice ?? describeUpdateState(updateState)}
 							</p>
 							<button
 								className="primary-button"

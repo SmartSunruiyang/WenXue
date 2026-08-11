@@ -21,6 +21,7 @@ const DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000
 const DOWNLOAD_PROGRESS_INTERVAL_MS = 150
 const INSTALLER_DIRECTORY = 'update-installers'
 const MANDATORY_POLICY_FILE = 'update-mandatory-policy.json'
+const DEVELOPMENT_UPDATE_MESSAGE = '开发模式不支持桌面更新，请安装桌面版本后检查。'
 const STALE_MANDATORY_MESSAGE =
 	'强制更新策略已超过 24 小时且更新服务暂不可达，已解除工作区限制；联网后请重新检查。'
 const INSTALL_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -185,11 +186,6 @@ export class DesktopUpdateService {
 		this.started = true
 
 		if (!this.options.isPackaged) {
-			this.setState({
-				phase: 'error',
-				message: '开发模式不支持桌面更新，请安装桌面版本后检查。',
-				retryable: false,
-			})
 			return
 		}
 		if (!this.options.manifestPublicKey.trim()) {
@@ -367,8 +363,11 @@ export class DesktopUpdateService {
 	}
 
 	private async performCheck(reason: UpdateCheckReason): Promise<UpdateState> {
-		void reason
-		if (!this.options.isPackaged || !this.options.manifestPublicKey.trim()) return this.updateState
+		if (!this.options.isPackaged) {
+			if (reason === 'manual') throw new Error(DEVELOPMENT_UPDATE_MESSAGE)
+			return this.updateState
+		}
+		if (!this.options.manifestPublicKey.trim()) return this.updateState
 		if (this.updateState.phase === 'downloading' || this.updateState.phase === 'opening') {
 			return this.updateState
 		}

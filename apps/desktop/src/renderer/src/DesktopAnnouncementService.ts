@@ -80,16 +80,16 @@ export class DesktopAnnouncementService {
 	private error: string | undefined
 
 	constructor(options: DesktopAnnouncementServiceOptions = {}) {
-		this.fetchImpl = options.fetchImpl ?? fetch
+		this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init))
 		this.refreshSession = options.refreshSession
 		this.watchSignal =
 			options.watchSignal ??
 			((documentId, callbacks) =>
 				watchDesktopSignal('desktop_announcement_signal', documentId, callbacks))
-		this.setTimeoutImpl = options.setTimeoutImpl ?? setTimeout
-		this.clearTimeoutImpl = options.clearTimeoutImpl ?? clearTimeout
-		this.setIntervalImpl = options.setIntervalImpl ?? setInterval
-		this.clearIntervalImpl = options.clearIntervalImpl ?? clearInterval
+		this.setTimeoutImpl = options.setTimeoutImpl ?? globalThis.setTimeout.bind(globalThis)
+		this.clearTimeoutImpl = options.clearTimeoutImpl ?? globalThis.clearTimeout.bind(globalThis)
+		this.setIntervalImpl = options.setIntervalImpl ?? globalThis.setInterval.bind(globalThis)
+		this.clearIntervalImpl = options.clearIntervalImpl ?? globalThis.clearInterval.bind(globalThis)
 		this.now = options.now ?? Date.now
 	}
 

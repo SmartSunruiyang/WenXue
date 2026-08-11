@@ -7,6 +7,38 @@ afterEach(() => {
 })
 
 describe('DesktopReleaseSignalService', () => {
+	it('calls the default browser timers with the global receiver', async () => {
+		const receivers = new Map<string, unknown>()
+		vi.spyOn(globalThis, 'setTimeout').mockImplementation(function (this: unknown) {
+			receivers.set('setTimeout', this)
+			return 1 as unknown as ReturnType<typeof setTimeout>
+		})
+		vi.spyOn(globalThis, 'clearTimeout').mockImplementation(function (this: unknown) {
+			receivers.set('clearTimeout', this)
+		})
+		let callbacks:
+			| { onChange: (snapshot: unknown) => void; onError: (error: unknown) => void }
+			| undefined
+		const service = new DesktopReleaseSignalService({
+			checkForUpdates: vi.fn(async () => undefined),
+			random: () => 0,
+			watchSignal: (_documentId, nextCallbacks) => {
+				callbacks = nextCallbacks
+				return { close: vi.fn() }
+			},
+		})
+
+		service.start('electron', 'stable')
+		callbacks?.onChange({ docs: [{ revision: 1 }] })
+		callbacks?.onChange({ docs: [{ revision: 2 }] })
+		service.stop()
+
+		expect(Object.fromEntries(receivers)).toEqual({
+			setTimeout: globalThis,
+			clearTimeout: globalThis,
+		})
+	})
+
 	it('checks only after revision changes while the main process owns periodic checks', async () => {
 		const checkForUpdates = vi.fn(async () => undefined)
 		let callbacks:

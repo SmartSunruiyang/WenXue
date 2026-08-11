@@ -18,6 +18,58 @@ afterEach(() => {
 })
 
 describe('DesktopAnnouncementService', () => {
+	it('calls the default browser fetch with the global receiver', async () => {
+		let receiver: unknown
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async function (
+			this: unknown,
+		) {
+			receiver = this
+			return Response.json({ announcements: [] })
+		})
+		const service = new DesktopAnnouncementService({
+			watchSignal: () => ({ close: vi.fn() }),
+		})
+
+		await service.start(session, 'darwin', '0.1.0')
+
+		expect(receiver).toBe(globalThis)
+		expect(fetchSpy).toHaveBeenCalledOnce()
+		expect(service.current()).toBeNull()
+		service.stop()
+	})
+
+	it('calls the default browser timers with the global receiver', async () => {
+		const receivers = new Map<string, unknown>()
+		vi.spyOn(globalThis, 'setTimeout').mockImplementation(function (this: unknown) {
+			receivers.set('setTimeout', this)
+			return 1 as unknown as ReturnType<typeof setTimeout>
+		})
+		vi.spyOn(globalThis, 'clearTimeout').mockImplementation(function (this: unknown) {
+			receivers.set('clearTimeout', this)
+		})
+		vi.spyOn(globalThis, 'setInterval').mockImplementation(function (this: unknown) {
+			receivers.set('setInterval', this)
+			return 2 as unknown as ReturnType<typeof setInterval>
+		})
+		vi.spyOn(globalThis, 'clearInterval').mockImplementation(function (this: unknown) {
+			receivers.set('clearInterval', this)
+		})
+		const service = new DesktopAnnouncementService({
+			fetchImpl: vi.fn<typeof fetch>(async () => Response.json({ announcements: [] })),
+			watchSignal: () => ({ close: vi.fn() }),
+		})
+
+		await service.start(session, 'darwin', '0.1.0')
+		service.stop()
+
+		expect(Object.fromEntries(receivers)).toEqual({
+			setTimeout: globalThis,
+			clearTimeout: globalThis,
+			setInterval: globalThis,
+			clearInterval: globalThis,
+		})
+	})
+
 	it('orders important messages first, acknowledges them, and removes withdrawn messages on signal', async () => {
 		let queue = [
 			announcement('normal-new', 'normal', '2026-07-17T12:02:00.000Z'),
@@ -316,7 +368,7 @@ function announcement(
 	id: string,
 	importance: ClientAnnouncementView['importance'],
 	publishedAt: string,
-	expiresAt = '2026-07-24T12:00:00.000Z',
+	expiresAt = '2099-12-31T23:59:59.000Z',
 ): ClientAnnouncementView {
 	return {
 		id,

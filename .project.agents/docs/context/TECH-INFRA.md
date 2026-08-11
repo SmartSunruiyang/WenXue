@@ -374,7 +374,8 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   artifact URL/SHA-512/size、`distribution.mode=manual-unsigned`、`releasePublicKeyFingerprint` 和测试证据；Ed25519
   公钥固定在 App，私钥仅在隔离 CI。Ed25519 证明清单与产物字节来源，不改变安装包在操作系统中的
   未签名状态。
-- DesktopUpdateService 在启动 30 秒、每 4 小时、release revision 和“关于问学”手动 intent 时检查；
+- 打包运行时的 DesktopUpdateService 在启动 30 秒、每 4 小时、release revision 和“关于问学”手动
+  intent 时检查；开发运行时保持 idle，不启动自动更新，用户手动检查时只在“关于问学”显示不可用说明。
   用户点击后才下载，SHA-512/size 校验通过后再次点击“打开安装包”，随后由系统打开 DMG/NSIS。
 - rollout 比例为 1/5/25/50/100；`sha256(releaseId + randomInstallId)` 稳定分桶；mandatory 仅允许
   100%。打开安装包前必须成功完成一次实时策略请求，pause/withdraw/断网都禁止新下载或打开；缓存

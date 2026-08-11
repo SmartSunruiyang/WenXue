@@ -241,7 +241,8 @@
 ## 模块名：DesktopUpdateService
 - 职责：main 实现 `manual-unsigned` 更新状态机；按启动延迟、4 小时定时器、renderer signal 与手动 intent
   检查策略；验证 runtime/channel/platform/arch/semver、Ed25519 清单、SHA-512/size 和稳定灰度分桶；
-  在用户 intent 后下载，并在一次实时 policy 复核成功后通过系统 API 打开已校验的 DMG/NSIS
+  在用户 intent 后下载，并在一次实时 policy 复核成功后通过系统 API 打开已校验的 DMG/NSIS；开发
+  运行时不启动自动更新且保持 idle，只有手动检查 intent 返回可展示的不可用说明
 - 不负责：不构建/签署清单/上传候选；不静默下载；不关闭 App 或 CfT；不替用户运行安装器；不执行降级；
   不渲染更新 UI
 - 输入：AppPaths、本地随机 installId、DesktopBridge check intent、CloudBaseLlmGateway update-policy/events、
@@ -857,7 +858,7 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
   release slot 原子互斥/最高版本门禁/列表过滤、纯审计追加、signal revision、event token 绑定/篡改拒绝、
   `expiresAt` TTL 与更新事件敏感字段拒绝。
 - **DesktopAnnouncementService / DesktopReleaseSignalService / DesktopUpdateService**：覆盖启动/登出、
-  watch 更新/错误/退避与轮询、消息排序/撤回/确认、更新状态机、dev unavailable、策略 freshness、
+  watch 更新/错误/退避与轮询、消息排序/撤回/确认、更新状态机、dev 启动保持 idle 且仅手动检查返回说明、策略 freshness、
   下载/打开前实时复核、离线缓存不得授权打开、IPC、SHA-512 拒绝与系统安装器交接。发布前必须用
   `manual-unsigned` 的 macOS arm64/x64 DMG 与 Windows x64 NSIS 完成 `0.1.0 → 0.1.1` 手动安装交接 E2E，
   包括系统未签名警告与用户明确继续；开发预览不构成验收。

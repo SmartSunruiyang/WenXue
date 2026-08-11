@@ -209,6 +209,29 @@ function createService(
 }
 
 describe('DesktopUpdateService manual-unsigned flow', () => {
+	it('keeps development startup quiet and explains unavailability only after a manual check', async () => {
+		const fixture = createFixture()
+		const setTimeoutImpl = vi.fn(() => 1) as unknown as typeof setTimeout
+		const setIntervalImpl = vi.fn(() => 2) as unknown as typeof setInterval
+		const { service } = createService(fixture, {
+			isPackaged: false,
+			setTimeoutImpl,
+			setIntervalImpl,
+		})
+
+		service.start()
+
+		expect(service.state()).toEqual({ phase: 'idle' })
+		expect(setTimeoutImpl).not.toHaveBeenCalled()
+		expect(setIntervalImpl).not.toHaveBeenCalled()
+		await expect(service.check('signal')).resolves.toEqual({ phase: 'idle' })
+		await expect(service.check('manual')).rejects.toThrow(
+			'开发模式不支持桌面更新，请安装桌面版本后检查。',
+		)
+		expect(service.state()).toEqual({ phase: 'idle' })
+		expect(fixture.fetchImpl).not.toHaveBeenCalled()
+	})
+
 	it('checks 30 seconds after startup and every four hours', async () => {
 		const fixture = createFixture()
 		let startupCheck: (() => void) | undefined
