@@ -234,7 +234,7 @@ extraResources:
 - 上游：`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`；DashScope Key 只来自 CloudBase Run 环境变量 `DASHSCOPE_API_KEY`。
 - 流式计量：当请求 `stream=true` 时，网关必须注入 `stream_options: { include_usage: true }`，否则 DashScope 流式响应不返回 usage。
 - 计量：M0 捕获 usage 与端到端延迟；M1 后写 `token_usage`，记录只含 CloudBase 用户 uid、model、tokens、latency、createdAt；M4 的 `usage-summary` target 实时读取当前用户 uid 记录并返回脱敏 `TokenUsageSummary`（recent id 不含 uid）。
-- 访问（2026-07-18 分发功能上线后）：当前版本 030 承接 100% 流量，保持 `OpenAccessTypes:["OA","PUBLIC","MINIAPP"]`，规格为 `Cpu:0.25`、`Mem:0.5`、`MinNum:1`、`MaxNum:2`；注册 target 按来源 IP、用户名和单实例总量限流，返回 429 与 `Retry-After`；扩大实例规模或正式公开获客前还必须在共享网关层补全局限流与审计告警。
+- 访问（2026-09-18 用户管理修复上线后）：当前版本 032 承接 100% 流量，保持 `OpenAccessTypes:["OA","PUBLIC","MINIAPP"]`，规格为 `Cpu:0.25`、`Mem:0.5`、`MinNum:1`、`MaxNum:2`；注册 target 按来源 IP、用户名和单实例总量限流，返回 429 与 `Retry-After`；扩大实例规模或正式公开获客前还必须在共享网关层补全局限流与审计告警。
 - 组合运行时上线（2026-07-18）：AdminApi 管理、消息、版本、客户端与 CI targets 及 AdminConsole `/admin` 静态 target 已合并到 Gateway；AdminConsole 以 `/admin/` base 构建，产物、AdminApi 的 `cloudbaseAuth.mjs` 与 `packages/client-operations` 的服务端契约入口经白名单 staging 进入镜像，Functions Framework 固定 `1.18.2`。统一域名共 18 条公开路由；独立 `wenxue-admin-api` 与 `wenxue-admin-web` 保留为回滚/排障单元。
 - 发布记录：2026-07-17 完成 023 灰度与 024 降配；2026-07-18 完成消息/手动更新控制面并发布 030。中间 028 曾错误使用 `/` base，生产只读冒烟发现 `/assets/*` 404 后改用固定 staging 脚本重建，029 恢复；030 携带最终幂等、健康统计、配额与发布公钥绑定修复。未购买额外资源点，也未开启超限。
 - 公网默认入口：统一功能入口使用 `https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com`；底层排障入口为 `https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com`，2026-07-18 `/healthz` 已验证 200。
@@ -249,10 +249,10 @@ extraResources:
 - 前端：`apps/admin` 静态站点，使用 CloudBase Web SDK 的 username/password 登录；路由守卫必须使用 `auth.getSession()`，不得使用已废弃且可能误判的 `getLoginState()`。仓库目标运行形态由 `wenxue-llm-gateway` 的 `/admin` target 提供构建产物；构建固定 `VITE_BASE_PATH=/admin/`、同源 AdminApi、当前 env/region，避免 shell 残留 `VITE_*` 污染 bundle。独立 CloudRun 静态容器保留作回滚。
 - 后端：`apps/admin-api` 是唯一业务实现；PUBLIC 请求均先校验 CloudBase Auth bearer，再查 `admin_users` 角色，前端不直接读写 NoSQL。相同公开 targets 由 Gateway 复用；独立 Function mode 服务保留作回滚。
 - 数据：网关用户授权权威是 CloudBase Auth `ACTIVE/BLOCKED`；AdminApi 使用 TCB `DescribeUserList` 获取完整用户目录、`ModifyUser(UserStatus=BLOCKED|ACTIVE)` 更新并回读状态；使用现有服务端 `TENCENTCLOUD_SECRETID/SECRETKEY`（可选 session token）且只调用所需用户管理动作。`user_accounts` 只补充备注/历史时间；`user_permission_audit` 追加状态操作的 requested/succeeded/unconfirmed 记录及备注调整；`admin_users` 继续作为后台角色表，管理员 Auth 冻结后现有 session 同样拒绝。
-- 当前公网部署（2026-07-18，分发功能已上线）：
-  - AdminConsole 主入口：`https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com/admin`，使用 CloudBase HTTP 网关默认域名；`/admin`、`/admin/`、`/admin/assets/*` 三条路由均指向 `wenxue-llm-gateway` 030，构建期注入 `VITE_BASE_PATH=/admin/` 与同源 AdminApi base URL。
+- 当前公网部署（2026-09-18，Auth 用户管理修复已上线）：
+  - AdminConsole 主入口：`https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com/admin`，使用 CloudBase HTTP 网关默认域名；`/admin`、`/admin/`、`/admin/assets/*` 三条路由均指向 `wenxue-llm-gateway` 032，构建期注入 `VITE_BASE_PATH=/admin/` 与同源 AdminApi base URL。
   - AdminApi 主入口：同域的管理、消息、版本、客户端与 CI 精确路由均指向 Gateway；不在默认域名下使用 `/admin/v1/*`，因为 `/admin` 页面路由会按前缀捕获。统一域名当前共 18 条公开路由。
-  - 独立 CloudRun 服务继续作为回滚单元和底层排障入口：`wenxue-admin-web` 在线版本 007、`wenxue-admin-api` 在线版本 012；正常功能路径由 Gateway 030 承接。
+  - 独立 CloudRun 服务继续作为回滚单元和底层排障入口：`wenxue-admin-web` 在线版本 007、`wenxue-admin-api` 在线版本 012；正常功能路径由 Gateway 032 承接。
   - 授权内部账号：`administrator`、`outas`、`spike2801` 的 CloudBase uid 已写入 `admin_users`，`role=admin`、`status=active`。
   - 数据权限：`admin_users`、`user_accounts`、`user_permission_audit` 为 `ADMINONLY`；后台前端只能经 AdminApi 访问。
   - 2026-07-09 验证：`/admin` 返回 200 HTML 且引用 `/admin/assets/index-DAabuiMV.js`；JS/CSS 静态资源返回 200；四条 AdminApi 精确路由未带 bearer token 均返回 401，并带 CloudBase Run upstream 状态。
@@ -261,6 +261,7 @@ extraResources:
   - 2026-07-17 降耗结果：唯一常驻 Gateway 为 0.25C/0.5GB、`MinNum=1`、`MaxNum=2`，按配置估算固定计算约 21420 点/月，较 107100 点/月基线约下降 80%。该数值是配置侧估算，不是账单实测；本次未购买资源点、未开启超限。
   - 2026-07-17 清理与切换：隔离静态托管探针路由与本轮上传的 `admin/`、`__admin_probe/` 文件已删除；正式七条后台路由随后全部切换到 Gateway。
   - 2026-07-18 验收：Gateway 030 与 AdminApi 012 均为 `NORMAL` 且承接 100% 流量；健康与 update policy 返回 200，三类未授权边界返回 401，CORS 预检为 204/`*`，`/admin` 及其实际 JS/CSS 均返回 200。
+  - 2026-09-18 验收：Gateway 032 正常承接 100% 流量；源码发布 031 的镜像构建和推送成功但平台状态失败，经 TCR 摘要核验后以同一镜像发布 032。健康、默认域名页面、HTML/JS/CSS 构建哈希、未登录管理接口 401 均通过；使用原服务配置只读查询生产目录，返回 8 个 Auth 账号（7 启用、1 禁用，其中 5 个无用量）及 82 条计量记录。真实账号状态写操作未在线执行，启用/禁用链路由本地集成与浏览器测试覆盖。
 
 ### 7.3 应用内消息与版本分发（M4.7 / M5.1）
 
