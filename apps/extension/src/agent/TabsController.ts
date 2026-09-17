@@ -54,6 +54,7 @@ export class TabsController {
 		if (this.disposed) {
 			throw new Error('TabsController already disposed')
 		}
+		this.disconnectTabEvents()
 		if (this.questionSolverLeaseRegistered) await this.revokeQuestionSolverLease()
 
 		this.currentTabId = null
@@ -454,16 +455,15 @@ export class TabsController {
 	 *
 	 * @note Port is 1:1 (runtime.connect → background SW has no frames),
 	 * so onDisconnect fires exactly once and we can safely reconnect.
-	 * Reconnection may miss events during the gap.
-	 * TODO: refresh this.tabs from background after reconnect to stay consistent.
+	 * Reconnection may miss events during the gap, so a fresh window snapshot is reconciled after
+	 * each reconnect.
 	 */
-	private connectTabEvents() {
-		this.port = chrome.runtime.connect({ name: 'tab-events' })
-
-		this.port.onMessage.addListener((message: any) => {
-			if (this.disposed) return
-			this.portRetries = 0
-
+	private connectTabEvents(refreshAfterConnect = false) {
+		const port = chrome.runtime.connect({ name: 'tab-events' })
+		this.port = port
+		const bufferedMessages: any[] = []
+		let snapshotPending = refreshAfterConnect
+		const handleMessage = (message: any) => {
 			if (message.action === 'created') {
 				const tab = message.payload.tab as chrome.tabs.Tab
 				const shouldTrack = this.experimentalIncludeAllTabs
@@ -510,9 +510,20 @@ export class TabsController {
 					targetTab.status = tab.status
 				}
 			}
+		}
+
+		port.onMessage.addListener((message: any) => {
+			if (this.disposed || this.port !== port) return
+			this.portRetries = 0
+			if (snapshotPending) {
+				bufferedMessages.push(message)
+				return
+			}
+			handleMessage(message)
 		})
 
-		this.port.onDisconnect.addListener(() => {
+		port.onDisconnect.addListener(() => {
+			if (this.port !== port) return
 			this.port = undefined
 			if (this.disposed) return
 			if (this.portRetries >= 7) {
@@ -521,8 +532,75 @@ export class TabsController {
 			}
 			debug('port disconnected, reconnecting...')
 			this.portRetries++
-			this.connectTabEvents()
+			this.connectTabEvents(true)
 		})
+
+		if (refreshAfterConnect) {
+			const replayBufferedMessages = () => {
+				if (this.disposed || this.port !== port) return
+				snapshotPending = false
+				for (const message of bufferedMessages.splice(0)) handleMessage(message)
+			}
+			void this.refreshTabsAfterReconnect(port).then(replayBufferedMessages, (error: unknown) => {
+				console.error(`${PREFIX} failed to refresh tabs after reconnect`, error)
+				replayBufferedMessages()
+			})
+		}
+	}
+
+	private async refreshTabsAfterReconnect(port: chrome.runtime.Port): Promise<void> {
+		if (this.windowId === null) return
+		const result = await sendMessage({
+			type: 'TAB_CONTROL',
+			action: 'get_window_tabs',
+			payload: { windowId: this.windowId },
+		})
+		if (this.disposed || this.port !== port) return
+		if (!Array.isArray(result?.tabs)) {
+			throw new Error('Failed to refresh window tabs after reconnect.')
+		}
+
+		const previousCurrentTabId = this.currentTabId
+		this.tabs = (result.tabs as chrome.tabs.Tab[]).flatMap((tab) => {
+			const shouldTrack = this.experimentalIncludeAllTabs
+				? this.isEligibleAllTabsTab(tab)
+				: this.tabGroupId !== null && tab.groupId === this.tabGroupId
+			if (!shouldTrack || tab.id == null) return []
+			return [
+				{
+					id: tab.id,
+					isInitial: tab.id === this.initialTabId,
+					url: tab.url,
+					title: tab.title,
+					status: tab.status,
+				},
+			]
+		})
+		this.portRetries = 0
+
+		if (
+			this.pendingActivation &&
+			!this.tabs.some((tab) => tab.id === this.pendingActivation?.tabId)
+		) {
+			this.activationRequestId++
+			this.pendingActivation = null
+		}
+		if (
+			previousCurrentTabId !== null &&
+			!this.tabs.some((tab) => tab.id === previousCurrentTabId)
+		) {
+			const replacement = this.tabs[this.tabs.length - 1] ?? null
+			if (replacement) await this.switchToReplacementTab(replacement.id)
+			else await this.updateCurrentTabId(null)
+			return
+		}
+		await this.syncQuestionSolverLease()
+	}
+
+	private disconnectTabEvents(): void {
+		const port = this.port
+		this.port = undefined
+		port?.disconnect()
 	}
 
 	private isEligibleAllTabsTab(tab: chrome.tabs.Tab): boolean {
@@ -539,8 +617,7 @@ export class TabsController {
 		this.disposed = true
 		this.activationRequestId++
 		this.pendingActivation = null
-		this.port?.disconnect()
-		this.port = undefined
+		this.disconnectTabEvents()
 		void this.revokeQuestionSolverLease().catch((error: unknown) => {
 			console.error(`${PREFIX} failed to revoke question solver task lease`, error)
 		})

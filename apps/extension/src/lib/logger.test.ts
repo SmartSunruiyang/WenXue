@@ -6,10 +6,11 @@ vi.mock('./logStore', () => ({
 
 vi.mock('./logRedaction', () => ({
 	redact: vi.fn((v: unknown) => v),
+	redactLogMessage: vi.fn((v: string) => v),
 }))
 
-import { appendBatch } from './logStore'
 import { redact } from './logRedaction'
+import { appendBatch } from './logStore'
 
 describe('logger', () => {
 	let loggerModule: typeof import('./logger')
@@ -26,7 +27,12 @@ describe('logger', () => {
 	})
 
 	it('batches entries and flushes when flushSize is reached', async () => {
-		loggerModule.configureLogger({ context: 'sidepanel', sink: 'direct', flushSize: 3, flushMs: 60_000 })
+		loggerModule.configureLogger({
+			context: 'sidepanel',
+			sink: 'direct',
+			flushSize: 3,
+			flushMs: 60_000,
+		})
 
 		loggerModule.logger.info('system', 'one')
 		loggerModule.logger.info('system', 'two')
@@ -35,7 +41,12 @@ describe('logger', () => {
 		loggerModule.logger.info('system', 'three')
 		expect(appendBatch).toHaveBeenCalledTimes(1)
 		expect(appendBatch).toHaveBeenCalledWith([
-			expect.objectContaining({ message: 'one', level: 'info', source: 'system', context: 'sidepanel' }),
+			expect.objectContaining({
+				message: 'one',
+				level: 'info',
+				source: 'system',
+				context: 'sidepanel',
+			}),
 			expect.objectContaining({ message: 'two' }),
 			expect.objectContaining({ message: 'three' }),
 		])
@@ -63,9 +74,7 @@ describe('logger', () => {
 		loggerModule.logger.info('agent', 'task', { apiKey: 'sk-secret' })
 
 		expect(redact).toHaveBeenCalledWith({ apiKey: 'sk-secret' })
-		expect(appendBatch).toHaveBeenCalledWith([
-			expect.objectContaining({ data: { safe: true } }),
-		])
+		expect(appendBatch).toHaveBeenCalledWith([expect.objectContaining({ data: { safe: true } })])
 	})
 
 	it('uses message sink when configured', async () => {
@@ -105,13 +114,16 @@ describe('logger', () => {
 
 		loggerModule.logger.debug('agent', 'step')
 
-		expect(appendBatch).toHaveBeenCalledWith([
-			expect.objectContaining({ ts: now }),
-		])
+		expect(appendBatch).toHaveBeenCalledWith([expect.objectContaining({ ts: now })])
 	})
 
 	it('flushLogger manually flushes remaining buffer', async () => {
-		loggerModule.configureLogger({ context: 'hub', sink: 'direct', flushSize: 100, flushMs: 60_000 })
+		loggerModule.configureLogger({
+			context: 'hub',
+			sink: 'direct',
+			flushSize: 100,
+			flushMs: 60_000,
+		})
 
 		loggerModule.logger.info('tabs', 'created')
 		loggerModule.logger.info('tabs', 'closed')

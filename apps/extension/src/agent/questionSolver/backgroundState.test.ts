@@ -70,6 +70,21 @@ describe('QuestionSolverBackgroundState', () => {
 		expect(storage.values[QUESTION_SOLVER_BACKGROUND_STATE_KEY]).toEqual(malformed)
 	})
 
+	it('continues persisting the latest snapshot after one transient storage failure', async () => {
+		const storage = new FlakySessionStorage()
+		const state = new QuestionSolverBackgroundState(storage, () => 1_000)
+		await state.initialize()
+		storage.failNextSet = true
+
+		await expect(registerLease(state)).rejects.toThrow('transient storage failure')
+		await expect(state.updateTaskLease(IDENTITY, LEASE, [1, 2], 2)).resolves.toBeUndefined()
+
+		expect(storage.setCalls).toBe(3)
+		expect(storage.values[QUESTION_SOLVER_BACKGROUND_STATE_KEY]).toMatchObject({
+			leases: [{ managedTabIds: [1, 2], targetTabId: 2 }],
+		})
+	})
+
 	it('binds one-shot frame challenges to the actual sender and exact document', async () => {
 		let now = 1_000
 		const state = new QuestionSolverBackgroundState(undefined, () => now)
@@ -245,5 +260,19 @@ class MemorySessionStorage implements SessionStorageLike {
 
 	async remove(key: string): Promise<void> {
 		delete this.values[key]
+	}
+}
+
+class FlakySessionStorage extends MemorySessionStorage {
+	setCalls = 0
+	failNextSet = false
+
+	override async set(values: Record<string, unknown>): Promise<void> {
+		this.setCalls++
+		if (this.failNextSet) {
+			this.failNextSet = false
+			throw new Error('transient storage failure')
+		}
+		await super.set(values)
 	}
 }

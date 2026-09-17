@@ -1,4 +1,4 @@
-import { redact } from './logRedaction'
+import { redact, redactLogMessage } from './logRedaction'
 import { appendBatch } from './logStore'
 import type { LogContext, LogDraft, LogLevel, LogSource } from './logTypes'
 
@@ -13,7 +13,7 @@ const DEFAULT_FLUSH_SIZE = 20
 const DEFAULT_FLUSH_MS = 1000
 
 let config: LoggerConfig | null = null
-let buffer: LogDraft[] = []
+const buffer: LogDraft[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 
 function getConfig(): LoggerConfig {
@@ -57,7 +57,7 @@ function emit(level: LogLevel, source: LogSource, message: string, data?: unknow
 		level,
 		source,
 		context: cfg.context,
-		message,
+		message: redactLogMessage(message),
 		data: data !== undefined ? redact(data) : undefined,
 	}
 

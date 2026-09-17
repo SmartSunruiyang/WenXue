@@ -467,6 +467,50 @@ describe('useAgent user session reload', () => {
 		expect(storage.listenerCount()).toBe(0)
 	})
 
+	it('defers a session reload during an active task and applies it when the task finishes', async () => {
+		const storage = createChromeStorageHarness()
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const probe = await renderAgentProbe(() => {})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		const activeAgent = multiPageAgentMockState.instances[0] as unknown as {
+			status: AgentStatus
+			dispatchEvent: (event: Event) => boolean
+			dispose: ReturnType<typeof vi.fn>
+		}
+		await act(async () => {
+			activeAgent.status = 'running'
+			activeAgent.dispatchEvent(new Event('statuschange'))
+		})
+
+		await act(async () => {
+			await storage.chrome.storage.local.set({
+				[WENXUE_USER_SESSION_KEY]: {
+					userId: 'user_456',
+					accessToken: 'replacement-access-token',
+					refreshToken: 'replacement-refresh-token',
+					expiresAt: 1893456000000,
+					gatewayBaseUrl: WENXUE_GATEWAY_BASE_URL,
+				},
+			})
+			await Promise.resolve()
+		})
+		expect(multiPageAgentMockState.instances).toHaveLength(1)
+		expect(activeAgent.dispose).not.toHaveBeenCalled()
+
+		await act(async () => {
+			activeAgent.status = 'completed'
+			activeAgent.dispatchEvent(new Event('statuschange'))
+		})
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(2))
+		expect(multiPageAgentMockState.instances[1].options).toMatchObject({
+			apiKey: 'replacement-access-token',
+		})
+		expect(activeAgent.dispose).toHaveBeenCalledOnce()
+
+		await probe.unmount()
+	})
+
 	it('reloads the agent when options changes the selected model', async () => {
 		const storage = createChromeStorageHarness({
 			customModels: [
@@ -621,6 +665,22 @@ describe('agent session initialization', () => {
 
 		expect(agent.dispose).toHaveBeenCalledTimes(1)
 		expect(bindAgent).not.toHaveBeenCalled()
+		expect(setConfig).not.toHaveBeenCalled()
+	})
+
+	it('disposes a replacement when a task starts before initialization can bind it', async () => {
+		const agent = new FakeAgent()
+		const setConfig = vi.fn()
+
+		await initializeAgentSession({
+			signal: new AbortController().signal,
+			loadConfig: async () => 'loaded',
+			createAgent: async () => agent,
+			bindAgent: () => false,
+			setConfig,
+		})
+
+		expect(agent.dispose).toHaveBeenCalledTimes(1)
 		expect(setConfig).not.toHaveBeenCalled()
 	})
 })

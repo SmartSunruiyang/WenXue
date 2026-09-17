@@ -58,7 +58,8 @@ export function installLlmFetchLogging(opts?: LoggingFetchOptions): () => void {
 			response = await origFetch.call(globalThis, input, init)
 		} catch (err) {
 			const durationMs = Date.now() - start
-			logger.error('llm', `fetch failed: ${url}`, {
+			logger.error('llm', 'LLM fetch failed', {
+				url,
 				request: redactedRequest,
 				error: String(err),
 				durationMs,
@@ -103,7 +104,8 @@ async function logResponse(
 			? redact(safeJsonParse(bodyText))
 			: undefined
 
-	logger.info('llm', `LLM ${response.status} ${url}`, {
+	logger.info('llm', 'LLM response received', {
+		url,
 		request: redactedRequest,
 		response: {
 			status: response.status,

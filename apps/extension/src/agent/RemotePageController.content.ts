@@ -117,7 +117,12 @@ function withTimeout(p: Promise<JsResult>, ms: number, onTimeout?: () => void): 
 
 export function initPageController() {
 	let pageController: PageController | null = null
-	let intervalID: number | null = null
+	let heartbeatExpiryTimer: number | null = null
+	let maskRefreshRunning = false
+	let maskRefreshPending = false
+	let disposed = false
+	let suspended = false
+	let maskLoadSequence = 0
 	let mainWorldExecutorInjected = false
 	let mainWorldExecutorInjection: Promise<void> | null = null
 	let mainExecId = 0
@@ -201,18 +206,33 @@ export function initPageController() {
 		})
 	}
 
-	intervalID = window.setInterval(async () => {
+	const maskStorageKeys = [
+		'agentHeartbeat',
+		'isAgentRunning',
+		'currentTabId',
+		'isAgentInteractionPaused',
+	] as const
+	const maskState: Record<(typeof maskStorageKeys)[number], unknown> = {
+		agentHeartbeat: undefined,
+		isAgentRunning: undefined,
+		currentTabId: undefined,
+		isAgentInteractionPaused: undefined,
+	}
+	const maskStateRevisions: Record<(typeof maskStorageKeys)[number], number> = {
+		agentHeartbeat: 0,
+		isAgentRunning: 0,
+		currentTabId: 0,
+		isAgentInteractionPaused: 0,
+	}
+
+	async function refreshMask(): Promise<void> {
+		if (disposed || suspended) return
 		const {
 			agentHeartbeat,
 			isAgentRunning,
 			currentTabId,
 			isAgentInteractionPaused = false,
-		} = await chrome.storage.local.get([
-			'agentHeartbeat',
-			'isAgentRunning',
-			'currentTabId',
-			'isAgentInteractionPaused',
-		])
+		} = maskState
 		const now = Date.now()
 		const agentInTouch = typeof agentHeartbeat === 'number' && now - agentHeartbeat < 2_000
 		const shouldShowMask = shouldShowAgentMask({
@@ -222,11 +242,16 @@ export function initPageController() {
 			myTabId: await myTabIdPromise,
 			isAgentInteractionPaused: Boolean(isAgentInteractionPaused),
 		})
+		if (disposed || suspended) return
 
 		if (shouldShowMask) {
 			const pc = getPC()
 			pc.initMask()
 			await pc.showMask()
+			if (disposed) {
+				pc.dispose()
+				if (pageController === pc) pageController = null
+			}
 		} else {
 			// await getPC().hideMask()
 			if (pageController) {
@@ -241,7 +266,93 @@ export function initPageController() {
 				pageController = null
 			}
 		}
-	}, 500)
+	}
+
+	function requestMaskRefresh(): void {
+		if (disposed || suspended) return
+		maskRefreshPending = true
+		if (maskRefreshRunning) return
+		maskRefreshRunning = true
+		void (async () => {
+			while (maskRefreshPending) {
+				maskRefreshPending = false
+				await refreshMask()
+			}
+		})()
+			.catch((error: unknown) => {
+				console.error('[RemotePageController.ContentScript]: Failed to refresh mask', error)
+			})
+			.finally(() => {
+				maskRefreshRunning = false
+				if (maskRefreshPending) requestMaskRefresh()
+			})
+	}
+
+	function scheduleHeartbeatExpiry(): void {
+		if (heartbeatExpiryTimer !== null) window.clearTimeout(heartbeatExpiryTimer)
+		heartbeatExpiryTimer = null
+		if (suspended) return
+		if (typeof maskState.agentHeartbeat !== 'number') return
+		const remaining = Math.max(0, 2_000 - (Date.now() - maskState.agentHeartbeat) + 1)
+		heartbeatExpiryTimer = window.setTimeout(() => {
+			heartbeatExpiryTimer = null
+			requestMaskRefresh()
+		}, remaining)
+	}
+
+	const handleMaskStorageChange = (
+		changes: Record<string, chrome.storage.StorageChange>,
+		areaName: string,
+	) => {
+		if (areaName !== 'local') return
+		let changed = false
+		for (const key of maskStorageKeys) {
+			if (!(key in changes)) continue
+			maskState[key] = changes[key].newValue
+			maskStateRevisions[key]++
+			changed = true
+		}
+		if (!changed) return
+		scheduleHeartbeatExpiry()
+		requestMaskRefresh()
+	}
+	async function loadMaskState(): Promise<void> {
+		const loadSequence = ++maskLoadSequence
+		const revisions = { ...maskStateRevisions }
+		try {
+			const stored = await chrome.storage.local.get([...maskStorageKeys])
+			if (disposed || suspended || loadSequence !== maskLoadSequence) return
+			for (const key of maskStorageKeys) {
+				if (maskStateRevisions[key] === revisions[key]) maskState[key] = stored[key]
+			}
+			scheduleHeartbeatExpiry()
+			requestMaskRefresh()
+		} catch (error) {
+			if (disposed || suspended || loadSequence !== maskLoadSequence) return
+			console.error('[RemotePageController.ContentScript]: Failed to load mask state', error)
+		}
+	}
+
+	chrome.storage.onChanged.addListener(handleMaskStorageChange)
+	void loadMaskState()
+
+	window.addEventListener('pagehide', (event) => {
+		suspended = true
+		if (heartbeatExpiryTimer !== null) window.clearTimeout(heartbeatExpiryTimer)
+		heartbeatExpiryTimer = null
+		pageController?.dispose()
+		pageController = null
+		if (event.persisted) return
+
+		disposed = true
+		maskLoadSequence++
+		chrome.storage.onChanged.removeListener(handleMaskStorageChange)
+	})
+	window.addEventListener('pageshow', (event) => {
+		if (!event.persisted || disposed) return
+		suspended = false
+		void loadMaskState()
+	})
 
 	chrome.runtime.onMessage.addListener((message, sender, sendResponse): true | undefined => {
 		if (message.type !== 'PAGE_CONTROL') {

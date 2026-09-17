@@ -148,7 +148,7 @@ export class MultiPageAgent extends PageAgentCore {
 			compaction,
 
 			onBeforeTask: async (agent) => {
-				logger.info('agent', `task started: ${agent.task}`, { task: agent.task })
+				logger.info('agent', 'task started', { task: agent.task })
 				stuckGuard.reset()
 				try {
 					await tabsController.init(agent.task, {
@@ -164,7 +164,7 @@ export class MultiPageAgent extends PageAgentCore {
 			},
 
 			onAfterTask: async (agent, result) => {
-				logger.info('agent', `task finished: ${result}`, { task: agent.task, result })
+				logger.info('agent', 'task finished', { task: agent.task, result })
 				try {
 					await runtime.stop()
 				} finally {
@@ -195,7 +195,7 @@ export class MultiPageAgent extends PageAgentCore {
 					return
 				}
 
-				logger.info('agent', `step: ${lastStep.action}`, {
+				logger.info('agent', 'step completed', {
 					action: lastStep.action,
 					reflection: lastStep.reflection.next_goal,
 				})

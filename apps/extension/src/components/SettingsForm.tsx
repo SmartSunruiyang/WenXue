@@ -32,6 +32,7 @@ import {
 	getCustomModelLabel,
 	getCustomModelProviderLabel,
 	getModelProviderPreset,
+	normalizeCustomModelBaseUrl,
 	normalizeSelectedModelId,
 	normalizeVisionModelId,
 } from '@/lib/modelConfig'
@@ -263,7 +264,7 @@ export function SettingsForm({
 	}
 
 	const handleAddCustomModel = () => {
-		const baseURL = draftBaseURL.trim()
+		const baseURL = normalizeCustomModelBaseUrl(draftBaseURL)
 		const apiKey = draftApiKey.trim()
 		const model = draftModel.trim()
 		const providerName = draftProvider === 'custom' ? draftProviderName.trim() : undefined
@@ -291,7 +292,7 @@ export function SettingsForm({
 	}
 
 	const canAddCustomModel =
-		draftBaseURL.trim().length > 0 &&
+		normalizeCustomModelBaseUrl(draftBaseURL) !== null &&
 		draftApiKey.trim().length > 0 &&
 		draftModel.trim().length > 0 &&
 		(draftProvider !== 'custom' || draftProviderName.trim().length > 0)

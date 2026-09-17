@@ -1,7 +1,14 @@
 import type { LLMConfig } from '@page-agent/llms'
 
-export const WENXUE_GATEWAY_BASE_URL =
+declare const __WENXUE_GATEWAY_BASE_URL__: string
+
+const DEFAULT_WENXUE_GATEWAY_BASE_URL =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
+export const WENXUE_GATEWAY_BASE_URL = (
+	typeof __WENXUE_GATEWAY_BASE_URL__ === 'string'
+		? __WENXUE_GATEWAY_BASE_URL__
+		: DEFAULT_WENXUE_GATEWAY_BASE_URL
+).replace(/\/+$/, '')
 export const WENXUE_GATEWAY_OPENAI_BASE_URL = `${WENXUE_GATEWAY_BASE_URL}/v1`
 
 // Default built-in LLM — WenXue CloudBase LLM Gateway.

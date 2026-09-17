@@ -609,10 +609,11 @@ export class QuestionSolverBackgroundState {
 				.filter((run) => run.lifecycle !== 'closed')
 				.map((run) => ({ ...run, effects: [...run.effects.values()] })),
 		}
-		this.persistQueue = this.persistQueue.then(() =>
+		const write = this.persistQueue.then(() =>
 			this.storage!.set({ [QUESTION_SOLVER_BACKGROUND_STATE_KEY]: snapshot }),
 		)
-		return this.persistQueue
+		this.persistQueue = write.catch(() => undefined)
+		return write
 	}
 
 	private normalizeStored(value: unknown): StoredState {

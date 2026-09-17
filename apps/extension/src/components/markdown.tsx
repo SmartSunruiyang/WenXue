@@ -45,7 +45,10 @@ const components: Components = {
 	),
 	h6: ({ node, className, ...props }) => (
 		<h6
-			className={cn('mb-1 mt-2 text-[13px] font-semibold text-muted-foreground first:mt-0', className)}
+			className={cn(
+				'mb-1 mt-2 text-[13px] font-semibold text-muted-foreground first:mt-0',
+				className,
+			)}
 			{...props}
 		/>
 	),
@@ -117,14 +120,31 @@ const components: Components = {
 	hr: ({ node, className, ...props }) => (
 		<hr className={cn('my-3 border-border', className)} {...props} />
 	),
-	img: ({ node, className, ...props }) => (
-		// eslint-disable-next-line jsx-a11y/alt-text -- alt comes from markdown; default to empty
-		<img alt="" className={cn('max-w-full rounded', className)} {...props} />
-	),
+	img: ({ node, className, src, alt, ...props }) =>
+		isSafeMarkdownImageSource(src) ? (
+			<img alt={alt ?? ''} className={cn('max-w-full rounded', className)} src={src} {...props} />
+		) : (
+			<span className={cn('text-muted-foreground', className)} role="note">
+				{alt ? `[已阻止远程图片：${alt}]` : '[已阻止远程图片]'}
+			</span>
+		),
 	strong: ({ node, className, ...props }) => (
 		<strong className={cn('font-semibold', className)} {...props} />
 	),
 	em: ({ node, className, ...props }) => <em className={cn('italic', className)} {...props} />,
+}
+
+export function isSafeMarkdownImageSource(src: string | Blob | undefined): boolean {
+	if (typeof src !== 'string' || !src) return false
+	if (/^data:image\/(?:avif|gif|jpeg|png|webp);base64,/i.test(src)) return true
+	if (src.startsWith('//')) return false
+	try {
+		const base = new URL(globalThis.location?.href ?? 'https://wenxue.invalid/')
+		const resolved = new URL(src, base)
+		return resolved.protocol === base.protocol && resolved.origin === base.origin
+	} catch {
+		return false
+	}
 }
 
 export function Markdown({ text }: { text: string }) {

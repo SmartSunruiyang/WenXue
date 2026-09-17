@@ -6,6 +6,7 @@ import {
 	BUILT_IN_MODEL_LABEL,
 	BUILT_IN_VISION_MODEL_ID,
 	type CustomModelConfig,
+	normalizeCustomModels,
 	normalizeVisionModelId,
 	resolveSelectedLLMConfig,
 	resolveVisionLLMConfig,
@@ -103,5 +104,30 @@ describe('resolveSelectedLLMConfig', () => {
 			model: 'deepseek-chat',
 			apiKey: 'sk-deepseek',
 		})
+	})
+})
+
+describe('normalizeCustomModels', () => {
+	it('keeps HTTPS model endpoints without URL credentials', () => {
+		expect(normalizeCustomModels(customModels)).toEqual(customModels)
+	})
+
+	it.each([
+		'http://models.example/v1',
+		'ftp://models.example/v1',
+		'https://user:password@models.example/v1',
+		'not a url',
+	])('drops an unsafe custom model endpoint: %s', (baseURL) => {
+		expect(
+			normalizeCustomModels([
+				{
+					id: 'unsafe',
+					provider: 'custom',
+					baseURL,
+					apiKey: 'secret',
+					model: 'unsafe-model',
+				},
+			]),
+		).toEqual([])
 	})
 })

@@ -171,4 +171,15 @@ describe('redact', () => {
 		expect(output).toContain('query=visible')
 		expect(input.toString()).toBe(original)
 	})
+
+	it('redacts credentials inside string URLs and query assignments', () => {
+		const output = redact(
+			'failed https://user:password@example.com/v1?api_key=query-secret token=plain-secret',
+		) as string
+
+		expect(output).not.toContain('user:password')
+		expect(output).not.toContain('query-secret')
+		expect(output).not.toContain('plain-secret')
+		expect(output).toContain(REDACTED)
+	})
 })

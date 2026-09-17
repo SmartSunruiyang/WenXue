@@ -39,6 +39,29 @@ function replaceBearerCredentials(value: string): string {
 	return value.replace(/\bBearer\s+\S+/gi, REDACTED)
 }
 
+function replaceSensitiveAssignments(value: string): string {
+	return value.replace(
+		/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|bearer[_-]?token|token)=([^&\s]+)/gi,
+		(_match, key: string) => `${key}=${REDACTED}`,
+	)
+}
+
+function replaceUrlCredentials(value: string): string {
+	return value.replace(/https?:\/\/[^\s"'<>]+/gi, (candidate) => {
+		try {
+			const url = new URL(candidate)
+			url.username = ''
+			url.password = ''
+			for (const key of Array.from(url.searchParams.keys())) {
+				if (isSensitiveKey(key)) url.searchParams.set(key, REDACTED)
+			}
+			return url.toString()
+		} catch {
+			return candidate
+		}
+	})
+}
+
 function isSensitiveKey(key: string): boolean {
 	return SENSITIVE_KEYS.has(key.toLowerCase().replace(/[-_\s]/g, ''))
 }
@@ -51,7 +74,9 @@ function truncateString(value: string, maxLength: number, originalLength = value
 }
 
 function redactString(value: string, budget: RedactionBudget): string {
-	const withoutBearer = replaceBearerCredentials(value)
+	const withoutBearer = replaceUrlCredentials(
+		replaceSensitiveAssignments(replaceBearerCredentials(value)),
+	)
 	let output: string
 
 	if (/^data:/i.test(withoutBearer)) {
@@ -248,4 +273,9 @@ export function redact(value: unknown): unknown {
 	} catch {
 		return UNSERIALIZABLE
 	}
+}
+
+export function redactLogMessage(message: string): string {
+	const output = redact(message)
+	return typeof output === 'string' ? output : '[Redacted log message]'
 }

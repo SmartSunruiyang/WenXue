@@ -148,11 +148,8 @@ export function normalizeCustomModels(value: unknown): CustomModelConfig[] {
 	return value.flatMap((item) => {
 		if (!item || typeof item !== 'object') return []
 		const candidate = item as Partial<CustomModelConfig>
-		if (
-			typeof candidate.id !== 'string' ||
-			typeof candidate.baseURL !== 'string' ||
-			typeof candidate.model !== 'string'
-		) {
+		const baseURL = normalizeCustomModelBaseUrl(candidate.baseURL)
+		if (typeof candidate.id !== 'string' || !baseURL || typeof candidate.model !== 'string') {
 			return []
 		}
 
@@ -169,10 +166,23 @@ export function normalizeCustomModels(value: unknown): CustomModelConfig[] {
 				provider,
 				providerName:
 					typeof candidate.providerName === 'string' ? candidate.providerName : undefined,
-				baseURL: candidate.baseURL,
+				baseURL,
 				apiKey: typeof candidate.apiKey === 'string' ? candidate.apiKey : undefined,
 				model: candidate.model,
 			},
 		]
 	})
+}
+
+export function normalizeCustomModelBaseUrl(value: unknown): string | null {
+	if (typeof value !== 'string') return null
+	const candidate = value.trim()
+	if (!candidate) return null
+	try {
+		const url = new URL(candidate)
+		if (url.protocol !== 'https:' || url.username || url.password) return null
+		return candidate
+	} catch {
+		return null
+	}
 }

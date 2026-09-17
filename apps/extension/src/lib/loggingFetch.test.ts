@@ -53,8 +53,9 @@ describe('installLlmFetchLogging', () => {
 		await vi.waitFor(() => {
 			expect(logger.info).toHaveBeenCalledWith(
 				'llm',
-				expect.stringContaining('200'),
+				'LLM response received',
 				expect.objectContaining({
+					url: 'https://api.example.com/v1/chat/completions',
 					request: expect.anything(),
 					response: expect.objectContaining({ status: 200 }),
 					durationMs: expect.any(Number),
@@ -157,8 +158,9 @@ describe('installLlmFetchLogging', () => {
 		await vi.waitFor(() => {
 			expect(logger.error).toHaveBeenCalledWith(
 				'llm',
-				expect.stringContaining('fetch failed'),
+				'LLM fetch failed',
 				expect.objectContaining({
+					url: 'https://api.example.com/v1/chat/completions',
 					error: expect.stringContaining('network down'),
 				}),
 			)
@@ -199,11 +201,7 @@ describe('installLlmFetchLogging', () => {
 		})
 
 		await vi.waitFor(() => {
-			expect(logger.info).toHaveBeenCalledWith(
-				'llm',
-				expect.stringContaining('200'),
-				expect.anything(),
-			)
+			expect(logger.info).toHaveBeenCalledWith('llm', 'LLM response received', expect.anything())
 		})
 
 		uninstall()

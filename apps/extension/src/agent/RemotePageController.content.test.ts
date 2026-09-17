@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	detectProtectedInterruptionInDocument,
 	dispatchJsExecution,
+	initPageController,
 } from './RemotePageController.content'
 
 afterEach(() => {
 	vi.useRealTimers()
+	vi.unstubAllGlobals()
 })
 
 describe('dispatchJsExecution', () => {
@@ -77,5 +79,42 @@ describe('protected visual interruption probe', () => {
 		document.body.innerHTML = '<div class="captcha-dialog" hidden>1234</div>'
 
 		expect(detectProtectedInterruptionInDocument()).toEqual({ blocked: false })
+	})
+})
+
+describe('content script page lifecycle', () => {
+	it('reloads mask state after bfcache restore and only disposes on a final pagehide', async () => {
+		const addStorageListener = vi.fn()
+		const removeStorageListener = vi.fn()
+		const get = vi.fn(async () => ({
+			agentHeartbeat: undefined,
+			isAgentRunning: false,
+			currentTabId: null,
+			isAgentInteractionPaused: false,
+		}))
+		vi.stubGlobal('chrome', {
+			runtime: {
+				sendMessage: vi.fn(async () => ({ tabId: 7 })),
+				onMessage: { addListener: vi.fn() },
+			},
+			storage: {
+				local: { get },
+				onChanged: {
+					addListener: addStorageListener,
+					removeListener: removeStorageListener,
+				},
+			},
+		})
+
+		initPageController()
+		await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+		window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+		expect(removeStorageListener).not.toHaveBeenCalled()
+
+		window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+		await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+
+		window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false }))
+		expect(removeStorageListener).toHaveBeenCalledWith(addStorageListener.mock.calls[0]?.[0])
 	})
 })

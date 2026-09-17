@@ -653,7 +653,7 @@ export async function initializeAgentSession<TConfig>({
 	signal: AbortSignal
 	loadConfig: () => Promise<TConfig>
 	createAgent: (config: TConfig) => AgentSessionAgent | Promise<AgentSessionAgent>
-	bindAgent: (agent: AgentSessionAgent) => void
+	bindAgent: (agent: AgentSessionAgent) => boolean | void
 	setConfig: (config: TConfig) => void
 }): Promise<void> {
 	const loadedConfig = await loadConfig()
@@ -665,7 +665,10 @@ export async function initializeAgentSession<TConfig>({
 		return
 	}
 
-	bindAgent(agent)
+	if (bindAgent(agent) === false) {
+		agent.dispose()
+		return
+	}
 	setConfig(loadedConfig)
 }
 
@@ -684,6 +687,7 @@ export function useAgent({
 	const runtimeModelsRef = useRef<RuntimeAgentModels | null>(null)
 	const mountedRef = useRef(false)
 	const initialLoadAbortRef = useRef<AbortController | null>(null)
+	const pendingReloadRef = useRef<{ clearExisting: boolean } | null>(null)
 	if (!sessionControllerRef.current) {
 		sessionControllerRef.current = createAgentSessionController({
 			setStatus,
@@ -709,6 +713,9 @@ export function useAgent({
 	const reloadAgentSession = useCallback(
 		async ({ clearExisting = false }: { clearExisting?: boolean } = {}) => {
 			if (sessionController.isTaskActive()) {
+				pendingReloadRef.current = {
+					clearExisting: clearExisting || pendingReloadRef.current?.clearExisting === true,
+				}
 				return
 			}
 			initialLoadAbortRef.current?.abort()
@@ -728,16 +735,26 @@ export function useAgent({
 					if (abortController.signal.aborted) return
 					console.error('[useAgent] Visual observation background is unavailable:', error)
 				}
+				let replacementRuntimeModels: RuntimeAgentModels | null = null
 				await initializeAgentSession({
 					signal: abortController.signal,
 					loadConfig: () => loadStoredConfig(),
 					createAgent: async (loadedConfig) => {
 						const runtimeModels = await loadRuntimeAgentModels(loadedConfig)
-						runtimeModelsRef.current = runtimeModels
+						replacementRuntimeModels = runtimeModels
 						return createAgentForConfig(loadedConfig, runtimeModels)
 					},
-					bindAgent: (agent) =>
-						sessionController.bind(agent, { enableUserTakeover, enableUserQuestions }),
+					bindAgent: (agent) => {
+						if (sessionController.isTaskActive()) {
+							pendingReloadRef.current = {
+								clearExisting: clearExisting || pendingReloadRef.current?.clearExisting === true,
+							}
+							return false
+						}
+						sessionController.bind(agent, { enableUserTakeover, enableUserQuestions })
+						runtimeModelsRef.current = replacementRuntimeModels
+						return true
+					},
 					setConfig,
 				})
 			} catch (error) {
@@ -775,12 +792,21 @@ export function useAgent({
 
 		return () => {
 			mountedRef.current = false
+			pendingReloadRef.current = null
 			initialLoadAbortRef.current?.abort()
 			initialLoadAbortRef.current = null
 			chrome.storage.onChanged.removeListener(handleStorageChange)
 			sessionController.dispose()
 		}
 	}, [reloadAgentSession, sessionController])
+
+	useEffect(() => {
+		if (isAgentTaskActive(status)) return
+		const pending = pendingReloadRef.current
+		if (!pending) return
+		pendingReloadRef.current = null
+		void reloadAgentSession(pending)
+	}, [reloadAgentSession, status])
 
 	const execute = useCallback(
 		(task: string) => sessionController.execute(task),

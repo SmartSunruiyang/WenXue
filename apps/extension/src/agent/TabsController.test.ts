@@ -107,6 +107,18 @@ describe('TabsController.init', () => {
 			false,
 		)
 	})
+
+	it('disconnects the previous tab-events port before reinitializing for another task', async () => {
+		createInitHarness()
+		const controller = new TabsController()
+
+		await controller.init('First task')
+		const firstPort = vi.mocked(chrome.runtime.connect).mock.results[0]?.value
+		await controller.init('Follow-up task')
+
+		expect(chrome.runtime.connect).toHaveBeenCalledTimes(2)
+		expect(firstPort?.disconnect).toHaveBeenCalledOnce()
+	})
 })
 
 describe('TabsController.switchToTab', () => {
@@ -242,6 +254,141 @@ describe('TabsController.closeTab', () => {
 })
 
 describe('TabsController tab events', () => {
+	it('reconciles missed tab changes after reconnect without reviving the stale port', async () => {
+		type PortHarness = {
+			port: chrome.runtime.Port
+			disconnectListener?: () => void
+		}
+		const ports: PortHarness[] = []
+		const sendMessage = vi.fn(async (message: { action: string }) => {
+			if (message.action === 'get_window_tabs') {
+				return {
+					tabs: [
+						{
+							id: 8,
+							windowId: 4,
+							url: 'https://example.com/remaining',
+							title: 'Remaining',
+							status: 'complete',
+							pinned: false,
+						},
+						{
+							id: 9,
+							windowId: 4,
+							url: 'https://example.com/new',
+							title: 'New',
+							status: 'complete',
+							pinned: false,
+						},
+					],
+				}
+			}
+			return { success: true }
+		})
+		const connect = vi.fn(() => {
+			const harness: PortHarness = {
+				port: {
+					onMessage: { addListener: vi.fn() },
+					onDisconnect: {
+						addListener: (listener: () => void) => {
+							harness.disconnectListener = listener
+						},
+					},
+					disconnect: vi.fn(),
+				} as unknown as chrome.runtime.Port,
+			}
+			ports.push(harness)
+			return harness.port
+		})
+		vi.stubGlobal('chrome', {
+			runtime: { connect, sendMessage },
+			storage: { local: { set: vi.fn(async () => {}) } },
+		})
+		const controller = new TabsController()
+		Object.assign(controller as unknown as Record<string, unknown>, {
+			experimentalIncludeAllTabs: true,
+			windowId: 4,
+			tabs: [
+				{ id: 7, isInitial: false, url: 'https://example.com/closed' },
+				{ id: 8, isInitial: false, url: 'https://example.com/remaining' },
+			],
+		})
+		controller.currentTabId = 7
+		;(controller as unknown as { connectTabEvents: () => void }).connectTabEvents()
+
+		ports[0].disconnectListener?.()
+		await vi.waitFor(() => expect(controller.currentTabId).toBe(9))
+		expect(connect).toHaveBeenCalledTimes(2)
+		expect(await controller.summarizeTabs()).not.toContain('https://example.com/closed')
+		expect(await controller.summarizeTabs()).toContain('https://example.com/new')
+
+		ports[0].disconnectListener?.()
+		expect(connect).toHaveBeenCalledTimes(2)
+	})
+
+	it('replays tab events that arrive while the reconnect snapshot is pending', async () => {
+		let resolveSnapshot!: (value: { tabs: chrome.tabs.Tab[] }) => void
+		const snapshot = new Promise<{ tabs: chrome.tabs.Tab[] }>((resolve) => {
+			resolveSnapshot = resolve
+		})
+		type PortHarness = {
+			port: chrome.runtime.Port
+			messageListener?: (message: unknown) => void
+			disconnectListener?: () => void
+		}
+		const ports: PortHarness[] = []
+		const connect = vi.fn(() => {
+			const harness: PortHarness = {
+				port: {
+					onMessage: {
+						addListener: (listener: (message: unknown) => void) => {
+							harness.messageListener = listener
+						},
+					},
+					onDisconnect: {
+						addListener: (listener: () => void) => {
+							harness.disconnectListener = listener
+						},
+					},
+					disconnect: vi.fn(),
+				} as unknown as chrome.runtime.Port,
+			}
+			ports.push(harness)
+			return harness.port
+		})
+		vi.stubGlobal('chrome', {
+			runtime: {
+				connect,
+				sendMessage: vi.fn((message: { action?: string }) =>
+					message.action === 'get_window_tabs' ? snapshot : Promise.resolve({ success: true }),
+				),
+			},
+			storage: { local: { set: vi.fn(async () => {}) } },
+		})
+		const controller = new TabsController()
+		Object.assign(controller as unknown as Record<string, unknown>, {
+			experimentalIncludeAllTabs: true,
+			windowId: 4,
+			tabs: [{ id: 7, isInitial: false, url: 'https://example.com/stale' }],
+		})
+		;(controller as unknown as { connectTabEvents: () => void }).connectTabEvents()
+
+		ports[0].disconnectListener?.()
+		ports[1].messageListener?.({ action: 'removed', payload: { tabId: 7 } })
+		resolveSnapshot({
+			tabs: [
+				{
+					id: 7,
+					windowId: 4,
+					url: 'https://example.com/stale',
+					pinned: false,
+				},
+			],
+		})
+
+		await vi.waitFor(async () => expect(await controller.summarizeTabs()).toContain('No tabs'))
+	})
+
 	it('handles asynchronous activation failures without an unhandled rejection', async () => {
 		let onMessage!: (message: unknown) => void
 		vi.stubGlobal('chrome', {
