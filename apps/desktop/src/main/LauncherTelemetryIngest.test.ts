@@ -115,4 +115,27 @@ describe('LauncherTelemetryIngest', () => {
 			'Telemetry browserId is required',
 		)
 	})
+
+	it('keeps every token record from concurrent telemetry ingestion', async () => {
+		await Promise.all(
+			Array.from({ length: 25 }, (_, index) =>
+				ingest.ingest({
+					browserId: 'course',
+					tokenUsage: [
+						{
+							id: `usage-${index}`,
+							ts: Date.now() + index,
+							model: 'qwen3.7-max',
+							inputTokens: 1,
+							outputTokens: 1,
+							totalTokens: 2,
+							estimatedCostCny: 0,
+						},
+					],
+				}),
+			),
+		)
+
+		await expect(tokenUsageStore.summary()).resolves.toMatchObject({ totalTokens: 50 })
+	})
 })

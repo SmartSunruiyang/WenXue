@@ -1,4 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import type { AppPaths } from './AppPaths'
 
 export interface TokenUsageRecord {
@@ -38,31 +39,36 @@ interface TokenUsageFile {
 
 export class TokenUsageStore {
 	private readonly filePath: string
+	private operationQueue: Promise<void> = Promise.resolve()
 
 	constructor(paths: AppPaths) {
 		this.filePath = paths.dataFile('token-usage.json')
 	}
 
 	async summary(): Promise<TokenUsageSummary> {
-		const records = await this.readRecords()
-		return {
-			totalInputTokens: sum(records, 'inputTokens'),
-			totalOutputTokens: sum(records, 'outputTokens'),
-			totalTokens: sum(records, 'totalTokens'),
-			estimatedCostCny: roundCurrency(sum(records, 'estimatedCostCny')),
-			byBrowser: bucket(records, (record) => record.browserId),
-			byModel: bucket(records, (record) => record.model),
-			daily: bucket(records, (record) => new Date(record.ts).toISOString().slice(0, 10)),
-			recent: records
-				.slice()
-				.sort((a, b) => b.ts - a.ts)
-				.slice(0, 20),
-		}
+		return this.enqueue(async () => {
+			const records = await this.readRecords()
+			return {
+				totalInputTokens: sum(records, 'inputTokens'),
+				totalOutputTokens: sum(records, 'outputTokens'),
+				totalTokens: sum(records, 'totalTokens'),
+				estimatedCostCny: roundCurrency(sum(records, 'estimatedCostCny')),
+				byBrowser: bucket(records, (record) => record.browserId),
+				byModel: bucket(records, (record) => record.model),
+				daily: bucket(records, (record) => new Date(record.ts).toISOString().slice(0, 10)),
+				recent: records
+					.slice()
+					.sort((a, b) => b.ts - a.ts)
+					.slice(0, 20),
+			}
+		})
 	}
 
 	async append(records: TokenUsageRecord[]): Promise<void> {
-		const next = [...(await this.readRecords()), ...records.map(sanitizeRecord)]
-		await writeFile(this.filePath, `${JSON.stringify({ records: next }, null, 2)}\n`, 'utf8')
+		await this.enqueue(async () => {
+			const next = [...(await this.readRecords()), ...records.map(sanitizeRecord)]
+			await this.writeRecords(next)
+		})
 	}
 
 	private async readRecords(): Promise<TokenUsageRecord[]> {
@@ -75,6 +81,30 @@ export class TokenUsageStore {
 			}
 			return []
 		}
+	}
+
+	private async writeRecords(records: TokenUsageRecord[]): Promise<void> {
+		const temporaryPath = `${this.filePath}.wenxue-${randomUUID()}.tmp`
+		try {
+			await writeFile(temporaryPath, `${JSON.stringify({ records }, null, 2)}\n`, {
+				encoding: 'utf8',
+				flag: 'wx',
+				mode: 0o600,
+			})
+			await rename(temporaryPath, this.filePath)
+		} catch (error) {
+			await rm(temporaryPath, { force: true }).catch(() => undefined)
+			throw error
+		}
+	}
+
+	private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.operationQueue.then(operation)
+		this.operationQueue = result.then(
+			() => undefined,
+			() => undefined,
+		)
+		return result
 	}
 }
 

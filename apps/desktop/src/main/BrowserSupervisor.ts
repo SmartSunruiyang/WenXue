@@ -1,8 +1,5 @@
 import { spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import type { Readable } from 'node:stream'
-import WebSocket from 'ws'
 import type { AppLogger } from './AppLogger'
 import type { BrowserResources } from './BrowserResources'
 import { buildArgv } from './launchConfig'
@@ -25,7 +22,6 @@ export interface BrowserSupervisorDeps {
 	logger: AppLogger
 	spawnBrowser?: (binary: string, argv: string[]) => BrowserProcessLike
 	focusExisting?: (binary: string, argv: string[]) => void | Promise<void>
-	closeGracefully?: (userDataDir: string) => boolean | Promise<boolean>
 }
 
 export interface BrowserLaunchOptions {
@@ -41,14 +37,12 @@ interface BrowserInstance {
 	child: BrowserProcessLike
 	binary: string
 	argv: string[]
-	userDataDir: string
 	shutdownRequested: boolean
 }
 
 export class BrowserSupervisor {
 	private readonly spawnBrowser: (binary: string, argv: string[]) => BrowserProcessLike
 	private readonly focusExisting: (binary: string, argv: string[]) => void | Promise<void>
-	private readonly closeGracefully: (userDataDir: string) => boolean | Promise<boolean>
 	private readonly listeners = new Set<StatusListener>()
 	private readonly profileListeners = new Set<ProfileStatusListener>()
 	private readonly instances = new Map<string, BrowserInstance>()
@@ -58,7 +52,6 @@ export class BrowserSupervisor {
 	constructor(private readonly deps: BrowserSupervisorDeps) {
 		this.spawnBrowser = deps.spawnBrowser ?? defaultSpawnBrowser
 		this.focusExisting = deps.focusExisting ?? defaultFocusExisting
-		this.closeGracefully = deps.closeGracefully ?? closeBrowserViaCdp
 	}
 
 	async launch(profileId = 'default', options: BrowserLaunchOptions = {}): Promise<void> {
@@ -95,7 +88,6 @@ export class BrowserSupervisor {
 				userDataDir,
 				extensionDir: this.deps.resources.extensionDir(),
 				startUrl: options.startUrl ?? 'chrome://newtab',
-				remoteDebuggingPort: 0,
 			})
 			child = this.spawnBrowser(binary, argv)
 		} catch (error) {
@@ -111,7 +103,6 @@ export class BrowserSupervisor {
 			child,
 			binary,
 			argv: [...argv],
-			userDataDir,
 			shutdownRequested: false,
 		})
 		this.attachBrowserLogs(profileId, child)
@@ -158,25 +149,10 @@ export class BrowserSupervisor {
 
 			current.child.on('exit', () => settle())
 			current.shutdownRequested = true
-			const fallBackToProcessSignal = () => {
-				if (settled || this.instances.get(profileId)?.child !== current.child) return
-				if (!current.child.kill('SIGTERM')) {
-					this.instances.delete(profileId)
-					this.setProfileStatus(profileId, 'idle')
-					settle()
-				}
-			}
-			try {
-				const graceful = this.closeGracefully(current.userDataDir)
-				if (typeof graceful === 'boolean') {
-					if (!graceful) fallBackToProcessSignal()
-				} else {
-					void graceful.then((closed) => {
-						if (!closed) fallBackToProcessSignal()
-					}, fallBackToProcessSignal)
-				}
-			} catch {
-				fallBackToProcessSignal()
+			if (!current.child.kill('SIGTERM')) {
+				this.instances.delete(profileId)
+				this.setProfileStatus(profileId, 'idle')
+				settle()
 			}
 		})
 	}
@@ -282,46 +258,4 @@ function defaultSpawnBrowser(binary: string, argv: string[]): BrowserProcessLike
 function defaultFocusExisting(binary: string, argv: string[]): void {
 	const process = spawn(binary, argv, { detached: true, stdio: 'ignore' })
 	process.unref()
-}
-
-async function closeBrowserViaCdp(userDataDir: string): Promise<boolean> {
-	let contents: string
-	try {
-		contents = await readFile(path.join(userDataDir, 'DevToolsActivePort'), 'utf8')
-	} catch {
-		return false
-	}
-	const [portValue, browserPath] = contents.trim().split(/\r?\n/)
-	const port = Number(portValue)
-	if (
-		!Number.isSafeInteger(port) ||
-		port < 1 ||
-		port > 65_535 ||
-		!browserPath ||
-		!/^\/devtools\/browser\/[A-Za-z0-9._-]+$/.test(browserPath)
-	) {
-		return false
-	}
-	return new Promise<boolean>((resolve) => {
-		let settled = false
-		const socket = new WebSocket(`ws://127.0.0.1:${port}${browserPath}`, {
-			handshakeTimeout: 1_500,
-		})
-		const finish = (result: boolean) => {
-			if (settled) return
-			settled = true
-			clearTimeout(timeout)
-			resolve(result)
-		}
-		const timeout = setTimeout(() => {
-			socket.terminate()
-			finish(false)
-		}, 2_000)
-		socket.once('open', () => {
-			socket.send(JSON.stringify({ id: 1, method: 'Browser.close' }), (error) => {
-				finish(!error)
-			})
-		})
-		socket.once('error', () => finish(false))
-	})
 }

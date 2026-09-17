@@ -135,9 +135,11 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		'browser:duplicateProfile',
 		async (_event: unknown, profileId: unknown): Promise<ProfileMutationResult> => {
 			try {
+				const requestedProfileId = requireStringArg(profileId, 'profileId')
+				assertProfileDataMutationAllowed(options, requestedProfileId)
 				return {
 					ok: true,
-					profile: await options.profileStore.duplicate(requireStringArg(profileId, 'profileId')),
+					profile: await options.profileStore.duplicate(requestedProfileId),
 				}
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -149,9 +151,11 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		'browser:removeProfile',
 		async (_event: unknown, profileId: unknown): Promise<ProfileMutationResult> => {
 			try {
+				const requestedProfileId = requireStringArg(profileId, 'profileId')
+				assertProfileDataMutationAllowed(options, requestedProfileId)
 				return {
 					ok: true,
-					profile: await options.profileStore.remove(requireStringArg(profileId, 'profileId')),
+					profile: await options.profileStore.remove(requestedProfileId),
 				}
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -391,6 +395,13 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	}
 }
 
+function assertProfileDataMutationAllowed(options: DesktopBridgeOptions, profileId: string): void {
+	const status = options.supervisor.statuses()[profileId] ?? 'idle'
+	if (status === 'launching' || status === 'running') {
+		throw new Error(`浏览器配置 ${profileId} 正在使用，请先关闭浏览器后再操作。`)
+	}
+}
+
 async function launchProfileWithUserSession(
 	options: DesktopBridgeOptions,
 	profileId: string,
@@ -447,7 +458,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function asSettingsPatch(value: unknown): DeepPartial<LauncherSettings> {
-	return asRecord(value) as DeepPartial<LauncherSettings>
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('Invalid settings patch')
+	}
+	return value as DeepPartial<LauncherSettings>
 }
 
 function requireStringArg(value: unknown, label: string): string {

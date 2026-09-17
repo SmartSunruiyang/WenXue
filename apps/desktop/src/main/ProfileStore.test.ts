@@ -156,6 +156,20 @@ describe('ProfileStore', () => {
 		expect(store.listProfiles()).toEqual(['copy'])
 	})
 
+	it('refuses to copy or delete a profile while Chromium holds its lock', async () => {
+		const store = new ProfileStore(appPaths)
+		const sourceDir = await store.ensureProfile('source')
+		await writeFile(path.join(sourceDir, 'lockfile'), 'locked')
+
+		await expect(store.copyProfile('source', 'copy')).rejects.toThrow(
+			/Browser profile is already in use/i,
+		)
+		await expect(store.deleteProfile('source')).rejects.toThrow(
+			/Browser profile is already in use/i,
+		)
+		expect(store.listProfiles()).toEqual(['source'])
+	})
+
 	it('rejects directory-unsafe profile IDs', async () => {
 		const store = new ProfileStore(appPaths)
 

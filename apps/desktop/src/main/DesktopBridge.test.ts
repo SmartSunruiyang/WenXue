@@ -269,6 +269,7 @@ function createBridgeHarness() {
 		requestClose,
 		quitApp,
 		profileStore,
+		supervisor,
 		logStore,
 		settingsStore,
 		telemetryIngest,
@@ -464,6 +465,23 @@ describe('registerDesktopBridge', () => {
 		)
 		expect(stop).toHaveBeenCalledWith('research')
 	})
+
+	it.each(['launching', 'running'] as const)(
+		'rejects profile data mutations while the profile is %s',
+		async (status) => {
+			const { ipcMain, profileStore, supervisor } = createBridgeHarness()
+			supervisor.statuses = () => ({ default: 'idle', research: status })
+
+			await expect(
+				ipcMain.handlers.get('browser:duplicateProfile')?.({}, 'research'),
+			).resolves.toMatchObject({ ok: false, error: expect.stringContaining('正在使用') })
+			await expect(
+				ipcMain.handlers.get('browser:removeProfile')?.({}, 'research'),
+			).resolves.toMatchObject({ ok: false, error: expect.stringContaining('正在使用') })
+			expect(profileStore.duplicate).not.toHaveBeenCalled()
+			expect(profileStore.remove).not.toHaveBeenCalled()
+		},
+	)
 
 	it('returns shell info and controls the launcher window', async () => {
 		const { ipcMain, minimizeWindow, requestClose, toggleMaximizeWindow } = createBridgeHarness()

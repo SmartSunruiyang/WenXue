@@ -330,6 +330,9 @@ export default function App() {
 		const releaseSignalService = releaseSignalServiceRef.current
 		const unsubscribe = window.wenxue.updates.onStateChange((state) => {
 			setUpdateState(state)
+			if (state.phase !== 'idle' && state.phase !== 'error') {
+				setUpdateCheckNotice(null)
+			}
 		})
 		void window.wenxue.updates
 			.getState()
@@ -818,6 +821,7 @@ export default function App() {
 		try {
 			const result = await window.wenxue.updates.check('manual')
 			if (!result.ok) throw new Error(result.error ?? strings.update.checkError)
+			setUpdateCheckNotice(null)
 			setUpdateState(result.state)
 		} catch (error) {
 			const nextMessage = readCloudBaseErrorMessage(error, strings.update.checkError)

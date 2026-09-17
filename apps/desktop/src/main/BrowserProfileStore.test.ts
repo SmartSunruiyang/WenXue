@@ -49,6 +49,20 @@ describe('BrowserProfileStore', () => {
 		expect(profileStore.listProfiles()).toEqual(['profile_a'])
 	})
 
+	it('serializes concurrent profile creation without losing metadata', async () => {
+		const ids = ['profile_a', 'profile_b']
+		const store = new BrowserProfileStore(appPaths, profileStore, {
+			now: () => 1000,
+			idFactory: () => ids.shift() ?? 'fallback',
+		})
+
+		const created = await Promise.all([store.create(), store.create()])
+
+		expect(created.map((profile) => profile.id)).toEqual(['profile_a', 'profile_b'])
+		await expect(store.list()).resolves.toHaveLength(2)
+		expect(profileStore.listProfiles()).toEqual(['profile_a', 'profile_b'])
+	})
+
 	it('renames profiles and falls back to the default display name for blank input', async () => {
 		const store = new BrowserProfileStore(appPaths, profileStore, {
 			now: () => 1000,

@@ -34,7 +34,6 @@ class FakeBrowserProcess extends EventEmitter {
 function createSupervisorHarness(
 	options: {
 		child?: FakeBrowserProcess
-		closeGracefully?: (userDataDir: string) => boolean | Promise<boolean>
 	} = {},
 ) {
 	const firstChild = options.child ?? new FakeBrowserProcess()
@@ -68,7 +67,6 @@ function createSupervisorHarness(
 		focusExisting: async (binary, argv) => {
 			focusCalls.push({ binary, argv })
 		},
-		closeGracefully: options.closeGracefully ?? (() => false),
 	})
 
 	supervisor.onStatusChange((status) => events.push(status))
@@ -97,9 +95,8 @@ describe('BrowserSupervisor', () => {
 		expect(supervisor.status()).toBe('idle')
 		await supervisor.launch()
 		expect(profiles.prepareForUnpackedExtension).toHaveBeenCalledWith('default')
-		expect(spawns[0].argv).toEqual(
-			expect.arrayContaining(['--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0']),
-		)
+		expect(spawns[0].argv).not.toContain('--remote-debugging-address=127.0.0.1')
+		expect(spawns[0].argv).not.toContain('--remote-debugging-port=0')
 		expect(events).toEqual(['launching'])
 
 		child.emit('spawn')
@@ -304,23 +301,6 @@ describe('BrowserSupervisor', () => {
 
 		expect(child.killCalls).toBe(1)
 		expect(child.killSignals).toEqual(['SIGTERM'])
-		expect(supervisor.status()).toBe('idle')
-	})
-
-	it('uses CDP Browser.close before falling back to process signals', async () => {
-		const child = new FakeBrowserProcess(null)
-		const closeGracefully = vi.fn(() => {
-			queueMicrotask(() => child.emit('exit', 0, null))
-			return true
-		})
-		const { supervisor } = createSupervisorHarness({ child, closeGracefully })
-
-		await supervisor.launch('research')
-		child.emit('spawn')
-		await supervisor.stop('research')
-
-		expect(closeGracefully).toHaveBeenCalledWith('/profiles/research')
-		expect(child.killSignals).toEqual([])
 		expect(supervisor.status()).toBe('idle')
 	})
 

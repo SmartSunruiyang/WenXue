@@ -62,6 +62,7 @@ export class ProfileStore {
 	}
 
 	async copyProfile(sourceId: string, targetId: string): Promise<string> {
+		await assertProfileNotInUse(this.profileDir(sourceId))
 		const targetDir = this.profileDir(targetId)
 		await cp(this.profileDir(sourceId), targetDir, {
 			errorOnExist: true,
@@ -72,7 +73,9 @@ export class ProfileStore {
 	}
 
 	async deleteProfile(id: string): Promise<void> {
-		await rm(this.profileDir(id), { force: true, recursive: true })
+		const profileDir = this.profileDir(id)
+		await assertProfileNotInUse(profileDir)
+		await rm(profileDir, { force: true, recursive: true })
 	}
 
 	private profileDir(id: string): string {

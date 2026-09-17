@@ -19,11 +19,10 @@ afterEach(() => {
 
 describe('DesktopAnnouncementService', () => {
 	it('calls the default browser fetch with the global receiver', async () => {
-		let receiver: unknown
 		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async function (
 			this: unknown,
 		) {
-			receiver = this
+			expect(this).toBe(globalThis)
 			return Response.json({ announcements: [] })
 		})
 		const service = new DesktopAnnouncementService({
@@ -32,7 +31,6 @@ describe('DesktopAnnouncementService', () => {
 
 		await service.start(session, 'darwin', '0.1.0')
 
-		expect(receiver).toBe(globalThis)
 		expect(fetchSpy).toHaveBeenCalledOnce()
 		expect(service.current()).toBeNull()
 		service.stop()

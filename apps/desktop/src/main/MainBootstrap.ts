@@ -5,7 +5,7 @@ import type {
 } from 'electron'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { createAppLogger } from './AppLogger'
+import { createAppLogger, type AppLogger } from './AppLogger'
 import { AppPaths } from './AppPaths'
 import { BrowserProfileStore } from './BrowserProfileStore'
 import { createBrowserResources } from './BrowserResources'
@@ -165,7 +165,7 @@ export async function startMainBootstrap(): Promise<void> {
 	})
 
 	const createWindow = () => {
-		currentWindow = createControlWindow(electron, supervisor, settingsStore, iconPath)
+		currentWindow = createControlWindow(electron, supervisor, settingsStore, logger, iconPath)
 		currentWindow.on('closed', () => {
 			if (currentWindow?.isDestroyed()) {
 				currentWindow = undefined
@@ -209,6 +209,7 @@ function createControlWindow(
 	electron: ElectronModule,
 	supervisor: BrowserSupervisor,
 	settingsStore: LauncherSettingsStore,
+	logger: AppLogger,
 	iconPath: string | undefined,
 ): BrowserWindow {
 	const win = new electron.BrowserWindow(
@@ -219,6 +220,7 @@ function createControlWindow(
 		}),
 	)
 	let allowClose = false
+	let resolvingClose = false
 
 	win.on('close', (event: ElectronEvent) => {
 		if (allowClose || supervisor.status() === 'idle' || supervisor.status() === 'error') {
@@ -226,6 +228,8 @@ function createControlWindow(
 		}
 
 		event.preventDefault()
+		if (resolvingClose) return
+		resolvingClose = true
 		void handleBrowserRunningClose({
 			status: () => supervisor.status(),
 			exitWithBrowsers: async () => (await settingsStore.get()).behavior.exitWithBrowsers,
@@ -240,12 +244,23 @@ function createControlWindow(
 					cancelId: 0,
 				}),
 			requestShutdown: () => supervisor.requestShutdown(),
-		}).then((decision) => {
-			if (decision === 'allow' && !win.isDestroyed()) {
-				allowClose = true
-				win.close()
-			}
 		})
+			.then((decision) => {
+				if (decision === 'allow' && !win.isDestroyed()) {
+					allowClose = true
+					win.close()
+				}
+			})
+			.catch((error: unknown) => {
+				logger.log(
+					'MainBootstrap',
+					'error',
+					error instanceof Error ? error.message : 'Failed to resolve the close request',
+				)
+			})
+			.finally(() => {
+				resolvingClose = false
+			})
 	})
 
 	if (process.env.ELECTRON_RENDERER_URL) {
