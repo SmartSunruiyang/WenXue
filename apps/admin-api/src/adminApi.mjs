@@ -8,7 +8,6 @@ import {
 } from 'node:crypto'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
-const DEFAULT_USAGE_LIMIT = 5000
 const DEFAULT_USER_LIMIT = 500
 const DEFAULT_ANNOUNCEMENT_LIMIT = 200
 const ANNOUNCEMENT_PAGE_LIMIT = 1_000
@@ -247,7 +246,7 @@ export async function handleAdminRequest(input) {
 		if (path === '/admin/v1/usage/summary' && method === 'GET') {
 			const filter = readUsageFilter(input.query ?? {})
 			const records = await input.store.listUsageRecords(filter)
-			const users = await input.store.listUserAccounts({ limit: DEFAULT_USER_LIMIT })
+			const users = await input.store.listUserAccounts({})
 			return jsonResponse(buildAdminUsageSummary(records, users, filter), 200, corsHeaders)
 		}
 
@@ -258,7 +257,7 @@ export async function handleAdminRequest(input) {
 				q: readQueryText(input.query?.q),
 				limit: readPositiveInteger(input.query?.limit, DEFAULT_USER_LIMIT),
 			})
-			const records = await input.store.listUsageRecords({ limit: DEFAULT_USAGE_LIMIT })
+			const records = await input.store.listUsageRecords({})
 			const usageByUser = aggregateUsageByUser(records)
 			return jsonResponse(
 				{
@@ -280,6 +279,12 @@ export async function handleAdminRequest(input) {
 			const current = normalizeUserAccount(await input.store.getUserAccount(payload.userId))
 			if (!current) {
 				throw new AdminApiError('User account not found', 404)
+			}
+			if (payload.patch.active !== undefined && payload.patch.active !== current.active) {
+				throw new AdminApiError(
+					'User access must be changed in CloudBase Auth until authoritative status updates are configured',
+					409,
+				)
 			}
 			const updatedAt = new Date(input.now ? input.now() : Date.now()).toISOString()
 			const patch = {
@@ -583,7 +588,7 @@ export async function resolveCloudBaseClientIdentity(input) {
 		`https://${input.env.cloudbaseEnvId}.api.tcloudbasegateway.com/auth/v1/user/me`,
 	)
 	url.searchParams.set('client_id', input.env.cloudbaseClientId)
-	const response = await fetchWithTimeout(
+	const { response, payload } = await fetchJsonWithTimeout(
 		input.fetchImpl ?? fetch,
 		url,
 		{
@@ -597,7 +602,6 @@ export async function resolveCloudBaseClientIdentity(input) {
 		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
 	)
 	if (!response.ok) throw new AdminApiError('CloudBase user token is invalid', 401)
-	const payload = /** @type {unknown} */ (await response.json())
 	if (!isRecord(payload)) throw new AdminApiError('CloudBase user token is invalid', 401)
 	const uid = readString(payload.sub) ?? readString(payload.uid)
 	if (!uid) throw new AdminApiError('CloudBase user token has no uid', 401)
@@ -2427,7 +2431,7 @@ export async function resolveCloudBaseAdminIdentity(input) {
 		`https://${input.env.cloudbaseEnvId}.api.tcloudbasegateway.com/auth/v1/token/introspect`,
 	)
 	url.searchParams.set('client_id', input.env.cloudbaseClientId)
-	const response = await fetchWithTimeout(
+	const { response, payload } = await fetchJsonWithTimeout(
 		input.fetchImpl ?? fetch,
 		url,
 		{
@@ -2443,7 +2447,6 @@ export async function resolveCloudBaseAdminIdentity(input) {
 	if (!response.ok) {
 		throw new AdminApiError('CloudBase admin token introspection failed', 401)
 	}
-	const payload = /** @type {unknown} */ (await response.json())
 	if (!isRecord(payload) || payload.active === false) {
 		throw new AdminApiError('CloudBase admin token is inactive', 401)
 	}
@@ -2674,7 +2677,6 @@ function readUsageFilter(query) {
 		to: readTimestamp(query.to),
 		userId: readUserId(query.userId) ?? undefined,
 		model: readQueryText(query.model) ?? undefined,
-		limit: readPositiveInteger(query.limit, DEFAULT_USAGE_LIMIT),
 	}
 }
 
@@ -2886,13 +2888,51 @@ function normalizePath(value) {
  * @param {RequestInit} init
  * @param {number} timeoutMs
  */
-async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
+async function fetchJsonWithTimeout(fetchImpl, url, init, timeoutMs) {
 	const controller = new AbortController()
-	const timeout = setTimeout(() => controller.abort(), timeoutMs)
+	let timedOut = false
+	/** @type {ReturnType<typeof setTimeout> | undefined} */
+	let timeout
+	const timeoutFailure = new Promise((_, reject) => {
+		timeout = setTimeout(() => {
+			timedOut = true
+			controller.abort()
+			reject(new AdminApiError('CloudBase authentication request timed out', 504))
+		}, timeoutMs)
+	})
 	try {
-		return await fetchImpl(url, { ...init, signal: controller.signal })
+		const requestAndBody = (async () => {
+			const response = await fetchImpl(url, { ...init, signal: controller.signal })
+			const payload = await readJsonOrNull(response)
+			return { response, payload }
+		})()
+		return await Promise.race([requestAndBody, timeoutFailure])
+	} catch (error) {
+		if (timedOut || (error instanceof Error && error.name === 'AbortError')) {
+			throw new AdminApiError('CloudBase authentication request timed out', 504)
+		}
+		throw error
 	} finally {
-		clearTimeout(timeout)
+		if (timeout) clearTimeout(timeout)
+	}
+}
+
+/** @param {Response} response */
+async function readJsonOrNull(response) {
+	const text = await response.text()
+	if (!text) {
+		if (response.ok) {
+			throw new AdminApiError('CloudBase authentication returned an empty JSON response', 502)
+		}
+		return null
+	}
+	try {
+		return /** @type {unknown} */ (JSON.parse(text))
+	} catch {
+		if (response.ok) {
+			throw new AdminApiError('CloudBase authentication returned invalid JSON', 502)
+		}
+		return null
 	}
 }
 

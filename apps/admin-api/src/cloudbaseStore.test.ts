@@ -115,6 +115,15 @@ describe('createCloudBaseAdminStore', () => {
 		expect(readHeader(calls[0].init?.headers, 'authorization')).toBe(`Bearer ${API_KEY}`)
 	})
 
+	it('rejects a successful NoSQL response that is not valid JSON', async () => {
+		const { fetchImpl } = createFetch([new Response('<html>temporary proxy error</html>')])
+		const store = createCloudBaseAdminStore({ envId: ENV_ID, apiKey: API_KEY, fetchImpl })
+
+		await expect(store.getAdminUser('admin-uid')).rejects.toThrow(
+			'CloudBase admin database returned invalid JSON',
+		)
+	})
+
 	it('queries usage records with REST filters and normalizes strict EJSON numbers', async () => {
 		const { calls, fetchImpl } = createFetch([
 			Response.json({
@@ -156,8 +165,55 @@ describe('createCloudBaseAdminStore', () => {
 			uid: USER_ID,
 			model: 'qwen-plus',
 		})
-		expect(url.searchParams.get('order')).toBe('[{"field":"ts","direction":"desc"}]')
+		expect(url.searchParams.get('order')).toBe(
+			'[{"field":"ts","direction":"desc"},{"field":"_id","direction":"desc"}]',
+		)
 		expect(url.searchParams.get('limit')).toBe('25')
+	})
+
+	it('paginates usage records instead of truncating lifetime totals at one page', async () => {
+		const firstPage = Array.from({ length: 500 }, (_, index) => ({
+			_id: `usage-${500 - index}`,
+			uid: USER_ID,
+			model: 'qwen3.7-plus',
+			ts: 500 - index,
+		}))
+		const { calls, fetchImpl } = createFetch([
+			Response.json({ list: firstPage }),
+			Response.json({ list: [{ _id: 'usage-0', uid: USER_ID, model: 'qwen3.7-plus', ts: 0 }] }),
+		])
+		const store = createCloudBaseAdminStore({ envId: ENV_ID, apiKey: API_KEY, fetchImpl })
+
+		await expect(store.listUsageRecords({})).resolves.toHaveLength(501)
+		expect(calls).toHaveLength(2)
+		expect(new URL(calls[0].url).searchParams.get('limit')).toBe('500')
+		const secondUrl = new URL(calls[1].url)
+		expect(secondUrl.searchParams.has('skip')).toBe(false)
+		expect(JSON.parse(secondUrl.searchParams.get('query') ?? '{}')).toEqual({
+			$and: [
+				{},
+				{
+					$or: [{ ts: { $lt: 1 } }, { ts: 1, _id: { $lt: 'usage-1' } }],
+				},
+			],
+		})
+	})
+
+	it('times out when a NoSQL response body stalls after headers', async () => {
+		const stalledBody = new ReadableStream<Uint8Array>({ start() {} })
+		const fetchImpl: typeof fetch = async () =>
+			new Response(stalledBody, {
+				status: 200,
+				headers: { 'content-type': 'application/json' },
+			})
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl,
+			timeoutMs: 5,
+		})
+
+		await expect(store.getAdminUser('admin-uid')).rejects.toThrow(/timed out/i)
 	})
 
 	it('patches user status with $set and asks CloudBase to return the updated document', async () => {

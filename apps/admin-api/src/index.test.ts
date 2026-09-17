@@ -27,8 +27,14 @@ describe('Admin API CloudBase adapter', () => {
 	})
 
 	it.each([
-		['a direct Functions Framework JSON event', { userId: 'user_123', status: 'disabled' }],
-		['a wrapped HTTP event', { body: JSON.stringify({ userId: 'user_123', status: 'disabled' }) }],
+		[
+			'a direct Functions Framework JSON event',
+			{ userId: 'user_123', status: 'active', note: 'reviewed' },
+		],
+		[
+			'a wrapped HTTP event',
+			{ body: JSON.stringify({ userId: 'user_123', status: 'active', note: 'reviewed' }) },
+		],
 	])('passes %s through as the user status request body', async (_label, event) => {
 		vi.stubEnv('CLOUDBASE_ADMIN_API_KEY', 'test-admin-key')
 		const fetchImpl = vi
@@ -49,7 +55,8 @@ describe('Admin API CloudBase adapter', () => {
 					doc: {
 						_id: 'user_123',
 						uid: 'user_123',
-						active: false,
+						active: true,
+						note: 'reviewed',
 						createdAt: '2026-07-01T00:00:00.000Z',
 						updatedAt: '2026-07-14T00:00:00.000Z',
 					},
@@ -69,7 +76,8 @@ describe('Admin API CloudBase adapter', () => {
 		expect(response.statusCode).toBe(200)
 		expect(JSON.parse(response.body).user).toMatchObject({
 			userId: 'user_123',
-			status: 'disabled',
+			status: 'active',
+			note: 'reviewed',
 		})
 		expect(fetchImpl).toHaveBeenCalledTimes(5)
 	})

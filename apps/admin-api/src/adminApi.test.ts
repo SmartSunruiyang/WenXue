@@ -620,6 +620,23 @@ describe('AdminApi', () => {
 		expect(parseBody(response).error.message).toBe('Admin user is not allowed')
 	})
 
+	it('reports invalid JSON from successful CloudBase introspection as an upstream error', async () => {
+		const response = await handleAdminRequest({
+			method: 'GET',
+			path: '/admin/v1/me',
+			headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+			env: {
+				cloudbaseEnvId: 'wenxue-d8gz76tacc3659f05',
+				cloudbaseClientId: 'client-id',
+			},
+			store: createStore(createState()),
+			fetchImpl: async () => new Response('<html>temporary proxy error</html>'),
+		})
+
+		expect(response.statusCode).toBe(502)
+		expect(parseBody(response).error.message).toBe('CloudBase authentication returned invalid JSON')
+	})
+
 	it('does not expose unexpected backend error details to the browser', async () => {
 		const response = await handleAdminRequest({
 			method: 'GET',
@@ -661,6 +678,23 @@ describe('AdminApi', () => {
 		expect(JSON.stringify(body)).not.toMatch(/content|authorization|bearer|api[_-]?key/i)
 	})
 
+	it('times out when CloudBase auth sends headers but stalls its JSON body', async () => {
+		const stalledBody = new ReadableStream<Uint8Array>({ start() {} })
+		const response = await request('/admin/v1/usage/summary', createState(), {
+			env: { requestTimeoutMs: 5 },
+			fetchImpl: vi.fn(
+				async () =>
+					new Response(stalledBody, {
+						status: 200,
+						headers: { 'content-type': 'application/json' },
+					}),
+			),
+		})
+
+		expect(response.statusCode).toBe(504)
+		expect(parseBody(response).error.message).toMatch(/timed out/i)
+	})
+
 	it('lets viewers read but not change user status', async () => {
 		const state = createState({ adminRole: 'viewer' })
 		const read = await request('/admin/v1/users', state)
@@ -685,13 +719,13 @@ describe('AdminApi', () => {
 		expect(parseBody(write).error.message).toBe('Admin role is required')
 	})
 
-	it('updates user status and writes an audit record for admins', async () => {
+	it('updates a user note and writes an audit record for admins', async () => {
 		const state = createState({ candidates: [candidateRecord()] })
 		const response = await request('/admin/v1/users/status', state, {
 			method: 'PATCH',
 			body: {
 				userId: USER_ID,
-				status: 'disabled',
+				status: 'active',
 				note: 'abnormal usage',
 				reason: 'manual review',
 			},
@@ -701,11 +735,11 @@ describe('AdminApi', () => {
 		expect(response.statusCode).toBe(200)
 		expect(body.user).toMatchObject({
 			userId: USER_ID,
-			status: 'disabled',
+			status: 'active',
 			note: 'abnormal usage',
 		})
 		expect(state.user).toMatchObject({
-			active: false,
+			active: true,
 			note: 'abnormal usage',
 		})
 		expect(state.audits).toHaveLength(1)
@@ -714,6 +748,23 @@ describe('AdminApi', () => {
 			adminUid: 'admin-uid',
 			reason: 'manual review',
 		})
+	})
+
+	it('rejects legacy status changes that cannot update CloudBase Auth', async () => {
+		const state = createState()
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: {
+				userId: USER_ID,
+				status: 'disabled',
+				reason: 'manual review',
+			},
+		})
+
+		expect(response.statusCode).toBe(409)
+		expect(parseBody(response).error.message).toMatch(/CloudBase Auth/i)
+		expect(state.user.active).toBe(true)
+		expect(state.audits).toHaveLength(0)
 	})
 
 	it('builds user status counts from user accounts', () => {

@@ -45,7 +45,7 @@ type AdminView = 'dashboard' | 'users' | 'announcements' | 'releases'
 
 const VIEW_COPY: Record<AdminView, { title: string; description: string }> = {
 	dashboard: { title: 'Tokens 看板', description: '用量、模型和最近调用概览' },
-	users: { title: '用户', description: '账号状态与内置模型访问设置' },
+	users: { title: '用户', description: '运营标记与备注' },
 	announcements: { title: '消息推送', description: '编辑固定弹窗并向目标账号立即推送' },
 	releases: { title: '版本更新', description: '选择 CI 候选并控制灰度发布' },
 }
@@ -145,12 +145,7 @@ export default function App() {
 		await refresh(session, userStatusFilter)
 	}
 
-	const handleUserStatusSave = async (patch: {
-		userId: string
-		status: UserStatus
-		note: string
-		reason: string
-	}) => {
+	const handleUserNoteSave = async (patch: { userId: string; note: string; reason: string }) => {
 		if (!session) return
 		const updated = await patchUserStatus(session, patch)
 		setUsers((current) =>
@@ -294,10 +289,10 @@ export default function App() {
 
 			{view === 'users' && (
 				<UserInspector
-					key={selectedUser?.userId ?? 'no-user'}
+					key={`${selectedUser?.userId ?? 'no-user'}:${selectedUser?.updatedAt ?? ''}:${selectedUser?.note ?? ''}`}
 					user={selectedUser}
 					canEdit={canEdit}
-					onSave={handleUserStatusSave}
+					onSave={handleUserNoteSave}
 				/>
 			)}
 		</div>
@@ -377,8 +372,8 @@ function UsersPage({
 		<section className="panel user-panel">
 			<div className="panel-header">
 				<div>
-					<h2>用户状态</h2>
-					<p>按用户启用或禁用内置模型访问</p>
+					<h2>用户运营标记</h2>
+					<p>仅供备注与筛选；实际访问权限以 CloudBase Auth 为准</p>
 				</div>
 				<div className="segmented">
 					{(['all', 'active', 'disabled'] as const).map((status) => (
@@ -635,14 +630,8 @@ function UserInspector({
 }: {
 	user?: UserAccountView
 	canEdit: boolean
-	onSave: (patch: {
-		userId: string
-		status: UserStatus
-		note: string
-		reason: string
-	}) => Promise<void>
+	onSave: (patch: { userId: string; note: string; reason: string }) => Promise<void>
 }) {
-	const [status, setStatus] = useState<UserStatus>(user?.status ?? 'active')
 	const [note, setNote] = useState(user?.note ?? '')
 	const [reason, setReason] = useState('')
 	const [saving, setSaving] = useState(false)
@@ -655,7 +644,6 @@ function UserInspector({
 		try {
 			await onSave({
 				userId: user.userId,
-				status,
 				note,
 				reason,
 			})
@@ -671,8 +659,8 @@ function UserInspector({
 		<aside className="inspector">
 			<div className="panel-header">
 				<div>
-					<h2>状态编辑</h2>
-					<p>用户级内置模型访问权限</p>
+					<h2>用户备注</h2>
+					<p>权限变更请在 CloudBase 用户管理中执行</p>
 				</div>
 			</div>
 			{user ? (
@@ -706,20 +694,8 @@ function UserInspector({
 						</div>
 					</div>
 					<div className="field-block">
-						<span>状态</span>
-						<div className="segmented wide">
-							{(['active', 'disabled'] as const).map((item) => (
-								<button
-									key={item}
-									type="button"
-									className={status === item ? 'selected' : ''}
-									onClick={() => setStatus(item)}
-									disabled={!canEdit}
-								>
-									{item === 'active' ? '启用' : '禁用'}
-								</button>
-							))}
-						</div>
+						<span>Legacy 标记（非权限）</span>
+						<StatusBadge status={user.status} />
 					</div>
 					<label className="field-block">
 						<span>备注</span>
@@ -745,7 +721,7 @@ function UserInspector({
 						disabled={!canEdit || saving}
 					>
 						<Save size={16} />
-						{saving ? '保存中' : '保存状态'}
+						{saving ? '保存中' : '保存备注'}
 					</button>
 					{!canEdit && <p className="muted">当前账号为只读角色</p>}
 					{message && <p className="muted">{message}</p>}

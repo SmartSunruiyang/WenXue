@@ -20,6 +20,7 @@ const ANNOUNCEMENT_RECEIPT_QUERY_CHUNK_SIZE = 50
 const ANNOUNCEMENT_RECEIPT_CLEANUP_LIMIT = 20
 const RELEASE_EVENT_CLEANUP_LIMIT = 20
 const RELEASE_SLOT_DOCUMENT_LIMIT = 6
+const DOCUMENT_QUERY_PAGE_LIMIT = 500
 const RELEASE_SLOT_PUBLISHED_AT = '1970-01-01T00:00:00.000Z'
 const TRANSACTION_CONFLICT_RETRY_BASE_MS = 25
 const TRANSACTION_CONFLICT_RETRY_MAX_MS = 400
@@ -43,23 +44,20 @@ export function createCloudBaseAdminStore(input) {
 			return client.getById(ADMIN_USERS_COLLECTION, uid)
 		},
 		async listUsageRecords(filter) {
-			const limit = filter.limit ?? 5000
-			const result = await client.query(TOKEN_USAGE_COLLECTION, {
-				query: buildUsageQuery(filter),
-				order: [{ field: 'ts', direction: 'desc' }],
-				limit,
-			})
+			const result = await queryUsageDocumentsPaged(client, buildUsageQuery(filter), filter.limit)
 			return result.filter((record) => matchesUsageFilter(record, filter))
 		},
 		async listUserAccounts(filter) {
-			const result = await client.query(USER_ACCOUNTS_COLLECTION, {
+			const result = await queryDocumentsPaged(client, USER_ACCOUNTS_COLLECTION, {
 				query: filter.status ? { active: filter.status === 'active' } : {},
-				limit: filter.limit ?? 500,
+				order: [{ field: '_id', direction: 'asc' }],
+				limit: filter.q ? undefined : filter.limit,
 			})
-			return result.filter((record) => {
+			const filtered = result.filter((record) => {
 				if (!filter.q) return true
 				return String(record.uid ?? record._id ?? '').includes(filter.q)
 			})
+			return filter.limit === undefined ? filtered : filtered.slice(0, filter.limit)
 		},
 		async getUserAccount(userId) {
 			return client.getById(USER_ACCOUNTS_COLLECTION, userId)
@@ -547,6 +545,77 @@ function buildUsageQuery(filter) {
 }
 
 /**
+ * @param {ReturnType<typeof createCloudBaseNoSqlClient>} client
+ * @param {string} collectionName
+ * @param {{ query?: Record<string, unknown>, order?: { field: string, direction: 'asc' | 'desc' }[], limit?: number }} options
+ */
+async function queryDocumentsPaged(client, collectionName, options) {
+	const records = []
+	let skip = 0
+	while (options.limit === undefined || records.length < options.limit) {
+		const remaining =
+			options.limit === undefined ? DOCUMENT_QUERY_PAGE_LIMIT : options.limit - records.length
+		const pageLimit = Math.min(DOCUMENT_QUERY_PAGE_LIMIT, remaining)
+		const page = await client.query(collectionName, {
+			query: options.query,
+			order: options.order,
+			limit: pageLimit,
+			skip,
+		})
+		records.push(...page)
+		if (page.length < pageLimit) break
+		skip += page.length
+	}
+	return records
+}
+
+/**
+ * token_usage is append-heavy, so offset pagination can repeat or skip records while a dashboard
+ * refresh is in flight. A descending (ts, _id) cursor keeps every subsequent page stable.
+ *
+ * @param {ReturnType<typeof createCloudBaseNoSqlClient>} client
+ * @param {Record<string, unknown>} baseQuery
+ * @param {number | undefined} limit
+ */
+async function queryUsageDocumentsPaged(client, baseQuery, limit) {
+	const records = []
+	/** @type {{ ts: number, id: string } | null} */
+	let before = null
+	while (limit === undefined || records.length < limit) {
+		const remaining = limit === undefined ? DOCUMENT_QUERY_PAGE_LIMIT : limit - records.length
+		const pageLimit = Math.min(DOCUMENT_QUERY_PAGE_LIMIT, remaining)
+		const query = before
+			? {
+					$and: [
+						baseQuery,
+						{
+							$or: [{ ts: { $lt: before.ts } }, { ts: before.ts, _id: { $lt: before.id } }],
+						},
+					],
+				}
+			: baseQuery
+		const page = await client.query(TOKEN_USAGE_COLLECTION, {
+			query,
+			order: [
+				{ field: 'ts', direction: 'desc' },
+				{ field: '_id', direction: 'desc' },
+			],
+			limit: pageLimit,
+		})
+		records.push(...page)
+		if (page.length < pageLimit) break
+		const cursorRecord = page.at(-1)
+		const cursorTs = Number(cursorRecord?.ts)
+		const cursorId = readString(cursorRecord?._id)
+		if (!Number.isFinite(cursorTs) || !cursorId) {
+			throw new Error('CloudBase usage query returned an invalid page cursor')
+		}
+		before = { ts: cursorTs, id: cursorId }
+	}
+	return records
+}
+
+/**
  * @param {{ envId: string, apiKey?: string, fetchImpl?: typeof fetch, timeoutMs?: number }} input
  */
 function createCloudBaseNoSqlClient(input) {
@@ -557,7 +626,7 @@ function createCloudBaseNoSqlClient(input) {
 		 * @returns {Promise<Record<string, unknown> | null>}
 		 */
 		async getById(collectionName, docId) {
-			const response = await requestCloudBase(
+			const { response, payload: rawPayload } = await requestCloudBaseJson(
 				input,
 				documentUrl(input.envId, collectionName, docId),
 				{
@@ -566,7 +635,7 @@ function createCloudBaseNoSqlClient(input) {
 			)
 			if (response.status === 404) return null
 			await assertCloudBaseOk(response, `read ${collectionName}`)
-			const payload = normalizeEjson(await response.json())
+			const payload = normalizeEjson(rawPayload)
 			return isRecord(payload) ? payload : null
 		},
 
@@ -587,9 +656,11 @@ function createCloudBaseNoSqlClient(input) {
 			if (options.skip !== undefined) {
 				url.searchParams.set('skip', String(options.skip))
 			}
-			const response = await requestCloudBase(input, url, { method: 'GET' })
+			const { response, payload: rawPayload } = await requestCloudBaseJson(input, url, {
+				method: 'GET',
+			})
 			await assertCloudBaseOk(response, `query ${collectionName}`)
-			const payload = normalizeEjson(await response.json())
+			const payload = normalizeEjson(rawPayload)
 			return documents(payload)
 		},
 
@@ -600,7 +671,7 @@ function createCloudBaseNoSqlClient(input) {
 		 * @returns {Promise<Record<string, unknown> | null>}
 		 */
 		async updateById(collectionName, docId, patch) {
-			const response = await requestCloudBase(
+			const { response, payload: rawPayload } = await requestCloudBaseJson(
 				input,
 				documentUrl(input.envId, collectionName, docId),
 				{
@@ -615,7 +686,7 @@ function createCloudBaseNoSqlClient(input) {
 			)
 			if (response.status === 404) return null
 			await assertCloudBaseOk(response, `update ${collectionName}`)
-			const payload = normalizeEjson(await response.json())
+			const payload = normalizeEjson(rawPayload)
 			return isRecord(payload) && isRecord(payload.doc) ? payload.doc : null
 		},
 
@@ -627,7 +698,7 @@ function createCloudBaseNoSqlClient(input) {
 		 */
 		async incrementById(collectionName, docId, updatedAt) {
 			const update = () =>
-				requestCloudBase(input, documentUrl(input.envId, collectionName, docId), {
+				requestCloudBaseJson(input, documentUrl(input.envId, collectionName, docId), {
 					method: 'PATCH',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({
@@ -639,7 +710,8 @@ function createCloudBaseNoSqlClient(input) {
 						returnDoc: true,
 					}),
 				})
-			let response = await update()
+			let updateResult = await update()
+			let { response } = updateResult
 			if (response.status === 404) {
 				const inserted = await requestCloudBase(
 					input,
@@ -651,14 +723,15 @@ function createCloudBaseNoSqlClient(input) {
 					},
 				)
 				if (inserted.status === 409) {
-					response = await update()
+					updateResult = await update()
+					response = updateResult.response
 				} else {
 					await assertCloudBaseOk(inserted, `initialize ${collectionName}`)
 					return { _id: docId, revision: 1, updatedAt }
 				}
 			}
 			await assertCloudBaseOk(response, `increment ${collectionName}`)
-			const payload = normalizeEjson(await response.json())
+			const payload = normalizeEjson(updateResult.payload)
 			return isRecord(payload) && isRecord(payload.doc) ? payload.doc : null
 		},
 
@@ -853,6 +926,28 @@ async function requestCloudBase(input, url, init) {
 }
 
 /**
+ * @param {{ envId: string, apiKey?: string, fetchImpl?: typeof fetch, timeoutMs?: number }} input
+ * @param {URL} url
+ * @param {RequestInit} init
+ */
+async function requestCloudBaseJson(input, url, init) {
+	if (!input.apiKey) {
+		throw new Error('CLOUDBASE_ADMIN_API_KEY is not configured')
+	}
+	const headers = new Headers(init.headers)
+	headers.set('authorization', `Bearer ${input.apiKey}`)
+	return fetchJsonWithTimeout(
+		input.fetchImpl ?? fetch,
+		url,
+		{
+			...init,
+			headers,
+		},
+		input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+	)
+}
+
+/**
  * @param {Response} response
  * @param {string} operation
  */
@@ -879,6 +974,56 @@ async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
 		throw error
 	} finally {
 		clearTimeout(timeout)
+	}
+}
+
+/**
+ * @param {typeof fetch} fetchImpl
+ * @param {URL} url
+ * @param {RequestInit} init
+ * @param {number} timeoutMs
+ */
+async function fetchJsonWithTimeout(fetchImpl, url, init, timeoutMs) {
+	const controller = new AbortController()
+	let timedOut = false
+	/** @type {ReturnType<typeof setTimeout> | undefined} */
+	let timeout
+	const timeoutFailure = new Promise((_, reject) => {
+		timeout = setTimeout(() => {
+			timedOut = true
+			controller.abort()
+			reject(new Error('CloudBase admin database request timed out'))
+		}, timeoutMs)
+	})
+	try {
+		const requestAndBody = (async () => {
+			const response = await fetchImpl(url, { ...init, signal: controller.signal })
+			const payload = await readJsonOrNull(response)
+			return { response, payload }
+		})()
+		return await Promise.race([requestAndBody, timeoutFailure])
+	} catch (error) {
+		if (timedOut || (error instanceof Error && error.name === 'AbortError')) {
+			throw new Error('CloudBase admin database request timed out')
+		}
+		throw error
+	} finally {
+		if (timeout) clearTimeout(timeout)
+	}
+}
+
+/** @param {Response} response */
+async function readJsonOrNull(response) {
+	const text = await response.text()
+	if (!text) {
+		if (response.ok) throw new Error('CloudBase admin database returned an empty JSON response')
+		return null
+	}
+	try {
+		return /** @type {unknown} */ (JSON.parse(text))
+	} catch {
+		if (response.ok) throw new Error('CloudBase admin database returned invalid JSON')
+		return null
 	}
 }
 

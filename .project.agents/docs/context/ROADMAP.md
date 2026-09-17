@@ -92,7 +92,7 @@
 
 - [x] `CloudBaseLlmGateway` 在请求 DashScope 前调用 `/auth/v1/user/me`，仅 CloudBase Auth `status=ACTIVE` 放行，`BLOCKED` 在上游调用前拒绝
 - [ ] `apps/admin-api` 入位：CloudBase Auth bearer 校验、`admin_users` 角色校验、tokens summary，以及迁移到 TCB `DescribeUserList` / `ModifyUser ACTIVE|BLOCKED` 的用户管理与审计
-- [ ] `apps/admin` 入位：内部用户名/密码登录、受保护后台壳、tokens 看板、用户启用/禁用
+- [ ] `apps/admin` 入位：内部用户名/密码登录、受保护后台壳、tokens 看板；当前用户页仅作运营标记/备注，启用/禁用仍依赖上一项 TCB 权威写入
 - [ ] CloudBase Auth 前置要求：username/password provider 已启用；创建内部管理员账号并在 `admin_users` 登记 active admin；普通用户授权状态以 CloudBase Auth `ACTIVE/BLOCKED` 为准
 - **验收**：未登录/非管理员后台 API 均拒绝；后台看板聚合正确；后台禁用用户后该用户网关调用在 DashScope 前返回 403；`pnpm -F admin-api test`、`pnpm -F admin-api typecheck`、`pnpm -F admin build` 通过。
 
