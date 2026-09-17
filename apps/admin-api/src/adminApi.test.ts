@@ -428,7 +428,9 @@ function createState(overrides: Partial<StoreState> = {}): StoreState {
 }
 
 function createFetch(active = true) {
-	return vi.fn(async () => Response.json({ active, sub: 'admin-uid' }))
+	return vi.fn(async () =>
+		Response.json({ status: active ? 'ACTIVE' : 'BLOCKED', sub: 'admin-uid' }),
+	)
 }
 
 async function request(
@@ -441,6 +443,7 @@ async function request(
 		headers?: Record<string, string>
 		env?: Record<string, string | number>
 		fetchImpl?: typeof fetch
+		store?: Parameters<typeof handleAdminRequest>[0]['store']
 	} = {},
 ) {
 	return handleAdminRequest({
@@ -461,7 +464,7 @@ async function request(
 			releaseEventTokenSecret: EVENT_TOKEN_SECRET,
 			...init.env,
 		},
-		store: createStore(state),
+		store: init.store ?? createStore(state),
 		fetchImpl: init.fetchImpl ?? createFetch(),
 		now: () => TEST_NOW,
 	})
@@ -725,7 +728,6 @@ describe('AdminApi', () => {
 			method: 'PATCH',
 			body: {
 				userId: USER_ID,
-				status: 'active',
 				note: 'abnormal usage',
 				reason: 'manual review',
 			},
@@ -750,7 +752,7 @@ describe('AdminApi', () => {
 		})
 	})
 
-	it('rejects legacy status changes that cannot update CloudBase Auth', async () => {
+	it('changes authoritative status after recording intent and preserves usage in the response', async () => {
 		const state = createState()
 		const response = await request('/admin/v1/users/status', state, {
 			method: 'PATCH',
@@ -761,10 +763,130 @@ describe('AdminApi', () => {
 			},
 		})
 
+		expect(response.statusCode).toBe(200)
+		expect(parseBody(response).user).toMatchObject({ status: 'disabled', totalTokens: 20 })
+		expect(state.user.active).toBe(false)
+		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'succeeded'])
+		expect(state.audits[0].operationId).toBe(state.audits[1].operationId)
+		expect(state.audits[1]).toMatchObject({
+			before: { status: 'active' },
+			after: { status: 'disabled' },
+			adminUid: 'admin-uid',
+		})
+	})
+
+	it('rejects a frozen administrator even while its admin_users record remains active', async () => {
+		const response = await request('/admin/v1/users', createState(), {
+			fetchImpl: createFetch(false),
+		})
+		expect(response.statusCode).toBe(403)
+	})
+
+	it('records an audit intent even when an explicit status matches the earlier read', async () => {
+		const state = createState()
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: USER_ID, status: 'active' },
+		})
+		expect(response.statusCode).toBe(200)
+		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'succeeded'])
+	})
+
+	it('prevents an administrator from freezing the current account', async () => {
+		const state = createState()
+		state.user.uid = 'admin-uid'
+		state.user._id = 'admin-uid'
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: 'admin-uid', status: 'disabled' },
+		})
 		expect(response.statusCode).toBe(409)
-		expect(parseBody(response).error.message).toMatch(/CloudBase Auth/i)
 		expect(state.user.active).toBe(true)
 		expect(state.audits).toHaveLength(0)
+	})
+
+	it('does not mutate access if its audit intent cannot be persisted', async () => {
+		const state = createState()
+		const update = vi.fn()
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: USER_ID, status: 'disabled' },
+			store: {
+				...createStore(state),
+				updateUserAccount: update,
+				async createUserPermissionAudit() {
+					throw new Error('private audit failure')
+				},
+			},
+		})
+		expect(response.statusCode).toBe(500)
+		expect(update).not.toHaveBeenCalled()
+	})
+
+	it('records an unconfirmed attempt without claiming an upstream failure succeeded', async () => {
+		const state = createState()
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: USER_ID, status: 'disabled' },
+			store: {
+				...createStore(state),
+				async updateUserAccount() {
+					throw new Error('upstream rejected: secret-value')
+				},
+			},
+		})
+		expect(response.statusCode).toBe(500)
+		expect(state.user.active).toBe(true)
+		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'unconfirmed'])
+		expect(response.body).not.toContain('secret-value')
+		expect(JSON.stringify(state.audits)).not.toContain('secret-value')
+	})
+
+	it('does not fabricate a successful update when the store cannot confirm the user', async () => {
+		const state = createState()
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: USER_ID, status: 'disabled' },
+			store: {
+				...createStore(state),
+				async updateUserAccount() {
+					return null
+				},
+			},
+		})
+		expect(response.statusCode).toBe(502)
+		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'unconfirmed'])
+	})
+
+	it('returns new Auth users without metadata or usage and does not impose a 500-user window', async () => {
+		const state = createState()
+		const accounts = Array.from({ length: 501 }, (_, index) => ({
+			_id: `new-${index}`,
+			uid: `new-${index}`,
+			active: index !== 500,
+			username: `newuser${index}`,
+			userType: 'externalUser',
+		}))
+		const listUserAccounts = vi.fn(async () => accounts)
+		const store = { ...createStore(state), listUserAccounts }
+		const response = await request('/admin/v1/users', state, { store })
+		expect(response.statusCode).toBe(200)
+		expect(listUserAccounts).toHaveBeenCalledWith({
+			status: undefined,
+			q: undefined,
+			limit: undefined,
+		})
+		expect(parseBody(response).users).toHaveLength(501)
+		expect(parseBody(response).users[500]).toMatchObject({
+			userId: 'new-500',
+			username: 'newuser500',
+			userType: 'externalUser',
+			status: 'disabled',
+			createdAt: '',
+			totalTokens: 0,
+		})
+		const summary = await request('/admin/v1/usage/summary', state, { store })
+		expect(parseBody(summary).userStatus).toEqual({ active: 500, disabled: 1, total: 501 })
 	})
 
 	it('builds user status counts from user accounts', () => {

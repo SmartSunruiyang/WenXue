@@ -82,8 +82,8 @@ let nextAnnouncementReceiptCleanupAt = 0
 /** @typedef {{ uid: string }} AdminIdentity */
 /** @typedef {{ _id: string, role: AdminRole, status: AdminUserStatus, displayName?: string }} AdminUser */
 /** @typedef {{ _id: string, uid: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs?: number, ts: number, createdAt?: string }} UsageRecord */
-/** @typedef {{ _id: string, uid: string, active: boolean, status: UserAccountStatus, firstSeenAt?: string, lastSeenAt?: string, createdAt?: string, updatedAt?: string, note?: string }} UserAccount */
-/** @typedef {{ userId: string, status: UserAccountStatus, firstSeenAt: string, lastSeenAt: string, createdAt: string, updatedAt: string, note?: string, inputTokens: number, outputTokens: number, totalTokens: number }} UserAccountView */
+/** @typedef {{ _id: string, uid: string, active: boolean, status: UserAccountStatus, username?: string, displayName?: string, userType?: string, firstSeenAt?: string, lastSeenAt?: string, createdAt?: string, updatedAt?: string, note?: string }} UserAccount */
+/** @typedef {{ userId: string, status: UserAccountStatus, username?: string, displayName?: string, userType?: string, firstSeenAt: string, lastSeenAt: string, createdAt: string, updatedAt: string, note?: string, inputTokens: number, outputTokens: number, totalTokens: number }} UserAccountView */
 /** @typedef {{ totalInputTokens: number, totalOutputTokens: number, totalTokens: number, byDay: UsageBucket[], byModel: UsageBucket[], byUser: UsageBucket[], recent: UsageRecordView[], userStatus: { active: number, disabled: number, total: number } }} AdminUsageSummary */
 /** @typedef {{ key: string, label: string, inputTokens: number, outputTokens: number, totalTokens: number }} UsageBucket */
 /** @typedef {{ id: string, ts: number, userId: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number }} UsageRecordView */
@@ -255,7 +255,10 @@ export async function handleAdminRequest(input) {
 			const users = await input.store.listUserAccounts({
 				status: status ?? undefined,
 				q: readQueryText(input.query?.q),
-				limit: readPositiveInteger(input.query?.limit, DEFAULT_USER_LIMIT),
+				limit:
+					input.query?.limit === undefined
+						? undefined
+						: readPositiveInteger(input.query.limit, DEFAULT_USER_LIMIT),
 			})
 			const records = await input.store.listUsageRecords({})
 			const usageByUser = aggregateUsageByUser(records)
@@ -280,12 +283,12 @@ export async function handleAdminRequest(input) {
 			if (!current) {
 				throw new AdminApiError('User account not found', 404)
 			}
-			if (payload.patch.active !== undefined && payload.patch.active !== current.active) {
-				throw new AdminApiError(
-					'User access must be changed in CloudBase Auth until authoritative status updates are configured',
-					409,
-				)
+			if (payload.userId === admin._id && payload.patch.active === false) {
+				throw new AdminApiError('不能禁用当前登录的管理员账号。', 409)
 			}
+			const usage = aggregateUsageByUser(
+				await input.store.listUsageRecords({ userId: payload.userId }),
+			).get(payload.userId)
 			const updatedAt = new Date(input.now ? input.now() : Date.now()).toISOString()
 			const patch = {
 				...payload.patch,
@@ -295,22 +298,46 @@ export async function handleAdminRequest(input) {
 			if (!merged) {
 				throw new AdminApiError('Invalid user account update', 400)
 			}
-			const persisted = normalizeUserAccount(
-				await input.store.updateUserAccount(payload.userId, patch),
-			)
-			const user = persisted ?? merged
-			await input.store.createUserPermissionAudit({
-				_id: randomUUID(),
+			const updatesStatus = patch.active !== undefined
+			const audit = {
+				operationId: randomUUID(),
 				userId: payload.userId,
 				adminUid: admin._id,
 				before: toUserPermissionSnapshot(current),
-				after: toUserPermissionSnapshot(user),
+				after: toUserPermissionSnapshot(merged),
 				reason: payload.reason,
 				createdAt: updatedAt,
-			})
+			}
+			if (updatesStatus) {
+				await input.store.createUserPermissionAudit({
+					...audit,
+					_id: randomUUID(),
+					outcome: 'requested',
+				})
+			}
+			let user
+			try {
+				user = normalizeUserAccount(await input.store.updateUserAccount(payload.userId, patch))
+				if (!user) throw new AdminApiError('用户更新结果未确认，请刷新后检查状态。', 502)
+				await input.store.createUserPermissionAudit({
+					...audit,
+					_id: randomUUID(),
+					outcome: 'succeeded',
+					after: toUserPermissionSnapshot(user),
+				})
+			} catch (error) {
+				if (updatesStatus) {
+					await input.store.createUserPermissionAudit({
+						...audit,
+						_id: randomUUID(),
+						outcome: 'unconfirmed',
+					})
+				}
+				throw error
+			}
 			return jsonResponse(
 				{
-					user: toUserAccountView(user, undefined),
+					user: toUserAccountView(user, usage),
 				},
 				200,
 				corsHeaders,
@@ -2428,7 +2455,7 @@ export async function resolveCloudBaseAdminIdentity(input) {
 		throw new AdminApiError('Missing admin token', 401)
 	}
 	const url = new URL(
-		`https://${input.env.cloudbaseEnvId}.api.tcloudbasegateway.com/auth/v1/token/introspect`,
+		`https://${input.env.cloudbaseEnvId}.api.tcloudbasegateway.com/auth/v1/user/me`,
 	)
 	url.searchParams.set('client_id', input.env.cloudbaseClientId)
 	const { response, payload } = await fetchJsonWithTimeout(
@@ -2445,10 +2472,13 @@ export async function resolveCloudBaseAdminIdentity(input) {
 		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
 	)
 	if (!response.ok) {
-		throw new AdminApiError('CloudBase admin token introspection failed', 401)
+		throw new AdminApiError('CloudBase admin profile request failed', 401)
 	}
-	if (!isRecord(payload) || payload.active === false) {
-		throw new AdminApiError('CloudBase admin token is inactive', 401)
+	if (!isRecord(payload)) {
+		throw new AdminApiError('CloudBase admin profile is invalid', 401)
+	}
+	if (payload.status !== 'ACTIVE') {
+		throw new AdminApiError('CloudBase admin user is disabled', 403)
 	}
 	const uid = readString(payload.sub) ?? readString(payload.uid)
 	if (!uid) {
@@ -2508,6 +2538,9 @@ export function normalizeUserAccount(value) {
 		uid,
 		active: status === 'active',
 		status,
+		username: readString(value.username) ?? undefined,
+		displayName: readString(value.displayName) ?? undefined,
+		userType: readString(value.userType) ?? undefined,
 		firstSeenAt: readString(value.firstSeenAt) ?? undefined,
 		lastSeenAt: readString(value.lastSeenAt) ?? undefined,
 		createdAt: readString(value.createdAt) ?? '',
@@ -2609,6 +2642,9 @@ function toUserAccountView(user, usage) {
 	return {
 		userId: normalized.uid,
 		status: normalized.status,
+		username: normalized.username,
+		displayName: normalized.displayName,
+		userType: normalized.userType,
 		firstSeenAt: normalized.firstSeenAt ?? normalized.createdAt ?? '',
 		lastSeenAt: normalized.lastSeenAt ?? normalized.updatedAt ?? '',
 		createdAt: normalized.createdAt ?? '',

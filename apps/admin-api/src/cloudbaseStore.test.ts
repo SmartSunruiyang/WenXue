@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
+import type { AuthUser } from './cloudbaseAuth.mjs'
 import { createCloudBaseAdminStore } from './cloudbaseStore.mjs'
 
 const ENV_ID = 'wenxue-d8gz76tacc3659f05'
@@ -37,6 +38,29 @@ function readJsonBody(init: RequestInit | undefined) {
 		throw new Error('Expected JSON request body')
 	}
 	return JSON.parse(init.body) as Record<string, unknown>
+}
+
+function authAccount(uid = USER_ID, active = true): AuthUser {
+	return { _id: uid, uid, active, status: active ? 'active' : 'disabled' }
+}
+
+function createAuthDirectory(users: AuthUser[]) {
+	const byUid = new Map(users.map((user) => [user.uid, user]))
+	return {
+		listUsers: vi.fn(async () => [...byUid.values()]),
+		getUser: vi.fn(async (uid: string) => byUid.get(uid) ?? null),
+		setUserStatus: vi.fn(async (uid: string, active: boolean) => {
+			const user = byUid.get(uid)
+			if (!user) throw new Error('User not found')
+			const updated = {
+				...user,
+				active,
+				status: active ? ('active' as const) : ('disabled' as const),
+			}
+			byUid.set(uid, updated)
+			return updated
+		}),
+	}
 }
 
 interface TransactionSeed {
@@ -216,20 +240,99 @@ describe('createCloudBaseAdminStore', () => {
 		await expect(store.getAdminUser('admin-uid')).rejects.toThrow(/timed out/i)
 	})
 
-	it('patches user status with $set and asks CloudBase to return the updated document', async () => {
-		const updatedAt = '2026-07-01T00:00:00.000Z'
+	it('uses Auth as the directory and status source while preserving UID-joined legacy metadata', async () => {
+		const authDirectory = createAuthDirectory([
+			{ ...authAccount('new-user'), username: 'new-login', displayName: '新用户' },
+			authAccount('old-user', false),
+		])
 		const { calls, fetchImpl } = createFetch([
+			Response.json({
+				list: [
+					{ _id: 'metadata-1', uid: 'old-user', active: true, note: 'retained note' },
+					{ _id: 'deleted-auth-user', active: true, note: 'orphan' },
+				],
+			}),
+		])
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl,
+			authDirectory,
+		})
+
+		await expect(store.listUserAccounts({})).resolves.toEqual([
+			{ ...authAccount('new-user'), username: 'new-login', displayName: '新用户' },
+			{ ...authAccount('old-user', false), note: 'retained note' },
+		])
+		expect(JSON.parse(new URL(calls[0].url).searchParams.get('query') ?? '')).toEqual({})
+	})
+
+	it('applies status, search and limit after merging authoritative users', async () => {
+		const authDirectory = createAuthDirectory([
+			authAccount('old-active'),
+			authAccount('old-disabled', false),
+			{ ...authAccount('new-disabled', false), username: 'Review-Login' },
+		])
+		const { calls, fetchImpl } = createFetch([
+			Response.json({
+				list: [
+					{ _id: 'old-active', active: false },
+					{ _id: 'old-disabled', active: true },
+				],
+			}),
+		])
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl,
+			authDirectory,
+		})
+
+		await expect(
+			store.listUserAccounts({ status: 'disabled', q: 'review', limit: 1 }),
+		).resolves.toEqual([{ ...authAccount('new-disabled', false), username: 'Review-Login' }])
+		expect(JSON.parse(new URL(calls[0].url).searchParams.get('query') ?? '')).toEqual({})
+		expect(new URL(calls[0].url).searchParams.get('limit')).toBe('500')
+	})
+
+	it('keeps users visible when they have no metadata and omits nonexistent Auth identities', async () => {
+		const authDirectory = createAuthDirectory([authAccount()])
+		const { calls, fetchImpl } = createFetch([Response.json({ list: [] })])
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl,
+			authDirectory,
+		})
+
+		await expect(store.getUserAccount(USER_ID)).resolves.toEqual(authAccount())
+		await expect(store.getUserAccount('unknown-user')).resolves.toBeNull()
+		await expect(
+			store.updateUserAccount('unknown-user', { note: 'do not insert' }),
+		).resolves.toBeNull()
+		expect(calls).toHaveLength(1)
+	})
+
+	it('updates Auth status while patching only note metadata with an atomic upsert', async () => {
+		const updatedAt = '2026-07-01T00:00:00.000Z'
+		const authDirectory = createAuthDirectory([authAccount()])
+		const { calls, fetchImpl } = createFetch([
+			Response.json({ list: [] }),
 			Response.json({
 				doc: {
 					_id: USER_ID,
 					uid: USER_ID,
-					active: false,
 					note: 'manual review',
 					updatedAt,
 				},
 			}),
 		])
-		const store = createCloudBaseAdminStore({ envId: ENV_ID, apiKey: API_KEY, fetchImpl })
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl,
+			authDirectory,
+		})
 
 		await expect(
 			store.updateUserAccount(USER_ID, {
@@ -243,19 +346,82 @@ describe('createCloudBaseAdminStore', () => {
 			note: 'manual review',
 		})
 
-		expect(calls).toHaveLength(1)
-		expect(calls[0].url).toContain(`/collections/user_accounts/documents/${USER_ID}`)
-		expect(calls[0].init?.method).toBe('PATCH')
-		expect(readJsonBody(calls[0].init)).toMatchObject({
+		expect(authDirectory.setUserStatus).toHaveBeenCalledWith(USER_ID, false)
+		expect(calls).toHaveLength(2)
+		expect(calls[1].url).toContain(`/collections/user_accounts/documents/${USER_ID}`)
+		expect(calls[1].init?.method).toBe('PATCH')
+		expect(readJsonBody(calls[1].init)).toEqual({
 			data: {
 				$set: {
-					active: false,
+					uid: USER_ID,
 					note: 'manual review',
 					updatedAt,
 				},
 			},
 			replaceMode: false,
 			returnDoc: true,
+			upsert: true,
+		})
+	})
+
+	it('edits an existing legacy note by its document id while retaining the Auth status', async () => {
+		const authDirectory = createAuthDirectory([authAccount(USER_ID, false)])
+		const legacy = { _id: 'legacy-doc', uid: USER_ID, active: true, note: 'old note' }
+		const { calls, fetchImpl } = createFetch([
+			Response.json({ list: [legacy] }),
+			Response.json({ doc: { ...legacy, note: 'new note' } }),
+		])
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl,
+			authDirectory,
+		})
+
+		await expect(store.updateUserAccount(USER_ID, { note: 'new note' })).resolves.toMatchObject({
+			_id: USER_ID,
+			uid: USER_ID,
+			active: false,
+			status: 'disabled',
+			note: 'new note',
+		})
+		expect(authDirectory.setUserStatus).not.toHaveBeenCalled()
+		expect(calls[1].url).toContain('/documents/legacy-doc')
+		expect(readJsonBody(calls[1].init).data).toEqual({ $set: { uid: USER_ID, note: 'new note' } })
+	})
+
+	it('does not persist a legacy permission change when Auth rejects the update', async () => {
+		const authDirectory = createAuthDirectory([authAccount()])
+		authDirectory.setUserStatus.mockRejectedValueOnce(new Error('Auth refused update'))
+		const { calls, fetchImpl } = createFetch([])
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl,
+			authDirectory,
+		})
+		await expect(
+			store.updateUserAccount(USER_ID, { active: false, note: 'review' }),
+		).rejects.toThrow('Auth refused update')
+		expect(calls).toHaveLength(0)
+	})
+
+	it.each([
+		{},
+		{ doc: {} },
+		{ doc: { _id: USER_ID, uid: USER_ID, note: 'old value' } },
+		{ doc: { _id: 'another-user', uid: USER_ID, note: 'new value' } },
+	])('rejects an absent, stale or wrong-identity note update result', async (response) => {
+		const authDirectory = createAuthDirectory([authAccount()])
+		const { fetchImpl } = createFetch([Response.json({ list: [] }), Response.json(response)])
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl,
+			authDirectory,
+		})
+		await expect(store.updateUserAccount(USER_ID, { note: 'new value' })).rejects.toMatchObject({
+			status: 502,
 		})
 	})
 

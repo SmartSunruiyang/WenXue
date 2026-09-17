@@ -1,6 +1,9 @@
 import cloudbase from '@cloudbase/node-sdk'
 import { createHash } from 'node:crypto'
 
+import { AdminApiError } from './adminApi.mjs'
+import { createCloudBaseAuthDirectory } from './cloudbaseAuth.mjs'
+
 /** @typedef {import('./adminApi.mjs').AdminStore} AdminStore */
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
@@ -29,11 +32,12 @@ const SEMVER_PATTERN =
 	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 
 /**
- * @param {{ envId: string, apiKey?: string, fetchImpl?: typeof fetch, timeoutMs?: number, transactionDatabase?: TransactionDatabase, sleepImpl?: (delayMs: number) => Promise<void>, randomImpl?: () => number }} input
+ * @param {{ envId: string, apiKey?: string, secretId?: string, secretKey?: string, token?: string, region?: string, authDirectory?: import('./cloudbaseAuth.mjs').AuthDirectory, fetchImpl?: typeof fetch, timeoutMs?: number, transactionDatabase?: TransactionDatabase, sleepImpl?: (delayMs: number) => Promise<void>, randomImpl?: () => number }} input
  * @returns {AdminStore}
  */
 export function createCloudBaseAdminStore(input) {
 	const client = createCloudBaseNoSqlClient(input)
+	const authDirectory = input.authDirectory ?? createCloudBaseAuthDirectory(input)
 	const transactionDatabase =
 		input.transactionDatabase ?? cloudbase.init({ env: input.envId }).database()
 	const sleepImpl = input.sleepImpl ?? sleep
@@ -48,25 +52,61 @@ export function createCloudBaseAdminStore(input) {
 			return result.filter((record) => matchesUsageFilter(record, filter))
 		},
 		async listUserAccounts(filter) {
-			const result = await queryDocumentsPaged(client, USER_ACCOUNTS_COLLECTION, {
-				query: filter.status ? { active: filter.status === 'active' } : {},
+			const users = await authDirectory.listUsers()
+			const metadata = await queryDocumentsPaged(client, USER_ACCOUNTS_COLLECTION, {
 				order: [{ field: '_id', direction: 'asc' }],
-				limit: filter.q ? undefined : filter.limit,
 			})
-			const filtered = result.filter((record) => {
-				if (!filter.q) return true
-				return String(record.uid ?? record._id ?? '').includes(filter.q)
-			})
+			const byUid = new Map()
+			for (const record of metadata) {
+				const uid = readString(record.uid) || readString(record._id)
+				if (uid && (!byUid.has(uid) || record._id === uid)) byUid.set(uid, record)
+			}
+			const query = filter.q?.toLocaleLowerCase()
+			const filtered = users
+				.map((user) => mergeUserMetadata(user, byUid.get(user.uid) ?? null))
+				.filter((user) => {
+					if (filter.status && user.status !== filter.status) return false
+					return (
+						!query ||
+						[user.uid, user.username, user.displayName, user.note].some((value) =>
+							value?.toLocaleLowerCase().includes(query),
+						)
+					)
+				})
 			return filter.limit === undefined ? filtered : filtered.slice(0, filter.limit)
 		},
 		async getUserAccount(userId) {
-			return client.getById(USER_ACCOUNTS_COLLECTION, userId)
+			const user = await authDirectory.getUser(userId)
+			if (!user) return null
+			return mergeUserMetadata(user, await readUserMetadata(client, userId))
 		},
 		async updateUserAccount(userId, patch) {
-			return (
-				(await client.updateById(USER_ACCOUNTS_COLLECTION, userId, patch)) ??
-				(await client.getById(USER_ACCOUNTS_COLLECTION, userId))
-			)
+			const user =
+				typeof patch.active === 'boolean'
+					? await authDirectory.setUserStatus(userId, patch.active)
+					: await authDirectory.getUser(userId)
+			if (!user) return null
+			let metadata = await readUserMetadata(client, userId)
+			/** @type {Record<string, unknown>} */
+			const metadataPatch = {}
+			if (typeof patch.note === 'string') metadataPatch.note = patch.note
+			if (typeof patch.updatedAt === 'string') metadataPatch.updatedAt = patch.updatedAt
+			if (Object.keys(metadataPatch).length > 0) {
+				const documentId = readString(metadata?._id) || userId
+				const desired = { ...metadataPatch, uid: userId }
+				metadata = await client.updateById(USER_ACCOUNTS_COLLECTION, documentId, desired, true)
+				if (
+					!metadata ||
+					metadata._id !== documentId ||
+					Object.entries(desired).some(([field, value]) => metadata?.[field] !== value)
+				) {
+					throw new AdminApiError(
+						'CloudBase user metadata update could not be verified; refresh and retry',
+						502,
+					)
+				}
+			}
+			return mergeUserMetadata(user, metadata)
 		},
 		async createUserPermissionAudit(record) {
 			await client.insert(USER_PERMISSION_AUDIT_COLLECTION, record)
@@ -529,6 +569,45 @@ export function createCloudBaseAdminStore(input) {
 }
 
 /**
+ * @param {ReturnType<typeof createCloudBaseNoSqlClient>} client
+ * @param {string} uid
+ */
+async function readUserMetadata(client, uid) {
+	const records = await queryDocumentsPaged(client, USER_ACCOUNTS_COLLECTION, {
+		query: { $or: [{ _id: uid }, { uid }] },
+		order: [{ field: '_id', direction: 'asc' }],
+	})
+	return (
+		records.find((record) => record._id === uid && (!record.uid || record.uid === uid)) ??
+		records.find((record) => record.uid === uid) ??
+		null
+	)
+}
+
+/**
+ * @param {import('./cloudbaseAuth.mjs').AuthUser} user
+ * @param {Record<string, unknown> | null} metadata
+ * @returns {import('./cloudbaseAuth.mjs').AuthUser}
+ */
+function mergeUserMetadata(user, metadata) {
+	const result = { ...user }
+	for (const field of ['createdAt', 'updatedAt', 'firstSeenAt', 'lastSeenAt']) {
+		const value = readString(metadata?.[field])
+		if (!value || !Number.isFinite(Date.parse(value))) continue
+		if (
+			field === 'lastSeenAt' &&
+			user.lastSeenAt &&
+			Date.parse(user.lastSeenAt) > Date.parse(value)
+		)
+			continue
+		result[/** @type {'createdAt' | 'updatedAt' | 'firstSeenAt' | 'lastSeenAt'} */ (field)] =
+			new Date(value).toISOString()
+	}
+	if (typeof metadata?.note === 'string') result.note = metadata.note
+	return result
+}
+
+/**
  * @param {{ from?: number, to?: number, userId?: string, model?: string }} filter
  */
 function buildUsageQuery(filter) {
@@ -668,9 +747,10 @@ function createCloudBaseNoSqlClient(input) {
 		 * @param {string} collectionName
 		 * @param {string} docId
 		 * @param {Record<string, unknown>} patch
+		 * @param {boolean} [upsert]
 		 * @returns {Promise<Record<string, unknown> | null>}
 		 */
-		async updateById(collectionName, docId, patch) {
+		async updateById(collectionName, docId, patch, upsert = false) {
 			const { response, payload: rawPayload } = await requestCloudBaseJson(
 				input,
 				documentUrl(input.envId, collectionName, docId),
@@ -681,6 +761,7 @@ function createCloudBaseNoSqlClient(input) {
 						data: { $set: patch },
 						replaceMode: false,
 						returnDoc: true,
+						...(upsert ? { upsert: true } : {}),
 					}),
 				},
 			)

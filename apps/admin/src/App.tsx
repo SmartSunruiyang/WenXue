@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 
+import type { UserStatusPatch } from './adminApi'
 import { fetchMe, fetchUsageSummary, fetchUsers, patchUserStatus } from './adminApi'
 import { AnnouncementPage } from './AnnouncementPage'
 import { cloudbaseConfig, getAdminSession, signInAdmin, signOutAdmin } from './cloudbase'
@@ -45,7 +46,7 @@ type AdminView = 'dashboard' | 'users' | 'announcements' | 'releases'
 
 const VIEW_COPY: Record<AdminView, { title: string; description: string }> = {
 	dashboard: { title: 'Tokens 看板', description: '用量、模型和最近调用概览' },
-	users: { title: '用户', description: '运营标记与备注' },
+	users: { title: '用户', description: '账号状态、用量与备注' },
 	announcements: { title: '消息推送', description: '编辑固定弹窗并向目标账号立即推送' },
 	releases: { title: '版本更新', description: '选择 CI 候选并控制灰度发布' },
 }
@@ -55,12 +56,15 @@ export default function App() {
 	const [me, setMe] = useState<AdminMe | null>(null)
 	const [summary, setSummary] = useState<AdminUsageSummary>(EMPTY_SUMMARY)
 	const [users, setUsers] = useState<UserAccountView[]>([])
+	const [usersRevision, setUsersRevision] = useState(0)
+	const [userSaveNotice, setUserSaveNotice] = useState<string | null>(null)
 	const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
 	const [userStatusFilter, setUserStatusFilter] = useState<UserStatus | 'all'>('all')
 	const [view, setView] = useState<AdminView>(readAdminView)
 	const [dispatchRefreshToken, setDispatchRefreshToken] = useState(0)
 	const [loading, setLoading] = useState(true)
 	const [refreshing, setRefreshing] = useState(false)
+	const [savingUser, setSavingUser] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 
 	const selectedUser = users.find((user) => user.userId === selectedUserId) ?? users[0]
@@ -69,6 +73,7 @@ export default function App() {
 		async (activeSession: AdminSession, status: UserStatus | 'all' = 'all') => {
 			setRefreshing(true)
 			setError(null)
+			setUserSaveNotice(null)
 			try {
 				const [nextMe, nextSummary, nextUsers] = await Promise.all([
 					fetchMe(activeSession),
@@ -78,12 +83,15 @@ export default function App() {
 				setMe(nextMe)
 				setSummary(nextSummary)
 				setUsers(nextUsers)
+				setUsersRevision((current) => current + 1)
 				setSelectedUserId((current) => {
 					if (current && nextUsers.some((user) => user.userId === current)) return current
 					return nextUsers[0]?.userId ?? null
 				})
+				return true
 			} catch (nextError) {
 				setError(nextError instanceof Error ? nextError.message : '后台数据加载失败')
+				return false
 			} finally {
 				setRefreshing(false)
 				setLoading(false)
@@ -145,25 +153,19 @@ export default function App() {
 		await refresh(session, userStatusFilter)
 	}
 
-	const handleUserNoteSave = async (patch: { userId: string; note: string; reason: string }) => {
-		if (!session) return
-		const updated = await patchUserStatus(session, patch)
-		setUsers((current) =>
-			current.map((user) =>
-				user.userId === updated.userId
-					? {
-							...user,
-							...updated,
-							firstSeenAt: user.firstSeenAt,
-							lastSeenAt: user.lastSeenAt,
-							inputTokens: user.inputTokens,
-							outputTokens: user.outputTokens,
-							totalTokens: user.totalTokens,
-						}
-					: user,
-			),
-		)
-		setSelectedUserId(updated.userId)
+	const handleUserSave = async (patch: UserStatusPatch) => {
+		if (!session) throw new Error('登录已失效，请重新登录后再保存')
+		setSavingUser(true)
+		setUserSaveNotice(null)
+		try {
+			await patchUserStatus(session, patch)
+			if (!(await refresh(session, userStatusFilter))) {
+				throw new Error('用户修改已提交，但列表刷新失败，请点击刷新确认当前状态')
+			}
+			setUserSaveNotice('已保存用户更改')
+		} finally {
+			setSavingUser(false)
+		}
 	}
 
 	if (loading) {
@@ -246,12 +248,17 @@ export default function App() {
 							className="icon-button"
 							type="button"
 							onClick={() => void handleRefresh()}
-							disabled={refreshing}
+							disabled={refreshing || savingUser}
 						>
 							<RefreshCw size={16} className={refreshing ? 'spin' : ''} />
 							刷新
 						</button>
-						<button className="icon-button ghost" type="button" onClick={handleLogout}>
+						<button
+							className="icon-button ghost"
+							type="button"
+							onClick={handleLogout}
+							disabled={savingUser}
+						>
 							<LogOut size={16} />
 							退出
 						</button>
@@ -264,6 +271,12 @@ export default function App() {
 						{error}
 					</div>
 				)}
+				{view === 'users' && userSaveNotice && (
+					<p className="notice" role="status">
+						<CheckCircle2 size={16} />
+						{userSaveNotice}
+					</p>
+				)}
 
 				{view === 'dashboard' && <DashboardPage summary={summary} />}
 				{view === 'users' && (
@@ -271,6 +284,7 @@ export default function App() {
 						users={users}
 						selectedUserId={selectedUser?.userId}
 						statusFilter={userStatusFilter}
+						refreshing={refreshing || savingUser}
 						onFilterChange={handleStatusFilterChange}
 						onSelect={setSelectedUserId}
 					/>
@@ -289,10 +303,12 @@ export default function App() {
 
 			{view === 'users' && (
 				<UserInspector
-					key={`${selectedUser?.userId ?? 'no-user'}:${selectedUser?.updatedAt ?? ''}:${selectedUser?.note ?? ''}`}
+					key={`${selectedUser?.userId ?? 'no-user'}:${usersRevision}`}
 					user={selectedUser}
 					canEdit={canEdit}
-					onSave={handleUserNoteSave}
+					currentAdminUid={me?.uid ?? session.userId}
+					refreshing={refreshing || savingUser}
+					onSave={handleUserSave}
 				/>
 			)}
 		</div>
@@ -315,7 +331,7 @@ function DashboardPage({ summary }: { summary: AdminUsageSummary }) {
 				/>
 				<MetricCard label="总 Tokens" value={summary.totalTokens} icon={<BarChart3 size={18} />} />
 				<MetricCard
-					label="活跃用户"
+					label="启用用户"
 					value={summary.userStatus.active}
 					icon={<CheckCircle2 size={18} />}
 					subtle={`${summary.userStatus.total} 个总计`}
@@ -359,12 +375,14 @@ function UsersPage({
 	users,
 	selectedUserId,
 	statusFilter,
+	refreshing,
 	onFilterChange,
 	onSelect,
 }: {
 	users: UserAccountView[]
 	selectedUserId?: string
 	statusFilter: UserStatus | 'all'
+	refreshing: boolean
 	onFilterChange: (status: UserStatus | 'all') => Promise<void>
 	onSelect: (userId: string) => void
 }) {
@@ -372,8 +390,8 @@ function UsersPage({
 		<section className="panel user-panel">
 			<div className="panel-header">
 				<div>
-					<h2>用户运营标记</h2>
-					<p>仅供备注与筛选；实际访问权限以 CloudBase Auth 为准</p>
+					<h2>用户账号</h2>
+					<p>查看已注册用户，管理访问权限与备注</p>
 				</div>
 				<div className="segmented">
 					{(['all', 'active', 'disabled'] as const).map((status) => (
@@ -382,6 +400,7 @@ function UsersPage({
 							type="button"
 							className={statusFilter === status ? 'selected' : ''}
 							onClick={() => void onFilterChange(status)}
+							disabled={refreshing}
 						>
 							{status === 'all' ? '全部' : status === 'active' ? '启用' : '禁用'}
 						</button>
@@ -578,7 +597,16 @@ function UserTable({
 							tabIndex={0}
 							aria-selected={user.userId === selectedUserId}
 						>
-							<td className="mono">{shortUserId(user.userId)}</td>
+							<td>
+								{user.username || user.displayName ? (
+									<>
+										<span className="table-title">{user.username || user.displayName}</span>
+										<span className="table-subline mono">{shortUserId(user.userId)}</span>
+									</>
+								) : (
+									<span className="mono">{shortUserId(user.userId)}</span>
+								)}
+							</td>
 							<td>
 								<StatusBadge status={user.status} />
 							</td>
@@ -626,30 +654,37 @@ function RecentTable({ summary }: { summary: AdminUsageSummary }) {
 function UserInspector({
 	user,
 	canEdit,
+	currentAdminUid,
+	refreshing,
 	onSave,
 }: {
 	user?: UserAccountView
 	canEdit: boolean
-	onSave: (patch: { userId: string; note: string; reason: string }) => Promise<void>
+	currentAdminUid: string
+	refreshing: boolean
+	onSave: (patch: UserStatusPatch) => Promise<void>
 }) {
+	const [status, setStatus] = useState<UserStatus>(user?.status ?? 'active')
 	const [note, setNote] = useState(user?.note ?? '')
 	const [reason, setReason] = useState('')
 	const [saving, setSaving] = useState(false)
-	const [message, setMessage] = useState<string | null>(null)
+	const [saveError, setSaveError] = useState<string | null>(null)
+	const hasChanges = !!user && (status !== user.status || note !== (user.note ?? ''))
+	const isCurrentAdmin = user?.userId === currentAdminUid
 
 	const handleSave = async () => {
-		if (!user) return
+		if (!user || !canEdit || saving || refreshing || !hasChanges) return
 		setSaving(true)
-		setMessage(null)
+		setSaveError(null)
 		try {
 			await onSave({
 				userId: user.userId,
-				note,
+				...(status !== user.status ? { status } : {}),
+				...(note !== (user.note ?? '') ? { note } : {}),
 				reason,
 			})
-			setMessage('已保存')
 		} catch (error) {
-			setMessage(error instanceof Error ? error.message : '保存失败')
+			setSaveError(error instanceof Error ? error.message : '保存失败，请重试')
 		} finally {
 			setSaving(false)
 		}
@@ -659,12 +694,18 @@ function UserInspector({
 		<aside className="inspector">
 			<div className="panel-header">
 				<div>
-					<h2>用户备注</h2>
-					<p>权限变更请在 CloudBase 用户管理中执行</p>
+					<h2>用户管理</h2>
+					<p>调整账号状态与备注，保存后生效</p>
 				</div>
 			</div>
 			{user ? (
 				<div className="inspector-body">
+					{(user.username || user.displayName) && (
+						<div className="field-block">
+							<span>用户名</span>
+							<strong>{user.username || user.displayName}</strong>
+						</div>
+					)}
 					<div className="field-block">
 						<span>用户 id</span>
 						<strong className="mono">{user.userId}</strong>
@@ -693,16 +734,24 @@ function UserInspector({
 							<strong>{formatDate(user.lastSeenAt || user.updatedAt || user.createdAt)}</strong>
 						</div>
 					</div>
-					<div className="field-block">
-						<span>Legacy 标记（非权限）</span>
-						<StatusBadge status={user.status} />
-					</div>
+					<label className="field-block">
+						<span>账号状态</span>
+						<select
+							value={status}
+							onChange={(event) => setStatus(event.target.value as UserStatus)}
+							disabled={!canEdit || isCurrentAdmin || saving || refreshing}
+						>
+							<option value="active">启用</option>
+							<option value="disabled">禁用</option>
+						</select>
+					</label>
+					{canEdit && isCurrentAdmin && <p className="muted">当前登录账号不能禁用自身</p>}
 					<label className="field-block">
 						<span>备注</span>
 						<textarea
 							value={note}
 							onChange={(event) => setNote(event.target.value)}
-							disabled={!canEdit}
+							disabled={!canEdit || saving || refreshing}
 						/>
 					</label>
 					<label className="field-block">
@@ -711,20 +760,24 @@ function UserInspector({
 							type="text"
 							value={reason}
 							onChange={(event) => setReason(event.target.value)}
-							disabled={!canEdit}
+							disabled={!canEdit || saving || refreshing}
 						/>
 					</label>
 					<button
 						className="primary-button"
 						type="button"
 						onClick={handleSave}
-						disabled={!canEdit || saving}
+						disabled={!canEdit || saving || refreshing || !hasChanges}
 					>
 						<Save size={16} />
-						{saving ? '保存中' : '保存备注'}
+						{saving ? '保存中' : '保存更改'}
 					</button>
 					{!canEdit && <p className="muted">当前账号为只读角色</p>}
-					{message && <p className="muted">{message}</p>}
+					{saveError && (
+						<div className="alert compact-alert" role="alert">
+							{saveError}
+						</div>
+					)}
 				</div>
 			) : (
 				<EmptyState label="选择一个用户" />

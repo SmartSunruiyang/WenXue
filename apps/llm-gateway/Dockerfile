@@ -8,6 +8,7 @@ ENV LOG_HEADER_BODY=false
 
 COPY apps/llm-gateway/package.json ./package.json
 RUN npm install --omit=dev
+COPY packages/client-operations /app/node_modules/@wenxue/client-operations
 
 WORKDIR /app/apps/llm-gateway
 COPY apps/llm-gateway/cloudbase-functions.json ./cloudbase-functions.json

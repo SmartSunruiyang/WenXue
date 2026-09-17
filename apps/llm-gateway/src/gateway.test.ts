@@ -1216,6 +1216,15 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(dockerfile).toContain('COPY apps/llm-gateway/src ./src')
 		expect(dockerfile).toContain('COPY apps/admin-api/src /app/apps/admin-api/src')
 		expect(dockerfile).toContain('COPY apps/admin/dist /app/apps/admin/dist')
+		expect(dockerfile).toContain(
+			'COPY packages/client-operations /app/node_modules/@wenxue/client-operations',
+		)
+		expect(prepareScript).toContain(
+			"['apps/admin-api/src/cloudbaseAuth.mjs', 'apps/admin-api/src/cloudbaseAuth.mjs']",
+		)
+		expect(prepareScript).toContain(
+			"['packages/client-operations/index.mjs', 'packages/client-operations/index.mjs']",
+		)
 		expect(prepareScript).toContain("VITE_BASE_PATH: '/admin/'")
 		expect(prepareScript).toContain("VITE_WENXUE_ADMIN_API_BASE_URL: ''")
 	})
