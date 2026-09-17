@@ -12,7 +12,6 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { DEMO_MODEL } from '@/agent/constants'
 import { ContextBanner, shouldShowContextBanner } from '@/components/ContextBanner'
 import { Conversation } from '@/components/conversation'
 import { HistoryDetail } from '@/components/HistoryDetail'
@@ -30,10 +29,12 @@ import { openExtensionOptionsPage } from '@/lib/extensionPages'
 import type { UILanguage } from '@/lib/i18n'
 import { useI18n } from '@/lib/i18n'
 import {
-	BUILT_IN_MODEL_ID,
-	BUILT_IN_MODEL_LABEL,
+	BUILT_IN_MODEL_OPTIONS,
+	BUILT_IN_VISION_MODEL_OPTIONS,
 	getCustomModelLabel,
 	normalizeSelectedModelId,
+	normalizeVisionModelId,
+	resolveSelectedLLMConfig,
 } from '@/lib/modelConfig'
 import { cn } from '@/lib/utils'
 
@@ -558,7 +559,34 @@ function TaskInput(props: React.ComponentProps<typeof InputGroupTextarea>) {
 	)
 }
 
-function ModelMenu({
+interface SidepanelModelOption {
+	id: string
+	label: string
+}
+
+export function getSidepanelModelGroups(config: ExtConfig | null): {
+	primary: { selectedId: string; options: SidepanelModelOption[] }
+	vision: { selectedId: string; options: SidepanelModelOption[] }
+} {
+	const customModels = config?.customModels ?? []
+	const customOptions = customModels.map((model) => ({
+		id: model.id,
+		label: getCustomModelLabel(model),
+	}))
+
+	return {
+		primary: {
+			selectedId: normalizeSelectedModelId(config?.selectedModelId, customModels),
+			options: [...BUILT_IN_MODEL_OPTIONS, ...customOptions],
+		},
+		vision: {
+			selectedId: normalizeVisionModelId(config?.visionModelId, customModels),
+			options: [...BUILT_IN_VISION_MODEL_OPTIONS, ...customOptions],
+		},
+	}
+}
+
+export function ModelMenu({
 	config,
 	onConfigure,
 	disabled,
@@ -593,14 +621,18 @@ function ModelMenu({
 		}
 	}, [open])
 
-	const customModels = config?.customModels ?? []
-	const selectedId = normalizeSelectedModelId(config?.selectedModelId, customModels)
-	const selectedName = customModels.find((model) => model.id === selectedId)?.model ?? DEMO_MODEL
+	const modelGroups = getSidepanelModelGroups(config)
+	const primaryModelName = resolveSelectedLLMConfig(
+		config?.selectedModelId,
+		config?.customModels ?? [],
+	).model
 
-	const selectModel = (id: string) => {
+	const selectModel = (role: 'primary' | 'vision', id: string) => {
 		setOpen(false)
-		if (!config || id === selectedId) return
-		onConfigure({ ...config, selectedModelId: id }).catch((error) => {
+		if (!config || id === modelGroups[role].selectedId) return
+		const nextConfig =
+			role === 'primary' ? { ...config, selectedModelId: id } : { ...config, visionModelId: id }
+		onConfigure(nextConfig).catch((error) => {
 			console.error('[SidePanel] Failed to switch model:', error)
 		})
 	}
@@ -624,7 +656,7 @@ function ModelMenu({
 				aria-haspopup="menu"
 				aria-expanded={open}
 			>
-				<span className="truncate">{selectedName}</span>
+				<span className="truncate">{primaryModelName}</span>
 				<ChevronDown className={cn('size-3 shrink-0 transition-transform', open && 'rotate-180')} />
 			</Button>
 
@@ -633,19 +665,29 @@ function ModelMenu({
 					role="menu"
 					className="animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 absolute bottom-full left-0 z-50 mb-1.5 w-60 origin-bottom-left rounded-md border bg-popover p-1 text-popover-foreground shadow-lg"
 				>
-					<MenuRadioItem
-						label={BUILT_IN_MODEL_LABEL}
-						active={selectedId === BUILT_IN_MODEL_ID}
-						disabled={disabled || !config}
-						onClick={() => selectModel(BUILT_IN_MODEL_ID)}
-					/>
-					{customModels.map((model) => (
+					<div className="px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+						{t('primaryModel')}
+					</div>
+					{modelGroups.primary.options.map((option) => (
 						<MenuRadioItem
-							key={model.id}
-							label={getCustomModelLabel(model)}
-							active={model.id === selectedId}
+							key={`primary:${option.id}`}
+							label={option.label}
+							active={option.id === modelGroups.primary.selectedId}
 							disabled={disabled || !config}
-							onClick={() => selectModel(model.id)}
+							onClick={() => selectModel('primary', option.id)}
+						/>
+					))}
+
+					<div className="mt-1 border-t px-2.5 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
+						{t('multimodalModel')}
+					</div>
+					{modelGroups.vision.options.map((option) => (
+						<MenuRadioItem
+							key={`vision:${option.id}`}
+							label={option.label}
+							active={option.id === modelGroups.vision.selectedId}
+							disabled={disabled || !config}
+							onClick={() => selectModel('vision', option.id)}
 						/>
 					))}
 

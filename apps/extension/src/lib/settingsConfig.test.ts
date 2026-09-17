@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { DEMO_CONFIG } from '@/agent/constants'
-import { BUILT_IN_MODEL_ID, type CustomModelConfig, getCustomModelLabel } from './modelConfig'
+import {
+	BUILT_IN_MODEL_ID,
+	BUILT_IN_VISION_MODEL_ID,
+	type CustomModelConfig,
+	getCustomModelLabel,
+} from './modelConfig'
 import { buildSettingsConfig, settingsConfigKey } from './settingsConfig'
 
 describe('settingsConfig', () => {
@@ -77,6 +82,24 @@ describe('settingsConfig', () => {
 		})
 
 		expect(config.visionModelId).toBeUndefined()
+	})
+
+	it('clears the text-only built-in id from the vision role', () => {
+		const config = buildSettingsConfig({
+			selectedModelId: BUILT_IN_MODEL_ID,
+			customModels: [],
+			visionModelId: BUILT_IN_MODEL_ID,
+			language: undefined,
+			uiLanguage: 'zh-CN',
+			systemInstruction: '',
+			experimentalLlmsTxt: false,
+			experimentalIncludeAllTabs: true,
+			logRetentionDays: 3,
+			logMaxEntries: 5000,
+		})
+
+		expect(config.visionModelId).toBeUndefined()
+		expect(BUILT_IN_VISION_MODEL_ID).not.toBe(BUILT_IN_MODEL_ID)
 	})
 
 	it('uses the selected custom model as the active LLM config', () => {

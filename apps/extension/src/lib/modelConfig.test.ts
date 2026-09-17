@@ -5,6 +5,7 @@ import {
 	BUILT_IN_MODEL_ID,
 	BUILT_IN_MODEL_LABEL,
 	BUILT_IN_VISION_MODEL_ID,
+	BUILT_IN_VISION_MODEL_OPTIONS,
 	type CustomModelConfig,
 	normalizeCustomModels,
 	normalizeVisionModelId,
@@ -50,8 +51,11 @@ describe('normalizeVisionModelId', () => {
 		)
 	})
 
-	it('keeps the built-in text model id when explicitly chosen', () => {
-		expect(normalizeVisionModelId(BUILT_IN_MODEL_ID, customModels)).toBe(BUILT_IN_MODEL_ID)
+	it('rejects the built-in text-only model for the vision role', () => {
+		expect(BUILT_IN_VISION_MODEL_OPTIONS).not.toContainEqual(
+			expect.objectContaining({ id: BUILT_IN_MODEL_ID }),
+		)
+		expect(normalizeVisionModelId(BUILT_IN_MODEL_ID, customModels)).toBe(BUILT_IN_VISION_MODEL_ID)
 	})
 
 	it('keeps a matching custom model id', () => {
@@ -74,8 +78,10 @@ describe('resolveVisionLLMConfig', () => {
 		})
 	})
 
-	it('resolves the built-in text id to the text demo config', () => {
-		expect(resolveVisionLLMConfig(BUILT_IN_MODEL_ID, customModels)).toEqual({ ...DEMO_CONFIG })
+	it('falls back to the vision config for the built-in text-only id', () => {
+		expect(resolveVisionLLMConfig(BUILT_IN_MODEL_ID, customModels)).toEqual({
+			...DEMO_VISION_CONFIG,
+		})
 	})
 
 	it('resolves a matching custom model id to that model', () => {

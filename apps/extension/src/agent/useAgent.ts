@@ -687,6 +687,7 @@ export function useAgent({
 	const runtimeModelsRef = useRef<RuntimeAgentModels | null>(null)
 	const mountedRef = useRef(false)
 	const initialLoadAbortRef = useRef<AbortController | null>(null)
+	const internalConfigWriteRef = useRef(false)
 	const pendingReloadRef = useRef<{ clearExisting: boolean } | null>(null)
 	if (!sessionControllerRef.current) {
 		sessionControllerRef.current = createAgentSessionController({
@@ -784,6 +785,12 @@ export function useAgent({
 			) {
 				return
 			}
+			if (internalConfigWriteRef.current) {
+				if (WENXUE_USER_SESSION_KEY in changes) {
+					pendingReloadRef.current = { clearExisting: true }
+				}
+				return
+			}
 			void reloadAgentSession({
 				clearExisting: WENXUE_USER_SESSION_KEY in changes,
 			})
@@ -864,28 +871,38 @@ export function useAgent({
 		async (nextConfig: ExtConfig) => {
 			initialLoadAbortRef.current?.abort()
 			initialLoadAbortRef.current = null
-			await sessionController.configure(
-				nextConfig,
-				(value) => saveStoredConfig(chrome.storage.local, value),
-				async (savedConfig) => {
-					if (!mountedRef.current) {
-						throw createTakeoverAbortError('Agent session has been disposed.')
-					}
+			internalConfigWriteRef.current = true
+			try {
+				await sessionController.configure(
+					nextConfig,
+					(value) => saveStoredConfig(chrome.storage.local, value),
+					async (savedConfig) => {
+						if (!mountedRef.current) {
+							throw createTakeoverAbortError('Agent session has been disposed.')
+						}
 
-					const runtimeModels = await loadRuntimeAgentModels(savedConfig)
-					runtimeModelsRef.current = runtimeModels
-					const replacement = createAgentForConfig(savedConfig, runtimeModels)
-					if (!mountedRef.current) {
-						replacement.dispose()
-						throw createTakeoverAbortError('Agent session has been disposed.')
-					}
+						const runtimeModels = await loadRuntimeAgentModels(savedConfig)
+						runtimeModelsRef.current = runtimeModels
+						const replacement = createAgentForConfig(savedConfig, runtimeModels)
+						if (!mountedRef.current) {
+							replacement.dispose()
+							throw createTakeoverAbortError('Agent session has been disposed.')
+						}
 
-					sessionController.bind(replacement, { enableUserTakeover, enableUserQuestions })
-					setConfig(savedConfig)
-				},
-			)
+						sessionController.bind(replacement, { enableUserTakeover, enableUserQuestions })
+						setConfig(savedConfig)
+					},
+				)
+			} finally {
+				internalConfigWriteRef.current = false
+				const pending = pendingReloadRef.current
+				if (pending && mountedRef.current && !sessionController.isTaskActive()) {
+					pendingReloadRef.current = null
+					void reloadAgentSession(pending)
+				}
+			}
 		},
-		[enableUserQuestions, enableUserTakeover, sessionController],
+		[enableUserQuestions, enableUserTakeover, reloadAgentSession, sessionController],
 	)
 
 	return {

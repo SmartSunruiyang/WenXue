@@ -8,18 +8,18 @@ export const BUILT_IN_MODEL_LABEL = `问学默认 · ${DEMO_MODEL}`
 export const BUILT_IN_VISION_MODEL_ID = 'builtin:qwen3.7-plus'
 export const BUILT_IN_VISION_MODEL_LABEL = `问学默认 · ${DEMO_VISION_MODEL}`
 
-/** 两个内置模型(文本 + 视觉)的解析表，供共享解析器与 UI 选项列表复用。 */
+/** 两个内置模型（文本 + 视觉）的解析表，供共享解析器与 UI 选项列表复用。 */
 const BUILT_IN_CONFIGS: Record<string, LLMConfig> = {
 	[BUILT_IN_MODEL_ID]: DEMO_CONFIG,
 	[BUILT_IN_VISION_MODEL_ID]: DEMO_VISION_CONFIG,
 }
 
-/**
- * 内置模型的 (id, 标签) 列表，供设置页拼接成下拉选项(连同自定义模型)。
- * 文本与视觉两个下拉共享同一份完整模型列表。
- */
 export const BUILT_IN_MODEL_OPTIONS: ReadonlyArray<{ id: string; label: string }> = [
 	{ id: BUILT_IN_MODEL_ID, label: BUILT_IN_MODEL_LABEL },
+	{ id: BUILT_IN_VISION_MODEL_ID, label: BUILT_IN_VISION_MODEL_LABEL },
+]
+
+export const BUILT_IN_VISION_MODEL_OPTIONS: ReadonlyArray<{ id: string; label: string }> = [
 	{ id: BUILT_IN_VISION_MODEL_ID, label: BUILT_IN_VISION_MODEL_LABEL },
 ]
 
@@ -69,10 +69,6 @@ export function getCustomModelLabel(model: CustomModelConfig): string {
 	return `${getCustomModelProviderLabel(model)} · ${model.model}`
 }
 
-/**
- * 共享归一化：内置模型(文本/视觉)与仍存在的自定义模型原样保留；其余(未设置、
- * 已删除、未知)归一化到给定的 `fallbackId`(由各角色提供各自的默认内置模型)。
- */
 function normalizeModelId(
 	modelId: string | undefined,
 	customModels: CustomModelConfig[],
@@ -83,10 +79,6 @@ function normalizeModelId(
 	return fallbackId
 }
 
-/**
- * 共享解析：把归一化后的模型 id 解析成 {@link LLMConfig}。两个内置模型都可解析，
- * 故文本/视觉两个角色可以互相选用对方的内置模型。
- */
 function resolveModelConfig(
 	modelId: string | undefined,
 	customModels: CustomModelConfig[],
@@ -120,26 +112,23 @@ export function resolveSelectedLLMConfig(
 	return resolveModelConfig(selectedModelId, customModels, BUILT_IN_MODEL_ID)
 }
 
-/**
- * 归一化系统级「视觉/多模态」模型 id。与文本模型不同，默认回退到
- * {@link BUILT_IN_VISION_MODEL_ID}(qwen3.7-plus)，而非文本内置模型。
- */
 export function normalizeVisionModelId(
 	visionModelId: string | undefined,
 	customModels: CustomModelConfig[],
 ): string {
+	if (visionModelId === BUILT_IN_MODEL_ID) return BUILT_IN_VISION_MODEL_ID
 	return normalizeModelId(visionModelId, customModels, BUILT_IN_VISION_MODEL_ID)
 }
 
-/**
- * 解析系统级「视觉/多模态」模型设置为 {@link LLMConfig}。未设置或未知 id 默认
- * 到视觉内置模型(qwen3.7-plus)；亦可解析文本内置模型与自定义模型。
- */
 export function resolveVisionLLMConfig(
 	visionModelId: string | undefined,
 	customModels: CustomModelConfig[],
 ): LLMConfig {
-	return resolveModelConfig(visionModelId, customModels, BUILT_IN_VISION_MODEL_ID)
+	return resolveModelConfig(
+		normalizeVisionModelId(visionModelId, customModels),
+		customModels,
+		BUILT_IN_VISION_MODEL_ID,
+	)
 }
 
 export function normalizeCustomModels(value: unknown): CustomModelConfig[] {

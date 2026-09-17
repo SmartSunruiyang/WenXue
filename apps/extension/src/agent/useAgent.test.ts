@@ -12,18 +12,21 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { WENXUE_GATEWAY_BASE_URL, WENXUE_GATEWAY_OPENAI_BASE_URL } from '@/agent/constants'
+import { saveStoredConfig } from '@/lib/configStorage'
 import { WENXUE_USER_SESSION_KEY } from '@/lib/userSession'
 
 const multiPageAgentMockState = vi.hoisted(() => ({
 	instances: [] as Array<{
 		options: Record<string, unknown>
+		status: AgentStatus
+		setStatus: (status: AgentStatus) => void
 		dispose: ReturnType<typeof vi.fn>
 	}>,
 }))
 
 vi.mock('./MultiPageAgent', () => {
 	class MockMultiPageAgent extends EventTarget {
-		status = 'idle'
+		status: AgentStatus = 'idle'
 		task = ''
 		history = []
 		onAskUser = undefined
@@ -54,6 +57,11 @@ vi.mock('./MultiPageAgent', () => {
 		constructor(readonly options: Record<string, unknown>) {
 			super()
 			multiPageAgentMockState.instances.push(this)
+		}
+
+		setStatus(status: AgentStatus) {
+			this.status = status
+			this.dispatchEvent(new Event('statuschange'))
 		}
 	}
 
@@ -98,8 +106,8 @@ class FakeAgent extends EventTarget {
 		request: UserTakeoverRequest,
 		options?: { signal: AbortSignal },
 	) => Promise<UserTakeoverResolution>
-	execute = vi.fn(async (_task: string) => COMPLETED_RESULT)
-	followUp = vi.fn(async (_task: string) => COMPLETED_RESULT)
+	execute = vi.fn(async () => COMPLETED_RESULT)
+	followUp = vi.fn(async () => COMPLETED_RESULT)
 	restoreConversation = vi.fn(
 		(session: { task: string; history: HistoricalEvent[]; status: 'completed' | 'error' }) => {
 			this.task = session.task
@@ -542,6 +550,172 @@ describe('useAgent user session reload', () => {
 			model: 'deepseek-chat',
 		})
 		expect(renders.at(-1)?.config?.selectedModelId).toBe('model-deepseek')
+
+		await probe.unmount()
+	})
+
+	it('applies sidepanel text and vision model changes exactly once', async () => {
+		const customModel = {
+			id: 'model-qwen-vl',
+			provider: 'qwen',
+			baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+			apiKey: 'sk-qwen',
+			model: 'qwen-vl-max',
+		}
+		const storage = createChromeStorageHarness({ customModels: [customModel] })
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const renders: UseAgentResult[] = []
+
+		const probe = await renderAgentProbe((result) => {
+			renders.push(result)
+		})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		await vi.waitFor(() => expect(renders.at(-1)?.config).not.toBeNull())
+		await act(async () => {
+			const current = renders.at(-1)?.config
+			if (!current) throw new Error('Expected loaded config')
+			await renders.at(-1)?.configure({
+				...current,
+				selectedModelId: customModel.id,
+				visionModelId: customModel.id,
+			})
+		})
+
+		expect(multiPageAgentMockState.instances).toHaveLength(2)
+		expect(multiPageAgentMockState.instances[1].options).toMatchObject({
+			baseURL: customModel.baseURL,
+			apiKey: customModel.apiKey,
+			model: customModel.model,
+			visualObservationModel: {
+				baseURL: customModel.baseURL,
+				apiKey: customModel.apiKey,
+				model: customModel.model,
+			},
+		})
+		expect(storage.store.selectedModelId).toBe(customModel.id)
+		expect(storage.store.visionModelId).toBe(customModel.id)
+
+		await probe.unmount()
+	})
+
+	it('loads one consistent external model snapshot from an atomic options save', async () => {
+		const textModel = {
+			id: 'model-text',
+			provider: 'deepseek' as const,
+			baseURL: 'https://api.deepseek.com',
+			apiKey: 'sk-text',
+			model: 'deepseek-chat',
+		}
+		const visionModel = {
+			id: 'model-vision',
+			provider: 'qwen' as const,
+			baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+			apiKey: 'sk-vision',
+			model: 'qwen-vl-max',
+		}
+		const storage = createChromeStorageHarness()
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const renders: UseAgentResult[] = []
+		const probe = await renderAgentProbe((result) => renders.push(result))
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		await vi.waitFor(() => expect(renders.at(-1)?.config).not.toBeNull())
+
+		vi.mocked(storage.chrome.storage.local.set).mockClear()
+		await act(async () => {
+			const current = renders.at(-1)?.config
+			if (!current) throw new Error('Expected loaded config')
+			await saveStoredConfig(storage.chrome.storage.local, {
+				...current,
+				selectedModelId: textModel.id,
+				visionModelId: visionModel.id,
+				customModels: [textModel, visionModel],
+			})
+		})
+
+		expect(storage.chrome.storage.local.set).toHaveBeenCalledTimes(1)
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(2))
+		expect(multiPageAgentMockState.instances[1].options).toMatchObject({
+			model: textModel.model,
+			apiKey: textModel.apiKey,
+			visualObservationModel: {
+				model: visionModel.model,
+				apiKey: visionModel.apiKey,
+			},
+		})
+		expect(renders.at(-1)?.config).toMatchObject({
+			selectedModelId: textModel.id,
+			visionModelId: visionModel.id,
+		})
+
+		await probe.unmount()
+	})
+
+	it('does not swallow an external user session change during a local config save', async () => {
+		const storage = createChromeStorageHarness()
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const renders: UseAgentResult[] = []
+		const probe = await renderAgentProbe((result) => renders.push(result))
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		await vi.waitFor(() => expect(renders.at(-1)?.config).not.toBeNull())
+
+		const originalSet = storage.chrome.storage.local.set
+		vi.mocked(storage.chrome.storage.local.set).mockImplementationOnce(async (values) => {
+			await originalSet(values)
+			await originalSet({
+				[WENXUE_USER_SESSION_KEY]: {
+					userId: 'user_789',
+					accessToken: 'concurrent-access-token',
+					refreshToken: 'concurrent-refresh-token',
+					expiresAt: 1893456000000,
+					gatewayBaseUrl: WENXUE_GATEWAY_BASE_URL,
+				},
+			})
+		})
+
+		await act(async () => {
+			const current = renders.at(-1)?.config
+			if (!current) throw new Error('Expected loaded config')
+			await renders.at(-1)?.configure({ ...current, visionModelId: 'builtin:qwen3.7-plus' })
+		})
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(3))
+		expect(multiPageAgentMockState.instances.at(-1)?.options).toMatchObject({
+			apiKey: 'concurrent-access-token',
+		})
+
+		await probe.unmount()
+	})
+
+	it('defers external model updates until an active task finishes', async () => {
+		const customVisionModel = {
+			id: 'model-qwen-vl',
+			provider: 'qwen',
+			baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+			apiKey: 'sk-qwen',
+			model: 'qwen-vl-max',
+		}
+		const storage = createChromeStorageHarness({ customModels: [customVisionModel] })
+		;(globalThis as typeof globalThis & { chrome?: typeof chrome }).chrome = storage.chrome
+		const probe = await renderAgentProbe(() => {})
+
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(1))
+		await act(async () => {
+			multiPageAgentMockState.instances[0].setStatus('running')
+			await storage.chrome.storage.local.set({ visionModelId: customVisionModel.id })
+		})
+		expect(multiPageAgentMockState.instances).toHaveLength(1)
+
+		await act(async () => {
+			multiPageAgentMockState.instances[0].setStatus('completed')
+		})
+		await vi.waitFor(() => expect(multiPageAgentMockState.instances).toHaveLength(2))
+		expect(multiPageAgentMockState.instances[1].options).toMatchObject({
+			visualObservationModel: {
+				baseURL: customVisionModel.baseURL,
+				apiKey: customVisionModel.apiKey,
+				model: customVisionModel.model,
+			},
+		})
 
 		await probe.unmount()
 	})

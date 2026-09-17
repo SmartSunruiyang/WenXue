@@ -21,17 +21,12 @@ export interface SettingsFormValues {
 	logMaxEntries: number
 }
 
-/**
- * 归一化系统级「视觉模型」id：未设置或指向已删除的模型 → undefined(解析时回退到
- * 视觉内置模型)；内置(文本或视觉)或仍存在的自定义模型 → 原样保留。不同于
- * {@link normalizeSelectedModelId}(未知 id 会被它强制归到内置),这里保留 undefined。
- */
-function normalizeOptionalModelId(
+function normalizeOptionalVisionModelId(
 	modelId: string | undefined,
 	customModels: CustomModelConfig[],
 ): string | undefined {
 	if (!modelId) return undefined
-	if (modelId === BUILT_IN_MODEL_ID || modelId === BUILT_IN_VISION_MODEL_ID) return modelId
+	if (modelId === BUILT_IN_VISION_MODEL_ID) return modelId
 	return customModels.some((model) => model.id === modelId) ? modelId : undefined
 }
 
@@ -46,7 +41,7 @@ export function buildSettingsConfig(values: SettingsFormValues): ExtConfig {
 		...llmConfig,
 		selectedModelId,
 		customModels: values.customModels,
-		visionModelId: normalizeOptionalModelId(values.visionModelId, values.customModels),
+		visionModelId: normalizeOptionalVisionModelId(values.visionModelId, values.customModels),
 		language: values.language,
 		uiLanguage: values.uiLanguage,
 		systemInstruction: values.systemInstruction || undefined,

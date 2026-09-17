@@ -13,7 +13,7 @@ import {
 	type UserSessionStorageArea,
 	WENXUE_USER_SESSION_KEY,
 } from '@/lib/userSession'
-import { BUILT_IN_MODEL_ID, type CustomModelConfig } from './modelConfig'
+import { BUILT_IN_MODEL_ID, BUILT_IN_VISION_MODEL_ID, type CustomModelConfig } from './modelConfig'
 import {
 	buildRuntimeAgentModels,
 	loadRuntimeAgentModels,
@@ -149,6 +149,24 @@ describe('runtimeModelConfig', () => {
 			apiKey: '',
 		})
 		expect(models.vision).toEqual(models.chaoxingModels.vision)
+	})
+
+	it('uses the vision built-in when stale config assigns the text-only built-in to vision', () => {
+		const models = buildRuntimeAgentModels(
+			{
+				...DEMO_CONFIG,
+				selectedModelId: BUILT_IN_MODEL_ID,
+				visionModelId: BUILT_IN_MODEL_ID,
+				customModels: [],
+			},
+			{ session },
+		)
+
+		expect(BUILT_IN_VISION_MODEL_ID).not.toBe(BUILT_IN_MODEL_ID)
+		expect(models.vision).toMatchObject({
+			model: 'qwen3.7-plus',
+			apiKey: 'cloudbase-access-token',
+		})
 	})
 
 	it('loads the persisted user session and ignores obsolete fallback flags', async () => {

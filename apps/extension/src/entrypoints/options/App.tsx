@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { ExtConfig } from '@/agent/useAgent'
 import { SETTINGS_SECTIONS, SettingsForm, type SettingsSectionId } from '@/components/SettingsForm'
 import { Logo } from '@/components/misc'
-import { loadStoredConfig, saveStoredConfig } from '@/lib/configStorage'
+import { isConfigStorageChange, loadStoredConfig, saveStoredConfig } from '@/lib/configStorage'
 import { useI18n } from '@/lib/i18n'
+import { settingsConfigKey } from '@/lib/settingsConfig'
 import { cn } from '@/lib/utils'
 
 export { SETTINGS_PAGE_VERSION } from '@/components/SettingsForm'
@@ -46,15 +47,71 @@ export function resolveActiveSettingsSection({
 export default function App() {
 	const { t } = useI18n()
 	const [config, setConfig] = useState<ExtConfig | null>(null)
+	const [externalConfigRevision, setExternalConfigRevision] = useState(0)
 	const [activeSection, setActiveSection] = useState<SettingsSectionId>('model')
 	const [saved, setSaved] = useState(false)
+	const configRef = useRef<ExtConfig | null>(null)
+	const reloadVersionRef = useRef(0)
+	const pendingLocalSavesRef = useRef(0)
+	const reloadAfterSaveRef = useRef(false)
+	const scheduleReloadRef = useRef<() => void>(() => {})
+	const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
 
 	useEffect(() => {
-		loadStoredConfig()
-			.then(setConfig)
-			.catch((error) => {
-				console.error('[Options] Failed to load config:', error)
-			})
+		let reloadTimer: number | null = null
+		let cancelled = false
+		const reloadConfig = () => {
+			if (pendingLocalSavesRef.current > 0) {
+				reloadAfterSaveRef.current = true
+				return
+			}
+			const version = ++reloadVersionRef.current
+			loadStoredConfig()
+				.then((nextConfig) => {
+					if (cancelled || version !== reloadVersionRef.current) return
+					if (pendingLocalSavesRef.current > 0) {
+						reloadAfterSaveRef.current = true
+						return
+					}
+					const previousConfig = configRef.current
+					if (
+						previousConfig &&
+						settingsConfigKey(previousConfig) !== settingsConfigKey(nextConfig)
+					) {
+						setExternalConfigRevision((revision) => revision + 1)
+					}
+					configRef.current = nextConfig
+					setConfig(nextConfig)
+				})
+				.catch((error) => {
+					console.error('[Options] Failed to load config:', error)
+				})
+		}
+		const scheduleReload = () => {
+			if (pendingLocalSavesRef.current > 0) {
+				reloadAfterSaveRef.current = true
+				return
+			}
+			if (reloadTimer !== null) window.clearTimeout(reloadTimer)
+			reloadTimer = window.setTimeout(reloadConfig, 50)
+		}
+		const handleStorageChange = (
+			changes: Record<string, chrome.storage.StorageChange>,
+			areaName: string,
+		) => {
+			if (!isConfigStorageChange(changes, areaName)) return
+			scheduleReload()
+		}
+
+		scheduleReloadRef.current = scheduleReload
+		reloadConfig()
+		chrome.storage.onChanged.addListener(handleStorageChange)
+		return () => {
+			cancelled = true
+			reloadVersionRef.current++
+			if (reloadTimer !== null) window.clearTimeout(reloadTimer)
+			chrome.storage.onChanged.removeListener(handleStorageChange)
+		}
 	}, [])
 
 	useEffect(() => {
@@ -95,7 +152,24 @@ export default function App() {
 	}, [config])
 
 	const handleAutoSave = async (nextConfig: ExtConfig) => {
-		setConfig(await saveStoredConfig(chrome.storage.local, nextConfig))
+		pendingLocalSavesRef.current++
+		reloadVersionRef.current++
+		const save = saveQueueRef.current.then(() => saveStoredConfig(chrome.storage.local, nextConfig))
+		saveQueueRef.current = save.then(
+			() => {},
+			() => {},
+		)
+		try {
+			const savedConfig = await save
+			configRef.current = savedConfig
+			setConfig(savedConfig)
+		} finally {
+			pendingLocalSavesRef.current--
+			if (pendingLocalSavesRef.current === 0 && reloadAfterSaveRef.current) {
+				reloadAfterSaveRef.current = false
+				scheduleReloadRef.current()
+			}
+		}
 	}
 
 	const handleSaved = () => {
@@ -149,6 +223,7 @@ export default function App() {
 				<main className="min-w-0">
 					{config ? (
 						<SettingsForm
+							key={externalConfigRevision}
 							config={config}
 							onSave={handleAutoSave}
 							mode="page"

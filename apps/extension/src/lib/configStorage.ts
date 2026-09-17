@@ -8,6 +8,7 @@ import {
 	BUILT_IN_MODEL_ID,
 	normalizeCustomModels,
 	normalizeSelectedModelId,
+	normalizeVisionModelId,
 	resolveSelectedLLMConfig,
 } from '@/lib/modelConfig'
 
@@ -17,7 +18,7 @@ export interface ConfigStorageArea {
 	remove(key: string): Promise<void>
 }
 
-const CONFIG_STORAGE_KEYS = [
+export const CONFIG_STORAGE_KEYS = [
 	'llmConfig',
 	'language',
 	'advancedConfig',
@@ -25,7 +26,16 @@ const CONFIG_STORAGE_KEYS = [
 	'selectedModelId',
 	'customModels',
 	'visionModelId',
-]
+] as const
+
+const CONFIG_STORAGE_KEY_SET = new Set<string>(CONFIG_STORAGE_KEYS)
+
+export function isConfigStorageChange(
+	changes: Record<string, chrome.storage.StorageChange>,
+	areaName: string,
+): boolean {
+	return areaName === 'local' && Object.keys(changes).some((key) => CONFIG_STORAGE_KEY_SET.has(key))
+}
 
 function sanitizePersistedLLMConfig(config: LLMConfig): LLMConfig {
 	if (!Object.prototype.hasOwnProperty.call(config, 'disableNamedToolChoice')) return config
@@ -38,7 +48,7 @@ function sanitizePersistedLLMConfig(config: LLMConfig): LLMConfig {
 export async function loadStoredConfig(
 	storage: ConfigStorageArea = chrome.storage.local,
 ): Promise<ExtConfig> {
-	const result = await storage.get(CONFIG_STORAGE_KEYS)
+	const result = await storage.get([...CONFIG_STORAGE_KEYS])
 	const customModels = normalizeCustomModels(result.customModels)
 	const selectedModelId = normalizeSelectedModelId(
 		typeof result.selectedModelId === 'string'
@@ -73,7 +83,14 @@ export async function loadStoredConfig(
 	) {
 		await storage.set({ advancedConfig })
 	}
-	const visionModelId = typeof result.visionModelId === 'string' ? result.visionModelId : undefined
+	const storedVisionModelId =
+		typeof result.visionModelId === 'string' ? result.visionModelId : undefined
+	const visionModelId = storedVisionModelId
+		? normalizeVisionModelId(storedVisionModelId, customModels)
+		: undefined
+	if (storedVisionModelId && visionModelId !== storedVisionModelId) {
+		await storage.set({ visionModelId })
+	}
 
 	const migrated = migrateLegacyEndpoint(llmConfig)
 	if (migrated !== llmConfig) {
@@ -112,28 +129,14 @@ export async function saveStoredConfig(
 ): Promise<ExtConfig> {
 	const customModels = normalizeCustomModels(rawCustomModels)
 	const normalizedSelectedModelId = normalizeSelectedModelId(selectedModelId, customModels)
+	const normalizedVisionModelId = visionModelId
+		? normalizeVisionModelId(visionModelId, customModels)
+		: undefined
 	const llmConfig = sanitizePersistedLLMConfig(
 		rawCustomModels || selectedModelId
 			? resolveSelectedLLMConfig(normalizedSelectedModelId, customModels)
 			: legacyLLMConfig,
 	)
-
-	await storage.set({ llmConfig })
-	await storage.set({ selectedModelId: normalizedSelectedModelId })
-	await storage.set({ customModels })
-	if (visionModelId) {
-		await storage.set({ visionModelId })
-	} else {
-		await storage.remove('visionModelId')
-	}
-	if (language) {
-		await storage.set({ language })
-	} else {
-		await storage.remove('language')
-	}
-	if (uiLanguage) {
-		await storage.set({ uiLanguage })
-	}
 
 	const advancedConfig: AdvancedConfig = {
 		systemInstruction,
@@ -142,7 +145,16 @@ export async function saveStoredConfig(
 		logRetentionDays,
 		logMaxEntries,
 	}
-	await storage.set({ advancedConfig })
+	// Null clears optional keys without exposing an intermediate config to storage listeners.
+	await storage.set({
+		llmConfig,
+		selectedModelId: normalizedSelectedModelId,
+		customModels,
+		visionModelId: normalizedVisionModelId ?? null,
+		language: language ?? null,
+		...(uiLanguage ? { uiLanguage } : {}),
+		advancedConfig,
+	})
 
 	return {
 		...llmConfig,
@@ -151,6 +163,6 @@ export async function saveStoredConfig(
 		uiLanguage,
 		selectedModelId: normalizedSelectedModelId,
 		customModels,
-		visionModelId: visionModelId || undefined,
+		visionModelId: normalizedVisionModelId,
 	}
 }

@@ -3,7 +3,6 @@ import {
 	Eye,
 	EyeOff,
 	FoldVertical,
-	HatGlasses,
 	Home,
 	Plus,
 	Sparkles,
@@ -26,6 +25,7 @@ import {
 	BUILT_IN_MODEL_ID,
 	BUILT_IN_MODEL_OPTIONS,
 	BUILT_IN_VISION_MODEL_ID,
+	BUILT_IN_VISION_MODEL_OPTIONS,
 	type CustomModelConfig,
 	MODEL_PROVIDER_PRESETS,
 	type ModelProvider,
@@ -73,6 +73,8 @@ export const SETTINGS_SECTIONS = [
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id']
 export const SETTINGS_PAGE_VERSION = 'v0.0.1'
+export const WENXUE_WEBSITE_URL = 'https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/'
+export const WENXUE_GITHUB_URL = 'https://github.com/SmartSunruiyang/WenXue'
 
 interface SettingsFormProps {
 	config: ExtConfig | null
@@ -297,10 +299,9 @@ export function SettingsForm({
 		draftModel.trim().length > 0 &&
 		(draftProvider !== 'custom' || draftProviderName.trim().length > 0)
 
-	const modelOptions = useMemo<Array<MagicSelectOption<string>>>(
-		() => [
-			...BUILT_IN_MODEL_OPTIONS.map((option) => ({ value: option.id, label: option.label })),
-			...customModels.map((customModel) => ({
+	const customModelOptions = useMemo<Array<MagicSelectOption<string>>>(
+		() =>
+			customModels.map((customModel) => ({
 				value: customModel.id,
 				label: getCustomModelLabel(customModel),
 				description: customModel.baseURL,
@@ -308,8 +309,24 @@ export function SettingsForm({
 					<ProviderLogo provider={customModel.provider} providerName={customModel.providerName} />
 				),
 			})),
-		],
 		[customModels],
+	)
+	const modelOptions = useMemo<Array<MagicSelectOption<string>>>(
+		() => [
+			...BUILT_IN_MODEL_OPTIONS.map((option) => ({ value: option.id, label: option.label })),
+			...customModelOptions,
+		],
+		[customModelOptions],
+	)
+	const visionModelOptions = useMemo<Array<MagicSelectOption<string>>>(
+		() => [
+			...BUILT_IN_VISION_MODEL_OPTIONS.map((option) => ({
+				value: option.id,
+				label: option.label,
+			})),
+			...customModelOptions,
+		],
+		[customModelOptions],
 	)
 	const providerOptions = useMemo<Array<MagicSelectOption<ModelProvider>>>(
 		() => [
@@ -438,7 +455,7 @@ export function SettingsForm({
 							<MagicSelect
 								id="vision-model"
 								value={visionModelId}
-								options={modelOptions}
+								options={visionModelOptions}
 								onChange={setVisionModelId}
 							/>
 						</div>
@@ -659,7 +676,7 @@ export function SettingsForm({
 					</span>
 
 					<a
-						href="https://github.com/alibaba/page-agent"
+						href={WENXUE_GITHUB_URL}
 						target="_blank"
 						rel="noopener noreferrer"
 						className="flex items-center gap-2 hover:text-foreground"
@@ -671,35 +688,13 @@ export function SettingsForm({
 					</a>
 
 					<a
-						href="https://alibaba.github.io/page-agent/"
+						href={WENXUE_WEBSITE_URL}
 						target="_blank"
 						rel="noopener noreferrer"
 						className="flex items-center gap-2 hover:text-foreground"
 					>
 						<Home className="size-4" />
 						<span>{t('homePage')}</span>
-					</a>
-
-					<a
-						href="https://github.com/alibaba/page-agent/blob/main/docs/terms-and-privacy.md"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="flex items-center gap-2 hover:text-foreground"
-					>
-						<HatGlasses className="size-4" />
-						<span>{t('privacy')}</span>
-					</a>
-				</div>
-
-				<div className="text-[10px] text-muted-foreground">
-					{t('builtWith')} ♥️ {t('builtWithSuffix')}{' '}
-					<a
-						href="https://github.com/gaomeng1900"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="underline hover:text-foreground"
-					>
-						@Simon
 					</a>
 				</div>
 			</SettingsSection>
