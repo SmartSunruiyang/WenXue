@@ -28,6 +28,7 @@ env:
   NODE_VERSION: '22'
   PNPM_VERSION: '9.15.0'
   PUPPETEER_DOWNLOAD_BASE_URL: https://storage.googleapis.com/chrome-for-testing-public
+  WENXUE_GATEWAY_BASE_URL: ${{ vars.WENXUE_GATEWAY_BASE_URL || 'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com' }}
 
 jobs:
   quality:
@@ -105,10 +106,10 @@ jobs:
           node apps/desktop/scripts/verify-embedded-release-key.mjs \
             --bundle apps/desktop/out/main/index.js \
             --gateway-base-url "$WENXUE_GATEWAY_BASE_URL" \
-            --renderer-dir apps/desktop/out/renderer
+            --renderer-dir apps/desktop/out/renderer \
+            --extension-dir apps/extension/.output/chrome-mv3
         env:
           WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
-          WENXUE_GATEWAY_BASE_URL: ${{ vars.WENXUE_GATEWAY_BASE_URL }}
           WENXUE_UPDATE_CHANNEL: ${{ inputs.channel }}
       - name: Package unsigned DMG
         run: pnpm -F desktop exec electron-builder --mac dmg "--$DESKTOP_ARCH" --publish never
@@ -169,10 +170,10 @@ jobs:
           node apps/desktop/scripts/verify-embedded-release-key.mjs `
             --bundle apps/desktop/out/main/index.js `
             --gateway-base-url "$env:WENXUE_GATEWAY_BASE_URL" `
-            --renderer-dir apps/desktop/out/renderer
+            --renderer-dir apps/desktop/out/renderer `
+            --extension-dir apps/extension/.output/chrome-mv3
         env:
           WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
-          WENXUE_GATEWAY_BASE_URL: ${{ vars.WENXUE_GATEWAY_BASE_URL }}
           WENXUE_UPDATE_CHANNEL: ${{ inputs.channel }}
       - name: Package unsigned NSIS installer
         shell: pwsh

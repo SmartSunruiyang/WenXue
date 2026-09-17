@@ -6,6 +6,28 @@ const chromeProfile = '.wxt/chrome-data'
 mkdirSync(chromeProfile, { recursive: true })
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
+const defaultGatewayBaseUrl =
+	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
+const gatewayBaseUrl = resolveGatewayBaseUrl(process.env.WENXUE_GATEWAY_BASE_URL)
+
+function resolveGatewayBaseUrl(value) {
+	const candidate = value?.trim() || defaultGatewayBaseUrl
+	const url = new URL(candidate)
+	const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+	if (
+		(url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) ||
+		url.username ||
+		url.password ||
+		url.pathname !== '/' ||
+		url.search ||
+		url.hash
+	) {
+		throw new Error(
+			'WENXUE_GATEWAY_BASE_URL must be an HTTPS origin (or loopback HTTP) without credentials, paths, queries, or fragments',
+		)
+	}
+	return url.origin
+}
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -20,6 +42,7 @@ export default defineConfig({
 		plugins: [tailwindcss()],
 		define: {
 			__VERSION__: JSON.stringify(pkg.version),
+			__WENXUE_GATEWAY_BASE_URL__: JSON.stringify(gatewayBaseUrl),
 		},
 		optimizeDeps: {
 			force: true,
@@ -44,6 +67,9 @@ export default defineConfig({
 		default_locale: 'en',
 		name: '__MSG_extName__',
 		description: '__MSG_extDescription__',
+		content_security_policy: {
+			extension_pages: "script-src 'self'; object-src 'self'; img-src 'self' data:;",
+		},
 		homepage_url: 'https://alibaba.github.io/page-agent/',
 		permissions: [
 			'tabs',

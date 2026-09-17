@@ -5,7 +5,26 @@ import { resolve } from 'path'
 
 const DEFAULT_GATEWAY_BASE_URL =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
-const gatewayBaseUrl = process.env.WENXUE_GATEWAY_BASE_URL ?? DEFAULT_GATEWAY_BASE_URL
+const gatewayBaseUrl = resolveGatewayBaseUrl(process.env.WENXUE_GATEWAY_BASE_URL)
+
+function resolveGatewayBaseUrl(value: string | undefined): string {
+	const candidate = value?.trim() || DEFAULT_GATEWAY_BASE_URL
+	const url = new URL(candidate)
+	const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+	if (
+		(url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) ||
+		url.username ||
+		url.password ||
+		url.pathname !== '/' ||
+		url.search ||
+		url.hash
+	) {
+		throw new Error(
+			'WENXUE_GATEWAY_BASE_URL must be an HTTPS origin (or loopback HTTP) without credentials, paths, queries, or fragments',
+		)
+	}
+	return url.origin
+}
 
 export default defineConfig({
 	main: {

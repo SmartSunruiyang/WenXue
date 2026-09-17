@@ -28,6 +28,16 @@ async function main() {
 		if (rendererBundles.length === 0 || !(await includesValue(rendererBundles, gatewayBaseUrl))) {
 			throw new Error('Built desktop renderer does not contain the configured gateway URL')
 		}
+		if (options.extensionDir) {
+			const extensionDir = path.resolve(options.extensionDir)
+			const extensionBundles = await collectJavaScriptFiles(extensionDir)
+			if (
+				extensionBundles.length === 0 ||
+				!(await includesValue(extensionBundles, gatewayBaseUrl))
+			) {
+				throw new Error('Built extension does not contain the configured gateway URL')
+			}
+		}
 	}
 	if (options.fingerprintOutput) {
 		const fingerprintOutput = path.resolve(options.fingerprintOutput)
@@ -67,6 +77,7 @@ function readOptions(argv) {
 		fingerprintOutput: values.get('fingerprint-output'),
 		gatewayBaseUrl: values.get('gateway-base-url'),
 		rendererDir: values.get('renderer-dir'),
+		extensionDir: values.get('extension-dir'),
 	}
 }
 
@@ -84,10 +95,17 @@ function requireValue(value, name) {
 
 function requireHttpsUrl(value, name) {
 	const parsed = new URL(requireValue(value, name))
-	if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) {
-		throw new Error(`${name} must be a safe HTTPS URL`)
+	if (
+		parsed.protocol !== 'https:' ||
+		parsed.username ||
+		parsed.password ||
+		parsed.pathname !== '/' ||
+		parsed.search ||
+		parsed.hash
+	) {
+		throw new Error(`${name} must be a safe HTTPS origin`)
 	}
-	return parsed.toString().replace(/\/$/, '')
+	return parsed.origin
 }
 
 main().catch((error) => {

@@ -208,7 +208,7 @@ extraResources:
 - 当前题 screenshot 通过 child→parent `postMessage/event.source` anchor 逐层换算 cross-origin iframe rect，保存/恢复各层 scroll，只接受 translate/scale；无法完整绑定时 review，不发送整屏兜底，也不发送 tab URL/title。
 - 页面级 API 补充：现有 main-world eval executor 仍只服务显式 `execute_javascript` 的 `world:'main'`；QuestionSolver 不调用该通道，也不启用上游 `window.PAGE_AGENT_EXT`。
 
-构建：`pnpm -F extension build` → WXT 产出 `.output/chrome-mv3/`，被 desktop 打包步骤消费。仓库根 `pnpm dev` 先构建 extension 再启动 desktop，避免持久画像注册旧 MV3 service worker；修改 background 后必须重启该开发链。专用画像启动前由 ProfileStore 开启 Developer Mode，使 unpacked extension 的 service worker 能从当前目录重新注册；sidepanel/hub 再以 v2 握手探测，并用 Web Locks 在 extension origin 内互斥、最多调用一次 `chrome.runtime.reload()`，失败时仅视觉工具降级，不阻断 DOM Agent。
+构建：`pnpm -F extension build` → WXT 产出 `.output/chrome-mv3/`，被 desktop 打包步骤消费。候选发布流水线以同一个 `WENXUE_GATEWAY_BASE_URL` 同时构建插件与桌面，并验证两份 bundle 的内嵌值一致；该值必须是无凭据、path、query、fragment 的 HTTPS origin（本地开发仅额外允许 loopback HTTP）。仓库根 `pnpm dev` 先构建 extension 再启动 desktop，避免持久画像注册旧 MV3 service worker；修改 background 后必须重启该开发链。专用画像启动前由 ProfileStore 开启 Developer Mode，使 unpacked extension 的 service worker 能从当前目录重新注册；sidepanel/hub 再以 v2 握手探测，并用 Web Locks 在 extension origin 内互斥、最多调用一次 `chrome.runtime.reload()`，失败时仅视觉工具降级，不阻断 DOM Agent。
 
 ## 7. 业务边界矩阵（插件 / 桌面端 / 未来后端）
 
@@ -248,7 +248,7 @@ extraResources:
 
 - 前端：`apps/admin` 静态站点，使用 CloudBase Web SDK 的 username/password 登录；路由守卫必须使用 `auth.getSession()`，不得使用已废弃且可能误判的 `getLoginState()`。仓库目标运行形态由 `wenxue-llm-gateway` 的 `/admin` target 提供构建产物；构建固定 `VITE_BASE_PATH=/admin/`、同源 AdminApi、当前 env/region，避免 shell 残留 `VITE_*` 污染 bundle。独立 CloudRun 静态容器保留作回滚。
 - 后端：`apps/admin-api` 是唯一业务实现；PUBLIC 请求均先校验 CloudBase Auth bearer，再查 `admin_users` 角色，前端不直接读写 NoSQL。相同公开 targets 由 Gateway 复用；独立 Function mode 服务保留作回滚。
-- 数据：网关用户授权权威是 CloudBase Auth `ACTIVE/BLOCKED`；运营临时封禁/解封应使用 CloudBase 用户管理或 TCB `ModifyUser(UserStatus=BLOCKED|ACTIVE)`。现有 AdminApi 仍读写 legacy `user_accounts` 与 `user_permission_audit`，尚未迁移到 `ModifyUser`，其状态页当前不影响网关放行；`admin_users` 继续作为后台管理员角色表。
+- 数据：网关用户授权权威是 CloudBase Auth `ACTIVE/BLOCKED`；运营临时封禁/解封应使用 CloudBase 用户管理或 TCB `ModifyUser(UserStatus=BLOCKED|ACTIVE)`。现有 AdminApi 仅把 legacy `user_accounts` 用于列表/筛选/备注，状态变化 fail-closed 返回 409 并不写伪授权成功；`user_permission_audit` 记录备注调整，`admin_users` 继续作为后台管理员角色表。
 - 当前公网部署（2026-07-18，分发功能已上线）：
   - AdminConsole 主入口：`https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com/admin`，使用 CloudBase HTTP 网关默认域名；`/admin`、`/admin/`、`/admin/assets/*` 三条路由均指向 `wenxue-llm-gateway` 030，构建期注入 `VITE_BASE_PATH=/admin/` 与同源 AdminApi base URL。
   - AdminApi 主入口：同域的管理、消息、版本、客户端与 CI 精确路由均指向 Gateway；不在默认域名下使用 `/admin/v1/*`，因为 `/admin` 页面路由会按前缀捕获。统一域名当前共 18 条公开路由。
