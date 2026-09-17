@@ -2,6 +2,7 @@ declare const __WENXUE_GATEWAY_BASE_URL__: string
 
 const DEFAULT_GATEWAY_BASE_URL =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
+const DEFAULT_VERIFICATION_TIMEOUT_MS = 12_000
 export const WENXUE_GATEWAY_BASE_URL = normalizeGatewayBaseUrl(
 	typeof __WENXUE_GATEWAY_BASE_URL__ === 'string'
 		? __WENXUE_GATEWAY_BASE_URL__
@@ -21,20 +22,43 @@ export type PublicUserSession = Pick<UserSession, 'userId' | 'expiresAt' | 'gate
 export interface UserSessionStoreOptions {
 	now?: () => number
 	gatewayBaseUrl?: string
+	fetchImpl?: typeof fetch
+	verificationTimeoutMs?: number
 }
 
 export class UserSessionStore {
 	private readonly now: () => number
 	private readonly gatewayBaseUrl: string
+	private readonly fetchImpl: typeof fetch
+	private readonly verificationTimeoutMs: number
 	private session: UserSession | null = null
 
 	constructor(options: UserSessionStoreOptions = {}) {
 		this.now = options.now ?? Date.now
 		this.gatewayBaseUrl = normalizeGatewayBaseUrl(options.gatewayBaseUrl ?? WENXUE_GATEWAY_BASE_URL)
+		this.fetchImpl = options.fetchImpl ?? fetch
+		this.verificationTimeoutMs =
+			typeof options.verificationTimeoutMs === 'number' &&
+			Number.isFinite(options.verificationTimeoutMs) &&
+			options.verificationTimeoutMs > 0
+				? options.verificationTimeoutMs
+				: DEFAULT_VERIFICATION_TIMEOUT_MS
 	}
 
-	setSession(value: unknown): PublicUserSession {
-		const session = normalizeUserSession(value, this.now(), this.gatewayBaseUrl)
+	async setSession(value: unknown): Promise<PublicUserSession> {
+		const candidate = normalizeUserSession(value, this.now(), this.gatewayBaseUrl)
+		const verifiedUserId = await verifyGatewayUser(
+			candidate,
+			this.fetchImpl,
+			this.verificationTimeoutMs,
+		)
+		if (candidate.userId !== verifiedUserId) {
+			throw new Error('问学账号身份校验失败，请重新登录')
+		}
+		if (this.session && this.session.userId !== verifiedUserId) {
+			throw new Error('请先退出当前问学账号，再登录其他账号')
+		}
+		const session = { ...candidate, userId: verifiedUserId }
 		this.session = session
 		return toPublicSession(session)
 	}
@@ -42,7 +66,6 @@ export class UserSessionStore {
 	current(): PublicUserSession | null {
 		if (!this.session) return null
 		if (this.session.expiresAt <= this.now()) {
-			this.session = null
 			return null
 		}
 		return toPublicSession(this.session)
@@ -53,7 +76,6 @@ export class UserSessionStore {
 			throw new Error('请先登录问学账号')
 		}
 		if (this.session.expiresAt <= this.now()) {
-			this.session = null
 			throw new Error('用户登录已过期，请重新登录')
 		}
 		return this.session
@@ -61,6 +83,52 @@ export class UserSessionStore {
 
 	clear(): void {
 		this.session = null
+	}
+}
+
+async function verifyGatewayUser(
+	session: UserSession,
+	fetchImpl: typeof fetch,
+	timeoutMs: number,
+): Promise<string> {
+	const controller = new AbortController()
+	let timeoutId: ReturnType<typeof setTimeout> | undefined
+	try {
+		return await Promise.race([
+			(async () => {
+				const response = await fetchImpl(
+					new URL('/v1/auth/activate', `${session.gatewayBaseUrl}/`).toString(),
+					{
+						method: 'POST',
+						headers: {
+							'content-type': 'application/json',
+							authorization: `Bearer ${session.accessToken}`,
+						},
+						body: JSON.stringify({}),
+						signal: controller.signal,
+					},
+				)
+				const payload: unknown = await response.json().catch(() => null)
+				const verifiedUserId = isRecord(payload) ? readString(payload.userId) : null
+				if (!response.ok || !isRecord(payload) || payload.ok !== true || !verifiedUserId) {
+					throw new Error('问学账号身份校验失败，请重新登录')
+				}
+				return verifiedUserId
+			})(),
+			new Promise<never>((_resolve, reject) => {
+				timeoutId = setTimeout(() => {
+					controller.abort()
+					reject(new Error('verification timed out'))
+				}, timeoutMs)
+			}),
+		])
+	} catch (error) {
+		if (error instanceof Error && error.message === '问学账号身份校验失败，请重新登录') {
+			throw error
+		}
+		throw new Error('无法验证问学账号，请检查网络后重试')
+	} finally {
+		if (timeoutId) clearTimeout(timeoutId)
 	}
 }
 

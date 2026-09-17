@@ -11,7 +11,7 @@ import type { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import type { TokenUsageStore } from './TokenUsageStore'
 import type { UsageCloudClient } from './UsageCloudClient'
 import type { UserSessionHandoff } from './UserSessionHandoff'
-import type { PublicUserSession, UserSessionStore } from './UserSessionStore'
+import type { PublicUserSession, UserSession, UserSessionStore } from './UserSessionStore'
 
 export interface IpcMainLike {
 	handle(channel: string, handler: (...args: unknown[]) => unknown): void
@@ -45,11 +45,18 @@ export interface DesktopBridgeOptions {
 	ipcMain: IpcMainLike
 	supervisor: Pick<
 		BrowserSupervisor,
-		'launch' | 'stop' | 'status' | 'statuses' | 'onStatusChange' | 'onProfileStatusChange'
+		'launch' | 'stop' | 'statuses' | 'onStatusChange' | 'onProfileStatusChange'
 	>
 	profileStore: Pick<
 		BrowserProfileStore,
-		'list' | 'create' | 'duplicate' | 'rename' | 'remove' | 'touch'
+		| 'list'
+		| 'create'
+		| 'get'
+		| 'duplicate'
+		| 'rename'
+		| 'remove'
+		| 'touch'
+		| 'listForReconciliation'
 	>
 	logStore: Pick<LauncherLogStore, 'query' | 'clear'>
 	settingsStore: Pick<LauncherSettingsStore, 'get' | 'update'>
@@ -78,9 +85,111 @@ export interface DesktopBridgeOptions {
 }
 
 export function registerDesktopBridge(options: DesktopBridgeOptions): () => void {
+	let signOutState: SignOutState | null = null
+	let activeAccountNamespace: string | null = null
+	let accountTransitionInProgress = false
+	const profileOperationTails = new Map<string, Promise<void>>()
+
+	const withProfileOperation = async <T>(
+		profileId: string,
+		operation: () => Promise<T>,
+	): Promise<T> => {
+		const previous = profileOperationTails.get(profileId) ?? Promise.resolve()
+		let release!: () => void
+		const gate = new Promise<void>((resolve) => {
+			release = resolve
+		})
+		const tail = previous.catch(() => undefined).then(() => gate)
+		profileOperationTails.set(profileId, tail)
+		await previous.catch(() => undefined)
+		try {
+			return await operation()
+		} finally {
+			release()
+			if (profileOperationTails.get(profileId) === tail) {
+				profileOperationTails.delete(profileId)
+			}
+		}
+	}
+
+	const requireActiveSession = (): UserSession => {
+		if (accountTransitionInProgress) {
+			throw new Error('问学账号状态切换中，请稍候。')
+		}
+		if (signOutState) {
+			throw new Error('正在安全退出问学账号，请稍候。')
+		}
+		const session = options.userSessionStore.requireSession()
+		if (activeAccountNamespace && activeAccountNamespace !== session.userId) {
+			throw new Error('请先退出当前问学账号，再登录其他账号')
+		}
+		activeAccountNamespace = session.userId
+		return session
+	}
+	const assertAccountStillActive = (accountNamespace: string): UserSession => {
+		const current = requireActiveSession()
+		if (current.userId !== accountNamespace) {
+			throw new Error('问学账号已切换，请重新操作。')
+		}
+		return current
+	}
+	const accountNamespaceForSignOut = (): string => {
+		try {
+			const session = options.userSessionStore.requireSession()
+			if (activeAccountNamespace && activeAccountNamespace !== session.userId) {
+				throw new Error('问学账号状态不一致，请重新打开问学。')
+			}
+			activeAccountNamespace = session.userId
+			return session.userId
+		} catch (error) {
+			if (activeAccountNamespace) return activeAccountNamespace
+			throw error
+		}
+	}
+	const accountStatuses = async (): Promise<Record<string, BrowserStatus>> => {
+		const session = requireActiveSession()
+		const profiles = await options.profileStore.list(session.userId)
+		assertAccountStillActive(session.userId)
+		const ownedProfileIds = new Set(profiles.map((profile) => profile.id))
+		return Object.fromEntries(
+			Object.entries(options.supervisor.statuses()).filter(([profileId]) =>
+				ownedProfileIds.has(profileId),
+			),
+		)
+	}
+	const stopProfilesForAccount = (accountNamespace: string): Promise<void> =>
+		stopAccountProfiles(options, accountNamespace, (profileId) =>
+			withProfileOperation(profileId, () => options.supervisor.stop(profileId)),
+		)
+	const launchOwnedProfile = (profileId: string): Promise<void> => {
+		requireActiveSession()
+		return withProfileOperation(profileId, async () => {
+			await options.updateService.assertWorkspaceAllowed()
+			const session = requireActiveSession()
+			await options.profileStore.get(session.userId, profileId)
+			assertAccountStillActive(session.userId)
+			const result = await options.userSessionHandoff.run(session, async (url) => {
+				assertAccountStillActive(session.userId)
+				await options.profileStore.get(session.userId, profileId)
+				assertAccountStillActive(session.userId)
+				await options.supervisor.launch(profileId, { startUrl: url })
+			})
+			if (!result.ok) {
+				throw new Error(result.error ?? '问学账号同步失败')
+			}
+			assertAccountStillActive(session.userId)
+			await options.profileStore.touch(session.userId, profileId)
+		})
+	}
+
 	options.ipcMain.handle('browser:launch', async (): Promise<LaunchResult> => {
 		try {
-			await launchProfileWithUserSession(options, 'default')
+			const session = requireActiveSession()
+			await options.updateService.assertWorkspaceAllowed()
+			const profiles = await options.profileStore.list(session.userId)
+			assertAccountStillActive(session.userId)
+			const profile = profiles[0] ?? (await options.profileStore.create(session.userId))
+			await launchOwnedProfile(profile.id)
 			return { ok: true }
 		} catch (error) {
 			return { ok: false, error: toUserSafeMessage(error) }
@@ -88,23 +197,32 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	})
 
 	options.ipcMain.handle('browser:getStatus', async (): Promise<BrowserStatus> => {
-		return options.supervisor.status()
+		return aggregateBrowserStatus(await accountStatuses())
 	})
 
 	options.ipcMain.handle(
 		'browser:getStatuses',
 		async (): Promise<Record<string, BrowserStatus>> => {
-			return options.supervisor.statuses()
+			return accountStatuses()
 		},
 	)
 
 	options.ipcMain.handle('browser:listProfiles', async () => {
-		return options.profileStore.list()
+		const session = requireActiveSession()
+		const profiles = await options.profileStore.list(session.userId)
+		assertAccountStillActive(session.userId)
+		return profiles
 	})
 
 	options.ipcMain.handle('browser:addProfile', async (): Promise<ProfileMutationResult> => {
 		try {
-			return { ok: true, profile: await options.profileStore.create() }
+			const session = requireActiveSession()
+			const profile = await options.profileStore.create(session.userId)
+			assertAccountStillActive(session.userId)
+			return {
+				ok: true,
+				profile,
+			}
 		} catch (error) {
 			return { ok: false, error: toUserSafeMessage(error) }
 		}
@@ -118,12 +236,16 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 			displayName: unknown,
 		): Promise<ProfileMutationResult> => {
 			try {
+				const session = requireActiveSession()
+				const profile = await options.profileStore.rename(
+					session.userId,
+					requireStringArg(profileId, 'profileId'),
+					requireStringArg(displayName, 'displayName'),
+				)
+				assertAccountStillActive(session.userId)
 				return {
 					ok: true,
-					profile: await options.profileStore.rename(
-						requireStringArg(profileId, 'profileId'),
-						requireStringArg(displayName, 'displayName'),
-					),
+					profile,
 				}
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -136,10 +258,22 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		async (_event: unknown, profileId: unknown): Promise<ProfileMutationResult> => {
 			try {
 				const requestedProfileId = requireStringArg(profileId, 'profileId')
-				assertProfileDataMutationAllowed(options, requestedProfileId)
+				requireActiveSession()
+				const profile = await withProfileOperation(requestedProfileId, async () => {
+					const session = requireActiveSession()
+					await options.profileStore.get(session.userId, requestedProfileId)
+					assertAccountStillActive(session.userId)
+					assertProfileDataMutationAllowed(options, requestedProfileId)
+					const duplicate = await options.profileStore.duplicate(
+						session.userId,
+						requestedProfileId,
+					)
+					assertAccountStillActive(session.userId)
+					return duplicate
+				})
 				return {
 					ok: true,
-					profile: await options.profileStore.duplicate(requestedProfileId),
+					profile,
 				}
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -152,10 +286,18 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		async (_event: unknown, profileId: unknown): Promise<ProfileMutationResult> => {
 			try {
 				const requestedProfileId = requireStringArg(profileId, 'profileId')
-				assertProfileDataMutationAllowed(options, requestedProfileId)
+				requireActiveSession()
+				const profile = await withProfileOperation(requestedProfileId, async () => {
+					const session = requireActiveSession()
+					await options.profileStore.get(session.userId, requestedProfileId)
+					assertAccountStillActive(session.userId)
+					await options.supervisor.stop(requestedProfileId)
+					assertAccountStillActive(session.userId)
+					return options.profileStore.remove(session.userId, requestedProfileId)
+				})
 				return {
 					ok: true,
-					profile: await options.profileStore.remove(requestedProfileId),
+					profile,
 				}
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -167,13 +309,10 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		'browser:openProfileFolder',
 		async (_event: unknown, profileId: unknown): Promise<LaunchResult> => {
 			try {
+				const session = requireActiveSession()
 				const requestedProfileId = requireStringArg(profileId, 'profileId')
-				const profile = (await options.profileStore.list()).find(
-					(item) => item.id === requestedProfileId,
-				)
-				if (!profile) {
-					throw new Error(`Unknown browser profile: ${requestedProfileId}`)
-				}
+				const profile = await options.profileStore.get(session.userId, requestedProfileId)
+				assertAccountStillActive(session.userId)
 				const message = await options.openPath(profile.userDataDir)
 				if (message.length > 0) {
 					throw new Error(message)
@@ -190,8 +329,7 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		async (_event: unknown, profileId: unknown): Promise<LaunchResult> => {
 			try {
 				const requestedProfileId = requireStringArg(profileId, 'profileId')
-				await launchProfileWithUserSession(options, requestedProfileId)
-				await options.profileStore.touch(requestedProfileId)
+				await launchOwnedProfile(requestedProfileId)
 				return { ok: true }
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -203,7 +341,14 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		'browser:stopProfile',
 		async (_event: unknown, profileId: unknown): Promise<LaunchResult> => {
 			try {
-				await options.supervisor.stop(requireStringArg(profileId, 'profileId'))
+				const requestedProfileId = requireStringArg(profileId, 'profileId')
+				requireActiveSession()
+				await withProfileOperation(requestedProfileId, async () => {
+					const session = requireActiveSession()
+					await options.profileStore.get(session.userId, requestedProfileId)
+					assertAccountStillActive(session.userId)
+					await options.supervisor.stop(requestedProfileId)
+				})
 				return { ok: true }
 			} catch (error) {
 				return { ok: false, error: toUserSafeMessage(error) }
@@ -309,25 +454,145 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	options.ipcMain.handle(
 		'auth:setSession',
 		async (_event: unknown, session: unknown): Promise<UserSessionResult> => {
+			let initialSession = false
+			let sessionEstablished = false
+			let ownsAccountTransition = false
 			try {
-				return { ok: true, session: options.userSessionStore.setSession(session) }
+				if (signOutState || accountTransitionInProgress) {
+					throw new Error('问学账号状态切换中，请稍候。')
+				}
+				initialSession = activeAccountNamespace === null
+				accountTransitionInProgress = true
+				ownsAccountTransition = true
+				const publicSession = await options.userSessionStore.setSession(session)
+				sessionEstablished = true
+				if (activeAccountNamespace && activeAccountNamespace !== publicSession.userId) {
+					throw new Error('请先退出当前问学账号，再登录其他账号')
+				}
+				activeAccountNamespace = publicSession.userId
+				if (initialSession) {
+					await reconcileForeignProfiles(options, publicSession.userId, (profileId) =>
+						withProfileOperation(profileId, () => options.supervisor.stop(profileId)),
+					)
+				}
+				return { ok: true, session: publicSession }
 			} catch (error) {
+				if (initialSession && sessionEstablished) {
+					options.userSessionStore.clear()
+					activeAccountNamespace = null
+				}
 				return { ok: false, error: toUserSafeMessage(error) }
+			} finally {
+				if (ownsAccountTransition) accountTransitionInProgress = false
 			}
 		},
 	)
 
 	options.ipcMain.handle('auth:getSession', async (): Promise<UserSessionResult> => {
 		try {
-			return { ok: true, session: options.userSessionStore.current() ?? undefined }
+			if (accountTransitionInProgress) throw new Error('问学账号状态切换中，请稍候。')
+			const session = options.userSessionStore.current() ?? undefined
+			if (session) {
+				if (activeAccountNamespace && activeAccountNamespace !== session.userId) {
+					throw new Error('问学账号状态不一致，请重新打开问学。')
+				}
+				activeAccountNamespace = session.userId
+			}
+			return { ok: true, session }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
+	})
+
+	options.ipcMain.handle('auth:prepareSignOut', async (): Promise<LaunchResult> => {
+		try {
+			if (accountTransitionInProgress) throw new Error('问学账号状态切换中，请稍候。')
+			const accountNamespace = accountNamespaceForSignOut()
+			if (signOutState) {
+				if (
+					signOutState.accountNamespace === accountNamespace &&
+					signOutState.phase === 'prepared'
+				) {
+					return { ok: true }
+				}
+				throw new Error('正在安全退出问学账号，请稍候。')
+			}
+
+			signOutState = { accountNamespace, phase: 'preparing' }
+			try {
+				await stopProfilesForAccount(accountNamespace)
+				signOutState = { accountNamespace, phase: 'prepared' }
+				return { ok: true }
+			} catch (error) {
+				signOutState = null
+				throw error
+			}
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
+	})
+
+	options.ipcMain.handle('auth:cancelSignOut', async (): Promise<LaunchResult> => {
+		try {
+			if (accountTransitionInProgress) throw new Error('问学账号状态切换中，请稍候。')
+			if (signOutState?.phase === 'preparing') {
+				throw new Error('浏览器仍在安全关闭中，暂时无法取消退出。')
+			}
+			if (
+				signOutState &&
+				activeAccountNamespace &&
+				signOutState.accountNamespace !== activeAccountNamespace
+			) {
+				throw new Error('问学账号已切换，无法取消当前退出流程。')
+			}
+			signOutState = null
+			return { ok: true }
 		} catch (error) {
 			return { ok: false, error: toUserSafeMessage(error) }
 		}
 	})
 
 	options.ipcMain.handle('auth:clearSession', async (): Promise<LaunchResult> => {
-		options.userSessionStore.clear()
-		return { ok: true }
+		try {
+			if (accountTransitionInProgress) throw new Error('问学账号状态切换中，请稍候。')
+			let accountNamespace: string | null = null
+			try {
+				accountNamespace = accountNamespaceForSignOut()
+			} catch {
+				accountNamespace = null
+			}
+			if (!accountNamespace) {
+				signOutState = null
+				options.userSessionStore.clear()
+				activeAccountNamespace = null
+				return { ok: true }
+			}
+
+			if (
+				signOutState &&
+				(signOutState.accountNamespace !== accountNamespace || signOutState.phase !== 'prepared')
+			) {
+				throw new Error('正在安全退出问学账号，请稍候。')
+			}
+
+			if (!signOutState) {
+				signOutState = { accountNamespace, phase: 'preparing' }
+				try {
+					await stopProfilesForAccount(accountNamespace)
+					signOutState = { accountNamespace, phase: 'prepared' }
+				} catch (error) {
+					signOutState = null
+					throw error
+				}
+			}
+
+			options.userSessionStore.clear()
+			signOutState = null
+			activeAccountNamespace = null
+			return { ok: true }
+		} catch (error) {
+			return { ok: false, error: toUserSafeMessage(error) }
+		}
 	})
 
 	options.ipcMain.handle('updates:getState', async (): Promise<UpdateState> => {
@@ -382,9 +647,31 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		}
 	})
 
-	const unsubscribeStatus = options.supervisor.onStatusChange(options.sendStatus)
+	const sendCurrentAccountStatus = async (): Promise<void> => {
+		try {
+			options.sendStatus(aggregateBrowserStatus(await accountStatuses()))
+		} catch {
+			// Signed-out and cross-account status changes are intentionally invisible.
+		}
+	}
+	const sendOwnedProfileStatus = async (
+		profileId: string,
+		status: BrowserStatus,
+	): Promise<void> => {
+		try {
+			const session = requireActiveSession()
+			await options.profileStore.get(session.userId, profileId)
+			assertAccountStillActive(session.userId)
+			options.sendProfileStatus({ profileId, status })
+		} catch {
+			// A profile owned by another or signed-out account must not reach the renderer.
+		}
+	}
+	const unsubscribeStatus = options.supervisor.onStatusChange(() => {
+		void sendCurrentAccountStatus()
+	})
 	const unsubscribeProfileStatus = options.supervisor.onProfileStatusChange((profileId, status) => {
-		options.sendProfileStatus({ profileId, status })
+		void sendOwnedProfileStatus(profileId, status)
 	})
 	const unsubscribeUpdateState = options.updateService.subscribe(options.sendUpdateState)
 
@@ -402,18 +689,56 @@ function assertProfileDataMutationAllowed(options: DesktopBridgeOptions, profile
 	}
 }
 
-async function launchProfileWithUserSession(
+interface SignOutState {
+	accountNamespace: string
+	phase: 'preparing' | 'prepared'
+}
+
+async function stopAccountProfiles(
 	options: DesktopBridgeOptions,
-	profileId: string,
+	accountNamespace: string,
+	stopProfile: (profileId: string) => Promise<void>,
 ): Promise<void> {
-	await options.updateService.assertWorkspaceAllowed()
-	const session = options.userSessionStore.requireSession()
-	const result = await options.userSessionHandoff.run(session, async (url) => {
-		await options.supervisor.launch(profileId, { startUrl: url })
-	})
-	if (!result.ok) {
-		throw new Error(result.error ?? '问学账号同步失败')
+	const profiles = await options.profileStore.list(accountNamespace)
+	const results = await Promise.allSettled(
+		profiles.map(async (profile) => {
+			await stopProfile(profile.id)
+		}),
+	)
+	const failures = results.flatMap((result, index) =>
+		result.status === 'rejected'
+			? [`${profiles[index]?.displayName ?? '未知浏览器'}：${toUserSafeMessage(result.reason)}`]
+			: [],
+	)
+	if (failures.length > 0) {
+		throw new Error(`退出登录前未能安全关闭浏览器：${failures.join('；')}`)
 	}
+}
+
+async function reconcileForeignProfiles(
+	options: DesktopBridgeOptions,
+	accountNamespace: string,
+	stopProfile: (profileId: string) => Promise<void>,
+): Promise<void> {
+	const foreignProfiles = (await options.profileStore.listForReconciliation()).filter(
+		(profile) => profile.accountNamespace !== accountNamespace,
+	)
+	const results = await Promise.allSettled(
+		foreignProfiles.map(async (profile) => {
+			await stopProfile(profile.id)
+		}),
+	)
+	if (results.some((result) => result.status === 'rejected')) {
+		throw new Error('检测到其他账号仍在运行的浏览器，无法进入工作台。请关闭所有问学浏览器后重试。')
+	}
+}
+
+function aggregateBrowserStatus(statuses: Record<string, BrowserStatus>): BrowserStatus {
+	const values = Object.values(statuses)
+	if (values.includes('error')) return 'error'
+	if (values.includes('launching')) return 'launching'
+	if (values.includes('running')) return 'running'
+	return 'idle'
 }
 
 interface ProfileMutationResult extends LaunchResult {

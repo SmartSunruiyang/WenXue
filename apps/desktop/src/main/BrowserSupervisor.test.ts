@@ -50,6 +50,10 @@ function createSupervisorHarness(
 	const profiles = {
 		ensureProfile: vi.fn(async (profileId = 'default') => `/profiles/${profileId}`),
 		prepareForUnpackedExtension: vi.fn(async (profileId = 'default') => `/profiles/${profileId}`),
+		markProfileLaunching: vi.fn(async () => undefined),
+		clearProfileLaunching: vi.fn(async () => undefined),
+		isProfileInUse: vi.fn(async () => false),
+		profilePath: vi.fn((profileId = 'default') => `/profiles/${profileId}`),
 		listProfiles: vi.fn(() => ['default']),
 	} as unknown as ProfileStore
 	const logger: AppLogger = {
@@ -93,7 +97,9 @@ describe('BrowserSupervisor', () => {
 		const { supervisor, child, events, profiles, spawns } = createSupervisorHarness()
 
 		expect(supervisor.status()).toBe('idle')
+		expect(supervisor.hasActiveProfiles()).toBe(false)
 		await supervisor.launch()
+		expect(supervisor.hasActiveProfiles()).toBe(true)
 		expect(profiles.prepareForUnpackedExtension).toHaveBeenCalledWith('default')
 		expect(spawns[0].argv).not.toContain('--remote-debugging-address=127.0.0.1')
 		expect(spawns[0].argv).not.toContain('--remote-debugging-port=0')
@@ -102,6 +108,18 @@ describe('BrowserSupervisor', () => {
 		child.emit('spawn')
 		expect(supervisor.status()).toBe('running')
 		expect(events).toEqual(['launching', 'running'])
+	})
+
+	it('does not spawn into an occupied profile after launcher restart', async () => {
+		const { supervisor, profiles, spawns } = createSupervisorHarness()
+		vi.mocked(profiles.isProfileInUse).mockResolvedValueOnce(true)
+
+		await expect(supervisor.launch('research')).rejects.toThrow('已被其他进程占用')
+		expect(profiles.markProfileLaunching).not.toHaveBeenCalled()
+		expect(spawns).toHaveLength(0)
+
+		await supervisor.launch('research')
+		expect(spawns).toHaveLength(1)
 	})
 
 	it('returns to idle after normal browser exit', async () => {
@@ -245,6 +263,27 @@ describe('BrowserSupervisor', () => {
 		expect(events).toEqual(['launching', 'idle'])
 	})
 
+	it('cancels and clears a cross-process launch marker before spawning', async () => {
+		const { supervisor, spawns, profiles } = createSupervisorHarness()
+		let finishMarker!: () => void
+		vi.mocked(profiles.markProfileLaunching).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishMarker = () => resolve(undefined)
+				}),
+		)
+
+		const launch = supervisor.launch('research')
+		await vi.waitFor(() => expect(profiles.markProfileLaunching).toHaveBeenCalledWith('research'))
+		await supervisor.stop('research')
+		finishMarker()
+		await launch
+
+		expect(profiles.clearProfileLaunching).toHaveBeenCalledWith('research')
+		expect(spawns).toHaveLength(0)
+		expect(supervisor.statuses()).toEqual({ research: 'idle' })
+	})
+
 	it('cancels pending launches during application shutdown', async () => {
 		const { supervisor, spawns, profiles } = createSupervisorHarness()
 		let finishPreparation!: (dir: string) => void
@@ -304,6 +343,55 @@ describe('BrowserSupervisor', () => {
 		expect(supervisor.status()).toBe('idle')
 	})
 
+	it('reports an untracked profile idle only after two inactive checks', async () => {
+		vi.useFakeTimers()
+		try {
+			const { supervisor, profiles } = createSupervisorHarness()
+			vi.mocked(profiles.isProfileInUse).mockResolvedValue(false)
+
+			const stop = supervisor.stop('research')
+			await vi.advanceTimersByTimeAsync(100)
+			await expect(stop).resolves.toBeUndefined()
+
+			expect(profiles.isProfileInUse).toHaveBeenCalledTimes(2)
+			expect(profiles.isProfileInUse).toHaveBeenCalledWith('research')
+			expect(supervisor.statuses()).toEqual({})
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('rechecks an apparently idle untracked profile before accepting the account boundary', async () => {
+		vi.useFakeTimers()
+		try {
+			const { supervisor, profiles } = createSupervisorHarness()
+			vi.mocked(profiles.isProfileInUse).mockResolvedValueOnce(false).mockResolvedValue(true)
+
+			const stopResult = expect(supervisor.stop('research')).rejects.toThrow(
+				'浏览器配置 research 仍在运行，无法安全退出账号。',
+			)
+			await vi.advanceTimersByTimeAsync(100)
+			await stopResult
+
+			expect(profiles.isProfileInUse).toHaveBeenCalledTimes(2)
+			expect(supervisor.statuses()).toEqual({ research: 'error' })
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('rejects account switch while an untracked browser still owns the profile', async () => {
+		const { supervisor, profiles, child } = createSupervisorHarness()
+		vi.mocked(profiles.isProfileInUse).mockResolvedValue(true)
+
+		await expect(supervisor.stop('research')).rejects.toThrow(
+			'浏览器配置 research 仍在运行，无法安全退出账号。',
+		)
+
+		expect(profiles.isProfileInUse).toHaveBeenCalledOnce()
+		expect(child.killSignals).toEqual([])
+		expect(supervisor.statuses()).toEqual({ research: 'error' })
+	})
 	it('force kills a profile when graceful shutdown does not exit', async () => {
 		vi.useFakeTimers()
 		try {
@@ -331,6 +419,120 @@ describe('BrowserSupervisor', () => {
 		} finally {
 			vi.useRealTimers()
 		}
+	})
+
+	it('does not relaunch over a process that remains live after shutdown timeout', async () => {
+		vi.useFakeTimers()
+		try {
+			const child = new FakeBrowserProcess(null)
+			const { supervisor, spawns } = createSupervisorHarness({ child })
+			await supervisor.launch('research')
+			child.emit('spawn')
+
+			const stopResult = expect(supervisor.stop('research')).rejects.toThrow(
+				'浏览器配置 research 未能安全关闭，请重试。',
+			)
+			await vi.advanceTimersByTimeAsync(5000)
+			await stopResult
+
+			expect(supervisor.hasActiveProfiles()).toBe(true)
+			await expect(supervisor.launch('research')).rejects.toThrow(
+				'浏览器配置 research 仍在关闭中，请先重试停止。',
+			)
+			expect(spawns).toHaveLength(1)
+
+			child.emit('exit', null, 'SIGKILL')
+			expect(supervisor.hasActiveProfiles()).toBe(false)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('retains the live handle when process signals cannot be delivered', async () => {
+		vi.useFakeTimers()
+		try {
+			const child = new FakeBrowserProcess(null)
+			child.kill = vi.fn(() => false)
+			const { supervisor, spawns } = createSupervisorHarness({ child })
+			await supervisor.launch('research')
+			child.emit('spawn')
+
+			const stopResult = expect(supervisor.stop('research')).rejects.toThrow(
+				'浏览器配置 research 未能安全关闭，请重试。',
+			)
+			await vi.advanceTimersByTimeAsync(5000)
+			await stopResult
+
+			expect(supervisor.hasActiveProfiles()).toBe(true)
+			await expect(supervisor.launch('research')).rejects.toThrow('仍在关闭中')
+			expect(spawns).toHaveLength(1)
+
+			child.emit('exit', 0, null)
+			expect(supervisor.hasActiveProfiles()).toBe(false)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('retains a spawned child handle when it emits an error before exit', async () => {
+		const { supervisor, child, spawns } = createSupervisorHarness()
+		await supervisor.launch('research')
+		child.emit('spawn')
+
+		child.emit('error', new Error('kill failed'))
+
+		expect(supervisor.hasActiveProfiles()).toBe(true)
+		expect(supervisor.statuses()).toEqual({ research: 'error' })
+		await expect(supervisor.launch('research')).rejects.toThrow('仍有未退出进程')
+		expect(spawns).toHaveLength(1)
+
+		child.emit('exit', 0, null)
+		expect(supervisor.hasActiveProfiles()).toBe(false)
+	})
+
+	it('handles launch-marker cleanup rejection after child exit without an unhandled rejection', async () => {
+		const { supervisor, child, logger, profiles } = createSupervisorHarness()
+		vi.mocked(profiles.clearProfileLaunching).mockRejectedValue(new Error('disk denied'))
+		await supervisor.launch('research')
+		child.emit('spawn')
+
+		child.emit('exit', 0, null)
+
+		await vi.waitFor(() => expect(supervisor.statuses()).toEqual({ research: 'error' }))
+		expect(logger.log).toHaveBeenCalledWith(
+			'BrowserSupervisor',
+			'error',
+			'failed to clear launch marker for research: disk denied',
+		)
+	})
+
+	it('waits for one shared exit cleanup before relaunching the same profile', async () => {
+		const { supervisor, child, queueChild, profiles, spawns } = createSupervisorHarness()
+		queueChild(new FakeBrowserProcess())
+		let finishCleanup!: () => void
+		vi.mocked(profiles.clearProfileLaunching).mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishCleanup = () => resolve(undefined)
+				}),
+		)
+
+		await supervisor.launch('research')
+		child.emit('spawn')
+		const stop = supervisor.stop('research')
+		await vi.waitFor(() => expect(profiles.clearProfileLaunching).toHaveBeenCalledOnce())
+
+		const relaunch = supervisor.launch('research')
+		await Promise.resolve()
+		expect(profiles.markProfileLaunching).toHaveBeenCalledOnce()
+		expect(spawns).toHaveLength(1)
+
+		finishCleanup()
+		await Promise.all([stop, relaunch])
+
+		expect(profiles.clearProfileLaunching).toHaveBeenCalledOnce()
+		expect(profiles.markProfileLaunching).toHaveBeenCalledTimes(2)
+		expect(spawns).toHaveLength(2)
 	})
 
 	it('treats signal exit during requested shutdown as idle', async () => {

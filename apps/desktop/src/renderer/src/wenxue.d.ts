@@ -185,6 +185,8 @@ declare global {
 			auth: {
 				setSession(session: UserSession): Promise<UserSessionResult>
 				getSession(): Promise<UserSessionResult>
+				prepareSignOut(): Promise<LaunchResult>
+				cancelSignOut(): Promise<LaunchResult>
 				clearSession(): Promise<LaunchResult>
 			}
 			updates: {

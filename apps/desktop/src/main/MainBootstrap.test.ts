@@ -83,7 +83,7 @@ describe('handleBrowserRunningClose', () => {
 
 		await expect(
 			handleBrowserRunningClose({
-				status: () => 'idle',
+				hasActiveProfiles: () => false,
 				showMessageBox,
 				requestShutdown,
 			}),
@@ -99,7 +99,7 @@ describe('handleBrowserRunningClose', () => {
 
 		await expect(
 			handleBrowserRunningClose({
-				status: () => 'running',
+				hasActiveProfiles: () => true,
 				showMessageBox,
 				requestShutdown,
 			}),
@@ -115,7 +115,7 @@ describe('handleBrowserRunningClose', () => {
 
 		await expect(
 			handleBrowserRunningClose({
-				status: () => 'running',
+				hasActiveProfiles: () => true,
 				exitWithBrowsers: () => 'launcherOnly',
 				showMessageBox,
 				requestShutdown,
@@ -132,7 +132,7 @@ describe('handleBrowserRunningClose', () => {
 
 		await expect(
 			handleBrowserRunningClose({
-				status: () => 'running',
+				hasActiveProfiles: () => true,
 				exitWithBrowsers: () => 'closeBrowsers',
 				showMessageBox,
 				requestShutdown,
@@ -149,7 +149,7 @@ describe('handleBrowserRunningClose', () => {
 
 		await expect(
 			handleBrowserRunningClose({
-				status: () => 'launching',
+				hasActiveProfiles: () => true,
 				showMessageBox,
 				requestShutdown,
 			}),
@@ -157,5 +157,24 @@ describe('handleBrowserRunningClose', () => {
 
 		expect(showMessageBox).toHaveBeenCalledOnce()
 		expect(requestShutdown).toHaveBeenCalledOnce()
+	})
+
+	it('keeps the launcher open and reports the error when browser shutdown fails', async () => {
+		const shutdownError = new Error('still running')
+		const onError = vi.fn()
+
+		await expect(
+			handleBrowserRunningClose({
+				hasActiveProfiles: () => true,
+				exitWithBrowsers: () => 'closeBrowsers',
+				showMessageBox: vi.fn(async () => ({ response: 0 })),
+				requestShutdown: vi.fn(async () => {
+					throw shutdownError
+				}),
+				onError,
+			}),
+		).resolves.toBe('prevented')
+
+		expect(onError).toHaveBeenCalledWith(shutdownError)
 	})
 })

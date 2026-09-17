@@ -13,7 +13,7 @@
 
 | 实体                     | 关键字段                                                                                                                                                                                  | 关系                                                                                | 持久化与生命周期                                                                                                                                                        |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BrowserProfile           | id（目录名）、displayName、type、colorKey、createdAt、lastUsedAt、userDataDir                                                                                                             | 1:1 → 画像目录；1:0/1 → 运行中的浏览器实例（瞬态）                                  | 是：元数据 `<userData>/browsers.json` + 磁盘目录 `<userData>/profiles/<id>`                                                                                             |
+| BrowserProfile           | id（目录名）、accountNamespace（仅磁盘/主进程）、displayName、type、colorKey、createdAt、lastUsedAt、userDataDir                                                                          | 1:1 → 画像目录；1:0/1 → 运行中的浏览器实例（瞬态）；N:1 → CloudBase 用户账号        | 是：账号归属元数据 `<userData>/browsers.json` + 磁盘目录 `<userData>/profiles/<id>`；退出账号只卸载/隐藏，不删除目录或 Profile 内扩展 IndexedDB                         |
 | BrowserRuntimeDescriptor | version、platform、binaryPath                                                                                                                                                             | 被 LaunchConfig / 版本查询消费                                                      | 是：打包资源 + `apps/desktop/browser.lock.json`，随 App 发版变更                                                                                                        |
 | ModelConfig              | selectedModelId、customModels[]（id、provider、providerName?、baseURL、apiKey、model）、运行时 llmConfig（baseURL、apiKey、model）、language、uiLanguage、logRetentionDays、logMaxEntries | 被 Agent 循环、插件 UI 与 Logging 消费                                              | 是：`chrome.storage.local`；自定义 BYO-Key 模型 Key 仅本机，内置模型只存网关 baseURL / 空 apiKey，运行时注入插件侧用户 access token；不再保留内置本地直连兜底           |
 | AgentTask                | id、instruction、status、startedAt、finishedAt                                                                                                                                            | 1:N → AgentActivity                                                                 | 是：插件 IndexedDB，用户可删                                                                                                                                            |
@@ -55,6 +55,14 @@
 - **I6.** 应用内消息正文与目标 UID 只能经鉴权客户端 API 返回给匹配账号，signal 只承载 revision；当前
   Electron 更新只接受 CI 注册、Ed25519 清单与 SHA-512/size 验证均通过且标记 `manual-unsigned` 的
   不可变候选，后台不得上传或改写二进制。
+- **I7.** 浏览器画像及其中的 Cookie、网站状态、扩展 IndexedDB、AI 历史与记忆按当前 CloudBase
+  `userId` 对应的 `AccountNamespace` 隔离。主进程必须用内置网关和 access token 调 `/v1/auth/activate`
+  校验真实 uid 后才提交 session；所有画像 IPC 从该 session 推导账号并同时校验账号与 profileId，renderer
+  不得指定账号。退出先停止该账号全部画像再清 session，磁盘数据保留；Cloud signOut 结果未知或已提交后
+  的本地收尾失败必须保持画像保护。无账号归属的旧画像失败关闭且元数据保留；新 ID 不复用旧/孤儿目录。
+  首次接受账号 session 前必须确认其他账号或无归属的遗留运行画像已关闭；无法安全关闭或确认时拒绝
+  提交新 session。Electron 单实例与跨进程启动标记覆盖 CfT 建锁前窗口。该行为仅为同设备本地恢复，
+  不构成云同步或 OS 用户间安全边界。
 
 ## 2. 模块清单
 
@@ -114,22 +122,29 @@
 
 ```
 ## 模块名：ProfileStore
-- 职责：画像目录创建/枚举/定位（demo 仅 default，接口按多画像设计）；仅在 Developer Mode 尚未开启且画像无 POSIX `SingletonLock` / Windows `lockfile` 时，以保留权限的临时文件 + fsync + 原子 rename 设置 `extensions.ui.developer_mode`
+- 职责：画像目录创建/枚举/定位；以独占 mkdir 建新目录；维护 spawn 前跨进程近期启动标记，并与 POSIX
+  `SingletonLock` / Windows `lockfile` 一起判断画像占用；仅在 Developer Mode 尚未开启且画像未占用时，
+  以保留权限的临时文件 + fsync + 原子 rename 设置 `extensions.ui.developer_mode`
 - 不负责：不管理画像 cookie/登录态；不在画像被 CfT 占用时修改 Chrome Preferences；已完成迁移的运行中画像只读短路，可继续走既有聚焦链
 - 输入：AppPaths
 - 输出：BrowserSupervisor、MainBootstrap
-- 关键类型/接口：ensureProfile(id = 'default'): Promise<string> · listProfiles(): string[]
+- 关键类型/接口：ensureProfile/createProfile/profilePath · markProfileLaunching/clearProfileLaunching ·
+  isProfileInUse · listProfiles
 - 持有状态：无内存状态（磁盘即状态）
 ```
 
 ```
 ## 模块名：BrowserProfileStore
-- 职责：持久化浏览器画像元数据（名称、颜色、时间、路径）并与 ProfileStore 目录对齐
-- 不负责：不读取画像内部 cookie/登录态；不 spawn；不渲染 UI
+- 职责：按 `AccountNamespace` 持久化浏览器画像元数据（名称、颜色、时间、路径）并与 ProfileStore
+  目录对齐；所有按 ID 操作同时校验账号归属；旧无归属记录失败关闭但原样保留；新 ID 同时避开全部
+  元数据和孤儿目录；串行同进程全部读写以避免并发写丢记录；为 DesktopBridge 提供仅主进程使用的重启
+  协调清单
+- 不负责：不读取画像内部 cookie/登录态；不决定当前账号；不 spawn；不渲染 UI
 - 输入：AppPaths、ProfileStore
 - 输出：DesktopBridge、BrowserSupervisor 调用方、ConsoleUI
-- 关键类型/接口：BrowserProfile · list · create · rename · touch
-- 持有状态：`<userData>/browsers.json`
+- 关键类型/接口：BrowserProfile · list(accountNamespace) · create(accountNamespace) ·
+  get/duplicate/rename/remove/touch(accountNamespace, profileId, ...) · listForReconciliation()
+- 持有状态：`<userData>/browsers.json`（`accountNamespace` 不返回 renderer）
 ```
 
 ```
@@ -174,11 +189,13 @@
 
 ```
 ## 模块名：UserSessionStore
-- 职责：主进程内存持有当前 CloudBase 用户 session，校验必需字段，为浏览器启动、UsageCloudClient 与 handoff 提供 access/refresh token
+- 职责：主进程用内置 HTTPS 网关和 bearer access token 调 `/v1/auth/activate`，校验响应真实 uid 与
+  renderer userId 完全一致后才在内存提交 CloudBase 用户 session；允许同账号 token 刷新，但在显式 clear
+  前（包括 token 已过期）拒绝直接覆盖成另一账号；为浏览器启动、UsageCloudClient 与 handoff 提供凭据
 - 不负责：不执行 CloudBase 登录/注册；不刷新远端会话；不保存厂商 API Key；不写日志或 tokens 记录
-- 输入：ConsoleUI 经 DesktopBridge 同步的 UserSession
+- 输入：ConsoleUI 经 DesktopBridge 同步的候选 UserSession、CloudBaseLlmGateway
 - 输出：DesktopBridge、UserSessionHandoff、UsageCloudClient 可用的 userId / accessToken / refreshToken / expiresAt / gatewayBaseUrl
-- 关键类型/接口：setSession(session) · current() · requireSession() · clear()
+- 关键类型/接口：setSession(session): Promise<PublicUserSession> · current() · requireSession() · clear()
 - 持有状态：仅主进程内存
 ```
 
@@ -229,7 +246,11 @@
 
 ```
 ## 模块名：BrowserSupervisor
-- 职责：按画像 spawn CfT、监听 exit/error、维护每个画像 idle→launching→running 状态机、崩溃通知（I1 执行者）；在首个异步画像准备前先占用 launching 状态以防并发重复 spawn；停止时先 SIGTERM，2s 未退出则 SIGKILL，5s 仍无退出事件标记 error
+- 职责：按画像 spawn CfT、监听 exit/error、维护每个画像 idle→launching→running 状态机、崩溃通知（I1
+  执行者）；在首个异步画像准备前先占用 launching 状态并在 spawn 前写跨进程启动标记；停止已跟踪进程
+  时先 SIGTERM，2s 未退出则 SIGKILL，5s 仍无 exit 证据则保留 live handle 并标记 error；应用重启后
+  对未跟踪画像二次确认锁与近期启动标记，无占用才视为已停止；仍占用时拒绝账号切换并要求用户关闭
+  浏览器后重试，不为日常启动开放 TCP 调试端口
 - 不负责：不组参数（LaunchConfig）；不定位资源（BrowserResources）；不渲染 UI
 - 输入：LaunchConfig、BrowserResources、ProfileStore、AppLogger
 - 输出：状态事件 → DesktopBridge
@@ -258,19 +279,25 @@
 ```
 ## 模块名：DesktopBridge
 - 职责：preload contextBridge + IPC 通道注册；渲染层访问主进程的唯一入口；转译更新状态与只允许
-  HTTPS 的外部链接 intent
-- 不负责：不含业务逻辑（仅转译与入参校验）；不绕过 I2/I3 直接控制插件域
+  HTTPS 的外部链接 intent；从 UserSessionStore 推导 `AccountNamespace` 并对所有画像命令、状态与事件
+  强制执行 I7；用带所有权的 transition 锁编排 token→uid 校验、首次遗留进程协调与退出前当前账号画像
+  停止事务；其他账号协调失败只向 renderer 返回不含 profileId 的通用错误
+- 不负责：不读取 Profile 内容；不接受 renderer 提供账号 ID；不绕过 I2/I3 直接控制插件域
 - 输入：BrowserSupervisor、BrowserProfileStore、LauncherLogStore、LauncherSettingsStore、LauncherTelemetryIngest、TokenUsageStore、UsageCloudClient、UserSessionStore、UserSessionHandoff、DesktopUpdateService、BrowserResources
 - 输出：ConsoleUI（window.wenxue.*）
 - 关键类型/接口：见 §3.2 IPC 契约
-- 持有状态：无
+- 持有状态：当前 `activeAccountNamespace`、首次 session 协调标记、退出事务 `signOutState` 与逐画像
+  生命周期队列；均仅内存、不持久化
 ```
 
 #### Layer 5 — 展示
 
 ```
 ## 模块名：ConsoleUI
-- 职责：React 启动器 App shell（账号登录/注册、侧栏路由、浏览器多开页、日志页、tokens 页、设置页）；注册调用 CloudBaseLlmGateway，登录与会话适配使用 CloudBase Web Auth SDK，并在发起请求前执行凭据格式校验；消费 DesktopAnnouncementService 与 DesktopUpdateService 状态并渲染固定弹窗
+- 职责：React 启动器 App shell（账号登录/注册、侧栏路由、浏览器多开页、日志页、tokens 页、设置页）；
+  注册调用 CloudBaseLlmGateway，登录与会话适配使用 CloudBase Web Auth SDK，并在发起请求前执行凭据格式
+  校验；退出按“主进程停止当前账号画像 → CloudBase signOut → 清主进程 session”顺序发送意图，只在
+  Cloud signOut 已确定失败且 SDK session 仍存在时解除退出保护；消费消息与更新状态并渲染固定弹窗
 - 不负责：不触 Node API；不直接调用 Tencent Cloud 管理 API；不写启动器业务判断（仅消费状态、发送意图）
 - 输入：DesktopBridge、DesktopAnnouncementService、DesktopReleaseSignalService、DispatchContracts、CloudBase Web Auth SDK、CloudBaseLlmGateway `/v1/auth/register` 与 `/v1/auth/activate`
 - 输出：用户
@@ -282,7 +309,8 @@
 
 ```
 ## 模块名：MainBootstrap
-- 职责：app 生命周期（ready→建窗→注册 IPC→启动更新检查→退出询问对话框），装配 L0–L4
+- 职责：获取 Electron 单实例锁；app 生命周期（ready→建窗→注册 IPC→启动更新检查→退出询问对话框），
+  第二实例请求聚焦现有窗口，装配 L0–L4
 - 不负责：不实现任何具体服务逻辑
 - 输入：桌面域全部模块
 - 输出：进程入口 apps/desktop/src/main/index.ts
@@ -591,10 +619,10 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 
 ```ts
 // module: DesktopBridge —— IPC 通道（渲染层唯一入口；通道上禁止出现插件域数据，I2/I3）
-//   browser:launch         invoke () => Promise<{ ok: boolean; error?: string }>  // 需已登录；幂等，保证 I1
-//   browser:getStatus      invoke () => BrowserStatus                             // 'idle'|'launching'|'running'|'error'
-//   browser:getStatuses    invoke () => Record<string, BrowserStatus>
-//   browser:listProfiles   invoke () => Promise<BrowserProfile[]>
+//   browser:launch         invoke () => Promise<{ ok: boolean; error?: string }>  // 需已登录；只启动/创建当前账号首个画像；幂等，保证 I1/I7
+//   browser:getStatus      invoke () => BrowserStatus                             // 仅聚合当前账号；'idle'|'launching'|'running'|'error'
+//   browser:getStatuses    invoke () => Record<string, BrowserStatus>             // 仅当前账号 profileId
+//   browser:listProfiles   invoke () => Promise<BrowserProfile[]>                 // 仅当前账号；不返回 accountNamespace
 //   browser:addProfile     invoke () => Promise<{ ok: boolean; profile?: BrowserProfile; error?: string }>
 //   browser:renameProfile  invoke (id: string, displayName: string) => Promise<{ ok: boolean; profile?: BrowserProfile; error?: string }>
 //   browser:duplicateProfile invoke (id: string) => Promise<{ ok: boolean; profile?: BrowserProfile; error?: string }>
@@ -604,7 +632,7 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 //                            // 需已登录；启动/聚焦时自动 handoff UserSession 给插件
 //   browser:stopProfile    invoke (id: string) => Promise<{ ok: boolean; error?: string }>
 //   browser:status-changed event  (status: BrowserStatus)                         // main → renderer
-//   browser:profile-status-changed event ({ profileId, status })                   // main → renderer
+//   browser:profile-status-changed event ({ profileId, status })                   // main → renderer；仅当前账号
 //   app:getVersions        invoke () => { app: string; browser: string; extension: string }
 //   app:getShellInfo       invoke () => { platform: NodeJS.Platform; frameless: boolean; hasSystemTrafficLights: boolean; isMaximized: boolean }
 //   app:openLogs           invoke () => Promise<{ ok: boolean; error?: string }>  // 打开本机日志目录，不传插件域数据
@@ -623,8 +651,13 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 //                            // 需已登录；优先读 CloudBaseLlmGateway `/v1/usage/summary`；失败时回退本地 TokenUsageStore
 //   auth:setSession        invoke (session: UserSession) => Promise<{ ok: boolean; session?: PublicUserSession; error?: string }>
 //   auth:getSession        invoke () => Promise<{ ok: boolean; session?: PublicUserSession; error?: string }>
+//   auth:prepareSignOut    invoke () => Promise<{ ok: boolean; error?: string }>
+//                            // 停止当前账号全部 pending/running 画像；失败时保留 session
+//   auth:cancelSignOut     invoke () => Promise<{ ok: boolean; error?: string }>
+//                            // prepare 后任一步未完成退出时解除保护；preparing 阶段不可取消，不删除画像
 //   auth:clearSession      invoke () => Promise<{ ok: boolean; error?: string }>
-//                            // Main 仅内存持有 session；renderer 通过注册网关创建账号，以 CloudBase Web SDK 登录/刷新
+//                            // 幂等确认当前账号画像已停止后清内存 session；不删除画像数据
+//                            // renderer 通过注册网关创建账号，以 CloudBase Web SDK 登录/刷新
 //   updates:getState       invoke () => Promise<UpdateState>
 //   updates:check          invoke (reason?: 'manual' | 'signal') => Promise<{ ok: boolean; state: UpdateState; error?: string }>
 //   updates:download       invoke () => Promise<{ ok: boolean; state: UpdateState; error?: string }>
@@ -633,13 +666,21 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 
 // module: BrowserSupervisor
 //   launch(profileId = 'default', opts?: { startUrl?: string }): Promise<void>
-//   // I1：running 时不二次 spawn，转为聚焦；startUrl 来自 LauncherSettingsStore
+//   // I1：running 时不二次 spawn，转为聚焦；DesktopBridge 的 session handoff 提供 startUrl，缺省打开 chrome://newtab
 //   stop(profileId: string): Promise<void>
 //   status(): BrowserStatus                             // 聚合状态：任一 running/launching/error 优先
 //   statuses(): Record<string, BrowserStatus>
 //   onStatusChange(cb: (s: BrowserStatus) => void): () => void
 //   onProfileStatusChange(cb: (profileId: string, s: BrowserStatus) => void): () => void
 //   requestShutdown(): Promise<void>                    // 仅响应用户"退出时一并关闭"的选择，关闭全部运行画像
+
+// module: BrowserProfileStore
+//   list(accountNamespace: string): Promise<BrowserProfile[]>
+//   create(accountNamespace: string): Promise<BrowserProfile>
+//   get(accountNamespace: string, profileId: string): Promise<BrowserProfile>
+//   duplicate/rename/remove/touch(accountNamespace: string, profileId: string, ...): Promise<BrowserProfile>
+//   listForReconciliation(): Promise<Array<{ id: string; accountNamespace: string | null }>> // 仅 main
+//   // accountNamespace 只由 DesktopBridge 从主进程 session 推导；跨账号与未知 ID 使用相同错误
 
 // module: LaunchConfig（纯函数）
 //   buildArgv(opts: { userDataDir: string; extensionDir: string;
@@ -653,7 +694,15 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 
 // module: ProfileStore
 //   ensureProfile(id = 'default'): Promise<string>      // 返回 userDataDir 绝对路径
+//   createProfile(id: string): Promise<string>          // 独占创建新画像目录
+//   prepareForUnpackedExtension(id = 'default'): Promise<string>
+//   markProfileLaunching(id: string): Promise<void>     // spawn 前写跨进程启动标记
+//   clearProfileLaunching(id: string): Promise<void>
+//   isProfileInUse(id = 'default'): Promise<boolean>     // 近期启动标记或 Chromium 画像锁
+//   profilePath(id = 'default'): string
 //   listProfiles(): string[]
+//   copyProfile(sourceId: string, targetId: string): Promise<string>
+//   deleteProfile(id: string): Promise<void>
 
 // module: Logging —— background 是 page-agent-ext/logs 的唯一写入者
 //   type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -803,38 +852,38 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 
 ## 4. 持久化与边界
 
-| 数据                                          | 位置                                                                                                                                      | 谁写                                                                     | 边界约束                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 画像数据（cookie、登录态、浏览记录）          | `<userData>/profiles/<id>/`                                                                                                               | 仅 CfT 进程                                                              | 桌面端只创建目录，永不读内容                                                                                                                                                                                                                                                                                                                                                                     |
-| 画像元数据                                    | `<userData>/browsers.json`                                                                                                                | BrowserProfileStore                                                      | 只含名称、颜色、时间、目录路径，不含 cookie/登录态                                                                                                                                                                                                                                                                                                                                               |
-| 启动器设置                                    | `<userData>/settings.json`                                                                                                                | LauncherSettingsStore                                                    | 即时保存；不得包含 API Key                                                                                                                                                                                                                                                                                                                                                                       |
-| 运行日志                                      | `<userData>/logs/`                                                                                                                        | AppLogger                                                                | 不含 Key/对话内容（I2）；主进程系统事件同时镜像到启动器日志                                                                                                                                                                                                                                                                                                                                      |
-| 启动器日志                                    | `<userData>/launcher-logs.json`                                                                                                           | LauncherLogStore / AppLogger / LauncherTelemetryIngest                   | 仅保存已脱敏日志；支持 browserId 归类、保留裁剪、清空与导出；桌面侧二次清洗敏感键但保留 token 计数字段；坏 JSON 自动隔离为 `.corrupt-<timestamp>` 后重建空文件                                                                                                                                                                                                                                   |
-| tokens 用量                                   | `<userData>/token-usage.json`                                                                                                             | TokenUsageStore / LauncherTelemetryIngest                                | 仅保存 tokens 数量、模型、画像、时间与估算成本；不含提示词正文或敏感头                                                                                                                                                                                                                                                                                                                           |
-| 云端 tokens summary 缓存                      | `<userData>/token-usage-summary-cache.json`                                                                                               | UsageCloudClient                                                         | 按 userId 绑定；只保存已脱敏 `TokenUsageSummary`，不保存 access token、refresh token、uid 到 summary、正文或敏感头                                                                                                                                                                                                                                                                               |
-| ModelConfig（含每个自定义模型自己的 API Key） | `chrome.storage.local`                                                                                                                    | SidepanelApp options 设置页与语言快捷入口                                | 自定义 BYO-Key 不出本机；内置模型只保存网关 baseURL 与空 apiKey，不保存百炼 Key；`selectedModelId` + `customModels[]` 为设置页源数据；历史 `WenXueUseLocalBuiltinLlmFallback` 标志被运行时忽略                                                                                                                                                                                                   |
-| ModelToolChoiceCompatibility                  | `chrome.storage.local` 独立版本化记录                                                                                                     | ExtensionSettingsConfig / RuntimeAgentModels                             | 仅按规范化 endpoint + model 保存 named `tool_choice` 不兼容的到期时间（30 天 TTL）；不含 API Key、用户 session、错误正文或鉴权头；过期/无效项加载时裁剪                                                                                                                                                                                                                                          |
-| 用户 session                                  | 主进程内存；插件 `chrome.storage.local` 的 `WenXueUserSession`                                                                            | ConsoleUI / UserSessionStore / UserSessionHandoff / ExtensionEntrypoints | 仅作为调网关凭据；不得在桌面设置页展示/复制 token；不得写入日志、tokens 记录或打包产物；refresh token 仅用于插件刷新 session                                                                                                                                                                                                                                                                     |
-| 用户账号授权状态                              | CloudBase Auth user profile                                                                                                               | TCB `CreateUser` / CloudBase 用户管理 / TCB `ModifyUser`                 | 网关每次受保护请求通过 `/auth/v1/user/me` 读取；仅 `ACTIVE` 放行，`BLOCKED` 拒绝；不依赖 NoSQL 激活记录                                                                                                                                                                                                                                                                                          |
-| DashScope API Key                             | CloudBase Run 环境变量 `DASHSCOPE_API_KEY`                                                                                                | CloudBaseLlmGateway                                                      | 仅服务端读取；不得返回给客户端、写入日志、写入仓库或本地配置                                                                                                                                                                                                                                                                                                                                     |
-| 云端 tokens 计量                              | CloudBase NoSQL `token_usage`                                                                                                             | CloudBaseLlmGateway / usage-summary target                               | 原始计量仅用户 uid、模型、tokens、时间、延迟；summary 返回前移除 uid；不含正文、Key、Authorization/Bearer/accessToken/refreshToken                                                                                                                                                                                                                                                               |
-| Legacy 用户账号状态                           | CloudBase NoSQL `user_accounts`                                                                                                           | AdminApi                                                                 | 当前 AdminConsole 状态/备注数据；Auth-native 切换后不被 CloudBaseLlmGateway 读取，不能作为封禁权威；远端集合暂不物理删除，待 AdminApi 迁移与数据清理                                                                                                                                                                                                                                             |
-| 后台管理员授权                                | CloudBase NoSQL `admin_users`                                                                                                             | 手动初始化 / AdminApi 读取                                               | `_id` 等于 CloudBase Auth uid；只有 active admin/viewer 可访问 AdminApi；不保存密码，密码由 CloudBase Auth 管理                                                                                                                                                                                                                                                                                  |
-| 用户权限审计                                  | CloudBase NoSQL `user_permission_audit`                                                                                                   | AdminApi                                                                 | 每次状态调整写 before/after/adminUid/reason/createdAt；不含提示词正文、access token、refresh token、API Key 或敏感头                                                                                                                                                                                                                                                                             |
-| 应用内消息                                    | CloudBase NoSQL `client_announcements`                                                                                                    | AdminApi                                                                 | ADMINONLY；纯文本；平台/版本/UID 目标只在服务端匹配；正文与 UID 不进入 signal                                                                                                                                                                                                                                                                                                                    |
-| 消息账号回执                                  | CloudBase NoSQL `client_announcement_receipts`                                                                                            | AdminApi                                                                 | ADMINONLY；`announcementId:uid` 唯一；`expiresAt` 为公告到期后 24 小时的 BSON Date，`expireAfterSeconds=0` TTL 主清理，pending/ack 每 5 分钟至多触发一次 20 条清理兜底；客户端只经用户 bearer API 幂等确认                                                                                                                                                                                       |
-| 消息 revision                                 | CloudBase NoSQL `desktop_announcement_signal/global` 与 `user:<sha256(uid)>`                                                              | AdminApi                                                                 | 服务端写；global 只因发布/撤回递增，账号文档只因该账号确认递增且带 uid；读规则仅允许登录用户读 global 或 `doc.uid == auth.uid`；仅 revision/updatedAt/uid，不含消息正文或目标                                                                                                                                                                                                                    |
-| 更新候选与 rollout                            | CloudBase NoSQL `desktop_release_candidates` / `desktop_release_rollouts`                                                                 | CI 注册 target / AdminApi                                                | ADMINONLY；候选不可变；后台只能选择 verified 候选并改变动态策略；rollouts 集合内以 `recordType=release-slot` 保留文档维护 active/current/highestVersion，列表过滤该文档；`runtime_channel_published` 支持发布历史                                                                                                                                                                                |
-| 更新 revision                                 | CloudBase NoSQL `desktop_release_signal/<runtime>:<channel>`                                                                              | AdminApi                                                                 | 公开只读、服务端写；仅 revision/updatedAt，不含私有候选元数据                                                                                                                                                                                                                                                                                                                                    |
-| 匿名更新事件                                  | CloudBase NoSQL `desktop_release_events`                                                                                                  | AdminApi                                                                 | 不含 uid/session/硬件指纹；保存 installId hash、阶段结果与 `expiresAt` BSON Date；`expiresAt` 上 `expireAfterSeconds=0` TTL 在 30 天后清理；同集合事务维护最多 32 shard 的全局 UTC 日共享配额，冲突指数退避，重复结果不重复计数；`release_created_cursor` 支持稳定健康游标；仅对最多 6 个活动/暂停 rollout 各读取最多 2,000 条，未覆盖项返回原因；event token 只防随意写入，健康统计不是可信遥测 |
-| 分发审计                                      | CloudBase NoSQL `admin_dispatch_audit`                                                                                                    | AdminApi                                                                 | ADMINONLY、纯审计、只追加；记录发布/撤回/暂停/恢复的管理员与前后摘要；不保存 release slot，不参与互斥或版本门禁                                                                                                                                                                                                                                                                                  |
-| 更新 installId                                | `<userData>/update-install-id`                                                                                                            | DesktopUpdateService                                                     | 随机 UUID；不从账号、硬件或画像派生；只用于本机稳定灰度分桶                                                                                                                                                                                                                                                                                                                                      |
-| Electron 安装包缓存                           | `<userData>/update-downloads/`                                                                                                            | DesktopUpdateService                                                     | 只保存 SHA-512/size 校验通过的 `manual-unsigned` 候选；pause/withdraw 或候选变化后不得打开；不保存 uid 或消息数据                                                                                                                                                                                                                                                                                |
-| 任务历史                                      | 插件 IndexedDB `page-agent-ext` v3：`sessions`（`id`、`conversationId`、`createdAt`、`updatedAt`，索引 `by-created` / `by-conversation`） | SidepanelApp                                                             | 不出本机；同一会话多轮续接按 `conversationId` upsert 为一条记录；用户可清空                                                                                                                                                                                                                                                                                                                      |
-| 插件日志                                      | IndexedDB `page-agent-ext` v3：`logs`（`id` 自增，`by-ts` 索引）；与 `sessions` 同库                                                      | 仅 background Logging 写；启动器日志页接管查看入口                       | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；可通过单向遥测进入桌面域                                                                                                                                                                                                                                     |
-| 快捷入口与 onboarding 标志                    | chrome.storage.local                                                                                                                      | NewTabHome                                                               | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                                                                                                                                                                                                                                                                                                                |
-| browser.lock.json                             | 仓库 `apps/desktop/`                                                                                                                      | 开发者（升级 CfT 时）                                                    | 构建期消费，运行期只读                                                                                                                                                                                                                                                                                                                                                                           |
-| 官网演示 UI 状态                              | 浏览器内存                                                                                                                                | WebsiteSite                                                              | 仅本页交互演示，不持久化、不出网                                                                                                                                                                                                                                                                                                                                                                 |
+| 数据                                                    | 位置                                                                                                                                      | 谁写                                                                     | 边界约束                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 画像数据（cookie、登录态、浏览记录、扩展 AI 历史/记忆） | `<userData>/profiles/<id>/`                                                                                                               | 仅 CfT / 内置扩展                                                        | 桌面端只创建、复制或删除整个目录，永不读内容；退出账号保留，只有归属账号可经 DesktopBridge 挂载；不上传云端                                                                                                                                                                                                                                                                                      |
+| 画像元数据                                              | `<userData>/browsers.json`                                                                                                                | BrowserProfileStore                                                      | 含 `accountNamespace`、名称、颜色、时间、目录路径，不含 cookie/登录态；`accountNamespace` 不返回 renderer；无归属旧记录失败关闭                                                                                                                                                                                                                                                                  |
+| 启动器设置                                              | `<userData>/settings.json`                                                                                                                | LauncherSettingsStore                                                    | 即时保存；不得包含 API Key                                                                                                                                                                                                                                                                                                                                                                       |
+| 运行日志                                                | `<userData>/logs/`                                                                                                                        | AppLogger                                                                | 不含 Key/对话内容（I2）；主进程系统事件同时镜像到启动器日志                                                                                                                                                                                                                                                                                                                                      |
+| 启动器日志                                              | `<userData>/launcher-logs.json`                                                                                                           | LauncherLogStore / AppLogger / LauncherTelemetryIngest                   | 仅保存已脱敏日志；支持 browserId 归类、保留裁剪、清空与导出；桌面侧二次清洗敏感键但保留 token 计数字段；坏 JSON 自动隔离为 `.corrupt-<timestamp>` 后重建空文件                                                                                                                                                                                                                                   |
+| tokens 用量                                             | `<userData>/token-usage.json`                                                                                                             | TokenUsageStore / LauncherTelemetryIngest                                | 仅保存 tokens 数量、模型、画像、时间与估算成本；不含提示词正文或敏感头                                                                                                                                                                                                                                                                                                                           |
+| 云端 tokens summary 缓存                                | `<userData>/token-usage-summary-cache.json`                                                                                               | UsageCloudClient                                                         | 按 userId 绑定；只保存已脱敏 `TokenUsageSummary`，不保存 access token、refresh token、uid 到 summary、正文或敏感头                                                                                                                                                                                                                                                                               |
+| ModelConfig（含每个自定义模型自己的 API Key）           | `chrome.storage.local`                                                                                                                    | SidepanelApp options 设置页与语言快捷入口                                | 自定义 BYO-Key 不出本机；内置模型只保存网关 baseURL 与空 apiKey，不保存百炼 Key；`selectedModelId` + `customModels[]` 为设置页源数据；历史 `WenXueUseLocalBuiltinLlmFallback` 标志被运行时忽略                                                                                                                                                                                                   |
+| ModelToolChoiceCompatibility                            | `chrome.storage.local` 独立版本化记录                                                                                                     | ExtensionSettingsConfig / RuntimeAgentModels                             | 仅按规范化 endpoint + model 保存 named `tool_choice` 不兼容的到期时间（30 天 TTL）；不含 API Key、用户 session、错误正文或鉴权头；过期/无效项加载时裁剪                                                                                                                                                                                                                                          |
+| 用户 session                                            | 主进程内存；插件 `chrome.storage.local` 的 `WenXueUserSession`                                                                            | ConsoleUI / UserSessionStore / UserSessionHandoff / ExtensionEntrypoints | 仅作为调网关凭据；不得在桌面设置页展示/复制 token；不得写入日志、tokens 记录或打包产物；refresh token 仅用于插件刷新 session                                                                                                                                                                                                                                                                     |
+| 用户账号授权状态                                        | CloudBase Auth user profile                                                                                                               | TCB `CreateUser` / CloudBase 用户管理 / TCB `ModifyUser`                 | 网关每次受保护请求通过 `/auth/v1/user/me` 读取；仅 `ACTIVE` 放行，`BLOCKED` 拒绝；不依赖 NoSQL 激活记录                                                                                                                                                                                                                                                                                          |
+| DashScope API Key                                       | CloudBase Run 环境变量 `DASHSCOPE_API_KEY`                                                                                                | CloudBaseLlmGateway                                                      | 仅服务端读取；不得返回给客户端、写入日志、写入仓库或本地配置                                                                                                                                                                                                                                                                                                                                     |
+| 云端 tokens 计量                                        | CloudBase NoSQL `token_usage`                                                                                                             | CloudBaseLlmGateway / usage-summary target                               | 原始计量仅用户 uid、模型、tokens、时间、延迟；summary 返回前移除 uid；不含正文、Key、Authorization/Bearer/accessToken/refreshToken                                                                                                                                                                                                                                                               |
+| Legacy 用户账号状态                                     | CloudBase NoSQL `user_accounts`                                                                                                           | AdminApi                                                                 | 当前 AdminConsole 状态/备注数据；Auth-native 切换后不被 CloudBaseLlmGateway 读取，不能作为封禁权威；远端集合暂不物理删除，待 AdminApi 迁移与数据清理                                                                                                                                                                                                                                             |
+| 后台管理员授权                                          | CloudBase NoSQL `admin_users`                                                                                                             | 手动初始化 / AdminApi 读取                                               | `_id` 等于 CloudBase Auth uid；只有 active admin/viewer 可访问 AdminApi；不保存密码，密码由 CloudBase Auth 管理                                                                                                                                                                                                                                                                                  |
+| 用户权限审计                                            | CloudBase NoSQL `user_permission_audit`                                                                                                   | AdminApi                                                                 | 每次状态调整写 before/after/adminUid/reason/createdAt；不含提示词正文、access token、refresh token、API Key 或敏感头                                                                                                                                                                                                                                                                             |
+| 应用内消息                                              | CloudBase NoSQL `client_announcements`                                                                                                    | AdminApi                                                                 | ADMINONLY；纯文本；平台/版本/UID 目标只在服务端匹配；正文与 UID 不进入 signal                                                                                                                                                                                                                                                                                                                    |
+| 消息账号回执                                            | CloudBase NoSQL `client_announcement_receipts`                                                                                            | AdminApi                                                                 | ADMINONLY；`announcementId:uid` 唯一；`expiresAt` 为公告到期后 24 小时的 BSON Date，`expireAfterSeconds=0` TTL 主清理，pending/ack 每 5 分钟至多触发一次 20 条清理兜底；客户端只经用户 bearer API 幂等确认                                                                                                                                                                                       |
+| 消息 revision                                           | CloudBase NoSQL `desktop_announcement_signal/global` 与 `user:<sha256(uid)>`                                                              | AdminApi                                                                 | 服务端写；global 只因发布/撤回递增，账号文档只因该账号确认递增且带 uid；读规则仅允许登录用户读 global 或 `doc.uid == auth.uid`；仅 revision/updatedAt/uid，不含消息正文或目标                                                                                                                                                                                                                    |
+| 更新候选与 rollout                                      | CloudBase NoSQL `desktop_release_candidates` / `desktop_release_rollouts`                                                                 | CI 注册 target / AdminApi                                                | ADMINONLY；候选不可变；后台只能选择 verified 候选并改变动态策略；rollouts 集合内以 `recordType=release-slot` 保留文档维护 active/current/highestVersion，列表过滤该文档；`runtime_channel_published` 支持发布历史                                                                                                                                                                                |
+| 更新 revision                                           | CloudBase NoSQL `desktop_release_signal/<runtime>:<channel>`                                                                              | AdminApi                                                                 | 公开只读、服务端写；仅 revision/updatedAt，不含私有候选元数据                                                                                                                                                                                                                                                                                                                                    |
+| 匿名更新事件                                            | CloudBase NoSQL `desktop_release_events`                                                                                                  | AdminApi                                                                 | 不含 uid/session/硬件指纹；保存 installId hash、阶段结果与 `expiresAt` BSON Date；`expiresAt` 上 `expireAfterSeconds=0` TTL 在 30 天后清理；同集合事务维护最多 32 shard 的全局 UTC 日共享配额，冲突指数退避，重复结果不重复计数；`release_created_cursor` 支持稳定健康游标；仅对最多 6 个活动/暂停 rollout 各读取最多 2,000 条，未覆盖项返回原因；event token 只防随意写入，健康统计不是可信遥测 |
+| 分发审计                                                | CloudBase NoSQL `admin_dispatch_audit`                                                                                                    | AdminApi                                                                 | ADMINONLY、纯审计、只追加；记录发布/撤回/暂停/恢复的管理员与前后摘要；不保存 release slot，不参与互斥或版本门禁                                                                                                                                                                                                                                                                                  |
+| 更新 installId                                          | `<userData>/update-install-id`                                                                                                            | DesktopUpdateService                                                     | 随机 UUID；不从账号、硬件或画像派生；只用于本机稳定灰度分桶                                                                                                                                                                                                                                                                                                                                      |
+| Electron 安装包缓存                                     | `<userData>/update-downloads/`                                                                                                            | DesktopUpdateService                                                     | 只保存 SHA-512/size 校验通过的 `manual-unsigned` 候选；pause/withdraw 或候选变化后不得打开；不保存 uid 或消息数据                                                                                                                                                                                                                                                                                |
+| 任务历史                                                | 插件 IndexedDB `page-agent-ext` v3：`sessions`（`id`、`conversationId`、`createdAt`、`updatedAt`，索引 `by-created` / `by-conversation`） | SidepanelApp                                                             | 不出本机；同一会话多轮续接按 `conversationId` upsert 为一条记录；用户可清空                                                                                                                                                                                                                                                                                                                      |
+| 插件日志                                                | IndexedDB `page-agent-ext` v3：`logs`（`id` 自增，`by-ts` 索引）；与 `sessions` 同库                                                      | 仅 background Logging 写；启动器日志页接管查看入口                       | 已脱敏的对话/LLM 正文可保存；Key/Authorization/Bearer 禁止入库；默认 3 天、5000 条，按 `logRetentionDays`/`logMaxEntries` 自动清理；可通过单向遥测进入桌面域                                                                                                                                                                                                                                     |
+| 快捷入口与 onboarding 标志                              | chrome.storage.local                                                                                                                      | NewTabHome                                                               | 不出本机（I2）；newtabQuickLinks 为非敏感书签数据                                                                                                                                                                                                                                                                                                                                                |
+| browser.lock.json                                       | 仓库 `apps/desktop/`                                                                                                                      | 开发者（升级 CfT 时）                                                    | 构建期消费，运行期只读                                                                                                                                                                                                                                                                                                                                                                           |
+| 官网演示 UI 状态                                        | 浏览器内存                                                                                                                                | WebsiteSite                                                              | 仅本页交互演示，不持久化、不出网                                                                                                                                                                                                                                                                                                                                                                 |
 
 出网边界：内置模型路径为插件域 → CloudBaseLlmGateway → DashScope；自定义 BYO-Key 路径仍为插件域 → 用户配置的 LLM baseURL（HTTPS）。桌面域可访问 CloudBaseLlmGateway 的 auth/usage/announcement/update 接口，并只监听无正文 signal；更新产物从已验证候选指向的专用 COS HTTPS 源下载。后台管理域仅访问 CloudBase Web Auth 与 AdminApi；CfT 自身的浏览流量属用户行为，不在系统边界内。
 
@@ -843,8 +892,8 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 - **必有单测（vitest）**：LaunchConfig（argv 组装全分支）、BrowserResources（路径解析，mock resourcesPath）、ProfileStore、BrowserSupervisor 状态机（mock child_process）。
 - **vendor 四包**：上游测试套件随包保留，`pnpm -r test` 必绿；对 vendor 的本地补丁必须配套回归测试。`@page-agent/core` 的续接/压缩补丁需覆盖 `user_message`、`followUp`、历史投影、摘要降级、`recall_steps`、硬阈值淘汰与恢复历史后续接。
 - **SidepanelApp 会话续接**：`useAgent` 覆盖 execute/followUp/restoreConversation 的状态同步，`db` 覆盖 v1/v2→v3 迁移与 `conversationId` upsert，`ContextBanner` 覆盖近溢出判定与横幅文案。
-- **启动器 App 化新增单测**：BrowserProfileStore 持久化与目录对齐；BrowserSupervisor 多画像并行与同画像 I1；DesktopBridge 新 IPC 契约；LauncherTelemetryIngest 日志/tokens 导入与二次清洗；窗口外壳选项纯函数。
-- **UserSessionStore / UserSessionHandoff / UsageCloudClient**：覆盖 session 字段校验、未登录拒绝启动/云端 summary、按 userId 读取与缓存云端 summary、云端失败时读同 userId 缓存、一次性 localhost handoff 成功/失败与重复完成保护。
+- **启动器 App 化新增单测**：BrowserProfileStore 持久化、目录对齐、串行并发写、账号过滤、跨账号 mutation 拒绝与旧记录失败关闭；ProfileStore/BrowserSupervisor 覆盖跨进程启动标记、负锁二次确认、多画像并行、同画像 I1、SIGTERM/SIGKILL/error 与未跟踪画像占用时的失败关闭；DesktopBridge 覆盖所有画像入口的主进程账号校验、transition 锁、状态过滤、退出前批量停止与 foreign ID 不泄露；LauncherTelemetryIngest 日志/tokens 导入与二次清洗；窗口外壳选项纯函数。
+- **UserSessionStore / UserSessionHandoff / UsageCloudClient**：覆盖主进程受信网关 token→uid 校验、uid 不匹配/401/畸形/超时失败关闭、同账号刷新、有效 session 跨账号覆盖拒绝、未登录拒绝启动/云端 summary、按 userId 读取与缓存云端 summary、云端失败时读同 userId 缓存、一次性 localhost handoff 成功/失败与重复完成保护；ConsoleUI 退出覆盖 Cloud signOut 结果未知与 clear 失败时不解除保护。
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1/v2→v3 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
 - **VisualObservation**：覆盖 v2 协议握手与单次自刷新、跨 extension realm 的 Web Lock 单飞、v1 明确不兼容、目标 tab 必填及切换/导航 TOCTOU、旧 background/消息拒绝结构化降级、AbortError 传播、Qwen 强制工具参数与重试消息顺序、CloudBase 错误 envelope、自定义无鉴权端点/内置网关鉴权前置、输出/日志禁止 data URI 回灌；发布前以真实 CfT 走协议握手 + 截图 data URL + tab id 一致性 smoke。
 - **VisualCapabilities / QuestionSolver**：覆盖 legacy Observe 输入/输出兼容、scene suggestion 不自动回答、`inspect/answer/fill` 写权限、capability registry、23 个 production variant source-attributed fixture、task lease/run/request/cancel 与 stale-result、全 frame interruption、attempt/question/page fingerprint、synthetic embedded-answer 映射及 production allowlist 为空、text/vision 路由、exact-state + snapshot/restore、DOM/视觉验证状态机、导航后 frame 重发现、no-submit 与 maturity；本地双 loopback origin fixture server 与 synthetic RPC 覆盖 cross-origin 结构、前台所有权和两任务隔离，真实 Chromium 扩展 smoke 仍是发布前门禁。

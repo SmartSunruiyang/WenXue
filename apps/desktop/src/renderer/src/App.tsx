@@ -51,6 +51,7 @@ import {
 	type DesktopAnnouncementSnapshot,
 } from './DesktopAnnouncementService'
 import { DesktopReleaseSignalService } from './DesktopReleaseSignalService'
+import { executeSafeSignOut } from './safeSignOut'
 import { strings } from './strings'
 import type {
 	AppShellInfo,
@@ -755,16 +756,21 @@ export default function App() {
 		setTokensLoading(false)
 		setLogoutBusy(true)
 		setMessage(null)
-		let signedOut = false
+		let logoutCompleted = false
 		try {
-			await signOutLauncher()
-			signedOut = true
-			const result = await window.wenxue.auth.clearSession()
-			if (!result.ok) throw new Error(result.error ?? '主进程 session 清理失败')
+			await executeSafeSignOut({
+				prepareSignOut: window.wenxue.auth.prepareSignOut,
+				signOutCloud: signOutLauncher,
+				hasCloudSession: async () => (await getLauncherSession()) !== null,
+				clearSession: window.wenxue.auth.clearSession,
+				cancelSignOut: window.wenxue.auth.cancelSignOut,
+			})
+			logoutCompleted = true
 		} catch (error) {
+			await refreshProfiles().catch(() => undefined)
 			setMessage(readCloudBaseErrorMessage(error, strings.auth.error.logout))
 		} finally {
-			if (signedOut) {
+			if (logoutCompleted) {
 				announcementServiceRef.current?.stop()
 				setTokensLoading(false)
 				setAuthUser(null)
@@ -790,7 +796,7 @@ export default function App() {
 			logoutBusyRef.current = false
 			setLogoutBusy(false)
 		}
-	}, [])
+	}, [refreshProfiles])
 
 	const acknowledgeAnnouncement = useCallback(async () => {
 		const current = announcementServiceRef.current?.current()
