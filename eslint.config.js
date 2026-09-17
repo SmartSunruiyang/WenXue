@@ -9,6 +9,9 @@ export default tseslint.config(
 			'**/node_modules/**',
 			'**/dist/**',
 			'**/.output/**',
+			'**/.cloudbase-deploy/**',
+			'**/.wxt/**',
+			'**/coverage/**',
 			'**/out/**',
 			'**/.browsers/**',
 			'ocsjs/**',
@@ -24,10 +27,14 @@ export default tseslint.config(
 		files: [
 			'apps/admin/src/**/*.{ts,tsx}',
 			'apps/desktop/src/renderer/**/*.{ts,tsx}',
+			'apps/extension/src/**/*.{js,ts,tsx}',
+			'apps/website/src/**/*.{js,ts,tsx}',
 			'packages/client-operations/**/*.{js,mjs}',
+			'packages/page-controller/src/**/*.{js,ts,tsx}',
+			'packages/ui/src/**/*.{js,ts,tsx}',
 		],
 		languageOptions: {
-			globals: globals.browser,
+			globals: { ...globals.browser, ...globals.webextensions },
 		},
 	},
 	{
@@ -41,6 +48,18 @@ export default tseslint.config(
 		],
 		languageOptions: {
 			globals: globals.node,
+		},
+	},
+	{
+		files: [
+			'eslint.config.js',
+			'**/*.config.{js,mjs,ts}',
+			'apps/admin/server*.mjs',
+			'apps/*/scripts/**/*.{js,mjs,ts}',
+			'apps/extension/test-fixtures/**/*.{js,mjs,ts}',
+		],
+		languageOptions: {
+			globals: { ...globals.node, ...globals.browser },
 		},
 	},
 )
