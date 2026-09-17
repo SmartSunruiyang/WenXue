@@ -111,6 +111,28 @@ describe('CloudBase LLM gateway behavior', () => {
 		})
 	})
 
+	it.each([
+		{ model: 'qwen-plus', messages: [{ role: 'user', content: 'hello' }] },
+		{ model: 'qwen3.7-max', messages: [], stream: false },
+		{
+			model: 'qwen3.7-max',
+			messages: [{ role: 'user', content: 'hello' }],
+			max_tokens: 32_769,
+		},
+	])('rejects an unsafe chat request before authentication or upstream fetch: %j', async (body) => {
+		const fetchImpl = vi.fn()
+
+		await expect(
+			handleChatCompletions({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				rawBody: JSON.stringify(body),
+				env: DEFAULT_ENV,
+				fetchImpl,
+			}),
+		).rejects.toMatchObject({ status: 400 })
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
 	it('extracts non-zero usage from a streamed SSE data frame', () => {
 		const usage = extractUsageFromSseFrame(
 			'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":5,"total_tokens":12}}\n\n',
@@ -404,6 +426,19 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(calls[0].authorization).toBe(`Bearer ${ACCESS_TOKEN}`)
 	})
 
+	it('reports a successful CloudBase profile response with invalid JSON as an upstream error', async () => {
+		await expect(
+			resolveCloudBaseUser({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				env: DEFAULT_ENV,
+				fetchImpl: async () => new Response('<html>temporary proxy error</html>'),
+			}),
+		).rejects.toMatchObject({
+			message: 'Upstream returned invalid JSON',
+			status: 502,
+		})
+	})
+
 	it('times out a stalled user-profile response body without leaking the token', async () => {
 		vi.useFakeTimers()
 		try {
@@ -557,6 +592,173 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(result.usagePersisted).toBe(true)
 		expect(usageWrites).toHaveLength(1)
 		expect(() => assertUsageRecordSafe(result.usageRecord)).not.toThrow()
+	})
+
+	it('parses streamed usage when the SSE data line is split across network chunks', async () => {
+		const encoder = new TextEncoder()
+		const usageWrites: unknown[] = []
+		const sentChunks: string[] = []
+		const usageFrame =
+			'data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}\n\n'
+		const dashScopeResponse = new Response(
+			new ReadableStream({
+				start(controller) {
+					for (const part of [
+						usageFrame.slice(0, 17),
+						usageFrame.slice(17, 51),
+						usageFrame.slice(51),
+					]) {
+						controller.enqueue(encoder.encode(part))
+					}
+					controller.close()
+				},
+			}),
+		)
+
+		const result = await handleChatCompletions({
+			headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+			rawBody: JSON.stringify({
+				model: 'qwen3.7-max',
+				stream: true,
+				messages: [{ role: 'user', content: 'hello' }],
+			}),
+			sse: {
+				closed: false,
+				send: (chunk: string) => sentChunks.push(chunk),
+				end() {},
+				on() {},
+			},
+			env: DEFAULT_ENV,
+			fetchImpl: createGatewayFetch({ dashScopeResponse, usageWrites }),
+		})
+
+		expect(sentChunks.join('')).toBe(usageFrame)
+		expect(result.usageRecord).toMatchObject({
+			inputTokens: 2,
+			outputTokens: 3,
+			totalTokens: 5,
+		})
+		expect(usageWrites).toHaveLength(1)
+	})
+
+	it('rejects an upstream SSE frame that grows beyond the buffer limit', async () => {
+		const dashScopeResponse = new Response(
+			new ReadableStream({
+				start(controller) {
+					controller.enqueue(new TextEncoder().encode(`data: ${'x'.repeat(1024 * 1024)}`))
+					controller.close()
+				},
+			}),
+		)
+
+		await expect(
+			handleChatCompletions({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				rawBody: JSON.stringify({
+					model: 'qwen3.7-max',
+					stream: true,
+					messages: [{ role: 'user', content: 'hello' }],
+				}),
+				sse: {
+					closed: false,
+					send() {},
+					end() {},
+					on() {},
+				},
+				env: DEFAULT_ENV,
+				fetchImpl: createGatewayFetch({ dashScopeResponse }),
+			}),
+		).rejects.toMatchObject({
+			message: 'DashScope SSE frame exceeds the size limit',
+			status: 502,
+		})
+	})
+
+	it('times out a stalled non-streaming DashScope response body', async () => {
+		vi.useFakeTimers()
+		try {
+			let markBodyStarted!: () => void
+			const bodyStarted = new Promise<void>((resolve) => {
+				markBodyStarted = resolve
+			})
+			const request = handleChatCompletions({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				rawBody: JSON.stringify({
+					model: 'qwen3.7-max',
+					stream: false,
+					messages: [{ role: 'user', content: 'hello' }],
+				}),
+				env: { ...DEFAULT_ENV, requestTimeoutMs: 1_000 },
+				fetchImpl: (async (url) => {
+					if (String(url).includes('/auth/v1/user/me')) {
+						return Response.json({ status: 'ACTIVE', sub: USER_ID })
+					}
+					return {
+						ok: true,
+						status: 200,
+						json: () => {
+							markBodyStarted()
+							return new Promise(() => {})
+						},
+					} as Response
+				}) as typeof fetch,
+			})
+			await bodyStarted
+			const rejection = expect(request).rejects.toMatchObject({
+				message: 'Upstream request timed out',
+				status: 504,
+			})
+
+			await vi.advanceTimersByTimeAsync(1_000)
+			await rejection
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it('times out a streamed DashScope body that stops producing chunks', async () => {
+		vi.useFakeTimers()
+		try {
+			let markChunkSent!: () => void
+			const chunkSent = new Promise<void>((resolve) => {
+				markChunkSent = resolve
+			})
+			const stalledResponse = new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue(new TextEncoder().encode('data: {"choices":[]}\n\n'))
+					},
+				}),
+			)
+			const request = handleChatCompletions({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				rawBody: JSON.stringify({
+					model: 'qwen3.7-max',
+					stream: true,
+					messages: [{ role: 'user', content: 'hello' }],
+				}),
+				sse: {
+					closed: false,
+					send() {
+						markChunkSent()
+					},
+					end() {},
+					on() {},
+				},
+				env: { ...DEFAULT_ENV, requestTimeoutMs: 1_000 },
+				fetchImpl: createGatewayFetch({ dashScopeResponse: stalledResponse }),
+			})
+			await chunkSent
+			const rejection = expect(request).rejects.toMatchObject({
+				message: 'Upstream request timed out',
+				status: 504,
+			})
+
+			await vi.advanceTimersByTimeAsync(1_000)
+			await rejection
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it('fails instead of writing zero usage when upstream omits usage', async () => {
@@ -1184,6 +1386,55 @@ describe('CloudBase LLM gateway behavior', () => {
 		])
 		expect(calls[0]?.authorization).toBe('Bearer cloudbase-usage-api-key')
 		expect(decodeURIComponent(calls[0]?.url ?? '')).toContain(`"uid":"${USER_ID}"`)
+	})
+
+	it('paginates usage records so cumulative totals are not capped at 500 rows', async () => {
+		const calls: string[] = []
+		const makeRecord = (index: number) => ({
+			_id: `record-${index}`,
+			uid: USER_ID,
+			model: 'qwen3.7-max',
+			inputTokens: 1,
+			outputTokens: 1,
+			totalTokens: 2,
+			latencyMs: 1,
+			requestId: `request-${index}`,
+			ts: 1782660000000 + index,
+			createdAt: '2026-06-28T15:20:00.000Z',
+		})
+
+		const records = await readUsageRecords({
+			uid: USER_ID,
+			envId: 'wenxue-d8gz76tacc3659f05',
+			apiKey: 'cloudbase-usage-api-key',
+			fetchImpl: async (url) => {
+				calls.push(String(url))
+				const query = JSON.parse(new URL(String(url)).searchParams.get('query') ?? '{}') as Record<
+					string,
+					unknown
+				>
+				return Response.json({
+					list:
+						'$and' in query
+							? [makeRecord(0)]
+							: Array.from({ length: 500 }, (_, index) => makeRecord(500 - index)),
+				})
+			},
+		})
+
+		expect(records).toHaveLength(501)
+		expect(calls).toHaveLength(2)
+		const secondUrl = new URL(calls[1])
+		expect(secondUrl.searchParams.has('skip')).toBe(false)
+		expect(JSON.parse(secondUrl.searchParams.get('query') ?? '{}')).toEqual({
+			$and: [
+				{ uid: USER_ID },
+				{
+					$or: [{ ts: { $lt: 1782660000001 } }, { ts: 1782660000001, _id: { $lt: 'record-1' } }],
+				},
+			],
+		})
+		expect(buildUsageSummary(records).totalTokens).toBe(1002)
 	})
 
 	it('returns a cloud usage summary for the authenticated user', async () => {

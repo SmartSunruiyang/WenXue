@@ -3,6 +3,11 @@ import { createHash, createHmac, randomUUID } from 'node:crypto'
 export const DASHSCOPE_CHAT_COMPLETIONS_URL =
 	'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
+const MAX_CHAT_BODY_BYTES = 8 * 1024 * 1024
+const MAX_CHAT_MESSAGES = 200
+const MAX_CHAT_OUTPUT_TOKENS = 32_768
+const MAX_SSE_FRAME_BYTES = 1024 * 1024
+const ALLOWED_CHAT_MODELS = new Set(['qwen3.7-max', 'qwen3.7-plus'])
 const REGISTRATION_TIMEOUT_MS = 10_000
 const ACTIVATION_TIMEOUT_MS = 10_000
 const TOKEN_USAGE_COLLECTION = 'token_usage'
@@ -245,7 +250,7 @@ export async function writeUsageRecord(input) {
 	}
 	assertUsageRecordSafe(input.record)
 	const url = collectionDocumentsUrl(input.envId, TOKEN_USAGE_COLLECTION)
-	const response = await fetchWithTimeout(
+	const { response, payload } = await fetchJsonWithTimeout(
 		input.fetchImpl ?? fetch,
 		url,
 		{
@@ -261,7 +266,7 @@ export async function writeUsageRecord(input) {
 	if (!response.ok) {
 		throw new GatewayError(`CloudBase usage write failed with ${response.status}`, 502)
 	}
-	return response.json()
+	return payload
 }
 
 /**
@@ -279,35 +284,72 @@ export async function readUsageRecords(input) {
 	if (!input.apiKey) {
 		throw new GatewayError('CLOUDBASE_USAGE_API_KEY is not configured', 500)
 	}
-	const url = collectionDocumentsUrl(input.envId, TOKEN_USAGE_COLLECTION)
-	url.searchParams.set('query', JSON.stringify({ uid: input.uid }))
-	url.searchParams.set('order', JSON.stringify([{ field: 'ts', direction: 'desc' }]))
-	url.searchParams.set('limit', String(input.limit ?? 500))
-	const response = await fetchWithTimeout(
-		input.fetchImpl ?? fetch,
-		url,
-		{
-			method: 'GET',
-			headers: {
-				authorization: `Bearer ${input.apiKey}`,
+	const requestedLimit =
+		typeof input.limit === 'number' && Number.isSafeInteger(input.limit) && input.limit > 0
+			? input.limit
+			: null
+	const records = []
+	let scanned = 0
+	/** @type {{ ts: number, id: string } | null} */
+	let before = null
+	while (requestedLimit === null || scanned < requestedLimit) {
+		const pageLimit = Math.min(500, requestedLimit === null ? 500 : requestedLimit - scanned)
+		const url = collectionDocumentsUrl(input.envId, TOKEN_USAGE_COLLECTION)
+		const baseQuery = { uid: input.uid }
+		const query = before
+			? {
+					$and: [
+						baseQuery,
+						{
+							$or: [{ ts: { $lt: before.ts } }, { ts: before.ts, _id: { $lt: before.id } }],
+						},
+					],
+				}
+			: baseQuery
+		url.searchParams.set('query', JSON.stringify(query))
+		url.searchParams.set(
+			'order',
+			JSON.stringify([
+				{ field: 'ts', direction: 'desc' },
+				{ field: '_id', direction: 'desc' },
+			]),
+		)
+		url.searchParams.set('limit', String(pageLimit))
+		const { response, payload } = await fetchJsonWithTimeout(
+			input.fetchImpl ?? fetch,
+			url,
+			{
+				method: 'GET',
+				headers: {
+					authorization: `Bearer ${input.apiKey}`,
+				},
 			},
-		},
-		input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-	)
-	if (!response.ok) {
-		throw new GatewayError(`CloudBase usage query failed with ${response.status}`, 502)
+			input.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+		)
+		if (!response.ok) {
+			throw new GatewayError(`CloudBase usage query failed with ${response.status}`, 502)
+		}
+		const page =
+			isRecord(payload) && Array.isArray(payload.list)
+				? payload.list
+				: isRecord(payload) && Array.isArray(payload.data)
+					? payload.data
+					: []
+		records.push(
+			...page.flatMap((item) => {
+				const record = normalizeCloudUsageRecord(item)
+				return record ? [record] : []
+			}),
+		)
+		scanned += page.length
+		if (page.length < pageLimit) break
+		const cursorRecord = normalizeCloudUsageRecord(page.at(-1))
+		if (!cursorRecord) {
+			throw new GatewayError('CloudBase usage query returned an invalid page cursor', 502)
+		}
+		before = { ts: cursorRecord.ts, id: cursorRecord._id }
 	}
-	const payload = /** @type {unknown} */ (await response.json())
-	const list =
-		isRecord(payload) && Array.isArray(payload.list)
-			? payload.list
-			: isRecord(payload) && Array.isArray(payload.data)
-				? payload.data
-				: []
-	return list.flatMap((item) => {
-		const record = normalizeCloudUsageRecord(item)
-		return record ? [record] : []
-	})
+	return records
 }
 
 /**
@@ -489,32 +531,39 @@ export async function handleChatCompletions(input) {
 	const now = input.now ?? Date.now
 	const startedAt = now()
 	const requestId = randomUUID()
+	if (new TextEncoder().encode(input.rawBody).byteLength > MAX_CHAT_BODY_BYTES) {
+		throw new GatewayError('Chat request body is too large', 413)
+	}
 	const body = parseRequestBody(input.rawBody)
+	assertChatRequestBody(body)
 	const user = await authorizeUserRequest({
 		headers: input.headers,
 		env: input.env,
 		fetchImpl: input.fetchImpl,
 	})
 	const dashScopeRequest = buildDashScopeRequest(body, input.env.dashscopeApiKey)
-	const upstream = await fetchWithTimeout(
-		input.fetchImpl ?? fetch,
-		dashScopeRequest.url,
-		{
-			method: 'POST',
-			headers: dashScopeRequest.headers,
-			body: JSON.stringify(dashScopeRequest.body),
-		},
-		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-	)
-	if (!upstream.ok) {
-		throw new GatewayError(`DashScope upstream failed with ${upstream.status}`, upstream.status)
+	const requestInit = {
+		method: 'POST',
+		headers: dashScopeRequest.headers,
+		body: JSON.stringify(dashScopeRequest.body),
 	}
+	const requestTimeoutMs = input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
 
 	if (body.stream === true) {
-		if (!input.sse) {
+		const sse = input.sse
+		if (!sse) {
 			throw new GatewayError('SSE context is required for streamed requests', 500)
 		}
-		const usage = await proxySseResponse(upstream, input.sse)
+		const { response: upstream, value: usage } = await fetchAndConsumeWithTimeout(
+			input.fetchImpl ?? fetch,
+			dashScopeRequest.url,
+			requestInit,
+			requestTimeoutMs,
+			async (response, control) => {
+				assertDashScopeResponseOk(response)
+				return proxySseResponse(response, sse, control)
+			},
+		)
 		const usageRecord = buildMeasuredUsageRecord({
 			body,
 			uid: user.uid,
@@ -533,7 +582,16 @@ export async function handleChatCompletions(input) {
 		return { usageRecord, usagePersisted, upstreamStatus: upstream.status }
 	}
 
-	const payload = await upstream.json()
+	const { response: upstream, value: payload } = await fetchAndConsumeWithTimeout(
+		input.fetchImpl ?? fetch,
+		dashScopeRequest.url,
+		requestInit,
+		requestTimeoutMs,
+		async (response) => {
+			assertDashScopeResponseOk(response)
+			return response.json()
+		},
+	)
 	const usageRecord = buildMeasuredUsageRecord({
 		body,
 		uid: user.uid,
@@ -550,6 +608,40 @@ export async function handleChatCompletions(input) {
 		timeoutMs: input.env.requestTimeoutMs,
 	})
 	return { responseBody: payload, usageRecord, usagePersisted, upstreamStatus: upstream.status }
+}
+
+/** @param {JsonRecord} body */
+function assertChatRequestBody(body) {
+	const model = readString(body.model)
+	if (!model || !ALLOWED_CHAT_MODELS.has(model)) {
+		throw new GatewayError('Unsupported chat model', 400)
+	}
+	if (!Array.isArray(body.messages) || body.messages.length === 0) {
+		throw new GatewayError('Chat messages must be a non-empty array', 400)
+	}
+	if (body.messages.length > MAX_CHAT_MESSAGES) {
+		throw new GatewayError(`Chat messages exceed the ${MAX_CHAT_MESSAGES} item limit`, 413)
+	}
+	if (body.stream !== undefined && typeof body.stream !== 'boolean') {
+		throw new GatewayError('Chat stream must be a boolean', 400)
+	}
+	const maxTokens = body.max_tokens
+	if (
+		maxTokens !== undefined &&
+		(typeof maxTokens !== 'number' ||
+			!Number.isSafeInteger(maxTokens) ||
+			maxTokens < 1 ||
+			maxTokens > MAX_CHAT_OUTPUT_TOKENS)
+	) {
+		throw new GatewayError(`Chat max_tokens must be from 1 to ${MAX_CHAT_OUTPUT_TOKENS}`, 400)
+	}
+}
+
+/** @param {Response} response */
+function assertDashScopeResponseOk(response) {
+	if (!response.ok) {
+		throw new GatewayError(`DashScope upstream failed with ${response.status}`, response.status)
+	}
 }
 
 /**
@@ -626,35 +718,70 @@ export function normalizeUsage(value) {
 /**
  * @param {Response} upstream
  * @param {{ closed: boolean, send: (chunk: string) => unknown, end: () => unknown, on?: (event: 'close', cb: () => void) => unknown }} sse
+ * @param {{ resetTimeout: () => void, abort: () => void }} control
  * @returns {Promise<TokenUsage | null>}
  */
-async function proxySseResponse(upstream, sse) {
+async function proxySseResponse(upstream, sse, control) {
 	if (!upstream.body) {
 		throw new GatewayError('DashScope stream response has no body', 502)
 	}
 	const reader = upstream.body.getReader()
 	const decoder = new TextDecoder()
+	/** @type {TokenUsage | null} */
 	let usage = null
+	let parseBuffer = ''
+	let parseBufferBytes = 0
 	let closed = false
 	sse.on?.('close', () => {
 		closed = true
+		control.abort()
 		reader.cancel().catch(() => {})
 	})
+	/** @param {string} text @param {boolean} [flush] */
+	const inspectCompleteLines = (text, flush = false) => {
+		parseBuffer += text
+		parseBufferBytes += Buffer.byteLength(text, 'utf8')
+		let lineEnd = parseBuffer.indexOf('\n')
+		while (lineEnd >= 0) {
+			const line = parseBuffer.slice(0, lineEnd + 1)
+			const lineBytes = Buffer.byteLength(line, 'utf8')
+			if (lineBytes > MAX_SSE_FRAME_BYTES) {
+				control.abort()
+				reader.cancel().catch(() => {})
+				throw new GatewayError('DashScope SSE frame exceeds the size limit', 502)
+			}
+			parseBuffer = parseBuffer.slice(lineEnd + 1)
+			parseBufferBytes -= lineBytes
+			usage = extractUsageFromSseFrame(line) ?? usage
+			lineEnd = parseBuffer.indexOf('\n')
+		}
+		if (parseBufferBytes > MAX_SSE_FRAME_BYTES) {
+			control.abort()
+			reader.cancel().catch(() => {})
+			throw new GatewayError('DashScope SSE frame exceeds the size limit', 502)
+		}
+		if (flush && parseBuffer) {
+			usage = extractUsageFromSseFrame(parseBuffer) ?? usage
+			parseBuffer = ''
+			parseBufferBytes = 0
+		}
+	}
 
 	while (!closed) {
 		const { value, done } = await reader.read()
 		if (done) {
 			break
 		}
+		control.resetTimeout()
 		const chunk = decoder.decode(value, { stream: true })
-		usage = extractUsageFromSseFrame(chunk) ?? usage
+		inspectCompleteLines(chunk)
 		if (!sse.closed) {
 			sse.send(chunk)
 		}
 	}
 	const trailing = decoder.decode()
+	inspectCompleteLines(trailing, true)
 	if (trailing && !sse.closed) {
-		usage = extractUsageFromSseFrame(trailing) ?? usage
 		sse.send(trailing)
 	}
 	if (!sse.closed) {
@@ -803,10 +930,14 @@ function readTencentCloudPayloadMessage(payload) {
  */
 async function safeJson(response) {
 	const text = await response.text()
-	if (!text) return null
+	if (!text) {
+		if (response.ok) throw new GatewayError('Upstream returned an empty JSON response', 502)
+		return null
+	}
 	try {
 		return JSON.parse(text)
 	} catch {
+		if (response.ok) throw new GatewayError('Upstream returned invalid JSON', 502)
 		return { message: text }
 	}
 }
@@ -1009,22 +1140,53 @@ function activationTimeoutMs(timeoutMs) {
  * @param {string | URL} url
  * @param {RequestInit} init
  * @param {number} timeoutMs
+ * @template T
+ * @param {(response: Response, control: { resetTimeout: () => void, abort: () => void }) => Promise<T>} consume
+ * @returns {Promise<{ response: Response, value: T }>}
  */
-async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
+async function fetchAndConsumeWithTimeout(fetchImpl, url, init, timeoutMs, consume) {
 	const controller = new AbortController()
-	const timeout = setTimeout(() => controller.abort(), timeoutMs)
+	let finished = false
+	let timedOut = false
+	/** @type {ReturnType<typeof setTimeout> | undefined} */
+	let timeout
+	/** @type {(reason: unknown) => void} */
+	let rejectTimeout = () => undefined
+	const timeoutFailure = new Promise((_, reject) => {
+		rejectTimeout = reject
+	})
+	const resetTimeout = () => {
+		if (finished) return
+		if (timeout) clearTimeout(timeout)
+		timeout = setTimeout(() => {
+			timedOut = true
+			controller.abort()
+			rejectTimeout(new GatewayError('Upstream request timed out', 504))
+		}, timeoutMs)
+	}
+	resetTimeout()
 	try {
-		return await fetchImpl(url, {
-			...init,
-			signal: controller.signal,
-		})
+		const requestAndBody = (async () => {
+			const response = await fetchImpl(url, {
+				...init,
+				signal: controller.signal,
+			})
+			resetTimeout()
+			const value = await consume(response, {
+				resetTimeout,
+				abort: () => controller.abort(),
+			})
+			return { response, value }
+		})()
+		return await Promise.race([requestAndBody, timeoutFailure])
 	} catch (error) {
-		if (isAbortError(error)) {
+		if (timedOut) {
 			throw new GatewayError('Upstream request timed out', 504)
 		}
 		throw error
 	} finally {
-		clearTimeout(timeout)
+		finished = true
+		if (timeout) clearTimeout(timeout)
 	}
 }
 
@@ -1038,38 +1200,12 @@ async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
  * @param {number} timeoutMs
  */
 async function fetchJsonWithTimeout(fetchImpl, url, init, timeoutMs) {
-	const controller = new AbortController()
-	/** @type {ReturnType<typeof setTimeout> | undefined} */
-	let timeout
-	const timeoutFailure = new Promise((_, reject) => {
-		timeout = setTimeout(() => {
-			controller.abort()
-			reject(new GatewayError('Upstream request timed out', 504))
-		}, timeoutMs)
-	})
-	try {
-		const requestAndBody = (async () => {
-			const response = await fetchImpl(url, {
-				...init,
-				signal: controller.signal,
-			})
-			const payload = /** @type {unknown} */ (await safeJson(response))
-			return { response, payload }
-		})()
-		return await Promise.race([requestAndBody, timeoutFailure])
-	} catch (error) {
-		if (controller.signal.aborted || isAbortError(error)) {
-			throw new GatewayError('Upstream request timed out', 504)
-		}
-		throw error
-	} finally {
-		if (timeout) clearTimeout(timeout)
-	}
-}
-
-/**
- * @param {unknown} error
- */
-function isAbortError(error) {
-	return error instanceof Error && error.name === 'AbortError'
+	const { response, value } = await fetchAndConsumeWithTimeout(
+		fetchImpl,
+		url,
+		init,
+		timeoutMs,
+		async (nextResponse) => safeJson(nextResponse),
+	)
+	return { response, payload: value }
 }
