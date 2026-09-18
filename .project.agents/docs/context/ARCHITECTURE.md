@@ -313,6 +313,7 @@ ConsoleUI 的 `cloudbase.ts` 同时封装 CloudBase 已有账号手机 OTP 登�
 `PhoneAuthForm.tsx` 消费一次性验证挑战、管理输入与倒计时；图形验证码由 CloudBase 实际挑战驱动，
 `captchaChallenge.ts` 管理挑战生命周期、SDK 回调与可暂停的网络超时，`CaptchaDialog.tsx` 只呈现挑战和发送意图，
 不在前端判定答案。短信登录不自动创建无用户名/密码的用户；新注册在手机验证码成功后才能获取完整账号会话。
+CloudBase Web Auth SDK 的用户名位于 `user_metadata.username`；旧短信账号补全资料时，使用 `updateUser` 返回的同 uid、同手机号资料核对用户名，不将后续资料刷新作为注册成功条件。
 所有新登录仍经 UserSessionStore → 网关 activate 验证，绑定前后 uid 必须一致；
 不新增认证后端、IPC 或跨域依赖。OTP 与图形挑战仅驻留内存；已有手机号的换绑/解绑不在此范围。
 

@@ -34,8 +34,7 @@ function registeredUser() {
 	return {
 		id: 'account-a',
 		phone: '+86 13800138000',
-		username: 'Alice1',
-		user_metadata: { hasPassword: true },
+		user_metadata: { username: 'Alice1', hasPassword: true },
 	}
 }
 
@@ -409,6 +408,57 @@ describe('launcher phone authentication', () => {
 		expect(fetcher).toHaveBeenCalledOnce()
 	})
 
+	it('accepts the profile returned by username update when SDK refreshUser fails afterward', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		const fetcher = mockGatewayActivation()
+		sdk.getUser.mockResolvedValueOnce({
+			data: {
+				user: { id: 'account-a', phone: '+86 13800138000', user_metadata: { hasPassword: false } },
+			},
+		})
+		sdk.verifyOtp.mockResolvedValueOnce({ data: session() })
+		sdk.updateUser.mockResolvedValueOnce({ data: { user: registeredUser() }, error: null })
+		sdk.refreshUser.mockResolvedValueOnce({
+			data: { user: null, session: null },
+			error: { code: 'unavailable' },
+		})
+		const challenge = await sendLauncherPhoneCode('13800138000', {
+			kind: 'complete',
+			userId: 'account-a',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		await expect(challenge.verify('123456')).resolves.toMatchObject({
+			userId: 'account-a',
+			username: 'Alice1',
+		})
+		expect(sdk.refreshUser).not.toHaveBeenCalled()
+		expect(fetcher).toHaveBeenCalledOnce()
+	})
+
+	it('refuses an updated username profile that belongs to a different uid', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		const fetcher = mockGatewayActivation()
+		sdk.getUser.mockResolvedValueOnce({
+			data: {
+				user: { id: 'account-a', phone: '+86 13800138000', user_metadata: { hasPassword: false } },
+			},
+		})
+		sdk.verifyOtp.mockResolvedValueOnce({ data: session() })
+		sdk.updateUser.mockResolvedValueOnce({
+			data: { user: { ...registeredUser(), id: 'account-b' } },
+			error: null,
+		})
+		const challenge = await sendLauncherPhoneCode('13800138000', {
+			kind: 'complete',
+			userId: 'account-a',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		await expect(challenge.verify('123456')).rejects.toThrow(strings.auth.phone.sessionChanged)
+		expect(fetcher).not.toHaveBeenCalled()
+	})
+
 	it('does not overwrite a different signed-in user while completing registration', async () => {
 		const { sendLauncherPhoneCode } = await import('./cloudbase')
 		sdk.getUser.mockResolvedValueOnce({
@@ -424,6 +474,20 @@ describe('launcher phone authentication', () => {
 		await expect(challenge.verify('123456')).rejects.toThrow(strings.auth.phone.sessionChanged)
 		expect(sdk.verifyOtp).not.toHaveBeenCalled()
 		expect(sdk.updateUser).not.toHaveBeenCalled()
+	})
+
+	it('directs an already completed OTP-only account to login without resending a code', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		sdk.getUser.mockResolvedValueOnce({ data: { user: registeredUser() }, error: null })
+		await expect(
+			sendLauncherPhoneCode('13800138000', {
+				kind: 'complete',
+				userId: 'account-a',
+				username: 'Alice1',
+				password: 'AuthTest9!',
+			}),
+		).rejects.toThrow(strings.auth.phone.registrationCompleted)
+		expect(sdk.reauthenticate).not.toHaveBeenCalled()
 	})
 
 	it('returns bounded errors without propagating upstream secrets', async () => {

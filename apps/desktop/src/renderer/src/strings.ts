@@ -236,6 +236,7 @@ export const strings = {
 			completeStep: '此手机号曾完成短信验证，请补齐用户名和密码后继续。',
 			registrationRequired: '此手机号尚未完成注册，请设置用户名和密码。',
 			registrationConflict: '该手机号已绑定其他账号，请放弃注册并使用短信登录。',
+			registrationCompleted: '此账号资料已设置完成，请返回密码登录或短信登录。',
 			conflictTitle: '手机号已有账号',
 			conflictDescription:
 				'该号码已绑定其他问学账号。继续注册不会覆盖原账号，请放弃当前注册并改用短信登录。',

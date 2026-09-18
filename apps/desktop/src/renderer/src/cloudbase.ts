@@ -237,11 +237,13 @@ export async function sendLauncherPhoneCode(
 			if (purpose.kind === 'bind' && readString(user?.phone)) {
 				throw new Error(strings.auth.phone.alreadyBound)
 			}
-			if (
-				purpose.kind === 'complete' &&
-				(readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone || isCompleteLauncherUser(user))
-			) {
-				throw new LauncherPhoneAlreadyRegisteredError(phone)
+			if (purpose.kind === 'complete') {
+				if (readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone) {
+					throw new Error(strings.auth.phone.sessionChanged)
+				}
+				if (isCompleteLauncherUser(user)) {
+					throw new Error(strings.auth.phone.registrationCompleted)
+				}
 			}
 		}
 		const startedAt = Date.now()
@@ -352,11 +354,9 @@ export async function sendLauncherPhoneCode(
 						if (!isCompleteLauncherUser(user)) {
 							throw new LauncherRegistrationRequiredError(phone, true, session.userId)
 						}
-						const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
 						return {
 							...session,
-							username:
-								readString(user?.username) ?? readString(metadata?.username) ?? session.username,
+							username: readLauncherUsername(user) ?? session.username,
 						}
 					}
 					if (purpose.kind === 'register') {
@@ -367,7 +367,7 @@ export async function sendLauncherPhoneCode(
 							!session ||
 							readString(user?.id) !== session.userId ||
 							readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone ||
-							readString(user?.username) !== purpose.username ||
+							readLauncherUsername(user) !== purpose.username ||
 							!Number.isFinite(createdAt) ||
 							createdAt < startedAt - 5000
 						) {
@@ -391,21 +391,18 @@ export async function sendLauncherPhoneCode(
 									? strings.auth.error.usernameExists
 									: strings.auth.phone.profileError,
 							)
-						const refreshed = await runAuthMutation(() => authClient.refreshUser())
-						const refreshedUser = readAuthUser(refreshed.data)
+						const updatedUser = readAuthUser(updated.data)
 						if (
-							refreshed.error ||
-							readString(refreshedUser?.id) !== purpose.userId ||
-							readString(refreshedUser?.username) !== purpose.username
+							readString(updatedUser?.id) !== purpose.userId ||
+							readString(updatedUser?.phone)?.replace(/^\+86\s*/, '') !== phone
 						) {
-							throw new Error(strings.auth.phone.profileError)
-						}
-						const session = await getLauncherSession()
-						if (session?.userId !== purpose.userId) {
 							throw new Error(strings.auth.phone.sessionChanged)
 						}
-						await activatePhoneRegistration(session.accessToken)
-						return { ...session, username: purpose.username }
+						if (readLauncherUsername(updatedUser) !== purpose.username) {
+							throw new Error(strings.auth.phone.profileError)
+						}
+						await activatePhoneRegistration(completedSession.accessToken)
+						return { ...completedSession, username: purpose.username }
 					}
 					const refreshed = await runAuthMutation(() => authClient.refreshUser())
 					if (refreshed.error) throw new Error(strings.auth.phone.refreshError)
@@ -474,10 +471,13 @@ function isUsernameAlreadyRegistered(value: CloudBaseAuthError): boolean {
 function isCompleteLauncherUser(user: Record<string, unknown> | null): boolean {
 	const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
 	return Boolean(
-		(readString(user?.username) ?? readString(metadata?.username)) &&
-		metadata?.hasPassword !== false &&
-		user?.hasPassword !== false,
+		readLauncherUsername(user) && metadata?.hasPassword !== false && user?.hasPassword !== false,
 	)
+}
+
+function readLauncherUsername(user: Record<string, unknown> | null): string | null {
+	const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
+	return readString(user?.username) ?? readString(metadata?.username)
 }
 
 export async function getLauncherIncompleteRegistration(): Promise<{
