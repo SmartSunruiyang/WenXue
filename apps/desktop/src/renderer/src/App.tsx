@@ -10,6 +10,8 @@ import {
 	CircleDollarSign,
 	Copy,
 	Download,
+	Eye,
+	EyeOff,
 	Focus,
 	FolderOpen,
 	Globe2,
@@ -1284,6 +1286,8 @@ function AuthScreen({
 	const [username, setUsername] = useState('')
 	const [password, setPassword] = useState('')
 	const [confirmPassword, setConfirmPassword] = useState('')
+	const [passwordVisible, setPasswordVisible] = useState(false)
+	const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false)
 	const [busy, setBusy] = useState(false)
 	const [localError, setLocalError] = useState<string | null>(null)
 	const isRegister = mode === 'register'
@@ -1365,6 +1369,8 @@ function AuthScreen({
 							disabled={busy}
 							onClick={() => {
 								setMode('login')
+								setPasswordVisible(false)
+								setConfirmPasswordVisible(false)
 								setLocalError(null)
 							}}
 							type="button"
@@ -1378,6 +1384,8 @@ function AuthScreen({
 							disabled={busy}
 							onClick={() => {
 								setMode('register')
+								setPasswordVisible(false)
+								setConfirmPasswordVisible(false)
 								setLocalError(null)
 							}}
 							type="button"
@@ -1403,33 +1411,89 @@ function AuthScreen({
 							</span>
 						) : null}
 					</label>
-					<label className="auth-field">
-						<span>{strings.auth.field.password}</span>
-						<input
-							aria-describedby={isRegister ? 'auth-password-hint' : undefined}
-							autoComplete={isRegister ? 'new-password' : 'current-password'}
-							disabled={busy}
-							onChange={(event) => setPassword(event.target.value)}
-							type="password"
-							value={password}
-						/>
+					<div className="auth-field">
+						<label htmlFor="auth-password">{strings.auth.field.password}</label>
+						<div className="auth-password">
+							<input
+								aria-describedby={isRegister ? 'auth-password-hint' : undefined}
+								autoCapitalize="none"
+								autoComplete={isRegister ? 'new-password' : 'current-password'}
+								disabled={busy}
+								id="auth-password"
+								onChange={(event) => setPassword(event.target.value)}
+								spellCheck={false}
+								type={passwordVisible ? 'text' : 'password'}
+								value={password}
+							/>
+							<button
+								aria-controls="auth-password"
+								aria-label={
+									passwordVisible
+										? strings.auth.action.hidePassword
+										: strings.auth.action.showPassword
+								}
+								className="auth-password__toggle"
+								disabled={busy}
+								onClick={() => setPasswordVisible((visible) => !visible)}
+								title={
+									passwordVisible
+										? strings.auth.action.hidePassword
+										: strings.auth.action.showPassword
+								}
+								type="button"
+							>
+								{passwordVisible ? (
+									<EyeOff size={16} aria-hidden="true" />
+								) : (
+									<Eye size={16} aria-hidden="true" />
+								)}
+							</button>
+						</div>
 						{isRegister ? (
 							<span className="auth-field__hint" id="auth-password-hint">
 								{strings.auth.hint.password}
 							</span>
 						) : null}
-					</label>
+					</div>
 					{isRegister ? (
-						<label className="auth-field">
-							<span>{strings.auth.field.confirmPassword}</span>
-							<input
-								autoComplete="new-password"
-								disabled={busy}
-								onChange={(event) => setConfirmPassword(event.target.value)}
-								type="password"
-								value={confirmPassword}
-							/>
-						</label>
+						<div className="auth-field">
+							<label htmlFor="auth-confirm-password">{strings.auth.field.confirmPassword}</label>
+							<div className="auth-password">
+								<input
+									autoCapitalize="none"
+									autoComplete="new-password"
+									disabled={busy}
+									id="auth-confirm-password"
+									onChange={(event) => setConfirmPassword(event.target.value)}
+									spellCheck={false}
+									type={confirmPasswordVisible ? 'text' : 'password'}
+									value={confirmPassword}
+								/>
+								<button
+									aria-controls="auth-confirm-password"
+									aria-label={
+										confirmPasswordVisible
+											? strings.auth.action.hideConfirmPassword
+											: strings.auth.action.showConfirmPassword
+									}
+									className="auth-password__toggle"
+									disabled={busy}
+									onClick={() => setConfirmPasswordVisible((visible) => !visible)}
+									title={
+										confirmPasswordVisible
+											? strings.auth.action.hideConfirmPassword
+											: strings.auth.action.showConfirmPassword
+									}
+									type="button"
+								>
+									{confirmPasswordVisible ? (
+										<EyeOff size={16} aria-hidden="true" />
+									) : (
+										<Eye size={16} aria-hidden="true" />
+									)}
+								</button>
+							</div>
+						</div>
 					) : null}
 					{localError || error ? (
 						<div className="auth-alert" role="alert">

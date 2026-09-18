@@ -235,6 +235,10 @@ export const strings = {
 			busy: '处理中',
 			login: '登录',
 			register: '注册并登录',
+			showPassword: '显示密码',
+			hidePassword: '隐藏密码',
+			showConfirmPassword: '显示确认密码',
+			hideConfirmPassword: '隐藏确认密码',
 		},
 		validation: {
 			usernameRequired: '请输入用户名。',

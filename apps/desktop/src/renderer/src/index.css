@@ -263,7 +263,8 @@ body:has(.app-shell--macos) {
 	display: grid;
 	gap: 8px;
 }
-.auth-field > span:first-child {
+.auth-field > span:first-child,
+.auth-field > label:first-child {
 	color: var(--wx-foreground);
 	font-size: 13px;
 	font-weight: 500;
@@ -279,6 +280,38 @@ body:has(.app-shell--macos) {
 	font-size: 14px;
 }
 .auth-field input:disabled {
+	opacity: 0.45;
+	cursor: wait;
+}
+.auth-password {
+	position: relative;
+}
+.auth-password input {
+	padding-right: 48px;
+}
+.auth-password__toggle {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	display: grid;
+	width: 32px;
+	height: 32px;
+	place-items: center;
+	padding: 0;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--wx-muted);
+	cursor: pointer;
+	transition:
+		background 150ms ease-out,
+		color 150ms ease-out;
+}
+.auth-password__toggle:hover:not(:disabled) {
+	background: var(--wx-hover);
+	color: var(--wx-foreground);
+}
+.auth-password__toggle:disabled {
 	opacity: 0.45;
 	cursor: wait;
 }
