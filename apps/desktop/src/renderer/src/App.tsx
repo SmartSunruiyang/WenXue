@@ -29,12 +29,13 @@ import {
 	ScrollText,
 	Search,
 	Settings,
+	Smartphone,
 	Square,
 	Trash2,
 	UserPlus,
 	X,
 } from 'lucide-react'
-import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -58,6 +59,7 @@ import {
 	type DesktopAnnouncementSnapshot,
 } from './DesktopAnnouncementService'
 import { DesktopReleaseSignalService } from './DesktopReleaseSignalService'
+import { PhoneAuthForm } from './PhoneAuthForm'
 import { executeSafeSignOut } from './safeSignOut'
 import { strings } from './strings'
 import type {
@@ -181,6 +183,7 @@ export default function App() {
 	const [activeLogSources, setActiveLogSources] = useState<LogSource[]>(logSources)
 	const [followLogs, setFollowLogs] = useState(true)
 	const [avatarOpen, setAvatarOpen] = useState(false)
+	const [phoneBindingUserId, setPhoneBindingUserId] = useState<string | null>(null)
 	const [addingProfile, setAddingProfile] = useState(false)
 	const [batchLaunching, setBatchLaunching] = useState(false)
 	const [logsMutating, setLogsMutating] = useState(false)
@@ -195,6 +198,7 @@ export default function App() {
 	const [updateCheckNotice, setUpdateCheckNotice] = useState<string | null>(null)
 	const [dismissedUpdate, setDismissedUpdate] = useState<string | null>(null)
 	const avatarButtonRef = useRef<HTMLButtonElement>(null)
+	const phoneBindingUserIdRef = useRef<string | null>(null)
 	const addingProfileRef = useRef(false)
 	const batchLaunchingRef = useRef(false)
 	const logoutBusyRef = useRef(false)
@@ -746,9 +750,23 @@ export default function App() {
 		[syncSignedInSession],
 	)
 
+	const handlePhoneLogin = useCallback(
+		async (session: LauncherAuthSession) => {
+			await syncSignedInSession(session)
+			setMessage(null)
+		},
+		[syncSignedInSession],
+	)
+
+	const closePhoneBinding = useCallback(() => {
+		phoneBindingUserIdRef.current = null
+		setPhoneBindingUserId(null)
+	}, [])
+
 	const handleLogout = useCallback(async () => {
 		if (
 			logoutBusyRef.current ||
+			phoneBindingUserIdRef.current !== null ||
 			addingProfileRef.current ||
 			batchLaunchingRef.current ||
 			pendingProfileActionsRef.current.size > 0 ||
@@ -911,6 +929,7 @@ export default function App() {
 				<AuthScreen
 					error={message}
 					onLogin={handleLogin}
+					onPhoneLogin={handlePhoneLogin}
 					onRegister={handleRegister}
 					shellInfo={shellInfo}
 					setMessage={setMessage}
@@ -977,6 +996,12 @@ export default function App() {
 				{avatarOpen ? (
 					<AvatarMenu
 						logoutBusy={logoutBusy}
+						onBindPhone={() => {
+							if (logoutBusyRef.current) return
+							phoneBindingUserIdRef.current = authUser.userId
+							setPhoneBindingUserId(authUser.userId)
+							setAvatarOpen(false)
+						}}
 						setAvatarOpen={setAvatarOpen}
 						setRoute={setRoute}
 						setSettingsSection={setSettingsSection}
@@ -988,7 +1013,8 @@ export default function App() {
 							batchLaunching ||
 							pendingProfileIds.length > 0 ||
 							savingSettings ||
-							logsMutating
+							logsMutating ||
+							phoneBindingUserId !== null
 						}
 						onLogout={handleLogout}
 					/>
@@ -1085,6 +1111,15 @@ export default function App() {
 				) : null}
 			</section>
 			{interruptionLayer}
+			{phoneBindingUserId ? (
+				<PhoneBindingDialog
+					key={phoneBindingUserId}
+					onAuthenticated={syncSignedInSession}
+					onClose={closePhoneBinding}
+					returnFocusRef={avatarButtonRef}
+					userId={phoneBindingUserId}
+				/>
+			) : null}
 		</main>
 	)
 }
@@ -1271,6 +1306,7 @@ function RailButton({ active, children, icon: Icon, label, onClick }: RailButton
 function AuthScreen({
 	error,
 	onLogin,
+	onPhoneLogin,
 	onRegister,
 	shellInfo,
 	setMessage,
@@ -1278,6 +1314,7 @@ function AuthScreen({
 }: {
 	error: string | null
 	onLogin: (username: string, password: string) => Promise<void>
+	onPhoneLogin: (session: LauncherAuthSession) => Promise<void>
 	onRegister: (username: string, password: string) => Promise<void>
 	shellInfo: AppShellInfo
 	setMessage: (message: string | null) => void
@@ -1287,6 +1324,8 @@ function AuthScreen({
 		() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
 	)
 	const [mode, setMode] = useState<'login' | 'register'>('login')
+	const [loginMethod, setLoginMethod] = useState<'password' | 'phone'>('password')
+	const [phoneBusy, setPhoneBusy] = useState(false)
 	const [username, setUsername] = useState('')
 	const [password, setPassword] = useState('')
 	const [confirmPassword, setConfirmPassword] = useState('')
@@ -1296,6 +1335,7 @@ function AuthScreen({
 	const [busy, setBusy] = useState(false)
 	const [localError, setLocalError] = useState<string | null>(null)
 	const isRegister = mode === 'register'
+	const anyBusy = busy || phoneBusy
 	const usernameRequirements = getLauncherUsernameRequirements(username)
 	const usernameRules = [
 		{ key: 'length', label: strings.auth.hint.username.length, valid: usernameRequirements.length },
@@ -1411,11 +1451,7 @@ function AuthScreen({
 					</div>
 				</div>
 			) : (
-				<form
-					aria-busy={busy}
-					className="auth-card no-drag"
-					onSubmit={(event) => void submit(event)}
-				>
+				<div aria-busy={anyBusy} className="auth-card no-drag">
 					<div className="auth-card__head">
 						<h1>{isRegister ? strings.auth.title.register : strings.auth.title.login}</h1>
 						<p>{isRegister ? strings.auth.description.register : strings.auth.description.login}</p>
@@ -1424,12 +1460,13 @@ function AuthScreen({
 						<button
 							aria-pressed={!isRegister}
 							className={!isRegister ? 'segmented-control__active' : ''}
-							disabled={busy}
+							disabled={anyBusy}
 							onClick={() => {
 								setMode('login')
 								setPasswordVisible(false)
 								setConfirmPasswordVisible(false)
 								setLocalError(null)
+								setMessage(null)
 							}}
 							type="button"
 						>
@@ -1439,12 +1476,13 @@ function AuthScreen({
 						<button
 							aria-pressed={isRegister}
 							className={isRegister ? 'segmented-control__active' : ''}
-							disabled={busy}
+							disabled={anyBusy}
 							onClick={() => {
 								setMode('register')
 								setPasswordVisible(false)
 								setConfirmPasswordVisible(false)
 								setLocalError(null)
+								setMessage(null)
 							}}
 							type="button"
 						>
@@ -1452,165 +1490,207 @@ function AuthScreen({
 							{strings.auth.mode.register}
 						</button>
 					</div>
-					<div className="auth-field">
-						<label htmlFor="auth-username">{strings.auth.field.username}</label>
-						<input
-							aria-describedby={isRegister ? 'auth-username-hint' : undefined}
-							aria-invalid={
-								isRegister && username.length > 0 && usernameRules.some((rule) => !rule.valid)
-							}
-							autoComplete="username"
-							autoFocus
-							disabled={busy}
-							id="auth-username"
-							onChange={(event) => setUsername(event.target.value)}
-							type="text"
-							value={username}
-						/>
-						{isRegister ? (
-							<AuthRequirements
-								id="auth-username-hint"
-								hasInput={username.length > 0}
-								rules={usernameRules}
-							/>
-						) : null}
-					</div>
-					<div className="auth-field">
-						<label htmlFor="auth-password">{strings.auth.field.password}</label>
+					{!isRegister ? (
 						<div
-							className={`auth-password ${showPasswordComparison ? 'auth-password--comparing' : ''}`}
+							aria-label={strings.auth.phone.methodLabel}
+							className="auth-login-methods"
+							role="group"
 						>
-							<input
-								aria-describedby={isRegister ? 'auth-password-hint' : undefined}
-								aria-invalid={
-									isRegister && password.length > 0 && passwordRules.some((rule) => !rule.valid)
-								}
-								autoCapitalize="none"
-								autoComplete={isRegister ? 'new-password' : 'current-password'}
-								disabled={busy}
-								id="auth-password"
-								onChange={(event) => setPassword(event.target.value)}
-								spellCheck={false}
-								type={passwordVisible ? 'text' : 'password'}
-								value={password}
-							/>
-							{showPasswordComparison ? (
-								<PasswordComparison
-									password={password}
-									visible={passwordVisible}
-									states={comparison.states}
-									activeIndex={activeConfirmationIndex}
-								/>
-							) : null}
-							<button
-								aria-controls="auth-password"
-								aria-label={
-									passwordVisible
-										? strings.auth.action.hidePassword
-										: strings.auth.action.showPassword
-								}
-								className="auth-password__toggle"
-								disabled={busy}
-								onClick={() => setPasswordVisible((visible) => !visible)}
-								title={
-									passwordVisible
-										? strings.auth.action.hidePassword
-										: strings.auth.action.showPassword
-								}
-								type="button"
-							>
-								{passwordVisible ? (
-									<EyeOff size={16} aria-hidden="true" />
-								) : (
-									<Eye size={16} aria-hidden="true" />
-								)}
-							</button>
-						</div>
-						{isRegister ? (
-							<AuthRequirements
-								id="auth-password-hint"
-								hasInput={password.length > 0}
-								rules={passwordRules}
-							/>
-						) : null}
-					</div>
-					{isRegister ? (
-						<div className="auth-field">
-							<label htmlFor="auth-confirm-password">{strings.auth.field.confirmPassword}</label>
-							<div className="auth-password">
-								<input
-									aria-describedby="auth-confirm-password-hint"
-									aria-invalid={confirmationHasError}
-									autoCapitalize="none"
-									autoComplete="new-password"
-									disabled={busy}
-									id="auth-confirm-password"
-									onChange={(event) => {
-										const value = event.target.value
-										setConfirmPassword(value)
-										setActiveConfirmationIndex(
-											Array.from(value.slice(0, event.target.selectionStart ?? value.length))
-												.length - 1,
-										)
-									}}
-									spellCheck={false}
-									type={confirmPasswordVisible ? 'text' : 'password'}
-									value={confirmPassword}
-								/>
+							{(['password', 'phone'] as const).map((method) => (
 								<button
-									aria-controls="auth-confirm-password"
-									aria-label={
-										confirmPasswordVisible
-											? strings.auth.action.hideConfirmPassword
-											: strings.auth.action.showConfirmPassword
-									}
-									className="auth-password__toggle"
-									disabled={busy}
-									onClick={() => setConfirmPasswordVisible((visible) => !visible)}
-									title={
-										confirmPasswordVisible
-											? strings.auth.action.hideConfirmPassword
-											: strings.auth.action.showConfirmPassword
-									}
+									aria-pressed={loginMethod === method}
+									disabled={anyBusy}
+									key={method}
+									onClick={() => {
+										setLoginMethod(method)
+										setLocalError(null)
+										setMessage(null)
+										setPasswordVisible(false)
+										setConfirmPasswordVisible(false)
+									}}
 									type="button"
 								>
-									{confirmPasswordVisible ? (
-										<EyeOff size={16} aria-hidden="true" />
-									) : (
-										<Eye size={16} aria-hidden="true" />
-									)}
+									{method === 'password'
+										? strings.auth.phone.passwordLogin
+										: strings.auth.phone.smsLogin}
 								</button>
+							))}
+						</div>
+					) : null}
+					{!isRegister && loginMethod === 'phone' ? (
+						<>
+							<PhoneAuthForm onAuthenticated={onPhoneLogin} onBusyChange={setPhoneBusy} />
+							{error ? (
+								<div className="auth-alert" role="alert">
+									{error}
+								</div>
+							) : null}
+						</>
+					) : (
+						<form className="auth-credentials" onSubmit={(event) => void submit(event)}>
+							<div className="auth-field">
+								<label htmlFor="auth-username">{strings.auth.field.username}</label>
+								<input
+									aria-describedby={isRegister ? 'auth-username-hint' : undefined}
+									aria-invalid={
+										isRegister && username.length > 0 && usernameRules.some((rule) => !rule.valid)
+									}
+									autoComplete="username"
+									autoFocus
+									disabled={busy}
+									id="auth-username"
+									onChange={(event) => setUsername(event.target.value)}
+									type="text"
+									value={username}
+								/>
+								{isRegister ? (
+									<AuthRequirements
+										id="auth-username-hint"
+										hasInput={username.length > 0}
+										rules={usernameRules}
+									/>
+								) : null}
 							</div>
-							<span
-								className="auth-field__hint auth-confirmation-hint"
-								id="auth-confirm-password-hint"
-								data-state={confirmationState}
-								role="status"
-							>
-								{confirmationHint}
-							</span>
-						</div>
-					) : null}
-					{localError || error ? (
-						<div className="auth-alert" role="alert">
-							{localError ?? error}
-						</div>
-					) : null}
-					<button className="primary-button auth-submit" disabled={busy} type="submit">
-						{busy ? (
-							<LoaderCircle className="spin" size={16} />
-						) : isRegister ? (
-							<UserPlus size={16} />
-						) : (
-							<LogIn size={16} />
-						)}
-						{busy
-							? strings.auth.action.busy
-							: isRegister
-								? strings.auth.action.register
-								: strings.auth.action.login}
-					</button>
-				</form>
+							<div className="auth-field">
+								<label htmlFor="auth-password">{strings.auth.field.password}</label>
+								<div
+									className={`auth-password ${showPasswordComparison ? 'auth-password--comparing' : ''}`}
+								>
+									<input
+										aria-describedby={isRegister ? 'auth-password-hint' : undefined}
+										aria-invalid={
+											isRegister && password.length > 0 && passwordRules.some((rule) => !rule.valid)
+										}
+										autoCapitalize="none"
+										autoComplete={isRegister ? 'new-password' : 'current-password'}
+										disabled={busy}
+										id="auth-password"
+										onChange={(event) => setPassword(event.target.value)}
+										spellCheck={false}
+										type={passwordVisible ? 'text' : 'password'}
+										value={password}
+									/>
+									{showPasswordComparison ? (
+										<PasswordComparison
+											password={password}
+											visible={passwordVisible}
+											states={comparison.states}
+											activeIndex={activeConfirmationIndex}
+										/>
+									) : null}
+									<button
+										aria-controls="auth-password"
+										aria-label={
+											passwordVisible
+												? strings.auth.action.hidePassword
+												: strings.auth.action.showPassword
+										}
+										className="auth-password__toggle"
+										disabled={busy}
+										onClick={() => setPasswordVisible((visible) => !visible)}
+										title={
+											passwordVisible
+												? strings.auth.action.hidePassword
+												: strings.auth.action.showPassword
+										}
+										type="button"
+									>
+										{passwordVisible ? (
+											<EyeOff size={16} aria-hidden="true" />
+										) : (
+											<Eye size={16} aria-hidden="true" />
+										)}
+									</button>
+								</div>
+								{isRegister ? (
+									<AuthRequirements
+										id="auth-password-hint"
+										hasInput={password.length > 0}
+										rules={passwordRules}
+									/>
+								) : null}
+							</div>
+							{isRegister ? (
+								<div className="auth-field">
+									<label htmlFor="auth-confirm-password">
+										{strings.auth.field.confirmPassword}
+									</label>
+									<div className="auth-password">
+										<input
+											aria-describedby="auth-confirm-password-hint"
+											aria-invalid={confirmationHasError}
+											autoCapitalize="none"
+											autoComplete="new-password"
+											disabled={busy}
+											id="auth-confirm-password"
+											onChange={(event) => {
+												const value = event.target.value
+												setConfirmPassword(value)
+												setActiveConfirmationIndex(
+													Array.from(value.slice(0, event.target.selectionStart ?? value.length))
+														.length - 1,
+												)
+											}}
+											spellCheck={false}
+											type={confirmPasswordVisible ? 'text' : 'password'}
+											value={confirmPassword}
+										/>
+										<button
+											aria-controls="auth-confirm-password"
+											aria-label={
+												confirmPasswordVisible
+													? strings.auth.action.hideConfirmPassword
+													: strings.auth.action.showConfirmPassword
+											}
+											className="auth-password__toggle"
+											disabled={busy}
+											onClick={() => setConfirmPasswordVisible((visible) => !visible)}
+											title={
+												confirmPasswordVisible
+													? strings.auth.action.hideConfirmPassword
+													: strings.auth.action.showConfirmPassword
+											}
+											type="button"
+										>
+											{confirmPasswordVisible ? (
+												<EyeOff size={16} aria-hidden="true" />
+											) : (
+												<Eye size={16} aria-hidden="true" />
+											)}
+										</button>
+									</div>
+									<span
+										className="auth-field__hint auth-confirmation-hint"
+										id="auth-confirm-password-hint"
+										data-state={confirmationState}
+										role="status"
+									>
+										{confirmationHint}
+									</span>
+								</div>
+							) : null}
+							{localError || error ? (
+								<div className="auth-alert" role="alert">
+									{localError ?? error}
+								</div>
+							) : null}
+							<button className="primary-button auth-submit" disabled={busy} type="submit">
+								{busy ? (
+									<LoaderCircle className="spin" size={16} />
+								) : isRegister ? (
+									<UserPlus size={16} />
+								) : (
+									<LogIn size={16} />
+								)}
+								{busy
+									? strings.auth.action.busy
+									: isRegister
+										? strings.auth.action.register
+										: strings.auth.action.login}
+							</button>
+						</form>
+					)}
+				</div>
 			)}
 		</main>
 	)
@@ -1691,8 +1771,93 @@ function PasswordComparison({
 	)
 }
 
+function PhoneBindingDialog({
+	onAuthenticated,
+	onClose,
+	returnFocusRef,
+	userId,
+}: {
+	onAuthenticated: (session: LauncherAuthSession) => Promise<void>
+	onClose: () => void
+	returnFocusRef: RefObject<HTMLButtonElement | null>
+	userId: string
+}) {
+	const dialogRef = useRef<HTMLDialogElement>(null)
+	const busyRef = useRef(false)
+	const [busy, setBusy] = useState(false)
+	const [complete, setComplete] = useState(false)
+
+	useEffect(() => {
+		const dialog = dialogRef.current
+		dialog?.showModal()
+		return () => {
+			dialog?.close()
+			returnFocusRef.current?.focus()
+		}
+	}, [returnFocusRef])
+
+	const handleBusyChange = useCallback((nextBusy: boolean) => {
+		busyRef.current = nextBusy
+		setBusy(nextBusy)
+	}, [])
+
+	return (
+		<dialog
+			aria-describedby="phone-binding-description"
+			aria-labelledby="phone-binding-title"
+			className="phone-binding-dialog no-drag"
+			onCancel={(event) => {
+				event.preventDefault()
+				if (!busyRef.current) onClose()
+			}}
+			ref={dialogRef}
+		>
+			<div className="phone-binding-dialog__head">
+				<h2 id="phone-binding-title">{strings.auth.phone.bindTitle}</h2>
+				<button
+					aria-label={strings.auth.phone.close}
+					className="phone-binding-dialog__close"
+					disabled={busy}
+					onClick={() => {
+						if (!busyRef.current) onClose()
+					}}
+					title={strings.auth.phone.close}
+					type="button"
+				>
+					<X size={18} />
+				</button>
+			</div>
+			<p className="phone-binding-dialog__description" id="phone-binding-description">
+				{strings.auth.phone.bindDescription}
+			</p>
+			{complete ? (
+				<div className="phone-binding-dialog__complete">
+					<p className="phone-auth-form__sent" role="status">
+						<Check size={18} aria-hidden="true" />
+						{strings.auth.phone.bindSuccess}
+					</p>
+					<button autoFocus className="primary-button" onClick={onClose} type="button">
+						{strings.auth.phone.close}
+					</button>
+				</div>
+			) : (
+				<PhoneAuthForm
+					onAuthenticated={async (session) => {
+						await onAuthenticated(session)
+						handleBusyChange(false)
+						setComplete(true)
+					}}
+					onBusyChange={handleBusyChange}
+					userId={userId}
+				/>
+			)}
+		</dialog>
+	)
+}
+
 function AvatarMenu({
 	logoutBusy,
+	onBindPhone,
 	onLogout,
 	setAvatarOpen,
 	setRoute,
@@ -1703,6 +1868,7 @@ function AvatarMenu({
 	workspaceBusy,
 }: {
 	logoutBusy: boolean
+	onBindPhone: () => void
 	onLogout: () => Promise<void>
 	setAvatarOpen: (open: boolean) => void
 	setRoute: (route: RouteId) => void
@@ -1758,6 +1924,10 @@ function AvatarMenu({
 			>
 				<Settings size={15} />
 				设置
+			</button>
+			<button disabled={logoutBusy} onClick={onBindPhone} role="menuitem" type="button">
+				<Smartphone size={15} />
+				{strings.auth.phone.bindTitle}
 			</button>
 			<button
 				onClick={() => {

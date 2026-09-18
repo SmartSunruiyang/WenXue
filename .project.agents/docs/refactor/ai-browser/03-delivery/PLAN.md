@@ -370,7 +370,7 @@ backing window”之间冻结内部实现，但两者都必须保持用户默认
 ### 阶段 8 — 账号控制域、配置与敏感信息
 
 - [ ] 8.1 把问学登录迁入账号控制域
-  - 复用 CloudBase username/password 流程；长期 access/refresh token 只存在账号控制 WebUI/扩展并
+  - 复用 CloudBase username/password、手机 OTP 与同 uid 手机号绑定流程，迁移人机验证码和发码频控交互；长期 access/refresh token 只存在账号控制 WebUI/扩展并
     使用 OS 密钥服务封装，Task Profile 不保存。
   - 原生层只接收经过验证的 AccountNamespace、认证状态和短期任务凭据，不记录长期 token。
   - 登录前阻止挂载任务目录；刷新失败撤销该账号任务租约并回到登录。

@@ -432,6 +432,138 @@ body:has(.app-shell--macos) {
 	min-height: 44px;
 	margin-top: 4px;
 }
+.auth-credentials,
+.phone-auth-form {
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+}
+.auth-login-methods {
+	display: flex;
+	gap: 24px;
+	border-bottom: 1px solid var(--wx-border);
+}
+.auth-login-methods button {
+	padding: 0 0 12px;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	background: transparent;
+	color: var(--wx-muted);
+	font-size: 14px;
+	cursor: pointer;
+	transition: color 160ms ease-out;
+}
+.auth-login-methods button:hover:not(:disabled),
+.auth-login-methods button[aria-pressed='true'] {
+	color: var(--wx-foreground);
+}
+.auth-login-methods button[aria-pressed='true'] {
+	border-bottom-color: var(--wx-primary);
+}
+.auth-login-methods button:disabled {
+	opacity: 0.45;
+	cursor: wait;
+}
+.phone-auth-form__number {
+	position: relative;
+}
+.phone-auth-form__number > span {
+	position: absolute;
+	top: 0;
+	left: 14px;
+	display: flex;
+	height: 44px;
+	align-items: center;
+	color: var(--wx-muted);
+	font-size: 14px;
+	pointer-events: none;
+}
+.phone-auth-form__number input {
+	padding-left: 56px;
+}
+.phone-auth-form__code {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.phone-auth-form__code input {
+	min-width: 0;
+}
+.phone-auth-form .phone-auth-form__send {
+	height: 44px;
+	min-width: 120px;
+	font-variant-numeric: tabular-nums;
+}
+.phone-auth-form__sent {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0;
+	color: var(--wx-signal-green);
+	font-size: 13px;
+	line-height: 1.6;
+}
+.phone-auth-form__hint {
+	margin: 0;
+	color: var(--wx-muted);
+	font-size: 13px;
+	line-height: 1.6;
+}
+.phone-binding-dialog {
+	width: min(440px, calc(100% - 48px));
+	max-height: calc(100% - 48px);
+	margin: auto;
+	padding: 28px;
+	overflow: auto;
+	border: 1px solid var(--wx-border);
+	border-radius: 16px;
+	background: var(--wx-surface);
+	color: var(--wx-foreground);
+}
+.phone-binding-dialog::backdrop {
+	background: rgb(0 0 0 / 0.24);
+}
+.phone-binding-dialog__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+}
+.phone-binding-dialog__head h2 {
+	margin: 0;
+	font-size: 20px;
+	font-weight: 600;
+}
+.phone-binding-dialog__close {
+	display: grid;
+	width: 32px;
+	height: 32px;
+	flex-shrink: 0;
+	place-items: center;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--wx-muted);
+	cursor: pointer;
+}
+.phone-binding-dialog__close:hover:not(:disabled) {
+	background: var(--wx-hover);
+	color: var(--wx-foreground);
+}
+.phone-binding-dialog__close:disabled {
+	opacity: 0.45;
+	cursor: wait;
+}
+.phone-binding-dialog__description {
+	margin: 8px 0 24px;
+	color: var(--wx-muted);
+	font-size: 14px;
+	line-height: 1.6;
+}
+.phone-binding-dialog__complete {
+	display: grid;
+	gap: 24px;
+}
 
 .sidebar {
 	position: relative;
@@ -1667,6 +1799,15 @@ body:has(.app-shell--macos) {
 	}
 	.token-overview__details strong {
 		font-size: 18px;
+	}
+}
+@media (max-height: 640px) {
+	.auth-shell:has(.phone-auth-form) {
+		padding-block: 40px 24px;
+	}
+	.auth-card:has(.phone-auth-form),
+	.auth-shell .phone-auth-form {
+		gap: 16px;
 	}
 }
 @media (prefers-reduced-motion: reduce) {

@@ -387,15 +387,26 @@ describe('desktop CloudBase auth session parsing', () => {
 		expect(vi.getTimerCount()).toBe(0)
 	})
 
-	it('times out when the CloudBase SDK login promise never settles', async () => {
+	it('times out stalled login and clears a late session before allowing another login', async () => {
 		vi.useFakeTimers()
-		cloudbaseMock.signInWithPassword.mockReturnValue(new Promise(() => undefined))
+		let finishLogin!: (value: unknown) => void
+		cloudbaseMock.signInWithPassword.mockReturnValue(
+			new Promise((resolve) => {
+				finishLogin = resolve
+			}),
+		)
 
 		const login = signInLauncher('Alice1', VALID_PASSWORD)
 		const expectation = expect(login).rejects.toThrow(strings.auth.error.timeout)
 		await vi.advanceTimersByTimeAsync(12_000)
 		await expectation
 
+		await expect(signInLauncher('Alice1', VALID_PASSWORD)).rejects.toThrow(
+			strings.auth.phone.pending,
+		)
+		finishLogin({ data: null, error: null })
+		await vi.advanceTimersByTimeAsync(0)
+		expect(cloudbaseMock.signOut).toHaveBeenCalledOnce()
 		expect(vi.getTimerCount()).toBe(0)
 	})
 
@@ -591,7 +602,12 @@ describe('desktop CloudBase auth session parsing', () => {
 		cloudbaseMock.fetch.mockResolvedValue(
 			Response.json({ error: { code: 'USERNAME_EXISTS' } }, { status: 409 }),
 		)
-		cloudbaseMock.signInWithPassword.mockReturnValue(new Promise(() => undefined))
+		let finishLogin!: (value: unknown) => void
+		cloudbaseMock.signInWithPassword.mockReturnValue(
+			new Promise((resolve) => {
+				finishLogin = resolve
+			}),
+		)
 
 		const registration = registerLauncher('Alice1', VALID_PASSWORD)
 		const expectation = expect(registration).rejects.toThrow(strings.auth.error.timeout)
@@ -600,6 +616,8 @@ describe('desktop CloudBase auth session parsing', () => {
 
 		expect(cloudbaseMock.signOut).not.toHaveBeenCalled()
 		expect(vi.getTimerCount()).toBe(0)
+		finishLogin({ data: null, error: null })
+		await vi.advanceTimersByTimeAsync(0)
 	})
 
 	it('preserves the SDK login error after a newly created registration', async () => {

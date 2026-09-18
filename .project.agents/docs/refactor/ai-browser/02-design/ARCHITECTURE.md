@@ -379,7 +379,7 @@ flowchart TB
 | 进程/上下文                                      | 主要职责                                                 | 问学业务模块的数据禁区                                                         |
 | ------------------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | Chromium browser process                         | 任务目录、Profile 生命周期、窗口宿主、并发配额与更新     | prompt、response、截图、BYO Key 明文或长期 access/refresh token 的持久化与日志 |
-| 账号控制 WebUI/扩展                              | 问学登录、账号配置、短期网关凭据申领/发布与 BYO Key 封装 | 任意任务的网站 Cookie、DOM、浏览历史和 AI 正文                                 |
+| 账号控制 WebUI/扩展                              | 问学密码/手机 OTP 登录、同 uid 手机号绑定、人机验证码、账号配置、短期网关凭据申领/发布与 BYO Key 封装 | 任意任务的网站 Cookie、DOM、浏览历史和 AI 正文                                 |
 | Task Profile extension service worker / renderer | 该任务 Agent、模型调用、AI 历史、任务日志                | 其他任务 Profile、其他任务扩展存储、长期账号 refresh token                     |
 | Task Profile web renderer                        | 该任务页面执行、DOM 序列化与动作反馈                     | 其他任务网站身份、任务目录、用户模型配置                                       |
 | CloudBase Gateway                                | session/任务凭据鉴权、厂商转发、tokens 计量              | prompt/响应持久化、厂商 Key 下发                                               |

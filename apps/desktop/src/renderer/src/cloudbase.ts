@@ -1,4 +1,9 @@
 import cloudbase from '@cloudbase/js-sdk'
+import {
+	configureLauncherCaptcha,
+	requestLauncherCaptcha,
+	withCaptchaAwareTimeout,
+} from './captchaChallenge'
 import { strings } from './strings'
 
 declare const __WENXUE_GATEWAY_BASE_URL__: string
@@ -57,6 +62,20 @@ interface CloudBaseAuthClient {
 		username: string
 		password: string
 	}): Promise<{ data?: unknown; error?: CloudBaseAuthError | null }>
+	signInWithOtp(input: {
+		phone: string
+		options: { shouldCreateUser: boolean }
+	}): Promise<CloudBaseOtpResult>
+	updateUser(input: { phone: string }): Promise<CloudBaseOtpResult>
+	getUser(): Promise<CloudBaseAuthResult>
+	refreshUser(): Promise<CloudBaseAuthResult>
+	createCaptchaData(input: {
+		state: string
+	}): Promise<{ data: string; token: string; expires_in: number }>
+	verifyCaptchaData(input: {
+		token: string
+		key: string
+	}): Promise<{ captcha_token: string; expires_in: number }>
 	getSession(): Promise<{ data?: unknown; error?: CloudBaseAuthError | null }>
 	refreshSession(
 		refreshToken?: string,
@@ -64,8 +83,23 @@ interface CloudBaseAuthClient {
 	signOut(): Promise<{ error?: CloudBaseAuthError | null }>
 }
 
+interface CloudBaseAuthResult {
+	data?: unknown
+	error?: CloudBaseAuthError | null
+}
+
+interface CloudBaseOtpResult {
+	data?: {
+		verifyOtp?: (input: { token: string; phone?: string }) => Promise<CloudBaseAuthResult>
+	}
+	error?: CloudBaseAuthError | null
+}
+
 interface CloudBaseApp {
-	auth(options: { persistence: 'local' }): CloudBaseAuthClient
+	auth(options: {
+		persistence: 'local'
+		captchaOptions: { openURIWithCallback: typeof requestLauncherCaptcha }
+	}): CloudBaseAuthClient
 	database(): CloudBaseDatabase
 }
 
@@ -128,6 +162,201 @@ export const cloudbaseConfig = {
 
 let app: CloudBaseApp | null | undefined
 let auth: CloudBaseAuthClient | null | undefined
+let phoneResendAt = 0
+let phoneRequestPending = false
+let authMutationPending = false
+let authMutationTimedOut = false
+let authOutcomeUnknown = false
+let activePhoneChallenge: LauncherPhoneChallenge | null = null
+
+export interface LauncherPhoneChallenge {
+	phone: string
+	expiresAt: number
+	resendAt: number
+	verify(code: string): Promise<LauncherAuthSession>
+	cancel(): void
+}
+
+export function getLauncherPhoneResendAt(): number {
+	return phoneResendAt
+}
+
+export function normalizeLauncherPhone(value: string): string {
+	const phone = value.trim().replace(/^\+86\s*/, '')
+	if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error(strings.auth.phone.invalidNumber)
+	return phone
+}
+
+export async function sendLauncherPhoneCode(
+	value: string,
+	purpose: { kind: 'login' } | { kind: 'bind'; userId: string },
+): Promise<LauncherPhoneChallenge> {
+	const phone = normalizeLauncherPhone(value)
+	assertAuthMutationIdle()
+	if (Date.now() < phoneResendAt) throw new Error(strings.auth.phone.rateLimit)
+	const authClient = getAuth()
+	if (!authClient) throw new Error(strings.auth.error.publishableKey)
+	phoneRequestPending = true
+	activePhoneChallenge?.cancel()
+	try {
+		if (purpose.kind === 'bind') {
+			const result = await runAuthMutation(() => authClient.getUser())
+			if (result.error) throw new Error(strings.auth.phone.sessionChanged)
+			const user = readAuthUser(result.data)
+			if (readString(user?.id) !== purpose.userId) {
+				throw new Error(strings.auth.phone.sessionChanged)
+			}
+			if (readString(user?.phone)) throw new Error(strings.auth.phone.alreadyBound)
+		}
+		const result = await runAuthMutation(() =>
+			purpose.kind === 'login'
+				? authClient.signInWithOtp({ phone, options: { shouldCreateUser: true } })
+				: authClient.updateUser({ phone }),
+		)
+		if (result.error)
+			throw new Error(readPhoneAuthError(result.error, strings.auth.phone.sendError))
+		const verifyOtp = result.data?.verifyOtp
+		if (!verifyOtp) throw new Error(strings.auth.phone.sendError)
+		phoneResendAt = Date.now() + 60_000
+		let cancelled = false
+		const challenge: LauncherPhoneChallenge = {
+			phone,
+			resendAt: phoneResendAt,
+			expiresAt: Date.now() + 600_000,
+			cancel() {
+				cancelled = true
+				if (activePhoneChallenge === challenge) activePhoneChallenge = null
+			},
+			async verify(code) {
+				if (cancelled || activePhoneChallenge !== challenge) {
+					throw new Error(strings.auth.phone.needCode)
+				}
+				if (Date.now() >= challenge.expiresAt) throw new Error(strings.auth.phone.expired)
+				if (!/^\d{6}$/.test(code)) throw new Error(strings.auth.phone.invalidCode)
+				assertAuthMutationIdle()
+				phoneRequestPending = true
+				try {
+					if (purpose.kind === 'bind') {
+						const before = await getLauncherSession()
+						if (before?.userId !== purpose.userId) {
+							throw new Error(strings.auth.phone.sessionChanged)
+						}
+					}
+					if (cancelled || activePhoneChallenge !== challenge) {
+						throw new Error(strings.auth.phone.needCode)
+					}
+					const verified = await runAuthMutation(
+						() => verifyOtp(purpose.kind === 'bind' ? { phone, token: code } : { token: code }),
+						purpose.kind === 'login' ? () => clearLateLogin(authClient) : undefined,
+					)
+					if (verified.error) {
+						throw new Error(readPhoneAuthError(verified.error, strings.auth.phone.verifyError))
+					}
+					if (cancelled) throw new Error(strings.auth.phone.needCode)
+					challenge.cancel()
+					if (purpose.kind === 'login') {
+						const session = readLauncherAuthSession(verified.data)
+						if (!session) throw new Error(strings.auth.error.loginSession)
+						return session
+					}
+					const refreshed = await runAuthMutation(() => authClient.refreshUser())
+					if (refreshed.error) throw new Error(strings.auth.phone.refreshError)
+					const refreshedUser = readAuthUser(refreshed.data)
+					if (
+						readString(refreshedUser?.id) !== purpose.userId ||
+						readString(refreshedUser?.phone)?.replace(/^\+86\s*/, '') !== phone
+					)
+						throw new Error(strings.auth.phone.refreshError)
+					const session = await getLauncherSession()
+					if (session?.userId !== purpose.userId) throw new Error(strings.auth.phone.sessionChanged)
+					return session
+				} catch (error) {
+					if (error instanceof AuthRequestTimeoutError) {
+						challenge.cancel()
+						throw new Error(
+							purpose.kind === 'bind'
+								? strings.auth.phone.bindingUnknown
+								: strings.auth.error.timeout,
+						)
+					}
+					throw new Error(readPhoneAuthError(error, strings.auth.phone.verifyError))
+				} finally {
+					phoneRequestPending = false
+				}
+			},
+		}
+		activePhoneChallenge = challenge
+		return challenge
+	} catch (error) {
+		if (error instanceof AuthRequestTimeoutError) phoneResendAt = Date.now() + 60_000
+		throw new Error(readPhoneAuthError(error, strings.auth.phone.sendError))
+	} finally {
+		phoneRequestPending = false
+	}
+}
+
+function assertAuthMutationIdle(): void {
+	if (authMutationPending || phoneRequestPending) throw new Error(strings.auth.phone.pending)
+	if (authOutcomeUnknown) throw new Error(strings.auth.phone.outcomeUnknown)
+}
+
+async function runAuthMutation<T>(
+	operation: () => Promise<T>,
+	onLateCompletion?: () => Promise<void>,
+): Promise<T> {
+	if (authMutationPending) throw new Error(strings.auth.phone.pending)
+	authMutationPending = true
+	authMutationTimedOut = false
+	let timedOut = false
+	const actualRequest = Promise.resolve()
+		.then(operation)
+		.then(async (result) => {
+			if (timedOut && onLateCompletion) await onLateCompletion()
+			return result
+		})
+		.finally(() => {
+			authMutationPending = false
+			authMutationTimedOut = false
+		})
+	try {
+		return await withAuthRequestTimeout(() => actualRequest)
+	} catch (error) {
+		if (error instanceof AuthRequestTimeoutError) {
+			timedOut = true
+			authMutationTimedOut = true
+		}
+		throw error
+	}
+}
+
+async function clearLateLogin(authClient: CloudBaseAuthClient): Promise<void> {
+	try {
+		const result = await authClient.signOut()
+		if (result.error) throw result.error
+	} catch {
+		authOutcomeUnknown = true
+	}
+}
+
+function readAuthUser(value: unknown): Record<string, unknown> | null {
+	return isRecord(value) && isRecord(value.user) ? value.user : null
+}
+
+function readPhoneAuthError(value: unknown, fallback: string): string {
+	if (isAbortError(value)) return strings.auth.error.timeout
+	if (value instanceof Error) {
+		const safeMessages = [
+			...Object.values(strings.auth.phone).filter((message) => typeof message === 'string'),
+			...Object.values(strings.auth.captcha),
+			...Object.values(strings.auth.error),
+		]
+		if (safeMessages.includes(value.message)) return value.message
+	}
+	if (isRecord(value) && value.code === 'resource_exhausted') return strings.auth.phone.rateLimit
+	if (isRecord(value) && value.code === 'invalid_argument') return strings.auth.phone.verifyError
+	const message = readCloudBaseErrorMessage(value, fallback)
+	return message === strings.auth.error.network ? message : fallback
+}
 
 export function watchDesktopSignal(
 	collectionName: 'desktop_announcement_signal' | 'desktop_release_signal',
@@ -217,12 +446,14 @@ export async function signInLauncher(
 	password: string,
 ): Promise<LauncherAuthSession> {
 	assertLauncherCredentials(username, password, 'login')
+	assertAuthMutationIdle()
 	const authClient = getAuth()
 	if (!authClient) throw new Error(strings.auth.error.publishableKey)
 	let data: unknown
 	try {
-		const result = await withAuthRequestTimeout(
-			authClient.signInWithPassword({ username, password }),
+		const result = await runAuthMutation(
+			() => authClient.signInWithPassword({ username, password }),
+			() => clearLateLogin(authClient),
 		)
 		if (result.error) throw result.error
 		data = result.data
@@ -239,6 +470,7 @@ export async function registerLauncher(
 	password: string,
 ): Promise<LauncherAuthSession> {
 	assertLauncherCredentials(username, password, 'register')
+	assertAuthMutationIdle()
 	const authClient = getAuth()
 	if (!authClient) throw new Error(strings.auth.error.publishableKey)
 	const accountCreation = await createLauncherAccount(username, password)
@@ -264,7 +496,7 @@ export async function getLauncherSession(): Promise<LauncherAuthSession | null> 
 	const authClient = getAuth()
 	if (!authClient) return null
 	try {
-		const { data, error } = await withAuthRequestTimeout(authClient.getSession())
+		const { data, error } = await withAuthRequestTimeout(() => authClient.getSession())
 		if (error) throw error
 		const session = readLauncherAuthSession(data)
 		if (session) return session
@@ -276,10 +508,13 @@ export async function getLauncherSession(): Promise<LauncherAuthSession | null> 
 }
 
 export async function refreshLauncherSession(refreshToken?: string): Promise<LauncherAuthSession> {
+	assertAuthMutationIdle()
 	const authClient = getAuth()
 	if (!authClient) throw new Error(strings.auth.error.publishableKey)
 	try {
-		const { data, error } = await withAuthRequestTimeout(authClient.refreshSession(refreshToken))
+		const { data, error } = await withAuthRequestTimeout(() =>
+			authClient.refreshSession(refreshToken),
+		)
 		if (error) throw error
 		const session = readLauncherAuthSession(data)
 		if (!session) throw new Error(strings.auth.error.loginSession)
@@ -290,11 +525,14 @@ export async function refreshLauncherSession(refreshToken?: string): Promise<Lau
 }
 
 export async function signOutLauncher(): Promise<void> {
+	if (authMutationPending || phoneRequestPending) throw new Error(strings.auth.phone.pending)
+	activePhoneChallenge?.cancel()
 	const authClient = getAuth()
 	if (!authClient) return
 	try {
-		const { error } = await withAuthRequestTimeout(authClient.signOut())
+		const { error } = await withAuthRequestTimeout(() => authClient.signOut())
 		if (error) throw error
+		authOutcomeUnknown = false
 	} catch (error) {
 		const message = readCloudBaseErrorMessage(error, strings.auth.error.logout)
 		if (error instanceof AuthRequestTimeoutError) {
@@ -334,7 +572,7 @@ export function readLauncherAuthSession(
 			readString(user?.username) ??
 			readString(userMetadata?.username) ??
 			readString(userMetadata?.name) ??
-			undefined,
+			maskLauncherPhone(readString(user?.phone)),
 		accessToken,
 		refreshToken,
 		expiresAt,
@@ -375,8 +613,30 @@ function isConnectivityError(value: unknown): boolean {
 function getAuth(): CloudBaseAuthClient | null {
 	if (auth !== undefined) return auth
 	const cloudbaseApp = getApp()
-	auth = cloudbaseApp?.auth({ persistence: 'local' }) ?? null
+	auth =
+		cloudbaseApp?.auth({
+			persistence: 'local',
+			captchaOptions: {
+				openURIWithCallback: (url) =>
+					authMutationTimedOut
+						? Promise.reject(new AuthRequestTimeoutError(strings.auth.error.timeout))
+						: requestLauncherCaptcha(url),
+			},
+		}) ?? null
+	if (auth) {
+		const authClient = auth
+		configureLauncherCaptcha({
+			createCaptchaData: (input) => authClient.createCaptchaData(input),
+			verifyCaptchaData: (input) => authClient.verifyCaptchaData(input),
+		})
+	}
 	return auth
+}
+
+function maskLauncherPhone(phone: string | null): string | undefined {
+	if (!phone) return undefined
+	const digits = phone.replace(/\D/g, '').slice(-11)
+	return /^1\d{10}$/.test(digits) ? `${digits.slice(0, 3)}****${digits.slice(-4)}` : undefined
 }
 
 function getApp(): CloudBaseApp | null {
@@ -458,25 +718,18 @@ async function activateLauncherAccount(accessToken: string): Promise<void> {
 
 async function discardUnactivatedSession(authClient: CloudBaseAuthClient): Promise<void> {
 	try {
-		await withAuthRequestTimeout(authClient.signOut())
+		await withAuthRequestTimeout(() => authClient.signOut())
 	} catch {
 		// Activation failed, so cleanup is best-effort and must not replace that original error.
 	}
 }
 
-async function withAuthRequestTimeout<T>(request: Promise<T>): Promise<T> {
-	let timeoutId: ReturnType<typeof setTimeout> | undefined
-	const timeout = new Promise<never>((_resolve, reject) => {
-		timeoutId = setTimeout(() => {
-			reject(new AuthRequestTimeoutError(strings.auth.error.timeout))
-		}, AUTH_REQUEST_TIMEOUT_MS)
-	})
-
-	try {
-		return await Promise.race([request, timeout])
-	} finally {
-		if (timeoutId !== undefined) clearTimeout(timeoutId)
-	}
+async function withAuthRequestTimeout<T>(request: () => Promise<T>): Promise<T> {
+	return withCaptchaAwareTimeout(
+		request,
+		AUTH_REQUEST_TIMEOUT_MS,
+		() => new AuthRequestTimeoutError(strings.auth.error.timeout),
+	)
 }
 
 async function readResponsePayload(response: Response): Promise<unknown> {
