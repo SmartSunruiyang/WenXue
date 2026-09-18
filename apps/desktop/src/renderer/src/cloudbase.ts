@@ -7,12 +7,13 @@ const DEFAULT_WENXUE_GATEWAY_BASE_URL =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
 const USERNAME_MIN_LENGTH = 5
 const USERNAME_MAX_LENGTH = 24
-const PASSWORD_MIN_LENGTH = 9
+const PASSWORD_MIN_LENGTH = 8
 const PASSWORD_MAX_LENGTH = 32
 const AUTH_REQUEST_TIMEOUT_MS = 12_000
-const USERNAME_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/
-const PASSWORD_FIRST_CHARACTER_PATTERN = /^[A-Za-z0-9]/
-const PASSWORD_CHARACTER_SET_PATTERN = /^[A-Za-z0-9()!@#$%^&*|?><_-]+$/
+const USERNAME_FIRST_CHARACTER_PATTERN = /^[A-Za-z]/
+const USERNAME_DISALLOWED_CHARACTER_PATTERN = /[^A-Za-z0-9]/
+const PASSWORD_FIRST_CHARACTER_PATTERN = /^[A-Za-z]/
+const PASSWORD_DISALLOWED_CHARACTER_PATTERN = /[^A-Za-z0-9()!@#$%^&*|?><_-]/
 const NETWORK_FAILURE_PATTERNS = [
 	/failed to fetch/i,
 	/fetch failed/i,
@@ -145,22 +146,69 @@ export function watchDesktopSignal(
 	return cloudbaseApp.database().collection(collectionName).where(query).watch(callbacks)
 }
 
+export function getLauncherUsernameRequirements(username: string): {
+	length: boolean
+	firstCharacter: boolean
+	characterSet: boolean
+} {
+	return {
+		length: username.length >= USERNAME_MIN_LENGTH && username.length <= USERNAME_MAX_LENGTH,
+		firstCharacter: USERNAME_FIRST_CHARACTER_PATTERN.test(username),
+		characterSet: username.length > 0 && !USERNAME_DISALLOWED_CHARACTER_PATTERN.test(username),
+	}
+}
+
+export function getLauncherPasswordRequirements(password: string): {
+	length: boolean
+	firstCharacter: boolean
+	characterSet: boolean
+	complexity: boolean
+} {
+	return {
+		length: password.length >= PASSWORD_MIN_LENGTH && password.length <= PASSWORD_MAX_LENGTH,
+		firstCharacter: PASSWORD_FIRST_CHARACTER_PATTERN.test(password),
+		characterSet: password.length > 0 && !PASSWORD_DISALLOWED_CHARACTER_PATTERN.test(password),
+		complexity: countPasswordCharacterCategories(password) >= 3,
+	}
+}
+
+export type PasswordCharacterMatch = 'pending' | 'match' | 'mismatch'
+
+export function getLauncherPasswordComparison(password: string, confirmation: string) {
+	const characters = Array.from(password)
+	const confirmedCharacters = Array.from(confirmation)
+	const states: PasswordCharacterMatch[] = characters.map((character, index) =>
+		index >= confirmedCharacters.length
+			? 'pending'
+			: character === confirmedCharacters[index]
+				? 'match'
+				: 'mismatch',
+	)
+	return {
+		states,
+		confirmedLength: confirmedCharacters.length,
+		extraLength: Math.max(0, confirmedCharacters.length - characters.length),
+		firstMismatchIndex: states.indexOf('mismatch'),
+	}
+}
+
 export function validateLauncherCredentials(
 	username: string,
 	password: string,
+	mode: 'login' | 'register' = 'register',
 ): LauncherCredentialValidationCode | null {
 	if (username.length === 0) return 'usernameRequired'
-	if (username.length < USERNAME_MIN_LENGTH || username.length > USERNAME_MAX_LENGTH) {
-		return 'usernameLength'
-	}
-	if (!USERNAME_PATTERN.test(username)) return 'usernameFormat'
+	const usernameRequirements = getLauncherUsernameRequirements(username)
+	if (!usernameRequirements.length) return 'usernameLength'
+	if (!usernameRequirements.firstCharacter || !usernameRequirements.characterSet)
+		return 'usernameFormat'
 	if (password.length === 0) return 'passwordRequired'
-	if (password.length < PASSWORD_MIN_LENGTH || password.length > PASSWORD_MAX_LENGTH) {
-		return 'passwordLength'
-	}
-	if (!PASSWORD_FIRST_CHARACTER_PATTERN.test(password)) return 'passwordFirstCharacter'
-	if (!PASSWORD_CHARACTER_SET_PATTERN.test(password)) return 'passwordCharacterSet'
-	if (countPasswordCharacterCategories(password) < 3) return 'passwordComplexity'
+	if (mode === 'login') return null
+	const passwordRequirements = getLauncherPasswordRequirements(password)
+	if (!passwordRequirements.length) return 'passwordLength'
+	if (!passwordRequirements.firstCharacter) return 'passwordFirstCharacter'
+	if (!passwordRequirements.characterSet) return 'passwordCharacterSet'
+	if (!passwordRequirements.complexity) return 'passwordComplexity'
 	return null
 }
 
@@ -168,7 +216,7 @@ export async function signInLauncher(
 	username: string,
 	password: string,
 ): Promise<LauncherAuthSession> {
-	assertLauncherCredentials(username, password)
+	assertLauncherCredentials(username, password, 'login')
 	const authClient = getAuth()
 	if (!authClient) throw new Error(strings.auth.error.publishableKey)
 	let data: unknown
@@ -190,7 +238,7 @@ export async function registerLauncher(
 	username: string,
 	password: string,
 ): Promise<LauncherAuthSession> {
-	assertLauncherCredentials(username, password)
+	assertLauncherCredentials(username, password, 'register')
 	const authClient = getAuth()
 	if (!authClient) throw new Error(strings.auth.error.publishableKey)
 	const accountCreation = await createLauncherAccount(username, password)
@@ -303,8 +351,12 @@ export function readCloudBaseErrorMessage(value: unknown, fallback: string): str
 		: message
 }
 
-function assertLauncherCredentials(username: string, password: string): void {
-	const validationCode = validateLauncherCredentials(username, password)
+function assertLauncherCredentials(
+	username: string,
+	password: string,
+	mode: 'login' | 'register',
+): void {
+	const validationCode = validateLauncherCredentials(username, password, mode)
 	if (validationCode) throw new Error(strings.auth.validation[validationCode])
 }
 

@@ -227,9 +227,26 @@ export const strings = {
 			confirmPassword: '确认密码',
 		},
 		hint: {
-			username: '5–24 位，以英文字母开头，仅可包含英文字母和数字。',
-			password:
-				'9–32 位，首位为英文字母或数字；特殊符号仅限 ()!@#$%^&*|?><_-；至少包含 4 类字符中的 3 类。',
+			username: {
+				length: '5–24 位',
+				firstCharacter: '以英文字母开头',
+				characterSet: '仅可包含英文字母和数字',
+			},
+			requirementState: { idle: '未输入', valid: '已满足', invalid: '未满足' },
+			password: {
+				length: '8–32 位',
+				firstCharacter: '首位必须为英文字母',
+				characterSet: '仅限英文字母、数字及 ()!@#$%^&*|?><_-',
+				complexity: '大写字母、小写字母、数字、特殊符号中至少 3 类',
+			},
+			confirmation: {
+				idle: '再次输入相同密码。',
+				missingPassword: '请先输入上方的密码。',
+				progress: (count: number, total: number) => `已匹配 ${count} / ${total} 位。`,
+				mismatch: (position: number) => `第 ${position} 位不一致，请检查后修改。`,
+				extra: (count: number) => `确认密码多出 ${count} 位，请检查后修改。`,
+				matched: '两次密码完全一致。',
+			},
 		},
 		action: {
 			busy: '处理中',
@@ -245,8 +262,8 @@ export const strings = {
 			usernameLength: '用户名长度必须为 5–24 位。',
 			usernameFormat: '用户名必须以英文字母开头，且只能包含英文字母和数字。',
 			passwordRequired: '请输入密码。',
-			passwordLength: '密码长度必须为 9–32 位。',
-			passwordFirstCharacter: '密码首位必须是英文字母或数字。',
+			passwordLength: '密码长度必须为 8–32 位。',
+			passwordFirstCharacter: '密码首位必须是英文字母，不能为数字或特殊符号。',
 			passwordCharacterSet:
 				'密码只能包含英文字母、数字及这些特殊符号：()!@#$%^&*|?><_-，不能包含空格、中文或 emoji。',
 			passwordComplexity: '密码必须至少包含小写字母、大写字母、数字和特殊符号中的 3 类。',

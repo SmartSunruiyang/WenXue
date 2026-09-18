@@ -289,6 +289,79 @@ body:has(.app-shell--macos) {
 .auth-password input {
 	padding-right: 48px;
 }
+.auth-password--comparing input:not(:focus) {
+	color: transparent;
+	-webkit-text-fill-color: transparent;
+}
+.auth-password__comparison {
+	--auth-password-match-background: oklch(0.88 0.13 145);
+	--auth-password-mismatch-background: oklch(0.89 0.065 15);
+	position: absolute;
+	inset: 1px 48px 1px 15px;
+	display: flex;
+	align-items: center;
+	overflow: hidden;
+	padding-right: 2px;
+	color: var(--wx-foreground);
+	font-size: 14px;
+	line-height: 24px;
+	white-space: pre;
+	pointer-events: none;
+	user-select: none;
+}
+.auth-password input:focus ~ .auth-password__comparison {
+	visibility: hidden;
+}
+.auth-password input:disabled ~ .auth-password__comparison {
+	opacity: 0.45;
+}
+.auth-password__character {
+	position: relative;
+	isolation: isolate;
+	flex-shrink: 0;
+}
+.auth-password__character::before {
+	position: absolute;
+	z-index: -1;
+	inset: 0;
+	border-radius: 4px;
+	content: '';
+	transform-origin: center bottom;
+}
+.auth-password__character[data-state='match']::before {
+	background: var(--auth-password-match-background);
+	animation: auth-password-match-reveal 180ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.auth-password__character[data-state='mismatch']::before {
+	background: var(--auth-password-mismatch-background);
+	animation: auth-password-match-reveal 180ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.auth-password__character[data-state='match']
+	+ .auth-password__character[data-state='match']::before,
+.auth-password__character[data-state='mismatch']
+	+ .auth-password__character[data-state='mismatch']::before {
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+}
+.auth-password__character[data-state='match']:has(
+		+ .auth-password__character[data-state='match']
+	)::before,
+.auth-password__character[data-state='mismatch']:has(
+		+ .auth-password__character[data-state='mismatch']
+	)::before {
+	border-top-right-radius: 0;
+	border-bottom-right-radius: 0;
+}
+@keyframes auth-password-match-reveal {
+	from {
+		opacity: 0;
+		transform: translateY(3px) scaleY(0.4);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scaleY(1);
+	}
+}
 .auth-password__toggle {
 	position: absolute;
 	top: 6px;
@@ -319,6 +392,31 @@ body:has(.app-shell--macos) {
 	color: var(--wx-muted);
 	font-size: 12px;
 	line-height: 1.6;
+}
+.auth-requirements {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.auth-requirement {
+	display: inline-flex;
+	align-items: flex-start;
+	gap: 4px;
+}
+.auth-requirement svg {
+	flex-shrink: 0;
+	margin-top: 3px;
+}
+.auth-requirement[data-state='valid'],
+.auth-confirmation-hint[data-state='valid'] {
+	color: var(--wx-signal-green);
+}
+.auth-requirement[data-state='invalid'],
+.auth-confirmation-hint[data-state='invalid'] {
+	color: var(--wx-error-red);
 }
 .auth-alert {
 	padding: 12px 14px;
@@ -1572,6 +1670,9 @@ body:has(.app-shell--macos) {
 	}
 }
 @media (prefers-reduced-motion: reduce) {
+	.auth-password__character[data-state]::before {
+		animation: none;
+	}
 	.auth-intro {
 		display: none;
 	}

@@ -327,9 +327,10 @@ describe('CloudBase LLM gateway behavior', () => {
 
 	it('rejects weak launcher passwords before calling CloudBase', async () => {
 		const cases = [
-			{ password: 'Auth9!', message: '密码长度必须为 9–32 位' },
-			{ password: `Aa1!${'x'.repeat(29)}`, message: '密码长度必须为 9–32 位' },
-			{ password: '!AuthTest9', message: '密码必须以英文字母或数字开头' },
+			{ password: 'AuthTe1', message: '密码长度必须为 8–32 位' },
+			{ password: `Aa1!${'x'.repeat(29)}`, message: '密码长度必须为 8–32 位' },
+			{ password: '!AuthTest9', message: '密码必须以英文字母开头' },
+			{ password: '1AuthTest!', message: '密码必须以英文字母开头' },
 			{
 				password: 'authtest9',
 				message: '密码必须包含大写字母、小写字母、数字和特殊符号中的至少 3 类',
@@ -351,6 +352,22 @@ describe('CloudBase LLM gateway behavior', () => {
 				}),
 			).rejects.toMatchObject({ message: item.message, status: 400 })
 			expect(called).toBe(false)
+		}
+	})
+
+	it('accepts eight-character passwords with a letter first and three character categories', async () => {
+		for (const password of ['AuthTes1', 'aUTHtes1', `Aa1${'x'.repeat(29)}`]) {
+			const fetchImpl = vi.fn(async () =>
+				Response.json({ Response: { RequestId: 'request-password-boundary' } }),
+			)
+			await expect(
+				handleLauncherRegistration({
+					rawBody: JSON.stringify({ username: 'alice', password }),
+					env: DEFAULT_ENV,
+					fetchImpl,
+				}),
+			).resolves.toEqual({ ok: true, username: 'alice' })
+			expect(fetchImpl).toHaveBeenCalledTimes(1)
 		}
 	})
 

@@ -21,7 +21,10 @@ vi.mock('@cloudbase/js-sdk', () => ({
 
 import {
 	cloudbaseConfig,
+	getLauncherPasswordComparison,
+	getLauncherPasswordRequirements,
 	getLauncherSession,
+	getLauncherUsernameRequirements,
 	readCloudBaseErrorMessage,
 	readLauncherAuthSession,
 	refreshLauncherSession,
@@ -166,22 +169,202 @@ describe('desktop CloudBase auth session parsing', () => {
 		expect(validateLauncherCredentials('1Abcd', VALID_PASSWORD)).toBe('usernameFormat')
 		expect(validateLauncherCredentials('Abc_12', VALID_PASSWORD)).toBe('usernameFormat')
 		expect(validateLauncherCredentials(' Abc12', VALID_PASSWORD)).toBe('usernameFormat')
+		expect(validateLauncherCredentials('Abc12\n', VALID_PASSWORD)).toBe('usernameFormat')
+	})
+
+	it('reports username requirements independently while input is incomplete or invalid', () => {
+		expect(getLauncherUsernameRequirements('0')).toEqual({
+			length: false,
+			firstCharacter: false,
+			characterSet: true,
+		})
+		expect(getLauncherUsernameRequirements('1Abcd')).toEqual({
+			length: true,
+			firstCharacter: false,
+			characterSet: true,
+		})
+		for (const username of ['Abc_12', 'Abc中文', 'Abc12 ', 'Abc12\n']) {
+			expect(getLauncherUsernameRequirements(username)).toEqual({
+				length: true,
+				firstCharacter: true,
+				characterSet: false,
+			})
+		}
+		expect(getLauncherUsernameRequirements('Alice1')).toEqual({
+			length: true,
+			firstCharacter: true,
+			characterSet: true,
+		})
+	})
+
+	it('reports no username requirements fulfilled after clearing the input', () => {
+		expect(getLauncherUsernameRequirements('')).toEqual({
+			length: false,
+			firstCharacter: false,
+			characterSet: false,
+		})
 	})
 
 	it('validates the CloudBase password boundary and complexity rules', () => {
+		expect(validateLauncherCredentials('Alice1', 'AuthTes1')).toBeNull()
 		expect(validateLauncherCredentials('Alice1', 'AuthTest1')).toBeNull()
 		expect(validateLauncherCredentials('Alice1', 'AuthTest!')).toBeNull()
 		expect(validateLauncherCredentials('Alice1', `Aa1!${'a'.repeat(28)}`)).toBeNull()
 		expect(validateLauncherCredentials('Alice1', 'Aa1()!@#$%^&*|?><_-')).toBeNull()
 		expect(validateLauncherCredentials('Alice1', '')).toBe('passwordRequired')
-		expect(validateLauncherCredentials('Alice1', 'AuthTes1')).toBe('passwordLength')
+		expect(validateLauncherCredentials('Alice1', 'AuthTe1')).toBe('passwordLength')
 		expect(validateLauncherCredentials('Alice1', 'A'.repeat(33))).toBe('passwordLength')
 		expect(validateLauncherCredentials('Alice1', '!AuthTest9')).toBe('passwordFirstCharacter')
+		expect(validateLauncherCredentials('Alice1', '1AuthTest!')).toBe('passwordFirstCharacter')
 		expect(validateLauncherCredentials('Alice1', 'AuthTest9 ')).toBe('passwordCharacterSet')
+		expect(validateLauncherCredentials('Alice1', 'AuthTest9\n')).toBe('passwordCharacterSet')
 		expect(validateLauncherCredentials('Alice1', 'Auth测Test9!')).toBe('passwordCharacterSet')
 		expect(validateLauncherCredentials('Alice1', 'Auth😀Test9!')).toBe('passwordCharacterSet')
 		expect(validateLauncherCredentials('Alice1', 'AuthTest9.')).toBe('passwordCharacterSet')
 		expect(validateLauncherCredentials('Alice1', 'Authentication')).toBe('passwordComplexity')
+	})
+
+	it('reports each password requirement independently during input', () => {
+		expect(getLauncherPasswordRequirements('AuthTes1')).toEqual({
+			length: true,
+			firstCharacter: true,
+			characterSet: true,
+			complexity: true,
+		})
+		expect(getLauncherPasswordRequirements('AuthTe1')).toEqual({
+			length: false,
+			firstCharacter: true,
+			characterSet: true,
+			complexity: true,
+		})
+		expect(getLauncherPasswordRequirements('authtes1')).toEqual({
+			length: true,
+			firstCharacter: true,
+			characterSet: true,
+			complexity: false,
+		})
+		expect(getLauncherPasswordRequirements('0')).toEqual({
+			length: false,
+			firstCharacter: false,
+			characterSet: true,
+			complexity: false,
+		})
+		expect(getLauncherPasswordRequirements('!AuthTest9')).toEqual({
+			length: true,
+			firstCharacter: false,
+			characterSet: true,
+			complexity: true,
+		})
+		for (const password of ['AuthTest9 ', 'AuthTest9\n', 'Auth测Test9!']) {
+			expect(getLauncherPasswordRequirements(password)).toEqual({
+				length: true,
+				firstCharacter: true,
+				characterSet: false,
+				complexity: true,
+			})
+		}
+		expect(getLauncherPasswordRequirements(VALID_PASSWORD)).toEqual({
+			length: true,
+			firstCharacter: true,
+			characterSet: true,
+			complexity: true,
+		})
+		expect(getLauncherPasswordRequirements('')).toEqual({
+			length: false,
+			firstCharacter: false,
+			characterSet: false,
+			complexity: false,
+		})
+	})
+
+	it('allows existing passwords beginning with a digit to reach login authentication', async () => {
+		mockSuccessfulSignIn()
+		expect(validateLauncherCredentials('Alice1', '1AuthTest!', 'login')).toBeNull()
+		await expect(signInLauncher('Alice1', '1AuthTest!')).resolves.toMatchObject({
+			userId: 'user_123',
+		})
+		expect(cloudbaseMock.signInWithPassword).toHaveBeenCalledWith({
+			username: 'Alice1',
+			password: '1AuthTest!',
+		})
+	})
+
+	it('rejects empty login passwords and numeric-leading registration passwords before requests', async () => {
+		await expect(signInLauncher('Alice1', '')).rejects.toThrow(
+			strings.auth.validation.passwordRequired,
+		)
+		await expect(registerLauncher('Alice1', '1AuthTest!')).rejects.toThrow(
+			strings.auth.validation.passwordFirstCharacter,
+		)
+		expect(cloudbaseMock.signInWithPassword).not.toHaveBeenCalled()
+		expect(cloudbaseMock.fetch).not.toHaveBeenCalled()
+	})
+
+	it('compares each confirmed position independently after a mismatch', () => {
+		expect(getLauncherPasswordComparison('Ab1!', 'Ax1')).toEqual({
+			states: ['match', 'mismatch', 'match', 'pending'],
+			confirmedLength: 3,
+			extraLength: 0,
+			firstMismatchIndex: 1,
+		})
+	})
+
+	it('updates password comparisons after correcting, deleting or changing the original', () => {
+		expect(getLauncherPasswordComparison('Ab1!', 'Ab').states).toEqual([
+			'match',
+			'match',
+			'pending',
+			'pending',
+		])
+		expect(getLauncherPasswordComparison('Ab1!', 'A').states).toEqual([
+			'match',
+			'pending',
+			'pending',
+			'pending',
+		])
+		expect(getLauncherPasswordComparison('Ab1!', '').states).toEqual([
+			'pending',
+			'pending',
+			'pending',
+			'pending',
+		])
+		expect(getLauncherPasswordComparison('Ac1!', 'Ab').states).toEqual([
+			'match',
+			'mismatch',
+			'pending',
+			'pending',
+		])
+	})
+
+	it('distinguishes complete matches from extra confirmation characters', () => {
+		expect(getLauncherPasswordComparison('Ab1!', 'Ab1!')).toEqual({
+			states: ['match', 'match', 'match', 'match'],
+			confirmedLength: 4,
+			extraLength: 0,
+			firstMismatchIndex: -1,
+		})
+		expect(getLauncherPasswordComparison('Ab1!', 'Ab1!2')).toEqual({
+			states: ['match', 'match', 'match', 'match'],
+			confirmedLength: 5,
+			extraLength: 1,
+			firstMismatchIndex: -1,
+		})
+		expect(getLauncherPasswordComparison('', 'A')).toEqual({
+			states: [],
+			confirmedLength: 1,
+			extraLength: 1,
+			firstMismatchIndex: -1,
+		})
+	})
+
+	it('keeps character positions aligned even when invalid Unicode is entered', () => {
+		expect(getLauncherPasswordComparison('A😀b1!', 'A😀x').states).toEqual([
+			'match',
+			'match',
+			'mismatch',
+			'pending',
+			'pending',
+		])
 	})
 
 	it('clears the CloudBase SDK login timeout after a successful sign in', async () => {
@@ -241,7 +424,7 @@ describe('desktop CloudBase auth session parsing', () => {
 		await expect(signInLauncher('1Alice', VALID_PASSWORD)).rejects.toThrow(
 			strings.auth.validation.usernameFormat,
 		)
-		await expect(registerLauncher('Alice1', 'AuthTes1')).rejects.toThrow(
+		await expect(registerLauncher('Alice1', 'AuthTe1')).rejects.toThrow(
 			strings.auth.validation.passwordLength,
 		)
 

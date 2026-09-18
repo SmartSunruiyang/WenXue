@@ -842,11 +842,11 @@ function parseLauncherRegistrationBody(rawBody) {
 	if (!/^[A-Za-z][A-Za-z0-9]*$/.test(username)) {
 		throw new GatewayError('用户名只能包含英文字母和数字，且必须以英文字母开头', 400)
 	}
-	if (password.length < 9 || password.length > 32) {
-		throw new GatewayError('密码长度必须为 9–32 位', 400)
+	if (password.length < 8 || password.length > 32) {
+		throw new GatewayError('密码长度必须为 8–32 位', 400)
 	}
-	if (!/^[A-Za-z0-9]/.test(password)) {
-		throw new GatewayError('密码必须以英文字母或数字开头', 400)
+	if (!/^[A-Za-z]/.test(password)) {
+		throw new GatewayError('密码必须以英文字母开头', 400)
 	}
 	if (!/^[A-Za-z0-9()!@#$%^&*|?><_-]+$/.test(password)) {
 		throw new GatewayError('密码包含不支持的字符', 400)

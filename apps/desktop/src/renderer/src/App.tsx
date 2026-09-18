@@ -35,10 +35,13 @@ import {
 	X,
 } from 'lucide-react'
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+	getLauncherPasswordComparison,
+	getLauncherPasswordRequirements,
 	getLauncherSession,
+	getLauncherUsernameRequirements,
 	readCloudBaseErrorMessage,
 	refreshLauncherSession,
 	registerLauncher,
@@ -48,6 +51,7 @@ import {
 	validateLauncherCredentials,
 	type LauncherAuthSession,
 	type LauncherPublicUser,
+	type PasswordCharacterMatch,
 } from './cloudbase'
 import {
 	DesktopAnnouncementService,
@@ -1288,9 +1292,63 @@ function AuthScreen({
 	const [confirmPassword, setConfirmPassword] = useState('')
 	const [passwordVisible, setPasswordVisible] = useState(false)
 	const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false)
+	const [activeConfirmationIndex, setActiveConfirmationIndex] = useState(-1)
 	const [busy, setBusy] = useState(false)
 	const [localError, setLocalError] = useState<string | null>(null)
 	const isRegister = mode === 'register'
+	const usernameRequirements = getLauncherUsernameRequirements(username)
+	const usernameRules = [
+		{ key: 'length', label: strings.auth.hint.username.length, valid: usernameRequirements.length },
+		{
+			key: 'firstCharacter',
+			label: strings.auth.hint.username.firstCharacter,
+			valid: usernameRequirements.firstCharacter,
+		},
+		{
+			key: 'characterSet',
+			label: strings.auth.hint.username.characterSet,
+			valid: usernameRequirements.characterSet,
+		},
+	]
+	const passwordRequirements = getLauncherPasswordRequirements(password)
+	const passwordRules = [
+		{ key: 'length', label: strings.auth.hint.password.length, valid: passwordRequirements.length },
+		{
+			key: 'firstCharacter',
+			label: strings.auth.hint.password.firstCharacter,
+			valid: passwordRequirements.firstCharacter,
+		},
+		{
+			key: 'characterSet',
+			label: strings.auth.hint.password.characterSet,
+			valid: passwordRequirements.characterSet,
+		},
+		{
+			key: 'complexity',
+			label: strings.auth.hint.password.complexity,
+			valid: passwordRequirements.complexity,
+		},
+	]
+	const comparison = getLauncherPasswordComparison(password, confirmPassword)
+	const confirmationHasError =
+		confirmPassword.length > 0 &&
+		(!password || comparison.firstMismatchIndex >= 0 || comparison.extraLength > 0)
+	const confirmationState = !confirmPassword ? 'idle' : confirmationHasError ? 'invalid' : 'valid'
+	const confirmationHint = !confirmPassword
+		? strings.auth.hint.confirmation.idle
+		: !password
+			? strings.auth.hint.confirmation.missingPassword
+			: comparison.firstMismatchIndex >= 0
+				? strings.auth.hint.confirmation.mismatch(comparison.firstMismatchIndex + 1)
+				: comparison.extraLength > 0
+					? strings.auth.hint.confirmation.extra(comparison.extraLength)
+					: comparison.confirmedLength === comparison.states.length
+						? strings.auth.hint.confirmation.matched
+						: strings.auth.hint.confirmation.progress(
+								comparison.confirmedLength,
+								comparison.states.length,
+							)
+	const showPasswordComparison = isRegister && password.length > 0 && confirmPassword.length > 0
 
 	useEffect(() => {
 		if (!introVisible) return
@@ -1312,7 +1370,7 @@ function AuthScreen({
 		if (busy) return
 		setLocalError(null)
 		setMessage(null)
-		const validationCode = validateLauncherCredentials(username, password)
+		const validationCode = validateLauncherCredentials(username, password, mode)
 		if (validationCode) {
 			setLocalError(strings.auth.validation[validationCode])
 			return
@@ -1394,28 +1452,39 @@ function AuthScreen({
 							{strings.auth.mode.register}
 						</button>
 					</div>
-					<label className="auth-field">
-						<span>{strings.auth.field.username}</span>
+					<div className="auth-field">
+						<label htmlFor="auth-username">{strings.auth.field.username}</label>
 						<input
 							aria-describedby={isRegister ? 'auth-username-hint' : undefined}
+							aria-invalid={
+								isRegister && username.length > 0 && usernameRules.some((rule) => !rule.valid)
+							}
 							autoComplete="username"
 							autoFocus
 							disabled={busy}
+							id="auth-username"
 							onChange={(event) => setUsername(event.target.value)}
 							type="text"
 							value={username}
 						/>
 						{isRegister ? (
-							<span className="auth-field__hint" id="auth-username-hint">
-								{strings.auth.hint.username}
-							</span>
+							<AuthRequirements
+								id="auth-username-hint"
+								hasInput={username.length > 0}
+								rules={usernameRules}
+							/>
 						) : null}
-					</label>
+					</div>
 					<div className="auth-field">
 						<label htmlFor="auth-password">{strings.auth.field.password}</label>
-						<div className="auth-password">
+						<div
+							className={`auth-password ${showPasswordComparison ? 'auth-password--comparing' : ''}`}
+						>
 							<input
 								aria-describedby={isRegister ? 'auth-password-hint' : undefined}
+								aria-invalid={
+									isRegister && password.length > 0 && passwordRules.some((rule) => !rule.valid)
+								}
 								autoCapitalize="none"
 								autoComplete={isRegister ? 'new-password' : 'current-password'}
 								disabled={busy}
@@ -1425,6 +1494,14 @@ function AuthScreen({
 								type={passwordVisible ? 'text' : 'password'}
 								value={password}
 							/>
+							{showPasswordComparison ? (
+								<PasswordComparison
+									password={password}
+									visible={passwordVisible}
+									states={comparison.states}
+									activeIndex={activeConfirmationIndex}
+								/>
+							) : null}
 							<button
 								aria-controls="auth-password"
 								aria-label={
@@ -1450,9 +1527,11 @@ function AuthScreen({
 							</button>
 						</div>
 						{isRegister ? (
-							<span className="auth-field__hint" id="auth-password-hint">
-								{strings.auth.hint.password}
-							</span>
+							<AuthRequirements
+								id="auth-password-hint"
+								hasInput={password.length > 0}
+								rules={passwordRules}
+							/>
 						) : null}
 					</div>
 					{isRegister ? (
@@ -1460,11 +1539,20 @@ function AuthScreen({
 							<label htmlFor="auth-confirm-password">{strings.auth.field.confirmPassword}</label>
 							<div className="auth-password">
 								<input
+									aria-describedby="auth-confirm-password-hint"
+									aria-invalid={confirmationHasError}
 									autoCapitalize="none"
 									autoComplete="new-password"
 									disabled={busy}
 									id="auth-confirm-password"
-									onChange={(event) => setConfirmPassword(event.target.value)}
+									onChange={(event) => {
+										const value = event.target.value
+										setConfirmPassword(value)
+										setActiveConfirmationIndex(
+											Array.from(value.slice(0, event.target.selectionStart ?? value.length))
+												.length - 1,
+										)
+									}}
 									spellCheck={false}
 									type={confirmPasswordVisible ? 'text' : 'password'}
 									value={confirmPassword}
@@ -1493,6 +1581,14 @@ function AuthScreen({
 									)}
 								</button>
 							</div>
+							<span
+								className="auth-field__hint auth-confirmation-hint"
+								id="auth-confirm-password-hint"
+								data-state={confirmationState}
+								role="status"
+							>
+								{confirmationHint}
+							</span>
 						</div>
 					) : null}
 					{localError || error ? (
@@ -1517,6 +1613,81 @@ function AuthScreen({
 				</form>
 			)}
 		</main>
+	)
+}
+
+function AuthRequirements({
+	id,
+	hasInput,
+	rules,
+}: {
+	id: string
+	hasInput: boolean
+	rules: Array<{ key: string; label: string; valid: boolean }>
+}) {
+	return (
+		<ul className="auth-field__hint auth-requirements" id={id} aria-live="polite">
+			{rules.map((rule) => {
+				const state = !hasInput ? 'idle' : rule.valid ? 'valid' : 'invalid'
+				const Icon = state === 'idle' ? Minus : rule.valid ? Check : X
+				return (
+					<li className="auth-requirement" data-state={state} key={rule.key}>
+						<Icon size={12} aria-hidden="true" />
+						<span>
+							{rule.label}
+							<span className="sr-only">，{strings.auth.hint.requirementState[state]}</span>
+						</span>
+					</li>
+				)
+			})}
+		</ul>
+	)
+}
+
+function PasswordComparison({
+	password,
+	visible,
+	states,
+	activeIndex,
+}: {
+	password: string
+	visible: boolean
+	states: PasswordCharacterMatch[]
+	activeIndex: number
+}) {
+	const viewportRef = useRef<HTMLDivElement>(null)
+	useLayoutEffect(() => {
+		const viewport = viewportRef.current
+		if (!viewport) return
+		const alignActiveCharacter = () => {
+			const index = Math.max(0, Math.min(activeIndex, viewport.children.length - 1))
+			const character = viewport.children[index] as HTMLElement | undefined
+			if (!character) return
+			const bounds = viewport.getBoundingClientRect()
+			const { left, right } = character.getBoundingClientRect()
+			if (left < bounds.left) viewport.scrollLeft -= Math.ceil(bounds.left - left)
+			else if (right > bounds.right) {
+				viewport.scrollLeft += Math.ceil(right - bounds.right)
+			}
+		}
+		alignActiveCharacter()
+		const observer = new ResizeObserver(alignActiveCharacter)
+		observer.observe(viewport)
+		return () => observer.disconnect()
+	}, [password, visible, activeIndex])
+	return (
+		<div className="auth-password__comparison" aria-hidden="true" ref={viewportRef}>
+			{Array.from(password).map((character, index) => (
+				<span
+					className="auth-password__character"
+					data-state={states[index]}
+					// eslint-disable-next-line @eslint-react/no-array-index-key -- Fixed positions retain cells; state changes replay only that cell's animation.
+					key={`${index}:${states[index]}`}
+				>
+					{visible ? character : '•'}
+				</span>
+			))}
+		</div>
 	)
 }
 
