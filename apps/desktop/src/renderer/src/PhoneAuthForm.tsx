@@ -3,6 +3,8 @@ import type { FormEvent } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
 	getLauncherPhoneResendAt,
+	LauncherPhoneAlreadyRegisteredError,
+	LauncherRegistrationRequiredError,
 	readCloudBaseErrorMessage,
 	sendLauncherPhoneCode,
 	type LauncherAuthSession,
@@ -12,15 +14,23 @@ import { strings } from './strings'
 
 export function PhoneAuthForm({
 	userId,
+	registration,
+	initialPhone = '',
 	onAuthenticated,
 	onBusyChange,
+	onRegistrationRequired,
+	onRegistrationConflict,
 }: {
 	userId?: string
+	registration?: { username: string; password: string; userId?: string }
+	initialPhone?: string
 	onAuthenticated: (session: LauncherAuthSession) => Promise<void>
 	onBusyChange?: (busy: boolean) => void
+	onRegistrationRequired?: (error: LauncherRegistrationRequiredError) => void
+	onRegistrationConflict?: (phone: string) => void
 }) {
 	const id = useId()
-	const [phone, setPhone] = useState('')
+	const [phone, setPhone] = useState(initialPhone)
 	const [code, setCode] = useState('')
 	const [challenge, setChallenge] = useState<LauncherPhoneChallenge | null>(null)
 	const [phase, setPhase] = useState<'sending' | 'verifying' | null>(null)
@@ -72,10 +82,23 @@ export function PhoneAuthForm({
 		setError(null)
 		setBusy('sending')
 		try {
-			const nextChallenge = await sendLauncherPhoneCode(
-				phone,
-				userId ? { kind: 'bind', userId } : { kind: 'login' },
-			)
+			const purpose = registration
+				? registration.userId
+					? {
+							kind: 'complete' as const,
+							userId: registration.userId,
+							username: registration.username,
+							password: registration.password,
+						}
+					: {
+							kind: 'register' as const,
+							username: registration.username,
+							password: registration.password,
+						}
+				: userId
+					? { kind: 'bind' as const, userId }
+					: { kind: 'login' as const }
+			const nextChallenge = await sendLauncherPhoneCode(phone, purpose)
 			if (!mountedRef.current) {
 				nextChallenge.cancel()
 				return
@@ -85,7 +108,13 @@ export function PhoneAuthForm({
 			setResendAt(nextChallenge.resendAt)
 			setNow(Date.now())
 		} catch (nextError) {
-			if (mountedRef.current) {
+			if (mountedRef.current && nextError instanceof LauncherRegistrationRequiredError) {
+				clearChallenge()
+				onRegistrationRequired?.(nextError)
+			} else if (mountedRef.current && nextError instanceof LauncherPhoneAlreadyRegisteredError) {
+				clearChallenge()
+				onRegistrationConflict?.(nextError.phone)
+			} else if (mountedRef.current) {
 				setError(readCloudBaseErrorMessage(nextError, strings.auth.phone.sendError))
 				setResendAt(getLauncherPhoneResendAt())
 				setNow(Date.now())
@@ -117,7 +146,13 @@ export function PhoneAuthForm({
 				await onAuthenticated(session)
 			}
 		} catch (nextError) {
-			if (mountedRef.current) {
+			if (mountedRef.current && nextError instanceof LauncherRegistrationRequiredError) {
+				clearChallenge()
+				onRegistrationRequired?.(nextError)
+			} else if (mountedRef.current && nextError instanceof LauncherPhoneAlreadyRegisteredError) {
+				clearChallenge()
+				onRegistrationConflict?.(nextError.phone)
+			} else if (mountedRef.current) {
 				setError(readCloudBaseErrorMessage(nextError, strings.auth.phone.verifyError))
 			}
 		} finally {
@@ -187,7 +222,9 @@ export function PhoneAuthForm({
 							? strings.auth.phone.sending
 							: resendSeconds > 0
 								? strings.auth.phone.resendCountdown(resendSeconds)
-								: strings.auth.phone.sendCode}
+								: registration
+									? strings.auth.phone.registerCode
+									: strings.auth.phone.sendCode}
 					</button>
 				</div>
 			</div>
@@ -209,14 +246,20 @@ export function PhoneAuthForm({
 					<LogIn size={16} />
 				)}
 				{phase === 'verifying'
-					? userId
-						? strings.auth.phone.binding
-						: strings.auth.phone.loggingIn
-					: userId
-						? strings.auth.phone.bind
-						: strings.auth.phone.login}
+					? registration
+						? strings.auth.phone.verifyingRegister
+						: userId
+							? strings.auth.phone.binding
+							: strings.auth.phone.loggingIn
+					: registration
+						? strings.auth.phone.verifyRegister
+						: userId
+							? strings.auth.phone.bind
+							: strings.auth.phone.login}
 			</button>
-			{!userId ? <p className="phone-auth-form__hint">{strings.auth.phone.loginHint}</p> : null}
+			{!userId && !registration ? (
+				<p className="phone-auth-form__hint">{strings.auth.phone.loginHint}</p>
+			) : null}
 		</form>
 	)
 }

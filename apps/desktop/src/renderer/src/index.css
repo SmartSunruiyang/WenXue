@@ -509,6 +509,26 @@ body:has(.app-shell--macos) {
 	font-size: 13px;
 	line-height: 1.6;
 }
+.auth-registration-verification {
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+}
+.auth-registration-verification__back {
+	align-self: center;
+	padding: 4px 8px;
+	border: 0;
+	background: transparent;
+	color: var(--wx-muted);
+	font-size: 13px;
+	cursor: pointer;
+}
+.auth-registration-verification__back:hover:not(:disabled) {
+	color: var(--wx-foreground);
+}
+.auth-registration-verification__back:disabled {
+	cursor: wait;
+}
 .phone-binding-dialog {
 	width: min(440px, calc(100% - 48px));
 	max-height: calc(100% - 48px);
@@ -563,6 +583,15 @@ body:has(.app-shell--macos) {
 .phone-binding-dialog__complete {
 	display: grid;
 	gap: 24px;
+}
+.phone-registration-conflict__actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 12px;
+	margin-top: 24px;
+}
+.phone-registration-conflict__actions button {
+	min-height: 40px;
 }
 
 .sidebar {

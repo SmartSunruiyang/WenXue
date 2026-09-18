@@ -66,7 +66,9 @@ interface CloudBaseAuthClient {
 		phone: string
 		options: { shouldCreateUser: boolean }
 	}): Promise<CloudBaseOtpResult>
-	updateUser(input: { phone: string }): Promise<CloudBaseOtpResult>
+	signUp(input: { phone: string; username: string; password: string }): Promise<CloudBaseOtpResult>
+	updateUser(input: { phone: string } | { username: string }): Promise<CloudBaseOtpResult>
+	reauthenticate(): Promise<CloudBaseOtpResult>
 	getUser(): Promise<CloudBaseAuthResult>
 	refreshUser(): Promise<CloudBaseAuthResult>
 	createCaptchaData(input: {
@@ -91,6 +93,7 @@ interface CloudBaseAuthResult {
 interface CloudBaseOtpResult {
 	data?: {
 		verifyOtp?: (input: { token: string; phone?: string }) => Promise<CloudBaseAuthResult>
+		updateUser?: (input: { nonce: string; password: string }) => Promise<CloudBaseAuthResult>
 	}
 	error?: CloudBaseAuthError | null
 }
@@ -137,6 +140,22 @@ export class CloudSignOutOutcomeUnknownError extends Error {
 	readonly cloudSignOutOutcome = 'unknown' as const
 }
 
+export class LauncherRegistrationRequiredError extends Error {
+	constructor(
+		readonly phone: string,
+		readonly existingAccount: boolean,
+		readonly userId?: string,
+	) {
+		super(strings.auth.phone.registrationRequired)
+	}
+}
+
+export class LauncherPhoneAlreadyRegisteredError extends Error {
+	constructor(readonly phone: string) {
+		super(strings.auth.phone.registrationConflict)
+	}
+}
+
 class AuthRequestTimeoutError extends Error {
 	constructor(message: string) {
 		super(message)
@@ -177,6 +196,12 @@ export interface LauncherPhoneChallenge {
 	cancel(): void
 }
 
+export type LauncherPhonePurpose =
+	| { kind: 'login' }
+	| { kind: 'bind'; userId: string }
+	| { kind: 'register'; username: string; password: string }
+	| { kind: 'complete'; userId: string; username: string; password: string }
+
 export function getLauncherPhoneResendAt(): number {
 	return phoneResendAt
 }
@@ -189,9 +214,12 @@ export function normalizeLauncherPhone(value: string): string {
 
 export async function sendLauncherPhoneCode(
 	value: string,
-	purpose: { kind: 'login' } | { kind: 'bind'; userId: string },
+	purpose: LauncherPhonePurpose,
 ): Promise<LauncherPhoneChallenge> {
 	const phone = normalizeLauncherPhone(value)
+	if (purpose.kind === 'register' || purpose.kind === 'complete') {
+		assertLauncherCredentials(purpose.username, purpose.password, 'register')
+	}
 	assertAuthMutationIdle()
 	if (Date.now() < phoneResendAt) throw new Error(strings.auth.phone.rateLimit)
 	const authClient = getAuth()
@@ -199,23 +227,58 @@ export async function sendLauncherPhoneCode(
 	phoneRequestPending = true
 	activePhoneChallenge?.cancel()
 	try {
-		if (purpose.kind === 'bind') {
+		if (purpose.kind === 'bind' || purpose.kind === 'complete') {
 			const result = await runAuthMutation(() => authClient.getUser())
 			if (result.error) throw new Error(strings.auth.phone.sessionChanged)
 			const user = readAuthUser(result.data)
 			if (readString(user?.id) !== purpose.userId) {
 				throw new Error(strings.auth.phone.sessionChanged)
 			}
-			if (readString(user?.phone)) throw new Error(strings.auth.phone.alreadyBound)
+			if (purpose.kind === 'bind' && readString(user?.phone)) {
+				throw new Error(strings.auth.phone.alreadyBound)
+			}
+			if (
+				purpose.kind === 'complete' &&
+				(readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone || isCompleteLauncherUser(user))
+			) {
+				throw new LauncherPhoneAlreadyRegisteredError(phone)
+			}
 		}
-		const result = await runAuthMutation(() =>
-			purpose.kind === 'login'
-				? authClient.signInWithOtp({ phone, options: { shouldCreateUser: true } })
-				: authClient.updateUser({ phone }),
-		)
+		const startedAt = Date.now()
+		const result = await runAuthMutation(() => {
+			switch (purpose.kind) {
+				case 'login':
+					return authClient.signInWithOtp({ phone, options: { shouldCreateUser: false } })
+				case 'register':
+					return authClient.signUp({
+						phone,
+						username: purpose.username,
+						password: purpose.password,
+					})
+				case 'complete':
+					return authClient.reauthenticate()
+				case 'bind':
+					return authClient.updateUser({ phone })
+			}
+		})
+		if (result.error && isPhoneUserNotFound(result.error) && purpose.kind === 'login') {
+			throw new LauncherRegistrationRequiredError(phone, false)
+		}
+		if (result.error && isPhoneAlreadyRegistered(result.error) && purpose.kind === 'register') {
+			throw new LauncherPhoneAlreadyRegisteredError(phone)
+		}
+		if (result.error && isPhoneAlreadyRegistered(result.error) && purpose.kind === 'bind') {
+			throw new Error(strings.auth.phone.alreadyOwned)
+		}
 		if (result.error)
 			throw new Error(readPhoneAuthError(result.error, strings.auth.phone.sendError))
-		const verifyOtp = result.data?.verifyOtp
+		const updatePassword = result.data?.updateUser
+		const verifyOtp =
+			purpose.kind === 'complete'
+				? updatePassword &&
+					((input: { token: string }) =>
+						updatePassword({ nonce: input.token, password: purpose.password }))
+				: result.data?.verifyOtp
 		if (!verifyOtp) throw new Error(strings.auth.phone.sendError)
 		phoneResendAt = Date.now() + 60_000
 		let cancelled = false
@@ -236,7 +299,7 @@ export async function sendLauncherPhoneCode(
 				assertAuthMutationIdle()
 				phoneRequestPending = true
 				try {
-					if (purpose.kind === 'bind') {
+					if (purpose.kind === 'bind' || purpose.kind === 'complete') {
 						const before = await getLauncherSession()
 						if (before?.userId !== purpose.userId) {
 							throw new Error(strings.auth.phone.sessionChanged)
@@ -247,8 +310,28 @@ export async function sendLauncherPhoneCode(
 					}
 					const verified = await runAuthMutation(
 						() => verifyOtp(purpose.kind === 'bind' ? { phone, token: code } : { token: code }),
-						purpose.kind === 'login' ? () => clearLateLogin(authClient) : undefined,
+						purpose.kind === 'bind' ? undefined : () => clearLateLogin(authClient),
 					)
+					if (verified.error && isPhoneUserNotFound(verified.error) && purpose.kind === 'login') {
+						challenge.cancel()
+						throw new LauncherRegistrationRequiredError(phone, false)
+					}
+					if (
+						verified.error &&
+						isPhoneAlreadyRegistered(verified.error) &&
+						purpose.kind === 'register'
+					) {
+						challenge.cancel()
+						throw new LauncherPhoneAlreadyRegisteredError(phone)
+					}
+					if (
+						verified.error &&
+						isPhoneAlreadyRegistered(verified.error) &&
+						purpose.kind === 'bind'
+					) {
+						challenge.cancel()
+						throw new Error(strings.auth.phone.alreadyOwned)
+					}
 					if (verified.error) {
 						throw new Error(readPhoneAuthError(verified.error, strings.auth.phone.verifyError))
 					}
@@ -257,7 +340,72 @@ export async function sendLauncherPhoneCode(
 					if (purpose.kind === 'login') {
 						const session = readLauncherAuthSession(verified.data)
 						if (!session) throw new Error(strings.auth.error.loginSession)
-						return session
+						const result = await runAuthMutation(() => authClient.getUser())
+						if (result.error) throw new Error(strings.auth.phone.profileError)
+						const user = readAuthUser(result.data) ?? readSessionUser(verified.data)
+						if (
+							readString(user?.id) !== session.userId ||
+							readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone
+						) {
+							throw new Error(strings.auth.phone.sessionChanged)
+						}
+						if (!isCompleteLauncherUser(user)) {
+							throw new LauncherRegistrationRequiredError(phone, true, session.userId)
+						}
+						const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
+						return {
+							...session,
+							username:
+								readString(user?.username) ?? readString(metadata?.username) ?? session.username,
+						}
+					}
+					if (purpose.kind === 'register') {
+						const session = readLauncherAuthSession(verified.data)
+						const user = readAuthUser(verified.data)
+						const createdAt = Date.parse(readString(user?.created_at) ?? '')
+						if (
+							!session ||
+							readString(user?.id) !== session.userId ||
+							readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone ||
+							readString(user?.username) !== purpose.username ||
+							!Number.isFinite(createdAt) ||
+							createdAt < startedAt - 5000
+						) {
+							await discardRegistrationConflictSession(authClient)
+							throw new LauncherPhoneAlreadyRegisteredError(phone)
+						}
+						await activatePhoneRegistration(session.accessToken)
+						return { ...session, username: purpose.username }
+					}
+					if (purpose.kind === 'complete') {
+						const completedSession = readLauncherAuthSession(verified.data)
+						if (completedSession?.userId !== purpose.userId) {
+							throw new Error(strings.auth.phone.sessionChanged)
+						}
+						const updated = await runAuthMutation(() =>
+							authClient.updateUser({ username: purpose.username }),
+						)
+						if (updated.error)
+							throw new Error(
+								isUsernameAlreadyRegistered(updated.error)
+									? strings.auth.error.usernameExists
+									: strings.auth.phone.profileError,
+							)
+						const refreshed = await runAuthMutation(() => authClient.refreshUser())
+						const refreshedUser = readAuthUser(refreshed.data)
+						if (
+							refreshed.error ||
+							readString(refreshedUser?.id) !== purpose.userId ||
+							readString(refreshedUser?.username) !== purpose.username
+						) {
+							throw new Error(strings.auth.phone.profileError)
+						}
+						const session = await getLauncherSession()
+						if (session?.userId !== purpose.userId) {
+							throw new Error(strings.auth.phone.sessionChanged)
+						}
+						await activatePhoneRegistration(session.accessToken)
+						return { ...session, username: purpose.username }
 					}
 					const refreshed = await runAuthMutation(() => authClient.refreshUser())
 					if (refreshed.error) throw new Error(strings.auth.phone.refreshError)
@@ -271,6 +419,12 @@ export async function sendLauncherPhoneCode(
 					if (session?.userId !== purpose.userId) throw new Error(strings.auth.phone.sessionChanged)
 					return session
 				} catch (error) {
+					if (
+						error instanceof LauncherRegistrationRequiredError ||
+						error instanceof LauncherPhoneAlreadyRegisteredError
+					) {
+						throw error
+					}
 					if (error instanceof AuthRequestTimeoutError) {
 						challenge.cancel()
 						throw new Error(
@@ -288,11 +442,62 @@ export async function sendLauncherPhoneCode(
 		activePhoneChallenge = challenge
 		return challenge
 	} catch (error) {
+		if (
+			error instanceof LauncherRegistrationRequiredError ||
+			error instanceof LauncherPhoneAlreadyRegisteredError
+		) {
+			throw error
+		}
 		if (error instanceof AuthRequestTimeoutError) phoneResendAt = Date.now() + 60_000
 		throw new Error(readPhoneAuthError(error, strings.auth.phone.sendError))
 	} finally {
 		phoneRequestPending = false
 	}
+}
+
+function isPhoneUserNotFound(value: CloudBaseAuthError): boolean {
+	return ['not_found', 'user_not_found'].includes(
+		String(value.code ?? value.errorCode ?? value.error_code),
+	)
+}
+
+function isPhoneAlreadyRegistered(value: CloudBaseAuthError): boolean {
+	return ['phone_already_exists', 'already_exists'].includes(
+		String(value.code ?? value.errorCode ?? value.error_code),
+	)
+}
+
+function isUsernameAlreadyRegistered(value: CloudBaseAuthError): boolean {
+	return String(value.code ?? value.errorCode ?? value.error_code) === 'username_already_exists'
+}
+
+function isCompleteLauncherUser(user: Record<string, unknown> | null): boolean {
+	const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
+	return Boolean(
+		(readString(user?.username) ?? readString(metadata?.username)) &&
+		metadata?.hasPassword !== false &&
+		user?.hasPassword !== false,
+	)
+}
+
+export async function getLauncherIncompleteRegistration(): Promise<{
+	phone: string
+	userId: string
+} | null> {
+	const session = await getLauncherSession()
+	if (!session) return null
+	const authClient = getAuth()
+	if (!authClient) return null
+	const result = await runAuthMutation(() => authClient.getUser())
+	if (result.error) throw new Error(strings.auth.phone.profileError)
+	const user = readAuthUser(result.data)
+	if (readString(user?.id) !== session.userId) {
+		throw new Error(strings.auth.phone.sessionChanged)
+	}
+	const phone = readString(user?.phone)?.replace(/^\+86\s*/, '')
+	return phone && /^1[3-9]\d{9}$/.test(phone) && !isCompleteLauncherUser(user)
+		? { phone, userId: session.userId }
+		: null
 }
 
 function assertAuthMutationIdle(): void {
@@ -338,8 +543,23 @@ async function clearLateLogin(authClient: CloudBaseAuthClient): Promise<void> {
 	}
 }
 
+async function discardRegistrationConflictSession(authClient: CloudBaseAuthClient): Promise<void> {
+	try {
+		const result = await withAuthRequestTimeout(() => authClient.signOut())
+		if (result.error) throw result.error
+	} catch {
+		authOutcomeUnknown = true
+		throw new Error(strings.auth.phone.outcomeUnknown)
+	}
+}
+
 function readAuthUser(value: unknown): Record<string, unknown> | null {
 	return isRecord(value) && isRecord(value.user) ? value.user : null
+}
+
+function readSessionUser(value: unknown): Record<string, unknown> | null {
+	if (!isRecord(value) || !isRecord(value.session)) return null
+	return isRecord(value.session.user) ? value.session.user : null
 }
 
 function readPhoneAuthError(value: unknown, fallback: string): string {
@@ -353,6 +573,8 @@ function readPhoneAuthError(value: unknown, fallback: string): string {
 		if (safeMessages.includes(value.message)) return value.message
 	}
 	if (isRecord(value) && value.code === 'resource_exhausted') return strings.auth.phone.rateLimit
+	if (isRecord(value) && isUsernameAlreadyRegistered(value))
+		return strings.auth.error.usernameExists
 	if (isRecord(value) && value.code === 'invalid_argument') return strings.auth.phone.verifyError
 	const message = readCloudBaseErrorMessage(value, fallback)
 	return message === strings.auth.error.network ? message : fallback
@@ -713,6 +935,14 @@ async function activateLauncherAccount(accessToken: string): Promise<void> {
 		throw new Error(
 			readAuthorizedErrorMessage(payload, `账号激活失败 (${response.status})`, accessToken),
 		)
+	}
+}
+
+async function activatePhoneRegistration(accessToken: string): Promise<void> {
+	try {
+		await activateLauncherAccount(accessToken)
+	} catch {
+		throw new Error(strings.auth.phone.activationError)
 	}
 }
 

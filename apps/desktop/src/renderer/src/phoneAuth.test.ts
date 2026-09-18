@@ -4,7 +4,9 @@ import { strings } from './strings'
 const sdk = vi.hoisted(() => ({
 	auth: vi.fn(),
 	signInWithOtp: vi.fn(),
+	signUp: vi.fn(),
 	updateUser: vi.fn(),
+	reauthenticate: vi.fn(),
 	getUser: vi.fn(),
 	getSession: vi.fn(),
 	refreshUser: vi.fn(),
@@ -28,12 +30,34 @@ function session(userId = 'account-a') {
 	}
 }
 
+function registeredUser() {
+	return {
+		id: 'account-a',
+		phone: '+86 13800138000',
+		username: 'Alice1',
+		user_metadata: { hasPassword: true },
+	}
+}
+
+function mockGatewayActivation() {
+	const fetcher = vi.fn().mockResolvedValue(
+		new Response(JSON.stringify({ ok: true, userId: 'account-a' }), {
+			status: 200,
+			headers: { 'content-type': 'application/json' },
+		}),
+	)
+	vi.stubGlobal('fetch', fetcher)
+	return fetcher
+}
+
 describe('launcher phone authentication', () => {
 	beforeEach(() => {
 		vi.resetModules()
 		vi.resetAllMocks()
 		sdk.auth.mockReturnValue(sdk)
 		sdk.signInWithOtp.mockResolvedValue({ data: { verifyOtp: sdk.verifyOtp }, error: null })
+		sdk.signUp.mockResolvedValue({ data: { verifyOtp: sdk.verifyOtp }, error: null })
+		sdk.reauthenticate.mockResolvedValue({ data: { updateUser: sdk.verifyOtp }, error: null })
 		sdk.updateUser.mockResolvedValue({ data: { verifyOtp: sdk.verifyOtp }, error: null })
 		sdk.getUser.mockResolvedValue({ data: { user: { id: 'account-a', phone: '' } }, error: null })
 		sdk.getSession.mockResolvedValue({ data: session(), error: null })
@@ -45,7 +69,10 @@ describe('launcher phone authentication', () => {
 		sdk.signOut.mockResolvedValue({ error: null })
 	})
 
-	afterEach(() => vi.useRealTimers())
+	afterEach(() => {
+		vi.useRealTimers()
+		vi.unstubAllGlobals()
+	})
 
 	it('normalizes mainland numbers and rejects invalid input before sending', async () => {
 		const { normalizeLauncherPhone, sendLauncherPhoneCode } = await import('./cloudbase')
@@ -60,14 +87,15 @@ describe('launcher phone authentication', () => {
 
 	it('uses CloudBase OTP and returns a reusable launcher session with a masked label', async () => {
 		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		sdk.getUser.mockResolvedValueOnce({ data: { user: registeredUser() } })
 		const challenge = await sendLauncherPhoneCode('13800138000', { kind: 'login' })
 		expect(sdk.signInWithOtp).toHaveBeenCalledWith({
 			phone: '13800138000',
-			options: { shouldCreateUser: true },
+			options: { shouldCreateUser: false },
 		})
 		const result = await challenge.verify('123456')
 		expect(sdk.verifyOtp).toHaveBeenCalledWith({ token: '123456' })
-		expect(result).toMatchObject({ userId: 'account-a', username: '138****8000' })
+		expect(result).toMatchObject({ userId: 'account-a', username: 'Alice1' })
 		await expect(challenge.verify('123456')).rejects.toThrow(strings.auth.phone.needCode)
 	})
 
@@ -109,6 +137,7 @@ describe('launcher phone authentication', () => {
 
 	it('allows correcting a rejected code without starting a new challenge', async () => {
 		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		sdk.getUser.mockResolvedValueOnce({ data: { user: registeredUser() } })
 		const challenge = await sendLauncherPhoneCode('13800138000', { kind: 'login' })
 		sdk.verifyOtp.mockResolvedValueOnce({
 			error: { code: 'invalid_argument', message: 'sensitive' },
@@ -140,6 +169,15 @@ describe('launcher phone authentication', () => {
 		expect(sdk.updateUser).not.toHaveBeenCalled()
 	})
 
+	it('does not bind a phone already owned by another account', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		sdk.updateUser.mockResolvedValueOnce({ error: { code: 'phone_already_exists' } })
+		await expect(
+			sendLauncherPhoneCode('13800138000', { kind: 'bind', userId: 'account-a' }),
+		).rejects.toThrow(strings.auth.phone.alreadyOwned)
+		expect(sdk.getSession).not.toHaveBeenCalled()
+	})
+
 	it('refuses a stale account before sending or verifying a binding code', async () => {
 		const { sendLauncherPhoneCode } = await import('./cloudbase')
 		await expect(
@@ -169,6 +207,7 @@ describe('launcher phone authentication', () => {
 
 	it('blocks parallel sends and verifications', async () => {
 		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		sdk.getUser.mockResolvedValueOnce({ data: { user: registeredUser() } })
 		let completeSend!: (value: unknown) => void
 		sdk.signInWithOtp.mockReturnValueOnce(
 			new Promise((resolve) => {
@@ -191,6 +230,200 @@ describe('launcher phone authentication', () => {
 		await expect(challenge.verify('123456')).rejects.toThrow(strings.auth.phone.pending)
 		completeVerify({ data: session() })
 		await verifying
+	})
+
+	it('routes a number without an account to registration without creating a user', async () => {
+		const { sendLauncherPhoneCode, LauncherRegistrationRequiredError } = await import('./cloudbase')
+		sdk.signInWithOtp.mockResolvedValueOnce({ error: { code: 'not_found' } })
+		await expect(sendLauncherPhoneCode('13800138000', { kind: 'login' })).rejects.toBeInstanceOf(
+			LauncherRegistrationRequiredError,
+		)
+		expect(sdk.signInWithOtp).toHaveBeenCalledWith({
+			phone: '13800138000',
+			options: { shouldCreateUser: false },
+		})
+		expect(sdk.signUp).not.toHaveBeenCalled()
+		expect(sdk.getSession).not.toHaveBeenCalled()
+	})
+
+	it('routes a newly recognized number to registration after OTP verification', async () => {
+		const { sendLauncherPhoneCode, LauncherRegistrationRequiredError } = await import('./cloudbase')
+		sdk.verifyOtp.mockResolvedValueOnce({ error: { code: 'not_found' } })
+		const challenge = await sendLauncherPhoneCode('13800138000', { kind: 'login' })
+		await expect(challenge.verify('123456')).rejects.toBeInstanceOf(
+			LauncherRegistrationRequiredError,
+		)
+		expect(sdk.signUp).not.toHaveBeenCalled()
+	})
+
+	it('does not pass a phone-only account to the desktop session', async () => {
+		const { sendLauncherPhoneCode, LauncherRegistrationRequiredError } = await import('./cloudbase')
+		sdk.getUser.mockResolvedValueOnce({
+			data: {
+				user: { id: 'account-a', phone: '+86 13800138000', user_metadata: { hasPassword: false } },
+			},
+		})
+		const challenge = await sendLauncherPhoneCode('13800138000', { kind: 'login' })
+		await expect(challenge.verify('123456')).rejects.toMatchObject({
+			phone: '13800138000',
+			existingAccount: true,
+			userId: 'account-a',
+		})
+		expect(LauncherRegistrationRequiredError).toBeTypeOf('function')
+		expect(sdk.signOut).not.toHaveBeenCalled()
+	})
+
+	it('refuses a phone OTP session whose profile belongs to another number', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		sdk.getUser.mockResolvedValueOnce({
+			data: { user: { ...registeredUser(), phone: '+86 13900139000' } },
+		})
+		const challenge = await sendLauncherPhoneCode('13800138000', { kind: 'login' })
+		await expect(challenge.verify('123456')).rejects.toThrow(strings.auth.phone.sessionChanged)
+	})
+
+	it('registers only after username, password and a verified unused phone', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		const fetcher = mockGatewayActivation()
+		sdk.verifyOtp.mockResolvedValueOnce({
+			data: {
+				...session(),
+				user: { ...registeredUser(), created_at: new Date().toISOString() },
+			},
+		})
+		const challenge = await sendLauncherPhoneCode('13800138000', {
+			kind: 'register',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		expect(sdk.signUp).toHaveBeenCalledWith({
+			phone: '13800138000',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		expect(fetcher).not.toHaveBeenCalled()
+		await expect(challenge.verify('123456')).resolves.toMatchObject({ userId: 'account-a' })
+		expect(fetcher).toHaveBeenCalledOnce()
+	})
+
+	it('does not hand off a newly registered session if the gateway refuses activation', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue(new Response(JSON.stringify({ error: 'inactive' }), { status: 403 })),
+		)
+		sdk.verifyOtp.mockResolvedValueOnce({
+			data: { ...session(), user: { ...registeredUser(), created_at: new Date().toISOString() } },
+		})
+		const challenge = await sendLauncherPhoneCode('13800138000', {
+			kind: 'register',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		await expect(challenge.verify('123456')).rejects.toThrow(strings.auth.phone.activationError)
+	})
+
+	it('refuses smart signup when verification logs into a previously registered phone', async () => {
+		const { sendLauncherPhoneCode, LauncherPhoneAlreadyRegisteredError } =
+			await import('./cloudbase')
+		const fetcher = mockGatewayActivation()
+		sdk.verifyOtp.mockResolvedValueOnce({
+			data: {
+				...session(),
+				user: { ...registeredUser(), created_at: '2025-01-01T00:00:00.000Z' },
+			},
+		})
+		const challenge = await sendLauncherPhoneCode('13800138000', {
+			kind: 'register',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		await expect(challenge.verify('123456')).rejects.toBeInstanceOf(
+			LauncherPhoneAlreadyRegisteredError,
+		)
+		expect(sdk.signOut).toHaveBeenCalledOnce()
+		expect(fetcher).not.toHaveBeenCalled()
+	})
+
+	it('does not offer an unsafe login handoff if conflict session cleanup fails', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		sdk.verifyOtp.mockResolvedValueOnce({
+			data: {
+				...session(),
+				user: { ...registeredUser(), created_at: '2025-01-01T00:00:00.000Z' },
+			},
+		})
+		sdk.signOut.mockResolvedValueOnce({ error: { code: 'unavailable' } })
+		const challenge = await sendLauncherPhoneCode('13800138000', {
+			kind: 'register',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		await expect(challenge.verify('123456')).rejects.toThrow(strings.auth.phone.outcomeUnknown)
+		await expect(sendLauncherPhoneCode('13800138000', { kind: 'login' })).rejects.toThrow(
+			strings.auth.phone.outcomeUnknown,
+		)
+	})
+
+	it('reports an already bound phone during signup without replacing it', async () => {
+		const { sendLauncherPhoneCode, LauncherPhoneAlreadyRegisteredError } =
+			await import('./cloudbase')
+		sdk.signUp.mockResolvedValueOnce({ error: { code: 'phone_already_exists' } })
+		await expect(
+			sendLauncherPhoneCode('13800138000', {
+				kind: 'register',
+				username: 'Alice1',
+				password: 'AuthTest9!',
+			}),
+		).rejects.toBeInstanceOf(LauncherPhoneAlreadyRegisteredError)
+		expect(sdk.updateUser).not.toHaveBeenCalled()
+	})
+
+	it('completes an older OTP-only account on its own uid after a second SMS proof', async () => {
+		const { sendLauncherPhoneCode, getLauncherIncompleteRegistration } = await import('./cloudbase')
+		const fetcher = mockGatewayActivation()
+		sdk.getUser.mockResolvedValue({
+			data: {
+				user: { id: 'account-a', phone: '+86 13800138000', user_metadata: { hasPassword: false } },
+			},
+		})
+		await expect(getLauncherIncompleteRegistration()).resolves.toEqual({
+			phone: '13800138000',
+			userId: 'account-a',
+		})
+		sdk.verifyOtp.mockResolvedValueOnce({ data: session() })
+		sdk.updateUser.mockResolvedValueOnce({ data: { user: { ...registeredUser() } } })
+		sdk.refreshUser.mockResolvedValueOnce({ data: { user: registeredUser() } })
+		const challenge = await sendLauncherPhoneCode('13800138000', {
+			kind: 'complete',
+			userId: 'account-a',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		expect(sdk.reauthenticate).toHaveBeenCalledOnce()
+		await expect(challenge.verify('123456')).resolves.toMatchObject({ userId: 'account-a' })
+		expect(sdk.verifyOtp).toHaveBeenCalledWith({ nonce: '123456', password: 'AuthTest9!' })
+		expect(sdk.updateUser).toHaveBeenCalledWith({ username: 'Alice1' })
+		expect(fetcher).toHaveBeenCalledOnce()
+	})
+
+	it('does not overwrite a different signed-in user while completing registration', async () => {
+		const { sendLauncherPhoneCode } = await import('./cloudbase')
+		sdk.getUser.mockResolvedValueOnce({
+			data: { user: { id: 'account-a', phone: '+86 13800138000' } },
+		})
+		const challenge = await sendLauncherPhoneCode('13800138000', {
+			kind: 'complete',
+			userId: 'account-a',
+			username: 'Alice1',
+			password: 'AuthTest9!',
+		})
+		sdk.getSession.mockResolvedValueOnce({ data: session('account-b') })
+		await expect(challenge.verify('123456')).rejects.toThrow(strings.auth.phone.sessionChanged)
+		expect(sdk.verifyOtp).not.toHaveBeenCalled()
+		expect(sdk.updateUser).not.toHaveBeenCalled()
 	})
 
 	it('returns bounded errors without propagating upstream secrets', async () => {

@@ -39,19 +39,20 @@ import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObje
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+	getLauncherIncompleteRegistration,
 	getLauncherPasswordComparison,
 	getLauncherPasswordRequirements,
 	getLauncherSession,
 	getLauncherUsernameRequirements,
 	readCloudBaseErrorMessage,
 	refreshLauncherSession,
-	registerLauncher,
 	signInLauncher,
 	signOutLauncher,
 	toPublicUser,
 	validateLauncherCredentials,
 	type LauncherAuthSession,
 	type LauncherPublicUser,
+	type LauncherRegistrationRequiredError,
 	type PasswordCharacterMatch,
 } from './cloudbase'
 import {
@@ -183,6 +184,10 @@ export default function App() {
 	const [activeLogSources, setActiveLogSources] = useState<LogSource[]>(logSources)
 	const [followLogs, setFollowLogs] = useState(true)
 	const [avatarOpen, setAvatarOpen] = useState(false)
+	const [incompleteRegistration, setIncompleteRegistration] = useState<{
+		phone: string
+		userId: string
+	} | null>(null)
 	const [phoneBindingUserId, setPhoneBindingUserId] = useState<string | null>(null)
 	const [addingProfile, setAddingProfile] = useState(false)
 	const [batchLaunching, setBatchLaunching] = useState(false)
@@ -368,6 +373,12 @@ export default function App() {
 			if (!mounted) return
 			setShellInfo(nextShellInfo)
 			if (!session) {
+				setAuthReady(true)
+				return
+			}
+			const incomplete = await getLauncherIncompleteRegistration()
+			if (incomplete) {
+				setIncompleteRegistration(incomplete)
 				setAuthReady(true)
 				return
 			}
@@ -722,6 +733,7 @@ export default function App() {
 				throw new Error(result.error ?? '账号 session 同步失败')
 			}
 			const nextVersions = await loadWorkspaceData()
+			setIncompleteRegistration(null)
 			setAuthUser(toPublicUser(session))
 			void announcementServiceRef.current
 				?.start(session, desktopPlatform(shellInfo.platform), nextVersions.app)
@@ -735,15 +747,6 @@ export default function App() {
 	const handleLogin = useCallback(
 		async (username: string, password: string) => {
 			const session = await signInLauncher(username, password)
-			await syncSignedInSession(session)
-			setMessage(null)
-		},
-		[syncSignedInSession],
-	)
-
-	const handleRegister = useCallback(
-		async (username: string, password: string) => {
-			const session = await registerLauncher(username, password)
 			await syncSignedInSession(session)
 			setMessage(null)
 		},
@@ -928,9 +931,9 @@ export default function App() {
 			<>
 				<AuthScreen
 					error={message}
+					incompleteRegistration={incompleteRegistration}
 					onLogin={handleLogin}
 					onPhoneLogin={handlePhoneLogin}
-					onRegister={handleRegister}
 					shellInfo={shellInfo}
 					setMessage={setMessage}
 					setShellInfo={setShellInfo}
@@ -1305,17 +1308,17 @@ function RailButton({ active, children, icon: Icon, label, onClick }: RailButton
 
 function AuthScreen({
 	error,
+	incompleteRegistration,
 	onLogin,
 	onPhoneLogin,
-	onRegister,
 	shellInfo,
 	setMessage,
 	setShellInfo,
 }: {
 	error: string | null
+	incompleteRegistration: { phone: string; userId: string } | null
 	onLogin: (username: string, password: string) => Promise<void>
 	onPhoneLogin: (session: LauncherAuthSession) => Promise<void>
-	onRegister: (username: string, password: string) => Promise<void>
 	shellInfo: AppShellInfo
 	setMessage: (message: string | null) => void
 	setShellInfo: (info: AppShellInfo) => void
@@ -1323,8 +1326,17 @@ function AuthScreen({
 	const [introVisible, setIntroVisible] = useState(
 		() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
 	)
-	const [mode, setMode] = useState<'login' | 'register'>('login')
+	const [mode, setMode] = useState<'login' | 'register'>(
+		incompleteRegistration ? 'register' : 'login',
+	)
 	const [loginMethod, setLoginMethod] = useState<'password' | 'phone'>('password')
+	const [registrationPhone, setRegistrationPhone] = useState(incompleteRegistration?.phone ?? '')
+	const [registrationUserId, setRegistrationUserId] = useState(
+		incompleteRegistration?.userId ?? null,
+	)
+	const [registerVerifying, setRegisterVerifying] = useState(false)
+	const [registrationConflict, setRegistrationConflict] = useState(false)
+	const [phoneLoginSeed, setPhoneLoginSeed] = useState('')
 	const [phoneBusy, setPhoneBusy] = useState(false)
 	const [username, setUsername] = useState('')
 	const [password, setPassword] = useState('')
@@ -1423,13 +1435,13 @@ function AuthScreen({
 			setLocalError(strings.auth.validation.passwordMismatch)
 			return
 		}
+		if (isRegister) {
+			setRegisterVerifying(true)
+			return
+		}
 		setBusy(true)
 		try {
-			if (isRegister) {
-				await onRegister(username, password)
-			} else {
-				await onLogin(username, password)
-			}
+			await onLogin(username, password)
 		} catch (nextError) {
 			setLocalError(readCloudBaseErrorMessage(nextError, strings.auth.error.operation))
 		} finally {
@@ -1463,6 +1475,9 @@ function AuthScreen({
 							disabled={anyBusy}
 							onClick={() => {
 								setMode('login')
+								setRegisterVerifying(false)
+								setPassword('')
+								setConfirmPassword('')
 								setPasswordVisible(false)
 								setConfirmPasswordVisible(false)
 								setLocalError(null)
@@ -1479,6 +1494,9 @@ function AuthScreen({
 							disabled={anyBusy}
 							onClick={() => {
 								setMode('register')
+								setRegisterVerifying(false)
+								setPassword('')
+								setConfirmPassword('')
 								setPasswordVisible(false)
 								setConfirmPasswordVisible(false)
 								setLocalError(null)
@@ -1517,9 +1535,55 @@ function AuthScreen({
 							))}
 						</div>
 					) : null}
-					{!isRegister && loginMethod === 'phone' ? (
+					{isRegister && registerVerifying ? (
+						<div className="auth-registration-verification">
+							<p className="phone-auth-form__hint">
+								{registrationUserId
+									? strings.auth.phone.completeStep
+									: strings.auth.phone.registerStep}
+							</p>
+							<PhoneAuthForm
+								key={`${registrationPhone}:${registrationUserId ?? 'new'}`}
+								initialPhone={registrationPhone}
+								onAuthenticated={onPhoneLogin}
+								onBusyChange={setPhoneBusy}
+								onRegistrationConflict={(phone) => {
+									setRegistrationPhone(phone)
+									setRegistrationConflict(true)
+								}}
+								registration={{
+									username,
+									password,
+									userId: registrationUserId ?? undefined,
+								}}
+							/>
+							<button
+								className="auth-registration-verification__back"
+								disabled={anyBusy}
+								onClick={() => setRegisterVerifying(false)}
+								type="button"
+							>
+								{strings.auth.phone.backToCredentials}
+							</button>
+						</div>
+					) : !isRegister && loginMethod === 'phone' ? (
 						<>
-							<PhoneAuthForm onAuthenticated={onPhoneLogin} onBusyChange={setPhoneBusy} />
+							<PhoneAuthForm
+								key={phoneLoginSeed}
+								initialPhone={phoneLoginSeed}
+								onAuthenticated={onPhoneLogin}
+								onBusyChange={setPhoneBusy}
+								onRegistrationRequired={(nextError: LauncherRegistrationRequiredError) => {
+									setRegistrationPhone(nextError.phone)
+									setRegistrationUserId(nextError.userId ?? null)
+									setUsername('')
+									setPassword('')
+									setConfirmPassword('')
+									setMode('register')
+									setRegisterVerifying(false)
+									setLocalError(strings.auth.phone.registrationRequired)
+								}}
+							/>
 							{error ? (
 								<div className="auth-alert" role="alert">
 									{error}
@@ -1692,7 +1756,62 @@ function AuthScreen({
 					)}
 				</div>
 			)}
+			{registrationConflict ? (
+				<PhoneRegistrationConflictDialog
+					onBack={() => setRegistrationConflict(false)}
+					onLogin={() => {
+						setRegistrationConflict(false)
+						setPhoneLoginSeed(registrationPhone)
+						setRegistrationUserId(null)
+						setUsername('')
+						setPassword('')
+						setConfirmPassword('')
+						setRegisterVerifying(false)
+						setMode('login')
+						setLoginMethod('phone')
+						setLocalError(null)
+					}}
+				/>
+			) : null}
 		</main>
+	)
+}
+
+function PhoneRegistrationConflictDialog({
+	onBack,
+	onLogin,
+}: {
+	onBack: () => void
+	onLogin: () => void
+}) {
+	const dialogRef = useRef<HTMLDialogElement>(null)
+	useEffect(() => {
+		const dialog = dialogRef.current
+		dialog?.showModal()
+		return () => dialog?.close()
+	}, [])
+	return (
+		<dialog
+			aria-describedby="phone-registration-conflict-description"
+			aria-labelledby="phone-registration-conflict-title"
+			className="phone-binding-dialog no-drag"
+			onCancel={(event) => {
+				event.preventDefault()
+				onBack()
+			}}
+			ref={dialogRef}
+		>
+			<h2 id="phone-registration-conflict-title">{strings.auth.phone.conflictTitle}</h2>
+			<p id="phone-registration-conflict-description">{strings.auth.phone.conflictDescription}</p>
+			<div className="phone-registration-conflict__actions">
+				<button className="soft-button" onClick={onBack} type="button">
+					{strings.auth.phone.conflictBack}
+				</button>
+				<button autoFocus className="primary-button" onClick={onLogin} type="button">
+					{strings.auth.phone.conflictAction}
+				</button>
+			</div>
+		</dialog>
 	)
 }
 

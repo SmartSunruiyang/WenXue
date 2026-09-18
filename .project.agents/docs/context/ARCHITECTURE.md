@@ -309,10 +309,11 @@
 - 持有状态：仅 UI 态
 ```
 
-ConsoleUI 的 `cloudbase.ts` 同时封装 CloudBase 手机 OTP 登录与已登录账号手机号绑定，
+ConsoleUI 的 `cloudbase.ts` 同时封装 CloudBase 已有账号手机 OTP 登录、手机号验证注册、未完成账号资料补全与同 uid 手机号绑定，
 `PhoneAuthForm.tsx` 消费一次性验证挑战、管理输入与倒计时；图形验证码由 CloudBase 实际挑战驱动，
 `captchaChallenge.ts` 管理挑战生命周期、SDK 回调与可暂停的网络超时，`CaptchaDialog.tsx` 只呈现挑战和发送意图，
-不在前端判定答案。所有新登录仍经 UserSessionStore → 网关 activate 验证，绑定前后 uid 必须一致，
+不在前端判定答案。短信登录不自动创建无用户名/密码的用户；新注册在手机验证码成功后才能获取完整账号会话。
+所有新登录仍经 UserSessionStore → 网关 activate 验证，绑定前后 uid 必须一致；
 不新增认证后端、IPC 或跨域依赖。OTP 与图形挑战仅驻留内存；已有手机号的换绑/解绑不在此范围。
 
 #### Layer 7 — 组装根
