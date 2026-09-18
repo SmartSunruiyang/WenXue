@@ -1055,7 +1055,12 @@ export default function App() {
 					/>
 				) : null}
 				{route === 'tokens' ? (
-					<TokensPage loading={tokensLoading} onRefresh={refreshTokens} summary={tokens} />
+					<TokensPage
+						loading={tokensLoading}
+						onRefresh={refreshTokens}
+						profiles={profiles}
+						summary={tokens}
+					/>
 				) : null}
 				{route === 'settings' ? (
 					<SettingsPage
@@ -2382,12 +2387,25 @@ function LogRow({ browserName, entry }: { browserName: string; entry: LauncherLo
 function TokensPage({
 	loading,
 	onRefresh,
+	profiles,
 	summary,
 }: {
 	loading: boolean
 	onRefresh: () => Promise<void>
+	profiles: BrowserProfile[]
 	summary: TokenUsageSummary
 }) {
+	const profileNames = new Map(profiles.map((profile) => [profile.id, profile.displayName]))
+	const displaySummary = {
+		...summary,
+		byBrowser: summary.byBrowser.map((bucket) => ({
+			...bucket,
+			label:
+				bucket.key === 'cloud'
+					? strings.tokens.unassignedBrowser
+					: (profileNames.get(bucket.key) ?? bucket.label),
+		})),
+	}
 	const hasData = summary.totalTokens > 0
 	return (
 		<div className="page page--tokens">
@@ -2410,7 +2428,7 @@ function TokensPage({
 						<button
 							className="primary-button"
 							disabled={!hasData}
-							onClick={() => exportTokenUsageSummary(summary)}
+							onClick={() => exportTokenUsageSummary(displaySummary)}
 							type="button"
 						>
 							<Download size={15} />
@@ -2448,7 +2466,7 @@ function TokensPage({
 				{hasData ? (
 					<div className="token-sections">
 						<div className="token-distributions">
-							<TokenPanel title={strings.tokens.byBrowser} buckets={summary.byBrowser} />
+							<TokenPanel title={strings.tokens.byBrowser} buckets={displaySummary.byBrowser} />
 							<TokenPanel title={strings.tokens.byModel} buckets={summary.byModel} />
 						</div>
 						<TokenPanel flow title={strings.tokens.daily} buckets={summary.daily} />

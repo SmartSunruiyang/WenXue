@@ -140,11 +140,23 @@ function resolveRuntimeBuiltInConfig(
 	options: RuntimeAgentModelOptions,
 ): LLMConfig {
 	const session = options.session
+	const browserId = session?.browserId
 
 	return {
 		...gatewayConfigForBuiltIn(modelId),
 		baseURL: toOpenAIBaseUrl(session?.gatewayBaseUrl),
 		apiKey: session?.accessToken ?? '',
+		...(browserId ? { customFetch: createBrowserUsageFetch(browserId) } : {}),
+	}
+}
+
+function createBrowserUsageFetch(browserId: string): typeof globalThis.fetch {
+	return (input, init) => {
+		const headers = new Headers(
+			init?.headers ?? (input instanceof Request ? input.headers : undefined),
+		)
+		headers.set('X-WenXue-Browser-Id', browserId)
+		return globalThis.fetch(input, { ...init, headers })
 	}
 }
 

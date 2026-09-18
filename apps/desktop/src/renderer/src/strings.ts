@@ -129,6 +129,7 @@ export const strings = {
 		cost: '估算成本',
 		costHint: '按模型价格估算，仅供参考。',
 		byBrowser: '按浏览器',
+		unassignedBrowser: '未关联浏览器',
 		byModel: '按模型',
 		daily: '每日用量',
 		recent: '最近调用',

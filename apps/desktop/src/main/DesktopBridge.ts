@@ -168,12 +168,15 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 			const session = requireActiveSession()
 			await options.profileStore.get(session.userId, profileId)
 			assertAccountStillActive(session.userId)
-			const result = await options.userSessionHandoff.run(session, async (url) => {
-				assertAccountStillActive(session.userId)
-				await options.profileStore.get(session.userId, profileId)
-				assertAccountStillActive(session.userId)
-				await options.supervisor.launch(profileId, { startUrl: url })
-			})
+			const result = await options.userSessionHandoff.run(
+				{ ...session, browserId: profileId },
+				async (url) => {
+					assertAccountStillActive(session.userId)
+					await options.profileStore.get(session.userId, profileId)
+					assertAccountStillActive(session.userId)
+					await options.supervisor.launch(profileId, { startUrl: url })
+				},
+			)
 			if (!result.ok) {
 				throw new Error(result.error ?? '问学账号同步失败')
 			}
@@ -264,10 +267,7 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 					await options.profileStore.get(session.userId, requestedProfileId)
 					assertAccountStillActive(session.userId)
 					assertProfileDataMutationAllowed(options, requestedProfileId)
-					const duplicate = await options.profileStore.duplicate(
-						session.userId,
-						requestedProfileId,
-					)
+					const duplicate = await options.profileStore.duplicate(session.userId, requestedProfileId)
 					assertAccountStillActive(session.userId)
 					return duplicate
 				})

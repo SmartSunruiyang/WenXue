@@ -233,23 +233,24 @@ extraResources:
 - 注册：桌面端先校验凭据，再调用 `/v1/auth/register`；网关重复校验后通过 Tencent Cloud TCB `CreateUser(UserStatus=ACTIVE)` 创建 externalUser，且不依赖该接口返回 uid。随后桌面端调用 CloudBase Web Auth SDK `signInWithPassword` 验证密码并取得真实 session，再以 access token 调用 `/v1/auth/activate`；该 target 在 10 秒上限内读取 `/auth/v1/user/me`，确认真实 uid 与 `ACTIVE` 后返回，不写 NoSQL。若 CreateUser 已成功但客户端未收到响应，重试可得到 409，桌面仍以本次密码尝试登录：只有正确密码才能通过 Auth profile 校验。密码只在注册 TLS 请求、TCB 创建调用及 SDK 登录中传递，激活请求体不含密码，密码不写日志、数据库或响应。
 - 上游：`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`；DashScope Key 只来自 CloudBase Run 环境变量 `DASHSCOPE_API_KEY`。
 - 流式计量：当请求 `stream=true` 时，网关必须注入 `stream_options: { include_usage: true }`，否则 DashScope 流式响应不返回 usage。
-- 计量：M0 捕获 usage 与端到端延迟；M1 后写 `token_usage`，记录只含 CloudBase 用户 uid、model、tokens、latency、createdAt；M4 的 `usage-summary` target 实时读取当前用户 uid 记录并返回脱敏 `TokenUsageSummary`（recent id 不含 uid）。
-- 访问（2026-07-18 分发功能上线后）：当前版本 030 承接 100% 流量，保持 `OpenAccessTypes:["OA","PUBLIC","MINIAPP"]`，规格为 `Cpu:0.25`、`Mem:0.5`、`MinNum:1`、`MaxNum:2`；注册 target 按来源 IP、用户名和单实例总量限流，返回 429 与 `Retry-After`；扩大实例规模或正式公开获客前还必须在共享网关层补全局限流与审计告警。
+- 计量：M0 捕获 usage 与端到端延迟；M1 后写 `token_usage`，记录只含 CloudBase 用户 uid、可选 browserId、model、tokens、latency、createdAt；M4 的 `usage-summary` target 实时读取当前用户 uid 记录并返回脱敏 `TokenUsageSummary`（recent id 不含 uid）。browserId 来自 `X-WenXue-Browser-Id`，限 1–128 位 ASCII 字母、数字、下划线和短横线，仅用于当前鉴权 uid 下的分组，不参与授权、不转发上游。旧记录保留 cloud 分组。
+- 访问（2026-09-18 画像账单修复上线后）：当前版本 033 状态 normal，承接 100% 流量，保持 `OpenAccessTypes:["OA","PUBLIC","MINIAPP"]`，规格为 `Cpu:0.25`、`Mem:0.5`、`MinNum:1`、`MaxNum:2`；注册 target 按来源 IP、用户名和单实例总量限流，返回 429 与 `Retry-After`；扩大实例规模或正式公开获客前还必须在共享网关层补全局限流与审计告警。
 - 组合运行时上线（2026-07-18）：AdminApi 管理、消息、版本、客户端与 CI targets 及 AdminConsole `/admin` 静态 target 已合并到 Gateway；AdminConsole 以 `/admin/` base 构建，产物经白名单 staging 进入镜像，Functions Framework 固定 `1.18.2`。统一域名共 18 条公开路由；独立 `wenxue-admin-api` 与 `wenxue-admin-web` 保留为回滚/排障单元。
 - 发布记录：2026-07-17 完成 023 灰度与 024 降配；2026-07-18 完成消息/手动更新控制面并发布 030。中间 028 曾错误使用 `/` base，生产只读冒烟发现 `/assets/*` 404 后改用固定 staging 脚本重建，029 恢复；030 携带最终幂等、健康统计、配额与发布公钥绑定修复。未购买额外资源点，也未开启超限。
-- 公网默认入口：统一功能入口使用 `https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com`；底层排障入口为 `https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com`，2026-07-18 `/healthz` 已验证 200。
+- 2026-09-18 发布：从在线 032 更新为 033，构建 ID `2605704907`，保留既有运行配置、VPC 与全部环境变量。通过固定白名单脚本构建组合运行时，验证两个客户端入口的新画像 ID 校验、健康与鉴权边界、注册 CORS、AdminConsole HTML/JS/CSS；未调用真实收费模型或改写历史用量。详见 [部署记录](../../log/2026-09-18-deploy-and-commit-workspace.md)。
+- 公网默认入口：统一功能入口使用 `https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com`；底层排障入口为 `https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com`，2026-09-18 `/healthz` 已验证 200；客户端原 `run.wxcloudrun.com` 入口也已验证同一新逻辑。
 - NoSQL 容量边界：2026-07-15 环境资源点配额 40000 已耗尽，数据库 REST 与 server SDK 写均返回 `EXCEED_REQUEST_LIMIT`。注册、登录、激活与网关用户授权因此改为只依赖 CloudBase Auth 原生 `ACTIVE/BLOCKED` 状态，不消耗 NoSQL 资源点；`token_usage` 写入与 usage/admin NoSQL 查询仍可能受该配额影响，写入失败按既有 best-effort 处理，展示层保留本地缓存兜底，资源点恢复前不得把云端计量/后台状态页表述为可用验收。
 - 用户 session：M2 使用 CloudBase Web Auth username/password；用户名 5–24 位、匹配 `^[A-Za-z][A-Za-z0-9]*$`；密码 9–32 位、首字符为字母或数字，仅允许 ASCII 字母数字与 `()!@#$%^&*|?><_-`，并至少包含小写字母、大写字母、数字、允许的特殊字符中的三类。桌面端在任何认证请求前校验，网关在注册边界重复校验；桌面端的注册、SDK 登录与激活等待均以 12 秒结束 UI busy 状态，网关注册阶段与激活阶段各自共享 10 秒总 deadline。桌面端不生成、展示、复制或持久化 `wxm_` 机器 token；桌面端/后台/扩展内置当前环境的 CloudBase publishable key，`VITE_CLOUDBASE_ACCESS_KEY` 仅作为环境覆盖入口。
-- 会话交接：M2 使用一次性 localhost 页面 + `externally_connectable` 把 `userId`、`accessToken`、`refreshToken`、`expiresAt` 与网关地址交给插件 background；不经远端服务，不向 Agent 发送控制指令。
+- 会话交接：M2 使用一次性 localhost 页面 + `externally_connectable` 把 `userId`、`accessToken`、`refreshToken`、`expiresAt`、网关地址及本次启动的 browserId 交给插件 background；不经远端服务，不向 Agent 发送控制指令。扩展刷新凭据时保留归属，内置模型通过 customFetch 携带画像请求头；自定义模型不添加该头。
 - 切换纪律：M3 已把内置模型运行时配置切到网关，`apiKey` 字段只注入插件侧当前 access token；M5 已删除本地百炼 Key 与本地直连兜底开关，旧 DashScope 直连 baseURL 仅用于自动迁移到网关默认配置。
-- 用量展示：M4 新增桌面 `UsageCloudClient`，通过主进程当前用户 session 调 `GET /v1/usage/summary`；成功后按 userId 写 `<userData>/token-usage-summary-cache.json`，失败时 `tokens:getSummary` 回退本地 `TokenUsageStore`。
+- 用量展示：M4 新增桌面 `UsageCloudClient`，通过主进程当前用户 session 调 `GET /v1/usage/summary`；成功后按 userId 写 `<userData>/token-usage-summary-cache.json`，失败时 `tokens:getSummary` 回退本地 `TokenUsageStore`。浏览器分组展示与导出使用本机当前画像名称，cloud 显示“未关联浏览器”；新归属需要更新客户端并重新启动画像，历史缺失 ID 的记录不能可靠回填。
 
 ### 7.2 后台管理（M4.6）
 
 - 前端：`apps/admin` 静态站点，使用 CloudBase Web SDK 的 username/password 登录；路由守卫必须使用 `auth.getSession()`，不得使用已废弃且可能误判的 `getLoginState()`。仓库目标运行形态由 `wenxue-llm-gateway` 的 `/admin` target 提供构建产物；构建固定 `VITE_BASE_PATH=/admin/`、同源 AdminApi、当前 env/region，避免 shell 残留 `VITE_*` 污染 bundle。独立 CloudRun 静态容器保留作回滚。
 - 后端：`apps/admin-api` 是唯一业务实现；PUBLIC 请求均先校验 CloudBase Auth bearer，再查 `admin_users` 角色，前端不直接读写 NoSQL。相同公开 targets 由 Gateway 复用；独立 Function mode 服务保留作回滚。
 - 数据：网关用户授权权威是 CloudBase Auth `ACTIVE/BLOCKED`；运营临时封禁/解封应使用 CloudBase 用户管理或 TCB `ModifyUser(UserStatus=BLOCKED|ACTIVE)`。现有 AdminApi 仅把 legacy `user_accounts` 用于列表/筛选/备注，状态变化 fail-closed 返回 409 并不写伪授权成功；`user_permission_audit` 记录备注调整，`admin_users` 继续作为后台管理员角色表。
-- 当前公网部署（2026-07-18，分发功能已上线）：
+- 公网部署快照（2026-07-18，当前 Gateway 版本见 §7.1）：
   - AdminConsole 主入口：`https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com/admin`，使用 CloudBase HTTP 网关默认域名；`/admin`、`/admin/`、`/admin/assets/*` 三条路由均指向 `wenxue-llm-gateway` 030，构建期注入 `VITE_BASE_PATH=/admin/` 与同源 AdminApi base URL。
   - AdminApi 主入口：同域的管理、消息、版本、客户端与 CI 精确路由均指向 Gateway；不在默认域名下使用 `/admin/v1/*`，因为 `/admin` 页面路由会按前缀捕获。统一域名当前共 18 条公开路由。
   - 独立 CloudRun 服务继续作为回滚单元和底层排障入口：`wenxue-admin-web` 在线版本 007、`wenxue-admin-api` 在线版本 012；正常功能路径由 Gateway 030 承接。

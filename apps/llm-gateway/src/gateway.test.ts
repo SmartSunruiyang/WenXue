@@ -133,6 +133,71 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(fetchImpl).not.toHaveBeenCalled()
 	})
 
+	it.each(
+		['', ' ', 'browser 1', '../browser', '浏览器', 'a'.repeat(129), [], ['one', 'two']].map(
+			(browserId) => ({ browserId }),
+		),
+	)(
+		'rejects an invalid browser id before authentication or upstream fetch: $browserId',
+		async ({ browserId }) => {
+			const fetchImpl = vi.fn()
+
+			await expect(
+				handleChatCompletions({
+					headers: {
+						authorization: `Bearer ${ACCESS_TOKEN}`,
+						'X-WenXue-Browser-Id': browserId,
+					},
+					rawBody: JSON.stringify({
+						model: 'qwen3.7-max',
+						messages: [{ role: 'user', content: 'hello' }],
+					}),
+					env: DEFAULT_ENV,
+					fetchImpl,
+				}),
+			).rejects.toMatchObject({ status: 400, message: 'Invalid X-WenXue-Browser-Id header' })
+			expect(fetchImpl).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each(['a', 'a'.repeat(128)])(
+		'accepts the browser id length boundary: %s',
+		async (browserId) => {
+			const result = await handleChatCompletions({
+				headers: {
+					authorization: `Bearer ${ACCESS_TOKEN}`,
+					'x-wenxue-browser-id': browserId,
+				},
+				rawBody: JSON.stringify({
+					model: 'qwen3.7-max',
+					messages: [{ role: 'user', content: 'hello' }],
+				}),
+				env: DEFAULT_ENV,
+				fetchImpl: createGatewayFetch({}),
+			})
+
+			expect(result.usageRecord.browserId).toBe(browserId)
+			expect(result.usagePersisted).toBe(true)
+		},
+	)
+
+	it('requires user authentication even when a browser id is supplied', async () => {
+		const fetchImpl = vi.fn()
+
+		await expect(
+			handleChatCompletions({
+				headers: { 'x-wenxue-browser-id': 'browser-1' },
+				rawBody: JSON.stringify({
+					model: 'qwen3.7-max',
+					messages: [{ role: 'user', content: 'hello' }],
+				}),
+				env: DEFAULT_ENV,
+				fetchImpl,
+			}),
+		).rejects.toMatchObject({ status: 401 })
+		expect(fetchImpl).not.toHaveBeenCalled()
+	})
+
 	it('extracts non-zero usage from a streamed SSE data frame', () => {
 		const usage = extractUsageFromSseFrame(
 			'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":5,"total_tokens":12}}\n\n',
@@ -169,6 +234,23 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(JSON.stringify(record)).not.toMatch(
 			/prompt|content|authorization|bearer|refresh_token|sk-/i,
 		)
+		expect(record).not.toHaveProperty('browserId')
+	})
+
+	it('allows validated browser metadata while rejecting sensitive usage fields and values', () => {
+		const record = buildUsageRecord({
+			uid: USER_ID,
+			browserId: 'task-1',
+			model: 'qwen3.7-max',
+			usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+			latencyMs: 123,
+			requestId: 'request-1',
+		})
+
+		expect(() => assertUsageRecordSafe(record)).not.toThrow()
+		expect(() => assertUsageRecordSafe({ ...record, prompt: 'private text' })).toThrow()
+		expect(() => assertUsageRecordSafe({ ...record, model: 'sk-private-secret' })).toThrow()
+		expect(() => assertUsageRecordSafe({ ...record, browserId: 'bad browser' })).toThrow()
 	})
 
 	it('registers a validated launcher account without writing an authorization row', async () => {
@@ -475,7 +557,10 @@ describe('CloudBase LLM gateway behavior', () => {
 
 		await expect(
 			handleChatCompletions({
-				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				headers: {
+					authorization: `Bearer ${ACCESS_TOKEN}`,
+					'x-wenxue-browser-id': 'browser-1',
+				},
 				rawBody: JSON.stringify({
 					model: 'qwen3.7-max',
 					stream: false,
@@ -497,9 +582,14 @@ describe('CloudBase LLM gateway behavior', () => {
 		clearAuthorizationCache()
 		const calls: string[] = []
 		const usageWrites: unknown[] = []
+		const dashScopeHeaders: Headers[] = []
+		const dashScopeBodies: unknown[] = []
 
 		const result = await handleChatCompletions({
-			headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+			headers: {
+				authorization: `Bearer ${ACCESS_TOKEN}`,
+				'X-WenXue-Browser-Id': 'task-1',
+			},
 			rawBody: JSON.stringify({
 				model: 'qwen3.7-max',
 				stream: false,
@@ -510,7 +600,7 @@ describe('CloudBase LLM gateway behavior', () => {
 				const ticks = [1782633600000, 1782633600456]
 				return () => ticks.shift() ?? 1782633600456
 			})(),
-			fetchImpl: createGatewayFetch({ calls, usageWrites }),
+			fetchImpl: createGatewayFetch({ calls, usageWrites, dashScopeHeaders, dashScopeBodies }),
 		})
 
 		expect(result.responseBody).toMatchObject({
@@ -518,6 +608,7 @@ describe('CloudBase LLM gateway behavior', () => {
 		})
 		expect(result.usageRecord).toMatchObject({
 			uid: USER_ID,
+			browserId: 'task-1',
 			model: 'qwen3.7-max',
 			totalTokens: 5,
 			latencyMs: 456,
@@ -528,6 +619,7 @@ describe('CloudBase LLM gateway behavior', () => {
 				data: [
 					expect.objectContaining({
 						uid: USER_ID,
+						browserId: 'task-1',
 						model: 'qwen3.7-max',
 						totalTokens: 5,
 					}),
@@ -538,16 +630,27 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(calls.filter((url) => url.includes('/collections/token_usage/documents'))).toHaveLength(
 			1,
 		)
+		expect(dashScopeHeaders).toHaveLength(1)
+		expect(dashScopeHeaders[0].get('x-wenxue-browser-id')).toBeNull()
+		expect(dashScopeHeaders[0].get('authorization')).toBe('Bearer server-dashscope-key')
+		expect(JSON.stringify(dashScopeBodies)).not.toContain('task-1')
+		expect(JSON.stringify(usageWrites)).not.toMatch(
+			/prompt|content|authorization|bearer|api_key|apikey|refresh_token|hello|cloudbase-access-token|server-dashscope-key/i,
+		)
 	})
 
 	it('proxies streamed DashScope SSE and returns a safe usage record', async () => {
 		const dashScopeBodies: unknown[] = []
+		const dashScopeHeaders: Headers[] = []
 		const usageWrites: unknown[] = []
 		const sentChunks: string[] = []
 		let ended = false
 
 		const result = await handleChatCompletions({
-			headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+			headers: new Headers({
+				authorization: `Bearer ${ACCESS_TOKEN}`,
+				'x-wenxue-browser-id': 'Browser_2',
+			}),
 			rawBody: JSON.stringify({
 				model: 'qwen3.7-max',
 				stream: true,
@@ -568,7 +671,7 @@ describe('CloudBase LLM gateway behavior', () => {
 				const ticks = [1782633600000, 1782633600456]
 				return () => ticks.shift() ?? 1782633600456
 			})(),
-			fetchImpl: createGatewayFetch({ dashScopeBodies, usageWrites }),
+			fetchImpl: createGatewayFetch({ dashScopeBodies, dashScopeHeaders, usageWrites }),
 		})
 
 		expect(dashScopeBodies).toEqual([
@@ -583,6 +686,7 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(ended).toBe(true)
 		expect(result.usageRecord).toMatchObject({
 			uid: USER_ID,
+			browserId: 'Browser_2',
 			model: 'qwen3.7-max',
 			inputTokens: 2,
 			outputTokens: 3,
@@ -590,8 +694,13 @@ describe('CloudBase LLM gateway behavior', () => {
 			latencyMs: 456,
 		})
 		expect(result.usagePersisted).toBe(true)
-		expect(usageWrites).toHaveLength(1)
+		expect(usageWrites).toEqual([{ data: [result.usageRecord] }])
 		expect(() => assertUsageRecordSafe(result.usageRecord)).not.toThrow()
+		expect(dashScopeHeaders).toHaveLength(1)
+		expect(dashScopeHeaders[0].get('x-wenxue-browser-id')).toBeNull()
+		expect(JSON.stringify(usageWrites)).not.toMatch(
+			/prompt|content|authorization|bearer|api_key|apikey|refresh_token|sk-|hello|cloudbase-access-token|server-dashscope-key/i,
+		)
 	})
 
 	it('parses streamed usage when the SSE data line is split across network chunks', async () => {
@@ -1362,6 +1471,7 @@ describe('CloudBase LLM gateway behavior', () => {
 						{
 							_id: 'record-1',
 							uid: USER_ID,
+							browserId: 'browser-1',
 							model: 'qwen-plus',
 							inputTokens: { $numberInt: '2' },
 							outputTokens: { $numberInt: '3' },
@@ -1380,6 +1490,7 @@ describe('CloudBase LLM gateway behavior', () => {
 			expect.objectContaining({
 				_id: 'record-1',
 				uid: USER_ID,
+				browserId: 'browser-1',
 				totalTokens: 5,
 				ts: 1782660000000,
 			}),
@@ -1464,7 +1575,62 @@ describe('CloudBase LLM gateway behavior', () => {
 			totalOutputTokens: 3,
 			totalTokens: 5,
 			byModel: [{ key: 'qwen-plus', totalTokens: 5 }],
+			byBrowser: [{ key: 'cloud', totalTokens: 5 }],
 		})
+	})
+
+	it('keeps browser groups distinct and preserves unassociated history in authenticated summaries', async () => {
+		const usageRecords = [
+			{ browserId: 'browser-1', inputTokens: 2, outputTokens: 3 },
+			{ browserId: 'browser-2', inputTokens: 4, outputTokens: 6 },
+			{ browserId: 'browser-1', inputTokens: 1, outputTokens: 2 },
+			{ inputTokens: 7, outputTokens: 8 },
+		].map((record, index) =>
+			buildUsageRecord({
+				uid: USER_ID,
+				browserId: record.browserId,
+				model: 'qwen3.7-max',
+				usage: {
+					inputTokens: record.inputTokens,
+					outputTokens: record.outputTokens,
+					totalTokens: record.inputTokens + record.outputTokens,
+				},
+				latencyMs: 123,
+				requestId: `request-${index}`,
+				now: () => 1782660000000 + index,
+			}),
+		)
+
+		const result = await handleUsageSummary({
+			headers: {
+				authorization: `Bearer ${ACCESS_TOKEN}`,
+				'x-wenxue-browser-id': 'another-browser',
+			},
+			env: DEFAULT_ENV,
+			fetchImpl: createGatewayFetch({ usageRecords }),
+		})
+
+		expect(result).toMatchObject({
+			totalInputTokens: 14,
+			totalOutputTokens: 19,
+			totalTokens: 33,
+			byBrowser: [
+				{ key: 'cloud', label: 'cloud', inputTokens: 7, outputTokens: 8, totalTokens: 15 },
+				{ key: 'browser-2', label: 'browser-2', inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+				{ key: 'browser-1', label: 'browser-1', inputTokens: 3, outputTokens: 5, totalTokens: 8 },
+			],
+			byModel: [{ key: 'qwen3.7-max', totalTokens: 33 }],
+			daily: [{ key: '2026-06-28', totalTokens: 33 }],
+		})
+		expect(result.recent.map((record) => record.browserId)).toEqual([
+			'cloud',
+			'browser-1',
+			'browser-2',
+			'browser-1',
+		])
+		expect(JSON.stringify(result)).not.toMatch(
+			/user_123|prompt|content|authorization|bearer|api_key|apikey|sk-|cloudbase-access-token/i,
+		)
 	})
 
 	it('exposes usage summary through its own Function mode target', async () => {
@@ -1519,6 +1685,7 @@ describe('CloudBase LLM gateway behavior', () => {
 function createGatewayFetch(options: {
 	calls?: string[]
 	dashScopeBodies?: unknown[]
+	dashScopeHeaders?: Headers[]
 	usageWrites?: unknown[]
 	userProfile?: Record<string, unknown>
 	dashScopeResponse?: Response
@@ -1547,6 +1714,7 @@ function createGatewayFetch(options: {
 		}
 		if (href === DASHSCOPE_CHAT_COMPLETIONS_URL) {
 			options.dashScopeBodies?.push(JSON.parse(String(init?.body)))
+			options.dashScopeHeaders?.push(new Headers(init?.headers))
 			if (options.dashScopeResponse) return options.dashScopeResponse
 			const requestBody = JSON.parse(String(init?.body)) as { stream?: boolean }
 			if (requestBody.stream) {

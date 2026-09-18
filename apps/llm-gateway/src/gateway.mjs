@@ -8,6 +8,7 @@ const MAX_CHAT_MESSAGES = 200
 const MAX_CHAT_OUTPUT_TOKENS = 32_768
 const MAX_SSE_FRAME_BYTES = 1024 * 1024
 const ALLOWED_CHAT_MODELS = new Set(['qwen3.7-max', 'qwen3.7-plus'])
+const BROWSER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 const REGISTRATION_TIMEOUT_MS = 10_000
 const ACTIVATION_TIMEOUT_MS = 10_000
 const TOKEN_USAGE_COLLECTION = 'token_usage'
@@ -18,7 +19,7 @@ const TENCENTCLOUD_TCB_VERSION = '2018-06-08'
 /** @typedef {{ inputTokens: number, outputTokens: number, totalTokens: number }} TokenUsage */
 /** @typedef {{ uid: string }} GatewayUser */
 /** @typedef {{ [key: string]: unknown }} JsonRecord */
-/** @typedef {{ _id: string, ts: number, uid: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number, requestId: string, createdAt: string }} CloudUsageRecord */
+/** @typedef {{ _id: string, ts: number, uid: string, browserId?: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number, requestId: string, createdAt: string }} CloudUsageRecord */
 /** @typedef {{ cloudbaseEnvId: string, cloudbaseRegion?: string, cloudbaseUsageApiKey?: string, tencentCloudSecretId?: string, tencentCloudSecretKey?: string, tencentCloudToken?: string, requestTimeoutMs?: number }} LauncherRegistrationEnv */
 
 export class GatewayError extends Error {
@@ -400,6 +401,7 @@ export function extractUsageFromSseFrame(frame) {
 /**
  * @param {{
  *   uid: string,
+ *   browserId?: string,
  *   model: string,
  *   usage: TokenUsage,
  *   latencyMs: number,
@@ -413,6 +415,7 @@ export function buildUsageRecord(input) {
 		_id: `${input.uid}:${input.requestId}:${ts}`,
 		ts,
 		uid: input.uid,
+		...(input.browserId === undefined ? {} : { browserId: input.browserId }),
 		model: input.model,
 		inputTokens: input.usage.inputTokens,
 		outputTokens: input.usage.outputTokens,
@@ -427,7 +430,15 @@ export function buildUsageRecord(input) {
  * @param {unknown} record
  */
 export function assertUsageRecordSafe(record) {
-	const text = JSON.stringify(record).toLowerCase()
+	const fields = isRecord(record) ? { ...record } : record
+	if (isRecord(fields) && fields.browserId !== undefined) {
+		if (typeof fields.browserId !== 'string' || !BROWSER_ID_PATTERN.test(fields.browserId)) {
+			throw new GatewayError('Usage record contains invalid browserId', 500)
+		}
+		// Browser IDs are validated metadata; values such as task-1 contain the key-like substring sk-.
+		delete fields.browserId
+	}
+	const text = JSON.stringify(fields).toLowerCase()
 	const forbidden = [
 		'prompt',
 		'content',
@@ -536,6 +547,7 @@ export async function handleChatCompletions(input) {
 	}
 	const body = parseRequestBody(input.rawBody)
 	assertChatRequestBody(body)
+	const browserId = readBrowserId(input.headers)
 	const user = await authorizeUserRequest({
 		headers: input.headers,
 		env: input.env,
@@ -567,6 +579,7 @@ export async function handleChatCompletions(input) {
 		const usageRecord = buildMeasuredUsageRecord({
 			body,
 			uid: user.uid,
+			browserId,
 			usage,
 			startedAt,
 			now,
@@ -595,6 +608,7 @@ export async function handleChatCompletions(input) {
 	const usageRecord = buildMeasuredUsageRecord({
 		body,
 		uid: user.uid,
+		browserId,
 		usage: isRecord(payload) ? normalizeUsage(payload.usage) : null,
 		startedAt,
 		now,
@@ -791,7 +805,7 @@ async function proxySseResponse(upstream, sse, control) {
 }
 
 /**
- * @param {{ body: JsonRecord, uid: string, usage: TokenUsage | null, startedAt: number, now: () => number, requestId: string }} input
+ * @param {{ body: JsonRecord, uid: string, browserId?: string, usage: TokenUsage | null, startedAt: number, now: () => number, requestId: string }} input
  */
 function buildMeasuredUsageRecord(input) {
 	const finishedAt = input.now()
@@ -800,6 +814,7 @@ function buildMeasuredUsageRecord(input) {
 	}
 	const record = buildUsageRecord({
 		uid: input.uid,
+		browserId: input.browserId,
 		model: readString(input.body.model) ?? 'unknown',
 		usage: input.usage,
 		latencyMs: finishedAt - input.startedAt,
@@ -875,6 +890,23 @@ function readHeader(headers, name) {
 		return value[0] ?? null
 	}
 	return value ?? null
+}
+
+/**
+ * @param {Headers | Record<string, string | string[] | undefined>} headers
+ * @returns {string | undefined}
+ */
+function readBrowserId(headers) {
+	const value =
+		headers instanceof Headers
+			? headers.get('x-wenxue-browser-id')
+			: Object.entries(headers).find(([key]) => key.toLowerCase() === 'x-wenxue-browser-id')?.[1]
+	if (value === undefined || value === null) return undefined
+	const browserId = Array.isArray(value) ? (value.length === 1 ? value[0] : undefined) : value
+	if (typeof browserId !== 'string' || !BROWSER_ID_PATTERN.test(browserId)) {
+		throw new GatewayError('Invalid X-WenXue-Browser-Id header', 400)
+	}
+	return browserId
 }
 
 /**
@@ -999,6 +1031,10 @@ function normalizeCloudUsageRecord(value) {
 	}
 	const id = readString(value._id)
 	const uid = readString(value.uid)
+	const browserId =
+		typeof value.browserId === 'string' && BROWSER_ID_PATTERN.test(value.browserId)
+			? value.browserId
+			: undefined
 	const model = readString(value.model)
 	const inputTokens = readEjsonNumber(value.inputTokens)
 	const outputTokens = readEjsonNumber(value.outputTokens)
@@ -1023,6 +1059,7 @@ function normalizeCloudUsageRecord(value) {
 		_id: id,
 		ts,
 		uid,
+		...(browserId === undefined ? {} : { browserId }),
 		model,
 		inputTokens,
 		outputTokens,
@@ -1040,7 +1077,7 @@ function toTokenUsageRecord(record) {
 	return {
 		id: record.requestId ? `${record.requestId}:${record.ts}` : `usage:${record.ts}`,
 		ts: record.ts,
-		browserId: 'cloud',
+		browserId: record.browserId ?? 'cloud',
 		model: record.model,
 		inputTokens: record.inputTokens,
 		outputTokens: record.outputTokens,

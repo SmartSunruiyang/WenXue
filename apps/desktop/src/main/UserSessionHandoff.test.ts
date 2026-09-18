@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { UserSessionHandoff } from './UserSessionHandoff'
 import type { UserSession } from './UserSessionStore'
 
-const sampleSession: UserSession = {
+const sampleSession: UserSession & { browserId: string } = {
 	userId: 'user_123',
+	browserId: 'research',
 	accessToken: 'access-token',
 	refreshToken: 'refresh-token',
 	expiresAt: 1782663600000,
@@ -20,6 +21,7 @@ describe('UserSessionHandoff', () => {
 			openedUrl = url
 			const html = await get(url)
 			expect(html).toContain('WENXUE_USER_SESSION')
+			expect(html).toContain('"browserId":"research"')
 			expect(html).toContain('access-token')
 			expect(html).toContain('refresh-token')
 			expect(html).toContain('akldabonmimlicnjlflnapfeklbfemhj')

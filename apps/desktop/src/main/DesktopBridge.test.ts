@@ -481,7 +481,7 @@ describe('registerDesktopBridge', () => {
 			startUrl: 'http://127.0.0.1:1234/wenxue-user-session-handoff/test',
 		})
 		expect(userSessionHandoffRun).toHaveBeenCalledWith(
-			expect.objectContaining({ userId: 'user_123' }),
+			expect.objectContaining({ userId: 'user_123', browserId: 'research' }),
 			expect.any(Function),
 		)
 		expect(stop).toHaveBeenCalledWith('research')

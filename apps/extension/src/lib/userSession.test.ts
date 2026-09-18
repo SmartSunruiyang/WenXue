@@ -34,36 +34,66 @@ describe('userSession', () => {
 				gatewayBaseUrl: WENXUE_GATEWAY_BASE_URL,
 			}),
 		).toBeNull()
-		expect(normalizeExtensionUserSession({ ...session, gatewayBaseUrl: 'https://attacker.example' }))
-			.toBeNull()
+		expect(
+			normalizeExtensionUserSession({ ...session, gatewayBaseUrl: 'https://attacker.example' }),
+		).toBeNull()
 	})
 
-	it('saves and loads the session from chrome storage shape', async () => {
-		const backing = new Map<string, unknown>()
-		const storage: UserSessionStorageArea = {
-			get: vi.fn(async (keys) => {
-				const key = Array.isArray(keys) ? keys[0] : keys
-				return { [key]: backing.get(key) }
-			}),
-			set: vi.fn(async (values) => {
-				Object.entries(values).forEach(([key, value]) => backing.set(key, value))
-			}),
-			remove: vi.fn(async (key) => {
-				backing.delete(key)
-			}),
-		}
+	it.each(['browser-1', 'Browser_2', 'a'.repeat(128)])(
+		'preserves a valid browser profile ID: %s',
+		(browserId) => {
+			expect(normalizeExtensionUserSession({ ...session, browserId })).toEqual({
+				...session,
+				browserId,
+			})
+		},
+	)
 
-		await saveExtensionUserSession(storage, session)
-
-		expect(storage.set).toHaveBeenCalledWith({
-			[WENXUE_USER_SESSION_KEY]: session,
-		})
-		await expect(
-			loadExtensionUserSession(storage, {
-				now: () => 1782630000000,
-			}),
-		).resolves.toEqual(session)
+	it.each([
+		'',
+		' browser-1',
+		'browser/1',
+		'browser\n1',
+		'browser-1\n',
+		'browser-1\r',
+		'浏览器',
+		'a'.repeat(129),
+		null,
+		123,
+	])('rejects an invalid browser profile ID: %j', (browserId) => {
+		expect(normalizeExtensionUserSession({ ...session, browserId })).toBeNull()
 	})
+
+	it.each([undefined, 'browser-1'])(
+		'saves and loads the session with browser ID %s from chrome storage shape',
+		async (browserId) => {
+			const storedSession = { ...session, ...(browserId ? { browserId } : {}) }
+			const backing = new Map<string, unknown>()
+			const storage: UserSessionStorageArea = {
+				get: vi.fn(async (keys) => {
+					const key = Array.isArray(keys) ? keys[0] : keys
+					return { [key]: backing.get(key) }
+				}),
+				set: vi.fn(async (values) => {
+					Object.entries(values).forEach(([key, value]) => backing.set(key, value))
+				}),
+				remove: vi.fn(async (key) => {
+					backing.delete(key)
+				}),
+			}
+
+			await saveExtensionUserSession(storage, storedSession)
+
+			expect(storage.set).toHaveBeenCalledWith({
+				[WENXUE_USER_SESSION_KEY]: storedSession,
+			})
+			await expect(
+				loadExtensionUserSession(storage, {
+					now: () => 1782630000000,
+				}),
+			).resolves.toEqual(storedSession)
+		},
+	)
 
 	it('refreshes a session when it is expired or near expiry', async () => {
 		const storage = createStorage({
@@ -97,6 +127,34 @@ describe('userSession', () => {
 			[WENXUE_USER_SESSION_KEY]: expect.objectContaining({ accessToken: 'new-access-token' }),
 		})
 	})
+
+	it.each([undefined, 'another-browser'])(
+		'keeps the original browser profile when refreshed credentials contain browser ID %s',
+		async (refreshedBrowserId) => {
+			const previous = { ...session, browserId: 'browser-original', expiresAt: 1000 }
+			const storage = createStorage({ [WENXUE_USER_SESSION_KEY]: previous })
+			const refresh = vi.fn(async () => ({
+				...session,
+				accessToken: 'new-access-token',
+				refreshToken: 'new-refresh-token',
+				expiresAt: 20_000,
+				browserId: refreshedBrowserId,
+			}))
+			const expected = {
+				...session,
+				accessToken: 'new-access-token',
+				refreshToken: 'new-refresh-token',
+				expiresAt: 20_000,
+				browserId: 'browser-original',
+			}
+
+			await expect(
+				loadExtensionUserSession(storage, { now: () => 1000, refresh }),
+			).resolves.toEqual(expected)
+			expect(refresh).toHaveBeenCalledWith(previous)
+			expect(storage.set).toHaveBeenCalledWith({ [WENXUE_USER_SESSION_KEY]: expected })
+		},
+	)
 
 	it('keeps a valid token when proactive refresh fails but hides expired tokens', async () => {
 		const validStorage = createStorage({

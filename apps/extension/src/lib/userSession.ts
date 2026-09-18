@@ -22,6 +22,7 @@ export interface ExtensionUserSession {
 	refreshToken: string
 	expiresAt: number
 	gatewayBaseUrl: string
+	browserId?: string
 }
 
 export interface UserSessionStorageArea {
@@ -63,6 +64,7 @@ export function normalizeExtensionUserSession(value: unknown): ExtensionUserSess
 	const expiresAt = typeof value.expiresAt === 'number' ? value.expiresAt : null
 	const gatewayBaseUrl = readString(value.gatewayBaseUrl) ?? WENXUE_GATEWAY_BASE_URL
 	const normalizedGatewayBaseUrl = normalizeGatewayBaseUrl(gatewayBaseUrl)
+	const browserId = value.browserId
 
 	if (
 		!userId ||
@@ -70,7 +72,9 @@ export function normalizeExtensionUserSession(value: unknown): ExtensionUserSess
 		!refreshToken ||
 		!expiresAt ||
 		!Number.isFinite(expiresAt) ||
-		!normalizedGatewayBaseUrl
+		!normalizedGatewayBaseUrl ||
+		(browserId !== undefined &&
+			(typeof browserId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(browserId)))
 	) {
 		return null
 	}
@@ -81,6 +85,7 @@ export function normalizeExtensionUserSession(value: unknown): ExtensionUserSess
 		refreshToken,
 		expiresAt,
 		gatewayBaseUrl: normalizedGatewayBaseUrl,
+		...(browserId !== undefined ? { browserId } : {}),
 	}
 }
 
@@ -110,7 +115,12 @@ export async function loadExtensionUserSession(
 
 	try {
 		const refresh = options.refresh ?? refreshExtensionUserSession
-		const refreshed = normalizeExtensionUserSession(await refresh(session))
+		const refreshedValue = await refresh(session)
+		const refreshed = normalizeExtensionUserSession(
+			isRecord(refreshedValue)
+				? { ...refreshedValue, browserId: session.browserId }
+				: refreshedValue,
+		)
 		if (refreshed) {
 			await storage.set({ [WENXUE_USER_SESSION_KEY]: refreshed })
 			return refreshed

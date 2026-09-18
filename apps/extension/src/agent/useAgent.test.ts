@@ -7,12 +7,20 @@ import type {
 	UserTakeoverRequest,
 	UserTakeoverResolution,
 } from '@page-agent/core'
+import { LLM, type LLMConfig } from '@page-agent/llms'
 import React, { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as z from 'zod/v4'
 
-import { WENXUE_GATEWAY_BASE_URL, WENXUE_GATEWAY_OPENAI_BASE_URL } from '@/agent/constants'
+import {
+	DEMO_CONFIG,
+	WENXUE_GATEWAY_BASE_URL,
+	WENXUE_GATEWAY_OPENAI_BASE_URL,
+} from '@/agent/constants'
 import { saveStoredConfig } from '@/lib/configStorage'
+import { BUILT_IN_MODEL_ID } from '@/lib/modelConfig'
+import { loadRuntimeAgentModels } from '@/lib/runtimeModelConfig'
 import { WENXUE_USER_SESSION_KEY } from '@/lib/userSession'
 
 const multiPageAgentMockState = vi.hoisted(() => ({
@@ -284,6 +292,60 @@ afterEach(() => {
 })
 
 describe('useAgent user session reload', () => {
+	it('preserves browser attribution from runtime models through the agent config into LLM requests', async () => {
+		const storage = createChromeStorageHarness({
+			[WENXUE_USER_SESSION_KEY]: {
+				userId: 'user_123',
+				accessToken: USER_ACCESS_TOKEN,
+				refreshToken: 'cloudbase-refresh-token',
+				expiresAt: 1893456000000,
+				gatewayBaseUrl: WENXUE_GATEWAY_BASE_URL,
+				browserId: 'browser-agent',
+			},
+		})
+		const config = { ...DEMO_CONFIG, selectedModelId: BUILT_IN_MODEL_ID, customModels: [] }
+		const models = await loadRuntimeAgentModels(config, storage.chrome.storage.local)
+		createAgentForConfig(config, models)
+		const options = multiPageAgentMockState.instances[0].options as unknown as LLMConfig
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					choices: [
+						{
+							finish_reason: 'tool_calls',
+							message: {
+								tool_calls: [{ function: { name: 'done', arguments: '{}' } }],
+							},
+						},
+					],
+				}),
+			),
+		)
+		const llm = new LLM(options)
+		const signal = new AbortController().signal
+		const result = await llm.invoke(
+			[{ role: 'user', content: 'hello' }],
+			{
+				done: {
+					description: 'Finish the task',
+					inputSchema: z.object({}),
+					execute: async () => 'done',
+				},
+			},
+			signal,
+		)
+
+		expect(result.toolResult).toBe('done')
+		expect(fetch).toHaveBeenCalledExactlyOnceWith(
+			`${WENXUE_GATEWAY_OPENAI_BASE_URL}/chat/completions`,
+			expect.objectContaining({ method: 'POST', signal }),
+		)
+		const headers = new Headers(fetch.mock.calls[0][1]?.headers)
+		expect(headers.get('X-WenXue-Browser-Id')).toBe('browser-agent')
+		expect(headers.get('Authorization')).toBe(`Bearer ${USER_ACCESS_TOKEN}`)
+		expect(JSON.parse(fetch.mock.calls[0][1]?.body as string)).not.toHaveProperty('browserId')
+	})
+
 	it('preserves live named-tool capability state across agent config copies', async () => {
 		const capability = { disabled: false }
 		const getNamedToolChoiceDisabled = () => capability.disabled

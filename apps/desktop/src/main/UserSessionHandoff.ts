@@ -25,6 +25,8 @@ interface CompletionPayload {
 	error?: string
 }
 
+type BrowserUserSession = UserSession & { browserId: string }
+
 export class UserSessionHandoff {
 	private readonly extensionId: string
 	private readonly timeoutMs: number
@@ -41,7 +43,7 @@ export class UserSessionHandoff {
 	}
 
 	async run(
-		session: UserSession,
+		session: BrowserUserSession,
 		openUrl: (url: string) => Promise<void>,
 	): Promise<UserSessionHandoffResult> {
 		const nonce = randomUUID()
@@ -74,7 +76,7 @@ export class UserSessionHandoff {
 		request: IncomingMessage
 		response: ServerResponse
 		basePath: string
-		session: UserSession
+		session: BrowserUserSession
 		complete: (result: UserSessionHandoffResult) => void
 	}): void {
 		const url = new URL(input.request.url ?? '/', 'http://localhost')
@@ -101,7 +103,7 @@ export class UserSessionHandoff {
 	}
 }
 
-function renderHandoffPage(session: UserSession, extensionId: string): string {
+function renderHandoffPage(session: BrowserUserSession, extensionId: string): string {
 	const message = JSON.stringify({
 		type: 'WENXUE_USER_SESSION',
 		session,

@@ -629,6 +629,7 @@ export function createAgentForConfig(
 		baseURL: activeModel.baseURL,
 		model: activeModel.model,
 		apiKey: activeModel.apiKey,
+		customFetch: activeModel.customFetch,
 		language: config.language,
 		experimentalLlmsTxt: config.experimentalLlmsTxt,
 		experimentalIncludeAllTabs: config.experimentalIncludeAllTabs,

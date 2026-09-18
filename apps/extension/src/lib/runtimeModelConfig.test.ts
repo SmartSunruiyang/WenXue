@@ -98,39 +98,142 @@ describe('runtimeModelConfig', () => {
 		expect(models.vision).toEqual(models.chaoxingModels.vision)
 	})
 
-	it('keeps custom BYO-Key models direct and does not require a user session', () => {
-		const customModels: CustomModelConfig[] = [
-			{
-				id: 'custom-moonshot',
-				provider: 'custom',
-				providerName: 'Moonshot',
-				baseURL: 'https://api.moonshot.example/v1',
-				apiKey: 'sk-user-owned',
-				model: 'moonshot-v1',
-			},
-		]
-		const config: ExtConfig = {
-			baseURL: customModels[0].baseURL,
-			model: customModels[0].model,
-			apiKey: customModels[0].apiKey,
-			selectedModelId: 'custom-moonshot',
-			visionModelId: 'custom-moonshot',
-			customModels,
+	it('attributes built-in requests to each profile without changing their payload or credentials', async () => {
+		const response = new Response('{}')
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response)
+		const config = { ...DEMO_CONFIG, selectedModelId: BUILT_IN_MODEL_ID, customModels: [] }
+		const first = buildRuntimeAgentModels(config, {
+			session: { ...session, browserId: 'browser-one' },
+		})
+		const second = buildRuntimeAgentModels(config, {
+			session: { ...session, browserId: 'browser-two' },
+		})
+		const controller = new AbortController()
+		const headers = new Headers({
+			Authorization: `Bearer ${session.accessToken}`,
+			'Content-Type': 'application/json',
+		})
+		const body = JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] })
+		const init: RequestInit = { method: 'POST', headers, body, signal: controller.signal }
+		const url = `${WENXUE_GATEWAY_OPENAI_BASE_URL}/chat/completions`
+		const requests = [
+			[first.active, 'browser-one'],
+			[first.vision, 'browser-one'],
+			[first.questionSolverModels.text, 'browser-one'],
+			[first.questionSolverModels.vision, 'browser-one'],
+			[second.active, 'browser-two'],
+			[second.vision, 'browser-two'],
+		] as const
+
+		for (const [model, browserId] of requests) {
+			expect(model.customFetch).toBeTypeOf('function')
+			await expect(model.customFetch!(url, init)).resolves.toBe(response)
+			expect(fetch).toHaveBeenLastCalledWith(url, {
+				...init,
+				headers: expect.any(Headers),
+			})
+			const sentHeaders = new Headers(fetch.mock.lastCall?.[1]?.headers)
+			expect(sentHeaders.get('X-WenXue-Browser-Id')).toBe(browserId)
+			expect(sentHeaders.get('Authorization')).toBe(`Bearer ${session.accessToken}`)
+			expect(sentHeaders.get('Content-Type')).toBe('application/json')
 		}
-
-		const models = buildRuntimeAgentModels(config, {
-			session: null,
-			now: () => Date.now(),
-		})
-
-		expect(models.active).toEqual({
-			baseURL: 'https://api.moonshot.example/v1',
-			model: 'moonshot-v1',
-			apiKey: 'sk-user-owned',
-		})
-		expect(models.chaoxingModels.vision).toEqual(models.active)
-		expect(models.vision).toEqual(models.active)
+		expect(headers.has('X-WenXue-Browser-Id')).toBe(false)
+		expect(init.body).toBe(body)
 	})
+
+	it('preserves Request inputs and fetch overrides while adding the browser profile header', async () => {
+		const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'))
+		const models = buildRuntimeAgentModels(
+			{ ...DEMO_CONFIG, selectedModelId: BUILT_IN_MODEL_ID, customModels: [] },
+			{ session: { ...session, browserId: 'browser-request' } },
+		)
+		const controller = new AbortController()
+		const body = JSON.stringify({ model: DEMO_CONFIG.model, messages: [] })
+		const request = new Request(`${WENXUE_GATEWAY_OPENAI_BASE_URL}/chat/completions`, {
+			method: 'POST',
+			headers: {
+				Authorization: 'Bearer request-token',
+				'Content-Type': 'application/json',
+			},
+			body,
+			signal: controller.signal,
+		})
+
+		await models.active.customFetch!(request)
+
+		expect(fetch.mock.lastCall?.[0]).toBe(request)
+		const sentHeaders = new Headers(fetch.mock.lastCall?.[1]?.headers)
+		expect(sentHeaders.get('Authorization')).toBe('Bearer request-token')
+		expect(sentHeaders.get('Content-Type')).toBe('application/json')
+		expect(sentHeaders.get('X-WenXue-Browser-Id')).toBe('browser-request')
+		expect(await request.clone().text()).toBe(body)
+		expect(request.headers.has('X-WenXue-Browser-Id')).toBe(false)
+
+		const override = new AbortController()
+		const init: RequestInit = {
+			headers: { Authorization: 'Bearer override-token' },
+			signal: override.signal,
+			cache: 'no-store',
+		}
+		await models.active.customFetch!(request, init)
+
+		expect(fetch).toHaveBeenLastCalledWith(request, { ...init, headers: expect.any(Headers) })
+		expect(new Headers(fetch.mock.lastCall?.[1]?.headers).get('Authorization')).toBe(
+			'Bearer override-token',
+		)
+		controller.abort()
+		expect(request.signal.aborted).toBe(true)
+	})
+
+	it.each([null, session])(
+		'does not add profile attribution without a browser ID: %j',
+		(session) => {
+			const models = buildRuntimeAgentModels(
+				{ ...DEMO_CONFIG, selectedModelId: BUILT_IN_MODEL_ID, customModels: [] },
+				{ session },
+			)
+
+			expect(models.active.customFetch).toBeUndefined()
+			expect(models.vision.customFetch).toBeUndefined()
+		},
+	)
+
+	it.each([null, { ...session, browserId: 'browser-one' }])(
+		'keeps custom BYO-Key models direct without profile attribution: %j',
+		(session) => {
+			const customModels: CustomModelConfig[] = [
+				{
+					id: 'custom-moonshot',
+					provider: 'custom',
+					providerName: 'Moonshot',
+					baseURL: 'https://api.moonshot.example/v1',
+					apiKey: 'sk-user-owned',
+					model: 'moonshot-v1',
+				},
+			]
+			const config: ExtConfig = {
+				baseURL: customModels[0].baseURL,
+				model: customModels[0].model,
+				apiKey: customModels[0].apiKey,
+				selectedModelId: 'custom-moonshot',
+				visionModelId: 'custom-moonshot',
+				customModels,
+			}
+
+			const models = buildRuntimeAgentModels(config, {
+				session,
+				now: () => Date.now(),
+			})
+
+			expect(models.active).toEqual({
+				baseURL: 'https://api.moonshot.example/v1',
+				model: 'moonshot-v1',
+				apiKey: 'sk-user-owned',
+			})
+			expect(models.chaoxingModels.vision).toEqual(models.active)
+			expect(models.vision).toEqual(models.active)
+		},
+	)
 
 	it('keeps built-in models usable without a user session until the first send', () => {
 		const models = buildRuntimeAgentModels(
