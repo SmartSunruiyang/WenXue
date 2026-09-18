@@ -138,11 +138,11 @@ export function watchDesktopSignal(
 ): DesktopSignalWatcher {
 	const cloudbaseApp = getApp()
 	if (!cloudbaseApp) throw new Error(strings.auth.error.publishableKey)
-	return cloudbaseApp
-		.database()
-		.collection(collectionName)
-		.where({ _id: documentId })
-		.watch(callbacks)
+	const query =
+		collectionName === 'desktop_announcement_signal' && documentId !== 'global'
+			? { _id: documentId, uid: '{openid}' }
+			: { _id: documentId }
+	return cloudbaseApp.database().collection(collectionName).where(query).watch(callbacks)
 }
 
 export function validateLauncherCredentials(

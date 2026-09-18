@@ -268,7 +268,8 @@ extraResources:
   types、纯校验/匹配和固定展示组件；不得在该包执行 fetch、watch、IPC 或持久化。
 - **消息信号**：renderer 同时 watch `desktop_announcement_signal/global` 与当前账号
   `user:<sha256(uid)>` 的 revision；global 仅因发布/撤回递增，账号文档仅因该账号确认递增并保存 uid
-  供逐文档读规则校验。消息正文、目标 UID 与回执均经带 CloudBase 用户 bearer 的
+  供逐文档读规则校验。账号 watch 查询同时限定 `_id` 与 `uid: '{openid}'`，匹配线上读规则；
+  global watch 只按 `_id` 查询。消息正文、目标 UID 与回执均经带 CloudBase 用户 bearer 的
   `/v1/client/announcements/*` API。两个 watch 独立退避，15 分钟轮询兜底；切换账号后旧 generation
   回调无效。
 - **版本信号**：未登录 renderer 可只读 `desktop_release_signal/<runtime>:<channel>` revision；

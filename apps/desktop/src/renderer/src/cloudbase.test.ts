@@ -144,6 +144,19 @@ describe('desktop CloudBase auth session parsing', () => {
 		expect(watcher).toBe(cloudbaseMock.watch.mock.results[0]?.value)
 	})
 
+	it('matches the account signal read rule without changing the global signal query', () => {
+		const callbacks = { onChange: vi.fn(), onError: vi.fn() }
+
+		watchDesktopSignal('desktop_announcement_signal', 'global', callbacks)
+		expect(cloudbaseMock.where).toHaveBeenLastCalledWith({ _id: 'global' })
+
+		watchDesktopSignal('desktop_announcement_signal', 'user:hashed-id', callbacks)
+		expect(cloudbaseMock.where).toHaveBeenLastCalledWith({
+			_id: 'user:hashed-id',
+			uid: '{openid}',
+		})
+	})
+
 	it('validates username boundaries without trimming input into validity', () => {
 		expect(validateLauncherCredentials('A1234', VALID_PASSWORD)).toBeNull()
 		expect(validateLauncherCredentials(`A${'1'.repeat(23)}`, VALID_PASSWORD)).toBeNull()
