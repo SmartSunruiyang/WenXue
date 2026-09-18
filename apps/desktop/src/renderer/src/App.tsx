@@ -3,6 +3,8 @@ import { AnnouncementDialog, UpdateDialog } from '@wenxue/client-operations/reac
 import type { LucideIcon } from 'lucide-react'
 import {
 	Activity,
+	ArrowUpDown,
+	ArrowUpRight,
 	Check,
 	ChevronDown,
 	CircleDollarSign,
@@ -20,7 +22,6 @@ import {
 	MoreHorizontal,
 	Pause,
 	Pencil,
-	Play,
 	Plus,
 	RefreshCw,
 	ScrollText,
@@ -72,27 +73,21 @@ declare const __WENXUE_UPDATE_CHANNEL__: string
 type RouteId = 'browsers' | 'logs' | 'tokens' | 'settings'
 type SettingsSectionId = 'launch' | 'behavior' | 'logs' | 'kernel' | 'about'
 type ProfileSortMode = 'recent' | 'name' | 'status'
+type ProfileFilter = 'all' | BrowserStatus
 type LogSource = LauncherLogEntry['source']
 
 const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
-	{ id: 'logs', label: '日志', icon: ScrollText },
-	{ id: 'tokens', label: 'Tokens', icon: CircleDollarSign },
+	{ id: 'logs', label: strings.logs.title, icon: ScrollText },
+	{ id: 'tokens', label: strings.tokens.title, icon: CircleDollarSign },
 ]
 
 const settingsSections: Array<{ id: SettingsSectionId; label: string }> = [
-	{ id: 'launch', label: '批量启动' },
-	{ id: 'behavior', label: '启动器行为' },
-	{ id: 'logs', label: '日志' },
-	{ id: 'kernel', label: '浏览器内核' },
-	{ id: 'about', label: '关于' },
+	{ id: 'launch', label: strings.settings.sections.launch },
+	{ id: 'behavior', label: strings.settings.sections.behavior },
+	{ id: 'logs', label: strings.settings.sections.logs },
+	{ id: 'kernel', label: strings.settings.sections.kernel },
+	{ id: 'about', label: strings.settings.sections.about },
 ]
-
-const statusLabels: Record<BrowserStatus, string> = {
-	idle: '空闲',
-	launching: '启动中',
-	running: '运行中',
-	error: '异常',
-}
 
 const statusPriority: Record<BrowserStatus, number> = {
 	running: 0,
@@ -174,6 +169,7 @@ export default function App() {
 	const [draftName, setDraftName] = useState('')
 	const [query, setQuery] = useState('')
 	const [profileSort, setProfileSort] = useState<ProfileSortMode>('recent')
+	const [profileFilter, setProfileFilter] = useState<ProfileFilter>('all')
 	const [logQuery, setLogQuery] = useState('')
 	const [logLevels, setLogLevels] = useState<LogLevel[]>(['info', 'warn', 'error'])
 	const [activeLogSources, setActiveLogSources] = useState<LogSource[]>(logSources)
@@ -426,16 +422,20 @@ export default function App() {
 
 	const visibleProfiles = useMemo(() => {
 		const text = query.trim().toLowerCase()
-		const filtered = text
-			? profiles.filter(
-					(profile) =>
-						profile.displayName.toLowerCase().includes(text) ||
-						profile.id.toLowerCase().includes(text) ||
-						profile.userDataDir.toLowerCase().includes(text),
-				)
-			: profiles
+		const filtered = profiles.filter((profile) => {
+			const matchesQuery =
+				!text ||
+				profile.displayName.toLowerCase().includes(text) ||
+				profile.id.toLowerCase().includes(text) ||
+				profile.userDataDir.toLowerCase().includes(text)
+			const matchesStatus =
+				profileFilter === 'all' ||
+				(statuses[profile.id] ?? 'idle') === profileFilter ||
+				selectedIds.includes(profile.id)
+			return matchesQuery && matchesStatus
+		})
 		return sortProfiles(filtered, profileSort, statuses)
-	}, [profileSort, profiles, query, statuses])
+	}, [profileFilter, profileSort, profiles, query, selectedIds, statuses])
 
 	const visibleLogs = useMemo(() => {
 		const text = logQuery.trim().toLowerCase()
@@ -505,6 +505,7 @@ export default function App() {
 			if (!result.ok || !result.profile) throw new Error(result.error ?? '无法添加浏览器画像')
 			setProfiles((current) => [...current, result.profile!])
 			setQuery('')
+			setProfileFilter('all')
 			setEditingId(result.profile.id)
 			setDraftName(result.profile.displayName)
 		} catch (error) {
@@ -524,6 +525,7 @@ export default function App() {
 				if (!result.ok || !result.profile) throw new Error(result.error ?? '复制画像失败')
 				setProfiles((current) => [...current, result.profile!])
 				setQuery('')
+				setProfileFilter('all')
 				setEditingId(result.profile.id)
 				setDraftName(result.profile.displayName)
 			} catch (error) {
@@ -590,8 +592,7 @@ export default function App() {
 				setProfiles((current) =>
 					current.map((profile) => (profile.id === profileId ? result.profile! : profile)),
 				)
-				setEditingId(null)
-				setDraftName('')
+				setEditingId((current) => (current === profileId ? null : current))
 			} catch (error) {
 				setMessage(readCloudBaseErrorMessage(error, strings.error.renameProfile))
 			} finally {
@@ -784,6 +785,7 @@ export default function App() {
 				setDraftName('')
 				setQuery('')
 				setProfileSort('recent')
+				setProfileFilter('all')
 				setLogQuery('')
 				setLogLevels(['info', 'warn', 'error'])
 				setActiveLogSources(logSources)
@@ -914,7 +916,9 @@ export default function App() {
 	}
 
 	return (
-		<main className={`app-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
+		<main
+			className={`app-shell ${shellInfo.platform === 'darwin' ? 'app-shell--macos' : ''} ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}
+		>
 			<aside
 				className={`sidebar drag-region ${shellInfo.hasSystemTrafficLights ? 'sidebar--traffic' : ''}`}
 				aria-label="启动器导航"
@@ -1015,6 +1019,7 @@ export default function App() {
 						launchSelected={launchSelected}
 						openProfileFolder={openProfileFolder}
 						profileSort={profileSort}
+						profileFilter={profileFilter}
 						profiles={visibleProfiles}
 						pendingProfileIds={pendingProfileIds}
 						query={query}
@@ -1023,6 +1028,7 @@ export default function App() {
 						setDraftName={setDraftName}
 						setEditingId={setEditingId}
 						setProfileSort={setProfileSort}
+						setProfileFilter={setProfileFilter}
 						setQuery={setQuery}
 						setSelectedIds={setSelectedIds}
 						statuses={statuses}
@@ -1266,6 +1272,9 @@ function AuthScreen({
 	setMessage: (message: string | null) => void
 	setShellInfo: (info: AppShellInfo) => void
 }) {
+	const [introVisible, setIntroVisible] = useState(
+		() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+	)
 	const [mode, setMode] = useState<'login' | 'register'>('login')
 	const [username, setUsername] = useState('')
 	const [password, setPassword] = useState('')
@@ -1273,6 +1282,21 @@ function AuthScreen({
 	const [busy, setBusy] = useState(false)
 	const [localError, setLocalError] = useState<string | null>(null)
 	const isRegister = mode === 'register'
+
+	useEffect(() => {
+		if (!introVisible) return
+		const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
+		const finishIntro = () => setIntroVisible(false)
+		const handleMotionPreference = () => {
+			if (motionPreference.matches) finishIntro()
+		}
+		const timeoutId = window.setTimeout(finishIntro, 2100)
+		motionPreference.addEventListener('change', handleMotionPreference)
+		return () => {
+			window.clearTimeout(timeoutId)
+			motionPreference.removeEventListener('change', handleMotionPreference)
+		}
+	}, [introVisible])
 
 	const submit = async (event?: FormEvent<HTMLFormElement>) => {
 		event?.preventDefault()
@@ -1310,107 +1334,119 @@ function AuthScreen({
 		<main className={`auth-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
 			<div className="top-drag-zone drag-region" />
 			<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
-			<form aria-busy={busy} className="auth-card no-drag" onSubmit={(event) => void submit(event)}>
-				<div className="auth-brand">
-					<img src="logo.png" alt="" />
-					<div>
-						<strong>问学</strong>
-						<span>ask for everything</span>
+			{introVisible ? (
+				<div className="auth-intro" aria-hidden="true">
+					<div className="auth-intro__brand">
+						<img className="auth-intro__logo" src="logo.png" alt="" />
+						<div className="auth-intro__slogan">
+							<img src="slogan.png" alt="" />
+						</div>
 					</div>
 				</div>
-				<div className="auth-card__head">
-					<h1>{isRegister ? strings.auth.title.register : strings.auth.title.login}</h1>
-					<p>{isRegister ? strings.auth.description.register : strings.auth.description.login}</p>
-				</div>
-				<div className="segmented-control auth-card__modes" aria-label={strings.auth.modeLabel}>
-					<button
-						aria-pressed={!isRegister}
-						className={!isRegister ? 'segmented-control__active' : ''}
-						disabled={busy}
-						onClick={() => {
-							setMode('login')
-							setLocalError(null)
-						}}
-						type="button"
-					>
-						<LogIn size={15} />
-						{strings.auth.mode.login}
-					</button>
-					<button
-						aria-pressed={isRegister}
-						className={isRegister ? 'segmented-control__active' : ''}
-						disabled={busy}
-						onClick={() => {
-							setMode('register')
-							setLocalError(null)
-						}}
-						type="button"
-					>
-						<UserPlus size={15} />
-						{strings.auth.mode.register}
-					</button>
-				</div>
-				<label className="auth-field">
-					<span>{strings.auth.field.username}</span>
-					<input
-						aria-describedby="auth-username-hint"
-						autoComplete="username"
-						autoFocus
-						disabled={busy}
-						onChange={(event) => setUsername(event.target.value)}
-						type="text"
-						value={username}
-					/>
-					<span className="auth-field__hint" id="auth-username-hint">
-						{strings.auth.hint.username}
-					</span>
-				</label>
-				<label className="auth-field">
-					<span>{strings.auth.field.password}</span>
-					<input
-						aria-describedby="auth-password-hint"
-						autoComplete={isRegister ? 'new-password' : 'current-password'}
-						disabled={busy}
-						onChange={(event) => setPassword(event.target.value)}
-						type="password"
-						value={password}
-					/>
-					<span className="auth-field__hint" id="auth-password-hint">
-						{strings.auth.hint.password}
-					</span>
-				</label>
-				{isRegister ? (
-					<label className="auth-field">
-						<span>{strings.auth.field.confirmPassword}</span>
-						<input
-							autoComplete="new-password"
+			) : (
+				<form
+					aria-busy={busy}
+					className="auth-card no-drag"
+					onSubmit={(event) => void submit(event)}
+				>
+					<div className="auth-card__head">
+						<h1>{isRegister ? strings.auth.title.register : strings.auth.title.login}</h1>
+						<p>{isRegister ? strings.auth.description.register : strings.auth.description.login}</p>
+					</div>
+					<div className="segmented-control auth-card__modes" aria-label={strings.auth.modeLabel}>
+						<button
+							aria-pressed={!isRegister}
+							className={!isRegister ? 'segmented-control__active' : ''}
 							disabled={busy}
-							onChange={(event) => setConfirmPassword(event.target.value)}
-							type="password"
-							value={confirmPassword}
-						/>
-					</label>
-				) : null}
-				{localError || error ? (
-					<div className="auth-alert" role="alert">
-						{localError ?? error}
+							onClick={() => {
+								setMode('login')
+								setLocalError(null)
+							}}
+							type="button"
+						>
+							<LogIn size={15} />
+							{strings.auth.mode.login}
+						</button>
+						<button
+							aria-pressed={isRegister}
+							className={isRegister ? 'segmented-control__active' : ''}
+							disabled={busy}
+							onClick={() => {
+								setMode('register')
+								setLocalError(null)
+							}}
+							type="button"
+						>
+							<UserPlus size={15} />
+							{strings.auth.mode.register}
+						</button>
 					</div>
-				) : null}
-				<button className="primary-button auth-submit" disabled={busy} type="submit">
-					{busy ? (
-						<LoaderCircle className="spin" size={16} />
-					) : isRegister ? (
-						<UserPlus size={16} />
-					) : (
-						<LogIn size={16} />
-					)}
-					{busy
-						? strings.auth.action.busy
-						: isRegister
-							? strings.auth.action.register
-							: strings.auth.action.login}
-				</button>
-			</form>
+					<label className="auth-field">
+						<span>{strings.auth.field.username}</span>
+						<input
+							aria-describedby={isRegister ? 'auth-username-hint' : undefined}
+							autoComplete="username"
+							autoFocus
+							disabled={busy}
+							onChange={(event) => setUsername(event.target.value)}
+							type="text"
+							value={username}
+						/>
+						{isRegister ? (
+							<span className="auth-field__hint" id="auth-username-hint">
+								{strings.auth.hint.username}
+							</span>
+						) : null}
+					</label>
+					<label className="auth-field">
+						<span>{strings.auth.field.password}</span>
+						<input
+							aria-describedby={isRegister ? 'auth-password-hint' : undefined}
+							autoComplete={isRegister ? 'new-password' : 'current-password'}
+							disabled={busy}
+							onChange={(event) => setPassword(event.target.value)}
+							type="password"
+							value={password}
+						/>
+						{isRegister ? (
+							<span className="auth-field__hint" id="auth-password-hint">
+								{strings.auth.hint.password}
+							</span>
+						) : null}
+					</label>
+					{isRegister ? (
+						<label className="auth-field">
+							<span>{strings.auth.field.confirmPassword}</span>
+							<input
+								autoComplete="new-password"
+								disabled={busy}
+								onChange={(event) => setConfirmPassword(event.target.value)}
+								type="password"
+								value={confirmPassword}
+							/>
+						</label>
+					) : null}
+					{localError || error ? (
+						<div className="auth-alert" role="alert">
+							{localError ?? error}
+						</div>
+					) : null}
+					<button className="primary-button auth-submit" disabled={busy} type="submit">
+						{busy ? (
+							<LoaderCircle className="spin" size={16} />
+						) : isRegister ? (
+							<UserPlus size={16} />
+						) : (
+							<LogIn size={16} />
+						)}
+						{busy
+							? strings.auth.action.busy
+							: isRegister
+								? strings.auth.action.register
+								: strings.auth.action.login}
+					</button>
+				</form>
+			)}
 		</main>
 	)
 }
@@ -1522,6 +1558,7 @@ interface BrowserPageProps {
 	launchSelected: () => Promise<void>
 	openProfileFolder: (profileId: string) => Promise<void>
 	profileSort: ProfileSortMode
+	profileFilter: ProfileFilter
 	profiles: BrowserProfile[]
 	pendingProfileIds: string[]
 	query: string
@@ -1530,6 +1567,7 @@ interface BrowserPageProps {
 	setDraftName: (name: string) => void
 	setEditingId: (profileId: string | null) => void
 	setProfileSort: (mode: ProfileSortMode) => void
+	setProfileFilter: (filter: ProfileFilter) => void
 	setQuery: (query: string) => void
 	setSelectedIds: (ids: string[]) => void
 	statuses: Record<string, BrowserStatus>
@@ -1538,161 +1576,246 @@ interface BrowserPageProps {
 }
 
 function BrowserPage(props: BrowserPageProps) {
-	const runningCount = props.allProfiles.filter(
-		(profile) => props.statuses[profile.id] === 'running',
-	).length
-	const launchingCount = props.allProfiles.filter(
-		(profile) => props.statuses[profile.id] === 'launching',
-	).length
-	const errorCount = props.allProfiles.filter(
-		(profile) => props.statuses[profile.id] === 'error',
-	).length
-	const selectionBusy = props.selectedIds.some((id) => props.pendingProfileIds.includes(id))
+	const [selectionMode, setSelectionMode] = useState(props.selectedIds.length > 0)
+	const selectAllRef = useRef<HTMLInputElement>(null)
+	const searchRef = useRef<HTMLInputElement>(null)
+	const counts: Record<ProfileFilter, number> = {
+		all: props.allProfiles.length,
+		running: 0,
+		idle: 0,
+		launching: 0,
+		error: 0,
+	}
+	for (const profile of props.allProfiles) counts[props.statuses[profile.id] ?? 'idle']++
+	const filters: ProfileFilter[] = ['all', 'running', 'idle']
+	if (counts.launching > 0 || props.profileFilter === 'launching') filters.push('launching')
+	if (counts.error > 0 || props.profileFilter === 'error') filters.push('error')
+	const selectableIds = props.profiles
+		.filter(
+			(profile) =>
+				props.selectedIds.includes(profile.id) ||
+				(!props.pendingProfileIds.includes(profile.id) &&
+					props.statuses[profile.id] !== 'launching'),
+		)
+		.map((profile) => profile.id)
+	const allSelected =
+		selectableIds.length > 0 && selectableIds.every((id) => props.selectedIds.includes(id))
+	const someSelected = selectableIds.some((id) => props.selectedIds.includes(id))
+	const selectionBusy = props.selectedIds.some(
+		(id) => props.pendingProfileIds.includes(id) || props.statuses[id] === 'launching',
+	)
+
+	useEffect(() => {
+		if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected && !allSelected
+	}, [allSelected, selectionMode, someSelected])
+
+	const resetFilters = () => {
+		props.setQuery('')
+		props.setProfileFilter('all')
+		props.setSelectedIds([])
+	}
 
 	return (
 		<div className="page page--browsers">
-			<header className="page-header safe-actions">
-				<div>
-					<h1>浏览器</h1>
-					<p>持久画像、多账号隔离与批量启动。</p>
-				</div>
-				<div className="header-actions">
-					<label aria-label="搜索浏览器画像" className="search-field">
-						<Search size={16} />
+			<div className="browser-page-content">
+				<header className="browser-page-header">
+					<div>
+						<h1>
+							{strings.browser.title}
+							<span className="browser-total" aria-label={strings.browser.total(counts.all)}>
+								{counts.all}
+							</span>
+						</h1>
+						<p>{strings.browser.description}</p>
+					</div>
+					<button
+						className="browser-button browser-button--primary"
+						disabled={props.addingProfile || props.batchLaunching}
+						onClick={() => void props.addProfile()}
+						type="button"
+					>
+						{props.addingProfile ? (
+							<LoaderCircle aria-hidden className="spin" size={16} />
+						) : (
+							<Plus aria-hidden size={17} />
+						)}
+						{props.addingProfile ? strings.browser.action.creating : strings.browser.action.create}
+					</button>
+				</header>
+
+				<div className="browser-tools">
+					<div className="browser-search">
+						<Search aria-hidden size={17} />
 						<input
+							aria-label={strings.browser.searchLabel}
 							disabled={props.batchLaunching}
 							onChange={(event) => {
 								props.setQuery(event.target.value)
 								props.setSelectedIds([])
 							}}
-							placeholder="搜索画像、ID 或目录"
+							placeholder={strings.browser.searchPlaceholder}
+							ref={searchRef}
 							value={props.query}
 						/>
-					</label>
-					<div className="segmented-control" aria-label="画像排序">
-						<button
-							aria-pressed={props.profileSort === 'recent'}
-							className={props.profileSort === 'recent' ? 'segmented-control__active' : ''}
-							disabled={props.batchLaunching}
-							onClick={() => props.setProfileSort('recent')}
-							type="button"
-						>
-							最近
-						</button>
-						<button
-							aria-pressed={props.profileSort === 'status'}
-							className={props.profileSort === 'status' ? 'segmented-control__active' : ''}
-							disabled={props.batchLaunching}
-							onClick={() => props.setProfileSort('status')}
-							type="button"
-						>
-							状态
-						</button>
-						<button
-							aria-pressed={props.profileSort === 'name'}
-							className={props.profileSort === 'name' ? 'segmented-control__active' : ''}
-							disabled={props.batchLaunching}
-							onClick={() => props.setProfileSort('name')}
-							type="button"
-						>
-							名称
-						</button>
+						{props.query ? (
+							<button
+								aria-label={strings.browser.clearSearch}
+								disabled={props.batchLaunching}
+								onClick={() => {
+									props.setQuery('')
+									props.setSelectedIds([])
+									searchRef.current?.focus()
+								}}
+								type="button"
+							>
+								<X aria-hidden size={15} />
+							</button>
+						) : null}
 					</div>
+					<label className="browser-sort">
+						<ArrowUpDown aria-hidden size={16} />
+						<select
+							aria-label={strings.browser.sortLabel}
+							disabled={props.batchLaunching}
+							onChange={(event) => props.setProfileSort(event.target.value as ProfileSortMode)}
+							value={props.profileSort}
+						>
+							<option value="recent">{strings.browser.sort.recent}</option>
+							<option value="name">{strings.browser.sort.name}</option>
+							<option value="status">{strings.browser.sort.status}</option>
+						</select>
+						<ChevronDown aria-hidden size={14} />
+					</label>
 					<button
-						className="primary-button"
-						disabled={props.addingProfile || props.batchLaunching}
-						onClick={() => void props.addProfile()}
+						aria-pressed={selectionMode}
+						className="browser-button browser-button--secondary"
+						disabled={props.batchLaunching || props.allProfiles.length === 0}
+						onClick={() => {
+							setSelectionMode(!selectionMode)
+							props.setSelectedIds([])
+						}}
 						type="button"
 					>
-						{props.addingProfile ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
-						{props.addingProfile ? '正在添加' : '添加浏览器'}
+						<Check aria-hidden size={16} />
+						{selectionMode ? strings.browser.selection.finish : strings.browser.selection.start}
 					</button>
 				</div>
-			</header>
 
-			<div className="browser-summary" aria-label="浏览器状态概览">
-				<span>
-					<strong>{props.allProfiles.length}</strong> 个画像
-				</span>
-				<span className="browser-summary__running">
-					<strong>{runningCount}</strong> 运行中
-				</span>
-				<span>
-					<strong>{launchingCount}</strong> 启动中
-				</span>
-				{errorCount > 0 ? (
-					<span className="browser-summary__error">
-						<strong>{errorCount}</strong> 个异常
-					</span>
+				<div className="browser-filterbar">
+					<div className="browser-filters" role="group" aria-label={strings.browser.filterLabel}>
+						{filters.map((filter) => (
+							<button
+								aria-pressed={props.profileFilter === filter}
+								disabled={props.batchLaunching}
+								key={filter}
+								onClick={() => {
+									props.setProfileFilter(filter)
+									props.setSelectedIds([])
+								}}
+								type="button"
+							>
+								<span>{strings.browser.filters[filter]}</span>
+								<span className="browser-filter-count">{counts[filter]}</span>
+							</button>
+						))}
+					</div>
+					{selectionMode ? (
+						<label className="browser-select-all">
+							<input
+								checked={allSelected}
+								disabled={props.batchLaunching || selectableIds.length === 0}
+								onChange={() => props.setSelectedIds(allSelected ? [] : selectableIds)}
+								ref={selectAllRef}
+								type="checkbox"
+							/>
+							{strings.browser.selection.all}
+						</label>
+					) : null}
+				</div>
+
+				<div className="browser-results" aria-label={strings.browser.listLabel}>
+					{props.profiles.length === 0 ? (
+						<section className="browser-empty">
+							<div className="browser-empty-icon">
+								{counts.all === 0 ? (
+									<Globe2 aria-hidden size={28} />
+								) : (
+									<Search aria-hidden size={28} />
+								)}
+							</div>
+							<h2>
+								{counts.all === 0
+									? strings.browser.empty.title
+									: strings.browser.empty.filteredTitle}
+							</h2>
+							<p>
+								{counts.all === 0
+									? strings.browser.empty.description
+									: strings.browser.empty.filteredDescription}
+							</p>
+							<button
+								className={`browser-button ${counts.all === 0 ? 'browser-button--primary' : 'browser-button--secondary'}`}
+								disabled={props.addingProfile || props.batchLaunching}
+								onClick={counts.all === 0 ? () => void props.addProfile() : resetFilters}
+								type="button"
+							>
+								{counts.all === 0 ? <Plus aria-hidden size={16} /> : null}
+								{counts.all === 0
+									? props.addingProfile
+										? strings.browser.action.creating
+										: strings.browser.action.create
+									: strings.browser.action.reset}
+							</button>
+						</section>
+					) : (
+						<ul className="profile-list" aria-label={strings.browser.listLabel}>
+							{props.profiles.map((profile) => (
+								<ProfileRow
+									key={profile.id}
+									profile={profile}
+									selectionMode={selectionMode}
+									{...props}
+								/>
+							))}
+						</ul>
+					)}
+				</div>
+
+				{selectionMode ? (
+					<div className="browser-selection-bar">
+						<div>
+							<span aria-live="polite">
+								{strings.browser.selection.count(props.selectedIds.length)}
+							</span>
+							<small>
+								{props.batchLaunching
+									? strings.browser.selection.busy
+									: strings.browser.selection.hint}
+							</small>
+						</div>
+						<button
+							className="browser-button browser-button--primary"
+							disabled={props.batchLaunching || selectionBusy || props.selectedIds.length === 0}
+							onClick={() => void props.launchSelected()}
+							type="button"
+						>
+							{props.batchLaunching ? (
+								<LoaderCircle aria-hidden className="spin" size={16} />
+							) : (
+								<ArrowUpRight aria-hidden size={17} />
+							)}
+							{props.batchLaunching
+								? strings.browser.action.launching
+								: strings.browser.selection.launch(props.selectedIds.length)}
+						</button>
+					</div>
 				) : null}
 			</div>
-
-			{props.allProfiles.length === 0 ? (
-				<EmptyState
-					action={() => void props.addProfile()}
-					actionLabel="添加第一个浏览器"
-					title="还没有浏览器画像"
-				>
-					创建一个持久画像后，登录态、Cookie 与缓存会保存在独立目录中。
-				</EmptyState>
-			) : props.profiles.length === 0 ? (
-				<EmptyState
-					action={() => props.setQuery('')}
-					actionIcon={X}
-					actionLabel="清除搜索"
-					title="没有匹配的浏览器"
-				>
-					换一个名称、ID 或目录关键词，或者清除当前搜索。
-				</EmptyState>
-			) : (
-				<div className="profile-list">
-					<div className="profile-row profile-row--head">
-						<span />
-						<span>画像</span>
-						<span>状态</span>
-						<span>上次使用</span>
-						<span>操作</span>
-					</div>
-					{props.profiles.map((profile) => (
-						<ProfileRow key={profile.id} profile={profile} {...props} />
-					))}
-				</div>
-			)}
-
-			{props.selectedIds.length > 0 ? (
-				<div className="selection-bar">
-					<div>
-						<Activity size={16} />
-						<span>已选择 {props.selectedIds.length} 个画像</span>
-					</div>
-					<button
-						className="primary-button"
-						disabled={props.batchLaunching || selectionBusy}
-						onClick={() => void props.launchSelected()}
-						type="button"
-					>
-						{props.batchLaunching ? (
-							<LoaderCircle className="spin" size={16} />
-						) : (
-							<Play size={16} />
-						)}
-						{props.batchLaunching ? '正在启动' : `打开选中 (${props.selectedIds.length})`}
-					</button>
-					<button
-						className="soft-button"
-						disabled={props.batchLaunching}
-						onClick={() => props.setSelectedIds([])}
-						type="button"
-					>
-						取消选择
-					</button>
-				</div>
-			) : null}
 		</div>
 	)
 }
 
-function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
+function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile; selectionMode: boolean }) {
 	const status = props.statuses[props.profile.id] ?? 'idle'
 	const selected = props.selectedIds.includes(props.profile.id)
 	const running = status === 'running'
@@ -1720,7 +1843,7 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 		const trigger = menuButtonRef.current
 		if (!trigger) return
 		const bounds = trigger.getBoundingClientRect()
-		const menuWidth = 164
+		const menuWidth = 184
 		const estimatedHeight = failed ? 192 : 156
 		const fitsBelow = bounds.bottom + 6 + estimatedHeight <= window.innerHeight - 8
 		setMenuPosition({
@@ -1803,7 +1926,7 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 	}, [closeMenu, menuOpen])
 
 	const toggleSelected = () => {
-		if (props.batchLaunching || actionPending) return
+		if (props.batchLaunching || actionPending || launching) return
 		props.setSelectedIds(
 			selected
 				? props.selectedIds.filter((id) => id !== props.profile.id)
@@ -1812,39 +1935,47 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 	}
 
 	return (
-		<div
-			className={`profile-row profile-row--${status} ${selected ? 'profile-row--selected' : ''}`}
-		>
-			<label className="checkbox-control">
-				<input
-					aria-label={`选择 ${props.profile.displayName}`}
-					checked={selected}
-					disabled={props.batchLaunching || actionPending}
-					onChange={toggleSelected}
-					type="checkbox"
-				/>
-				<span />
-			</label>
+		<li className={`profile-row profile-row--${status} ${selected ? 'profile-row--selected' : ''}`}>
+			{props.selectionMode ? (
+				<label className="checkbox-control">
+					<input
+						aria-label={strings.browser.selection.label(props.profile.displayName)}
+						checked={selected}
+						disabled={props.batchLaunching || actionPending || launching}
+						onChange={toggleSelected}
+						type="checkbox"
+					/>
+					<span />
+				</label>
+			) : null}
 			<div className="profile-identity">
 				<div className={`profile-avatar profile-avatar--${props.profile.colorKey}`}>
 					{props.profile.displayName.slice(0, 1)}
 				</div>
 				<div className="profile-copy">
 					{props.editingId === props.profile.id ? (
-						<div className="rename-field">
+						<div
+							className="rename-field"
+							onBlur={(event) => {
+								if (!event.currentTarget.contains(event.relatedTarget)) {
+									void props.commitRename(props.profile.id)
+								}
+							}}
+						>
 							<input
-								aria-label={`重命名 ${props.profile.displayName}`}
+								aria-label={`${strings.browser.action.rename} ${props.profile.displayName}`}
 								autoFocus
 								disabled={actionPending || props.batchLaunching}
 								onChange={(event) => props.setDraftName(event.target.value)}
 								onKeyDown={(event) => {
-									if (event.key === 'Enter') props.commitRename(props.profile.id)
+									if (event.key === 'Enter' && !event.nativeEvent.isComposing)
+										void props.commitRename(props.profile.id)
 									if (event.key === 'Escape') props.setEditingId(null)
 								}}
 								value={props.draftName}
 							/>
 							<button
-								aria-label="确认重命名"
+								aria-label={strings.browser.action.confirmRename}
 								disabled={actionPending || props.batchLaunching}
 								onClick={() => void props.commitRename(props.profile.id)}
 								type="button"
@@ -1852,7 +1983,7 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 								<Check size={14} />
 							</button>
 							<button
-								aria-label="取消重命名"
+								aria-label={strings.browser.action.cancelRename}
 								disabled={actionPending || props.batchLaunching}
 								onClick={() => props.setEditingId(null)}
 								type="button"
@@ -1861,52 +1992,62 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 							</button>
 						</div>
 					) : (
-						<strong className="profile-name">{props.profile.displayName}</strong>
+						<strong className="profile-name" title={props.profile.displayName}>
+							{props.profile.displayName}
+						</strong>
 					)}
-					{props.editingId === props.profile.id ? null : (
-						<span className="profile-id">{props.profile.id}</span>
-					)}
-					<StatusBadge compact status={status} />
+					<span className="profile-meta">{formatRelativeTime(props.profile.lastUsedAt)}</span>
 				</div>
 			</div>
 			<StatusBadge status={status} />
-			<span className="mono-text">{formatRelativeTime(props.profile.lastUsedAt)}</span>
 			<div className="row-actions">
 				<button
 					className="row-primary-action"
 					disabled={launching || actionPending || props.batchLaunching}
 					onClick={() => void props.launchProfile(props.profile.id)}
-					title={running ? '聚焦' : failed ? '重新启动' : '打开'}
+					aria-label={`${running ? strings.browser.action.focus : failed ? strings.browser.action.retry : strings.browser.action.launch} ${props.profile.displayName}`}
 					type="button"
 				>
-					{launching ? (
+					{launching || actionPending ? (
 						<LoaderCircle className="spin" size={15} />
 					) : running ? (
 						<Focus size={15} />
 					) : failed ? (
 						<RefreshCw size={15} />
 					) : (
-						<Play size={15} />
+						<ArrowUpRight size={16} />
 					)}
-					<span>{launching ? '启动中' : running ? '聚焦' : failed ? '重试' : '打开'}</span>
+					<span>
+						{launching
+							? strings.browser.action.launching
+							: actionPending
+								? strings.browser.action.busy
+								: running
+									? strings.browser.action.focus
+									: failed
+										? strings.browser.action.retry
+										: strings.browser.action.launch}
+					</span>
 				</button>
-				{running ? (
-					<button
-						aria-label={`停止 ${props.profile.displayName}`}
-						disabled={actionPending || props.batchLaunching}
-						onClick={() => void props.stopProfile(props.profile.id)}
-						title="停止"
-						type="button"
-					>
-						<Square size={15} />
-					</button>
-				) : null}
+				<span className="profile-stop-slot">
+					{running ? (
+						<button
+							aria-label={`${strings.browser.action.stop} ${props.profile.displayName}`}
+							disabled={actionPending || props.batchLaunching}
+							onClick={() => void props.stopProfile(props.profile.id)}
+							title={strings.browser.action.stop}
+							type="button"
+						>
+							<Square size={15} />
+						</button>
+					) : null}
+				</span>
 				<div className="row-more">
 					<button
 						aria-controls={`profile-menu-${props.profile.id}`}
 						aria-expanded={menuOpen}
 						aria-haspopup="menu"
-						aria-label={`${props.profile.displayName} 的更多操作`}
+						aria-label={`${props.profile.displayName} · ${strings.browser.action.more}`}
 						className="row-more__trigger"
 						disabled={actionPending || props.batchLaunching}
 						onClick={toggleMenu}
@@ -1916,7 +2057,7 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 							toggleMenu()
 						}}
 						ref={menuButtonRef}
-						title="更多操作"
+						title={strings.browser.action.more}
 						type="button"
 					>
 						<MoreHorizontal size={16} />
@@ -1926,8 +2067,8 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 			{menuOpen && menuPosition
 				? createPortal(
 						<div
-							aria-label={`${props.profile.displayName} 的更多操作`}
-							className="row-more__menu"
+							aria-label={`${props.profile.displayName} · ${strings.browser.action.more}`}
+							className="row-more__menu browser-profile-menu"
 							id={`profile-menu-${props.profile.id}`}
 							ref={menuRef}
 							role="menu"
@@ -1943,7 +2084,7 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 									type="button"
 								>
 									<ScrollText size={15} />
-									查看日志
+									{strings.browser.action.logs}
 								</button>
 							) : null}
 							<button
@@ -1956,7 +2097,7 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 								type="button"
 							>
 								<Pencil size={15} />
-								重命名
+								{strings.browser.action.rename}
 							</button>
 							<button
 								disabled={launching || running}
@@ -1968,7 +2109,7 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 								type="button"
 							>
 								<Copy size={15} />
-								复制画像
+								{strings.browser.action.duplicate}
 							</button>
 							<button
 								onClick={() => {
@@ -1979,7 +2120,7 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 								type="button"
 							>
 								<FolderOpen size={15} />
-								打开目录
+								{strings.browser.action.folder}
 							</button>
 							<button
 								className="danger-icon"
@@ -1992,13 +2133,13 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile }) {
 								type="button"
 							>
 								<Trash2 size={15} />
-								删除画像
+								{strings.browser.action.remove}
 							</button>
 						</div>,
 						document.body,
 					)
 				: null}
-		</div>
+		</li>
 	)
 }
 
@@ -2034,6 +2175,8 @@ function LogsPage({
 	setLogQuery: (query: string) => void
 }) {
 	const logStreamRef = useRef<HTMLDivElement>(null)
+	const logSearchRef = useRef<HTMLInputElement>(null)
+	const profileNames = new Map(profiles.map((profile) => [profile.id, profile.displayName]))
 
 	useEffect(() => {
 		if (!followLogs || !logStreamRef.current) return
@@ -2047,138 +2190,159 @@ function LogsPage({
 	}
 
 	return (
-		<div className="page">
-			<header className="page-header safe-actions">
-				<div>
-					<h1>日志</h1>
-					<p>实时 tail、筛选、详情与保留裁剪。</p>
+		<div className="page page--logs">
+			<div className="page-content">
+				<header className="page-header safe-actions">
+					<div>
+						<h1>{strings.logs.title}</h1>
+						<p>{strings.logs.description}</p>
+					</div>
+					<div className="header-actions">
+						<button
+							className="soft-button"
+							disabled={clearingLogs || totalLogCount === 0}
+							onClick={() => {
+								if (window.confirm(strings.logs.confirmClear)) void clearLogs()
+							}}
+							type="button"
+						>
+							{clearingLogs ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}
+							{clearingLogs ? strings.logs.clearing : strings.logs.clear}
+						</button>
+						<button
+							className="primary-button"
+							disabled={logs.length === 0}
+							onClick={() => exportLauncherLogs(logs, settings.logs.defaultExportFormat)}
+							type="button"
+						>
+							<Download size={16} />
+							{strings.logs.export}
+						</button>
+					</div>
+				</header>
+				<div className="log-toolbar">
+					<div className="log-search-row">
+						<div className="search-field">
+							<Search aria-hidden size={16} />
+							<input
+								aria-label={strings.logs.searchLabel}
+								onChange={(event) => setLogQuery(event.target.value)}
+								placeholder={strings.logs.searchPlaceholder}
+								ref={logSearchRef}
+								type="search"
+								value={logQuery}
+							/>
+							{logQuery ? (
+								<button
+									aria-label={strings.logs.clearSearch}
+									className="search-clear"
+									onClick={() => {
+										setLogQuery('')
+										logSearchRef.current?.focus()
+									}}
+									type="button"
+								>
+									<X aria-hidden size={15} />
+								</button>
+							) : null}
+						</div>
+						<button
+							aria-pressed={followLogs}
+							className={`soft-button ${followLogs ? 'soft-button--active' : ''}`}
+							onClick={() => setFollowLogs(!followLogs)}
+							type="button"
+						>
+							{followLogs ? <Activity size={16} /> : <Pause size={16} />}
+							{followLogs ? strings.logs.follow : strings.logs.paused}
+						</button>
+					</div>
+					<div className="log-filter-row">
+						<span>{strings.logs.levelLabel}</span>
+						<div aria-label={strings.logs.levelLabel} className="level-filter" role="group">
+							{(['debug', 'info', 'warn', 'error'] as LogLevel[]).map((level) => (
+								<button
+									aria-pressed={logLevels.includes(level)}
+									key={level}
+									onClick={() =>
+										setLogLevels(
+											logLevels.includes(level)
+												? logLevels.filter((item) => item !== level)
+												: [...logLevels, level],
+										)
+									}
+									type="button"
+								>
+									<span aria-hidden className={`level-dot level-dot--${level}`} />
+									{strings.logs.level[level]}
+								</button>
+							))}
+						</div>
+					</div>
+					<div className="log-filter-row">
+						<span>{strings.logs.sourceLabel}</span>
+						<div aria-label={strings.logs.sourceLabel} className="source-filter" role="group">
+							{logSources.map((source) => (
+								<button
+									aria-pressed={activeLogSources.includes(source)}
+									key={source}
+									onClick={() =>
+										setActiveLogSources(
+											activeLogSources.includes(source)
+												? activeLogSources.filter((item) => item !== source)
+												: [...activeLogSources, source],
+										)
+									}
+									type="button"
+								>
+									{strings.logs.source[source]}
+								</button>
+							))}
+						</div>
+					</div>
 				</div>
-				<div className="header-actions">
-					<button
-						aria-pressed={followLogs}
-						className={`soft-button ${followLogs ? 'soft-button--active' : ''}`}
-						onClick={() => setFollowLogs(!followLogs)}
-						type="button"
+				<div className="legend-row">
+					<span>{strings.logs.count(logs.length, totalLogCount)}</span>
+					<span>{strings.logs.retention(settings.logs.retentionDays)}</span>
+				</div>
+				{totalLogCount === 0 ? (
+					<EmptyState icon={ScrollText} title={strings.logs.emptyTitle}>
+						{strings.logs.emptyDescription}
+					</EmptyState>
+				) : logs.length === 0 ? (
+					<EmptyState
+						action={resetFilters}
+						actionIcon={X}
+						actionLabel={strings.logs.reset}
+						icon={Search}
+						title={strings.logs.filteredTitle}
 					>
-						{followLogs ? <Activity size={15} /> : <Pause size={15} />}
-						{followLogs ? '跟随最新' : '已暂停'}
-					</button>
-					<button
-						className="soft-button"
-						disabled={clearingLogs}
-						onClick={() => {
-							if (window.confirm('清空全部日志？此操作不可撤销。')) void clearLogs()
+						{strings.logs.filteredDescription}
+					</EmptyState>
+				) : (
+					<div
+						className="log-stream"
+						onScroll={(event) => {
+							if (!followLogs) return
+							const { clientHeight, scrollHeight, scrollTop } = event.currentTarget
+							if (scrollHeight - scrollTop - clientHeight > 48) setFollowLogs(false)
 						}}
-						type="button"
+						ref={logStreamRef}
 					>
-						{clearingLogs ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
-						{clearingLogs ? '正在清空' : '清空'}
-					</button>
-					<button
-						className="primary-button"
-						disabled={logs.length === 0}
-						onClick={() => exportLauncherLogs(logs, settings.logs.defaultExportFormat)}
-						type="button"
-					>
-						<Download size={15} />
-						导出
-					</button>
-				</div>
-			</header>
-
-			<div className="log-toolbar">
-				<label aria-label="搜索日志" className="search-field">
-					<Search size={16} />
-					<input
-						onChange={(event) => setLogQuery(event.target.value)}
-						placeholder="搜索消息、来源或画像"
-						value={logQuery}
-					/>
-				</label>
-				<div className="level-filter">
-					{(['debug', 'info', 'warn', 'error'] as LogLevel[]).map((level) => (
-						<button
-							aria-pressed={logLevels.includes(level)}
-							className={logLevels.includes(level) ? 'level-filter__item--active' : ''}
-							key={level}
-							onClick={() =>
-								setLogLevels(
-									logLevels.includes(level)
-										? logLevels.filter((item) => item !== level)
-										: [...logLevels, level],
-								)
-							}
-							type="button"
-						>
-							<span className={`level-dot level-dot--${level}`} />
-							{level}
-						</button>
-					))}
-				</div>
-				<div className="source-filter" aria-label="日志来源筛选">
-					{logSources.map((source) => (
-						<button
-							aria-pressed={activeLogSources.includes(source)}
-							className={activeLogSources.includes(source) ? 'source-filter__item--active' : ''}
-							key={source}
-							onClick={() =>
-								setActiveLogSources(
-									activeLogSources.includes(source)
-										? activeLogSources.filter((item) => item !== source)
-										: [...activeLogSources, source],
-								)
-							}
-							type="button"
-						>
-							{source}
-						</button>
-					))}
-				</div>
+						{logs.map((entry) => (
+							<LogRow
+								browserName={profileNames.get(entry.browserId) ?? entry.browserId}
+								entry={entry}
+								key={entry.id}
+							/>
+						))}
+					</div>
+				)}
 			</div>
-
-			<div className="legend-row">
-				<span>
-					画像维度：
-					{profiles.length > 0
-						? profiles.map((profile) => profile.displayName).join(' / ')
-						: '暂无画像'}
-				</span>
-				<span>保留策略由设置页控制</span>
-			</div>
-
-			{totalLogCount === 0 ? (
-				<EmptyState title="还没有启动器日志">
-					插件日志通道连接后，会在这里按时间线实时出现。
-				</EmptyState>
-			) : logs.length === 0 ? (
-				<EmptyState
-					action={resetFilters}
-					actionIcon={X}
-					actionLabel="重置筛选"
-					title="没有匹配的日志"
-				>
-					调整关键词、级别或来源，或者重置全部筛选条件。
-				</EmptyState>
-			) : (
-				<div
-					className="log-stream"
-					onScroll={(event) => {
-						if (!followLogs) return
-						const { clientHeight, scrollHeight, scrollTop } = event.currentTarget
-						if (scrollHeight - scrollTop - clientHeight > 48) setFollowLogs(false)
-					}}
-					ref={logStreamRef}
-				>
-					{logs.map((entry) => (
-						<LogRow entry={entry} key={entry.id} />
-					))}
-				</div>
-			)}
 		</div>
 	)
 }
 
-function LogRow({ entry }: { entry: LauncherLogEntry }) {
+function LogRow({ browserName, entry }: { browserName: string; entry: LauncherLogEntry }) {
 	const [open, setOpen] = useState(false)
 	const detailsId = `log-details-${entry.id}`
 	return (
@@ -2190,16 +2354,26 @@ function LogRow({ entry }: { entry: LauncherLogEntry }) {
 				type="button"
 			>
 				<span className="mono-text">{formatTime(entry.ts)}</span>
-				<span className={`level-dot level-dot--${entry.level}`} />
-				<span className="log-tag">{entry.source}</span>
-				<span className="log-tag">{entry.browserId}</span>
-				<strong>{entry.message}</strong>
-				<ChevronDown className={open ? 'log-row__chevron--open' : ''} size={14} />
+				<span className="log-row__content">
+					<strong title={entry.message}>{entry.message}</strong>
+					<span className="log-row__meta">
+						<span className="log-level">
+							<i aria-hidden className={`level-dot level-dot--${entry.level}`} />
+							{strings.logs.level[entry.level]}
+						</span>
+						<span>{strings.logs.source[entry.source]}</span>
+						<span className="log-tag" title={browserName}>
+							{browserName}
+						</span>
+					</span>
+				</span>
+				<ChevronDown aria-hidden className={open ? 'log-row__chevron--open' : ''} size={16} />
 			</button>
 			{open ? (
-				<pre id={detailsId}>
-					{JSON.stringify(entry.data ?? { context: entry.context }, null, 2)}
-				</pre>
+				<div className="log-details" id={detailsId}>
+					<p>{entry.message}</p>
+					<pre>{JSON.stringify(entry.data ?? { context: entry.context }, null, 2)}</pre>
+				</div>
 			) : null}
 		</div>
 	)
@@ -2217,98 +2391,106 @@ function TokensPage({
 	const hasData = summary.totalTokens > 0
 	return (
 		<div className="page page--tokens">
-			<header className="page-header safe-actions">
-				<div>
-					<h1>Tokens</h1>
-					<p>当前账号的用量归因；成本按已配置模型价格估算，仅供参考。</p>
-				</div>
-				<div className="header-actions">
-					<button
-						className="soft-button"
-						disabled={loading}
-						onClick={() => void onRefresh()}
-						type="button"
-					>
-						<RefreshCw className={loading ? 'spin' : ''} size={15} />
-						{loading ? '同步中' : '刷新'}
-					</button>
-					<button
-						className="primary-button"
-						disabled={!hasData}
-						onClick={() => exportTokenUsageSummary(summary)}
-						type="button"
-					>
-						<Download size={15} />
-						导出统计
-					</button>
-				</div>
-			</header>
+			<div className="page-content">
+				<header className="page-header safe-actions">
+					<div>
+						<h1>{strings.tokens.title}</h1>
+						<p>{strings.tokens.description}</p>
+					</div>
+					<div className="header-actions">
+						<button
+							className="soft-button"
+							disabled={loading}
+							onClick={() => void onRefresh()}
+							type="button"
+						>
+							<RefreshCw className={loading ? 'spin' : ''} size={15} />
+							{loading ? strings.tokens.refreshing : strings.tokens.refresh}
+						</button>
+						<button
+							className="primary-button"
+							disabled={!hasData}
+							onClick={() => exportTokenUsageSummary(summary)}
+							type="button"
+						>
+							<Download size={15} />
+							{strings.tokens.export}
+						</button>
+					</div>
+				</header>
 
-			<section aria-label="Tokens 总览" className="token-overview">
-				<div className="token-overview__total">
-					<span>总 tokens</span>
-					<strong>{formatNumber(summary.totalTokens)}</strong>
-				</div>
-				<div className="token-overview__details">
-					<div>
-						<span>输入</span>
-						<strong>{formatNumber(summary.totalInputTokens)}</strong>
+				<section
+					aria-busy={loading}
+					aria-label={strings.tokens.overview}
+					className="token-overview"
+				>
+					<div className="token-overview__total">
+						<span>{strings.tokens.total}</span>
+						<strong>{loading && !hasData ? '—' : formatNumber(summary.totalTokens)}</strong>
 					</div>
-					<div>
-						<span>输出</span>
-						<strong>{formatNumber(summary.totalOutputTokens)}</strong>
+					<div className="token-overview__details">
+						<div>
+							<span>{strings.tokens.input}</span>
+							<strong>{formatNumber(summary.totalInputTokens)}</strong>
+						</div>
+						<div>
+							<span>{strings.tokens.output}</span>
+							<strong>{formatNumber(summary.totalOutputTokens)}</strong>
+						</div>
+						<div>
+							<span>{strings.tokens.cost}</span>
+							<strong>¥{summary.estimatedCostCny.toFixed(4)}</strong>
+						</div>
 					</div>
-					<div>
-						<span>估算成本</span>
-						<strong>¥{summary.estimatedCostCny.toFixed(4)}</strong>
-					</div>
-				</div>
-			</section>
+				</section>
+				<p className="token-cost-note">{strings.tokens.costHint}</p>
 
-			{hasData ? (
-				<div className="token-sections">
-					<div className="token-distributions">
-						<TokenPanel title="按浏览器画像" buckets={summary.byBrowser} />
-						<TokenPanel title="按模型" buckets={summary.byModel} />
-					</div>
-					<TokenPanel flow title="日期趋势" buckets={summary.daily} />
-					<section className="usage-history">
-						<h2>最近调用</h2>
-						<table>
-							<thead>
-								<tr>
-									<th>时间</th>
-									<th>模型</th>
-									<th>用量</th>
-								</tr>
-							</thead>
-							<tbody>
-								{summary.recent.length > 0 ? (
-									summary.recent.map((record) => (
-										<tr key={record.id}>
-											<td className="mono-text">{formatTime(record.ts)}</td>
-											<td>{record.model}</td>
-											<td>{formatNumber(record.totalTokens)} tokens</td>
-										</tr>
-									))
-								) : (
+				{hasData ? (
+					<div className="token-sections">
+						<div className="token-distributions">
+							<TokenPanel title={strings.tokens.byBrowser} buckets={summary.byBrowser} />
+							<TokenPanel title={strings.tokens.byModel} buckets={summary.byModel} />
+						</div>
+						<TokenPanel flow title={strings.tokens.daily} buckets={summary.daily} />
+						<section className="usage-history">
+							<h2>{strings.tokens.recent}</h2>
+							<table>
+								<thead>
 									<tr>
-										<td className="usage-history__empty" colSpan={3}>
-											暂无最近调用
-										</td>
+										<th>{strings.tokens.time}</th>
+										<th>{strings.tokens.model}</th>
+										<th>{strings.tokens.usage}</th>
 									</tr>
-								)}
-							</tbody>
-						</table>
-					</section>
-				</div>
-			) : (
-				<EmptyState title={loading ? '正在同步 tokens' : '还没有 tokens 记录'}>
-					{loading
-						? '正在读取当前账号的网关计量与本地缓存。'
-						: '完成一次模型调用后，这里会汇总网关计量或已脱敏的本地缓存。'}
-				</EmptyState>
-			)}
+								</thead>
+								<tbody>
+									{summary.recent.length > 0 ? (
+										summary.recent.map((record) => (
+											<tr key={record.id}>
+												<td className="mono-text">{formatTime(record.ts)}</td>
+												<td>{record.model}</td>
+												<td>{formatNumber(record.totalTokens)} tokens</td>
+											</tr>
+										))
+									) : (
+										<tr>
+											<td className="usage-history__empty" colSpan={3}>
+												{strings.tokens.noRecent}
+											</td>
+										</tr>
+									)}
+								</tbody>
+							</table>
+						</section>
+					</div>
+				) : (
+					<EmptyState
+						icon={CircleDollarSign}
+						title={loading ? strings.tokens.loadingTitle : strings.tokens.emptyTitle}
+					>
+						{loading ? strings.tokens.loadingDescription : strings.tokens.emptyDescription}
+					</EmptyState>
+				)}
+			</div>
 		</div>
 	)
 }
@@ -2326,6 +2508,9 @@ function TokenPanel({
 	return (
 		<section className={flow ? 'token-flow' : 'token-panel'}>
 			<h2>{title}</h2>
+			{buckets.length === 0 ? (
+				<p className="section-empty">{strings.tokens.noDistribution}</p>
+			) : null}
 			{buckets.map((bucket) => (
 				<div className="usage-bar" key={bucket.key}>
 					<div>
@@ -2333,7 +2518,7 @@ function TokenPanel({
 						<span>{formatNumber(bucket.totalTokens)} tokens</span>
 					</div>
 					<span>
-						<i style={{ width: `${Math.max(6, (bucket.totalTokens / max) * 100)}%` }} />
+						<i style={{ width: `${(bucket.totalTokens / max) * 100}%` }} />
 					</span>
 				</div>
 			))}
@@ -2368,220 +2553,215 @@ function SettingsPage({
 }) {
 	return (
 		<div className="page page--settings">
-			<header className="page-header safe-actions">
-				<div>
-					<h1>设置</h1>
-					<p>批量启动、退出行为、日志、内核与关于。</p>
-				</div>
-				<div aria-live="polite" className="settings-save-state">
-					{saving ? (
-						<>
-							<LoaderCircle className="spin" size={15} />
-							正在保存
-						</>
-					) : savedTick ? (
-						<>
-							<Check size={15} />
-							已保存
-						</>
-					) : (
-						'修改后自动保存'
-					)}
-				</div>
-			</header>
+			<div className="page-content">
+				<header className="page-header safe-actions">
+					<div>
+						<h1>{strings.settings.title}</h1>
+						<p>{strings.settings.description}</p>
+					</div>
+					<div aria-live="polite" className="settings-save-state">
+						{saving ? (
+							<>
+								<LoaderCircle className="spin" size={15} />
+								{strings.settings.saving}
+							</>
+						) : savedTick ? (
+							<>
+								<Check size={15} />
+								{strings.settings.saved}
+							</>
+						) : (
+							strings.settings.autoSave
+						)}
+					</div>
+				</header>
 
-			<div className="settings-layout">
-				<nav aria-label="设置分类" className="settings-tabs">
-					{settingsSections.map((item) => (
-						<button
-							aria-current={section === item.id ? 'page' : undefined}
-							className={section === item.id ? 'settings-tabs__item--active' : ''}
-							key={item.id}
-							onClick={() => setSection(item.id)}
-							type="button"
-						>
-							{item.label}
-						</button>
-					))}
-				</nav>
-				<div aria-busy={saving} className="settings-panels" inert={saving}>
-					{section === 'launch' ? (
-						<section className="settings-panel">
-							<h2>批量启动</h2>
-							<p className="settings-panel__intro">控制“打开选中”队列，修改后下一批立即使用。</p>
-							<NumberSetting
-								hint="批量打开时的并发数量"
-								label="同时打开上限"
-								max={12}
-								min={1}
-								onChange={(value) => updateSettings({ launch: { concurrencyLimit: value } })}
-								value={settings.launch.concurrencyLimit}
-							/>
-							<NumberSetting
-								hint="降低同时启动时的资源峰值"
-								label="错峰间隔"
-								max={5000}
-								min={0}
-								onChange={(value) => updateSettings({ launch: { staggerMs: value } })}
-								step={100}
-								suffix="ms"
-								value={settings.launch.staggerMs}
-							/>
-							<p className="settings-panel__note">
-								<Info size={15} />
-								窗口大小、起始页、画像类型、代理、缩放与语言将在运行时接入后开放。
-							</p>
-						</section>
-					) : null}
-					{section === 'behavior' ? (
-						<section className="settings-panel">
-							<h2>启动器行为</h2>
-							<p className="settings-panel__intro">浏览器仍在运行时，决定关闭问学后的处理方式。</p>
-							<SelectSetting
-								label="退出处理"
-								onChange={(value) =>
-									updateSettings({
-										behavior: {
-											exitWithBrowsers: value as LauncherSettings['behavior']['exitWithBrowsers'],
-										},
-									})
-								}
-								options={[
-									{ value: 'ask', label: '每次询问' },
-									{ value: 'launcherOnly', label: '仅退出启动器' },
-									{ value: 'closeBrowsers', label: '同时关闭浏览器' },
-								]}
-								value={settings.behavior.exitWithBrowsers}
-							/>
-							<p className="settings-panel__note">
-								<Info size={15} />
-								关闭按钮策略、开机自启与下载目录将在对应系统能力接入后开放。
-							</p>
-						</section>
-					) : null}
-					{section === 'logs' ? (
-						<section className="settings-panel">
-							<h2>日志</h2>
-							<p className="settings-panel__intro">日志只保存在本机，并按时长和条数自动裁剪。</p>
-							<NumberSetting
-								hint="超过时长的记录会自动清理"
-								label="保留时长"
-								max={90}
-								min={1}
-								onChange={(value) => updateSettings({ logs: { retentionDays: value } })}
-								suffix="天"
-								value={settings.logs.retentionDays}
-							/>
-							<NumberSetting
-								hint="超过上限时优先清理最旧记录"
-								label="最大条数"
-								max={100000}
-								min={100}
-								onChange={(value) => updateSettings({ logs: { maxEntries: value } })}
-								step={100}
-								value={settings.logs.maxEntries}
-							/>
-							<SelectSetting
-								label="最低捕获级别"
-								onChange={(value) => updateSettings({ logs: { minLevel: value as LogLevel } })}
-								options={[
-									{ value: 'debug', label: 'Debug' },
-									{ value: 'info', label: 'Info' },
-									{ value: 'warn', label: 'Warn' },
-									{ value: 'error', label: 'Error' },
-								]}
-								value={settings.logs.minLevel}
-							/>
-							<SelectSetting
-								label="默认导出格式"
-								onChange={(value) =>
-									updateSettings({
-										logs: {
-											defaultExportFormat: value as LauncherSettings['logs']['defaultExportFormat'],
-										},
-									})
-								}
-								options={[
-									{ value: 'json', label: 'JSON' },
-									{ value: 'ndjson', label: 'NDJSON' },
-									{ value: 'text', label: '纯文本' },
-								]}
-								value={settings.logs.defaultExportFormat}
-							/>
-							<p className="settings-panel__note">
-								<Info size={15} />
-								LLM 请求与响应捕获将在采集链路接入后开放。
-							</p>
-						</section>
-					) : null}
-					{section === 'kernel' ? (
-						<section className="settings-panel">
-							<h2>浏览器内核</h2>
-							<p className="settings-panel__intro">随问学安装并由启动器统一管理的运行时版本。</p>
-							<div className="version-list">
-								<span>Browser</span>
-								<strong>{versions.browser}</strong>
-								<span>Extension</span>
-								<strong>{versions.extension}</strong>
-							</div>
-						</section>
-					) : null}
-					{section === 'about' ? (
-						<section className="settings-panel">
-							<h2>关于</h2>
-							<p className="settings-panel__intro">问学 WenXue · ask for everything</p>
-							<div className="version-list">
-								<span>App</span>
-								<strong>{versions.app}</strong>
-								<span>Browser</span>
-								<strong>{versions.browser}</strong>
-								<span>Extension</span>
-								<strong>{versions.extension}</strong>
-							</div>
-							<p aria-live="polite" className="settings-panel__note">
-								<Info size={15} />
-								{updateCheckNotice ?? describeUpdateState(updateState)}
-							</p>
+				<div className="settings-layout">
+					<nav aria-label={strings.settings.navigation} className="settings-tabs">
+						{settingsSections.map((item) => (
 							<button
-								className="primary-button"
-								disabled={
-									updateState.phase === 'checking' ||
-									updateState.phase === 'downloading' ||
-									updateState.phase === 'opening'
-								}
-								onClick={() => void checkForUpdates()}
+								aria-current={section === item.id ? 'page' : undefined}
+								className={section === item.id ? 'settings-tabs__item--active' : ''}
+								key={item.id}
+								onClick={() => setSection(item.id)}
 								type="button"
 							>
-								{updateState.phase === 'checking' ? (
-									<LoaderCircle className="spin" size={15} />
-								) : (
-									<RefreshCw size={15} />
-								)}
-								{updateState.phase === 'checking'
-									? strings.update.checkingAction
-									: strings.update.checkAction}
+								{item.label}
 							</button>
-							<button
-								className="soft-button"
-								onClick={() => {
-									void window.wenxue.app
-										.openLogs()
-										.then((result) => {
-											if (!result.ok) {
-												setMessage(result.error ?? strings.openLogsFallback)
-											}
+						))}
+					</nav>
+					<div aria-busy={saving} className="settings-panels" inert={saving}>
+						{section === 'launch' ? (
+							<section className="settings-panel">
+								<h2>{strings.settings.sections.launch}</h2>
+								<p className="settings-panel__intro">{strings.settings.launch.description}</p>
+								<NumberSetting
+									hint={strings.settings.launch.limitHint}
+									label={strings.settings.launch.limit}
+									max={12}
+									min={1}
+									onChange={(value) => updateSettings({ launch: { concurrencyLimit: value } })}
+									value={settings.launch.concurrencyLimit}
+								/>
+								<NumberSetting
+									hint={strings.settings.launch.staggerHint}
+									label={strings.settings.launch.stagger}
+									max={5000}
+									min={0}
+									onChange={(value) => updateSettings({ launch: { staggerMs: value } })}
+									step={100}
+									suffix={strings.settings.launch.unit}
+									value={settings.launch.staggerMs}
+								/>
+							</section>
+						) : null}
+						{section === 'behavior' ? (
+							<section className="settings-panel">
+								<h2>{strings.settings.sections.behavior}</h2>
+								<p className="settings-panel__intro">{strings.settings.behavior.description}</p>
+								<SelectSetting
+									label={strings.settings.behavior.exit}
+									onChange={(value) =>
+										updateSettings({
+											behavior: {
+												exitWithBrowsers: value as LauncherSettings['behavior']['exitWithBrowsers'],
+											},
 										})
-										.catch((error: unknown) =>
-											setMessage(readCloudBaseErrorMessage(error, strings.openLogsFallback)),
-										)
-								}}
-								type="button"
-							>
-								<FolderOpen size={15} />
-								打开日志目录
-							</button>
-						</section>
-					) : null}
+									}
+									options={[
+										{ value: 'ask', label: strings.settings.behavior.ask },
+										{ value: 'launcherOnly', label: strings.settings.behavior.launcherOnly },
+										{ value: 'closeBrowsers', label: strings.settings.behavior.closeBrowsers },
+									]}
+									value={settings.behavior.exitWithBrowsers}
+								/>
+							</section>
+						) : null}
+						{section === 'logs' ? (
+							<section className="settings-panel">
+								<h2>{strings.settings.sections.logs}</h2>
+								<p className="settings-panel__intro">{strings.settings.logs.description}</p>
+								<NumberSetting
+									hint={strings.settings.logs.retentionHint}
+									label={strings.settings.logs.retention}
+									max={90}
+									min={1}
+									onChange={(value) => updateSettings({ logs: { retentionDays: value } })}
+									suffix={strings.settings.logs.unit}
+									value={settings.logs.retentionDays}
+								/>
+								<NumberSetting
+									hint={strings.settings.logs.limitHint}
+									label={strings.settings.logs.limit}
+									max={100000}
+									min={100}
+									onChange={(value) => updateSettings({ logs: { maxEntries: value } })}
+									step={100}
+									value={settings.logs.maxEntries}
+								/>
+								<SelectSetting
+									label={strings.settings.logs.level}
+									onChange={(value) => updateSettings({ logs: { minLevel: value as LogLevel } })}
+									options={[
+										{ value: 'debug', label: strings.logs.level.debug },
+										{ value: 'info', label: strings.logs.level.info },
+										{ value: 'warn', label: strings.logs.level.warn },
+										{ value: 'error', label: strings.logs.level.error },
+									]}
+									value={settings.logs.minLevel}
+								/>
+								<SelectSetting
+									label={strings.settings.logs.format}
+									onChange={(value) =>
+										updateSettings({
+											logs: {
+												defaultExportFormat:
+													value as LauncherSettings['logs']['defaultExportFormat'],
+											},
+										})
+									}
+									options={[
+										{ value: 'json', label: 'JSON' },
+										{ value: 'ndjson', label: 'NDJSON' },
+										{ value: 'text', label: strings.settings.logs.plainText },
+									]}
+									value={settings.logs.defaultExportFormat}
+								/>
+							</section>
+						) : null}
+						{section === 'kernel' ? (
+							<section className="settings-panel">
+								<h2>{strings.settings.sections.kernel}</h2>
+								<p className="settings-panel__intro">{strings.settings.kernel.description}</p>
+								<div className="version-list">
+									<span>{strings.settings.kernel.browser}</span>
+									<strong>{versions.browser}</strong>
+									<span>{strings.settings.kernel.extension}</span>
+									<strong>{versions.extension}</strong>
+								</div>
+							</section>
+						) : null}
+						{section === 'about' ? (
+							<section className="settings-panel">
+								<h2>{strings.settings.sections.about}</h2>
+								<p className="settings-panel__intro">
+									{strings.brand} · {strings.slogan}
+								</p>
+								<div className="version-list">
+									<span>{strings.settings.about.version}</span>
+									<strong>{versions.app}</strong>
+									<span>{strings.settings.kernel.browser}</span>
+									<strong>{versions.browser}</strong>
+									<span>{strings.settings.kernel.extension}</span>
+									<strong>{versions.extension}</strong>
+								</div>
+								<p aria-live="polite" className="settings-panel__note">
+									<Info size={15} />
+									{updateCheckNotice ?? describeUpdateState(updateState)}
+								</p>
+								<div className="settings-panel__actions">
+									<button
+										className="primary-button"
+										disabled={
+											updateState.phase === 'checking' ||
+											updateState.phase === 'downloading' ||
+											updateState.phase === 'opening'
+										}
+										onClick={() => void checkForUpdates()}
+										type="button"
+									>
+										{updateState.phase === 'checking' ? (
+											<LoaderCircle className="spin" size={15} />
+										) : (
+											<RefreshCw size={15} />
+										)}
+										{updateState.phase === 'checking'
+											? strings.update.checkingAction
+											: strings.update.checkAction}
+									</button>
+									<button
+										className="soft-button"
+										onClick={() => {
+											void window.wenxue.app
+												.openLogs()
+												.then((result) => {
+													if (!result.ok) {
+														setMessage(result.error ?? strings.openLogsFallback)
+													}
+												})
+												.catch((error: unknown) =>
+													setMessage(readCloudBaseErrorMessage(error, strings.openLogsFallback)),
+												)
+										}}
+										type="button"
+									>
+										<FolderOpen size={15} />
+										{strings.settings.about.openLogs}
+									</button>
+								</div>
+							</section>
+						) : null}
+					</div>
 				</div>
 			</div>
 		</div>
@@ -2677,10 +2857,10 @@ function NumberSetting({
 				{invalid ? (
 					<small className="setting-error">
 						{min !== undefined && max !== undefined
-							? `请输入 ${min}–${max} 范围内、步长为 ${resolvedStep} 的数字`
+							? strings.settings.invalid.range(min, max, resolvedStep)
 							: min !== undefined
-								? `请输入不小于 ${min}、步长为 ${resolvedStep} 的数字`
-								: `请输入不大于 ${max}、步长为 ${resolvedStep} 的数字`}
+								? strings.settings.invalid.min(min, resolvedStep)
+								: strings.settings.invalid.max(max, resolvedStep)}
 					</small>
 				) : null}
 			</div>
@@ -2724,13 +2904,11 @@ function SettingCopy({ hint, label }: { hint?: string; label: string }) {
 	)
 }
 
-function StatusBadge({ compact = false, status }: { compact?: boolean; status: BrowserStatus }) {
+function StatusBadge({ status }: { status: BrowserStatus }) {
 	return (
-		<span
-			className={`status-badge status-badge--${status} ${compact ? 'status-badge--compact' : ''}`}
-		>
-			<i />
-			{statusLabels[status]}
+		<span className={`status-badge status-badge--${status}`}>
+			<i aria-hidden />
+			{strings.browser.status[status]}
 		</span>
 	)
 }
@@ -2740,18 +2918,20 @@ function EmptyState({
 	actionIcon: ActionIcon = Plus,
 	actionLabel,
 	children,
+	icon: Icon = Info,
 	title,
 }: {
 	action?: () => void
 	actionIcon?: LucideIcon
 	actionLabel?: string
 	children: string
+	icon?: LucideIcon
 	title: string
 }) {
 	return (
 		<section className="empty-state">
 			<div className="empty-state__mark">
-				<img src="logo.png" alt="" />
+				<Icon aria-hidden size={24} strokeWidth={1.5} />
 			</div>
 			<h2>{title}</h2>
 			<p>{children}</p>
@@ -2786,12 +2966,12 @@ function sortProfiles(
 }
 
 function formatRelativeTime(ts: number | null): string {
-	if (!ts) return '从未'
+	if (!ts) return strings.browser.time.never
 	const diff = Date.now() - ts
-	if (diff < 60_000) return '刚刚'
-	if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
-	if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
-	return `${Math.floor(diff / 86_400_000)} 天前`
+	if (diff < 60_000) return strings.browser.time.justNow
+	if (diff < 3_600_000) return strings.browser.time.minutes(Math.floor(diff / 60_000))
+	if (diff < 86_400_000) return strings.browser.time.hours(Math.floor(diff / 3_600_000))
+	return strings.browser.time.days(Math.floor(diff / 86_400_000))
 }
 
 function formatTime(ts: number): string {

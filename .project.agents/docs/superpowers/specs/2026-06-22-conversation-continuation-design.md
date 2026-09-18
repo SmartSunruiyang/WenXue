@@ -1,5 +1,7 @@
 # 对话续接与上下文压缩 Spec
 
+> 2026-09-18 后续调整：浏览器内插件侧栏的新会话反馈恢复上一版约 520ms 收拢动效；以 [UIUX §10](../../context/UIUX.md#10-侧边栏对话与历史) 为准。
+
 > 派生设计文档。上游行为依据：`PRD.md` §F3（侧边栏对话与 Agent，新建对话、任务历史、回到会话上下文）；
 > 交互依据：`UIUX.md` §6（侧边栏状态系统、新建对话、完成态、历史）；架构边界依据：
 > `ARCHITECTURE.md` §2（`@page-agent/core`、`SidepanelApp`、`MultiPageAgent` 卡片）、§3（PageAgentCore 签名）；
@@ -33,11 +35,11 @@
 
 ## 4. 名词与两条轴
 
-| 名词 | 含义 |
-| --- | --- |
-| 轮（turn） | 用户一条指令 + Agent 对它的一次执行（到 `done` 或 `error`）。 |
-| 会话（conversation） | 用户未点「新会话」前的连续多轮，对应历史库一条记录。 |
-| 投影（projection） | 真正送进 LLM 的 `<agent_history>`，是 `history` 的压缩视图。 |
+| 名词                 | 含义                                                          |
+| -------------------- | ------------------------------------------------------------- |
+| 轮（turn）           | 用户一条指令 + Agent 对它的一次执行（到 `done` 或 `error`）。 |
+| 会话（conversation） | 用户未点「新会话」前的连续多轮，对应历史库一条记录。          |
+| 投影（projection）   | 真正送进 LLM 的 `<agent_history>`，是 `history` 的压缩视图。  |
 
 **轴 1 `browser_state`**：每步替换、不累积，不治理。
 **轴 2 `agent_history`**：跨步 / 跨轮累加，是本设计唯一的压缩对象。
@@ -82,10 +84,10 @@ export interface SummaryEvent {
 
 ```ts
 export interface CompactionConfig {
-	enabled: boolean            // 默认 true
-	softTokens: number          // 软阈值：history 估算 token，达到即摘要。默认 12_000
-	hardTokens: number          // 硬阈值：实测 promptTokens，逼近即提示/淘汰。默认按窗口 ~80%，缺省 28_000
-	keepRecentSteps: number     // 摘要后保留逐字的最近步数。默认 5
+	enabled: boolean // 默认 true
+	softTokens: number // 软阈值：history 估算 token，达到即摘要。默认 12_000
+	hardTokens: number // 硬阈值：实测 promptTokens，逼近即提示/淘汰。默认按窗口 ~80%，缺省 28_000
+	keepRecentSteps: number // 摘要后保留逐字的最近步数。默认 5
 }
 ```
 
@@ -133,13 +135,17 @@ followUp(task: string): Promise<ExecutionResult>
 ### 7.4 回退取回工具 `recall_steps`
 
 ```ts
-tools.set('recall_steps', tool({
-	description: 'Retrieve the verbatim record of earlier step(s) by their step index, when the summary is not detailed enough (e.g. to roll back or redo a past action).',
-	inputSchema: z.object({ indices: z.array(z.number()).min(1).max(10) }),
-	execute: async function (this: PageAgentCore, { indices }) {
-		// 从全量 history 按 stepIndex 取原始 step，逐字返回
-	},
-}),)
+tools.set(
+	'recall_steps',
+	tool({
+		description:
+			'Retrieve the verbatim record of earlier step(s) by their step index, when the summary is not detailed enough (e.g. to roll back or redo a past action).',
+		inputSchema: z.object({ indices: z.array(z.number()).min(1).max(10) }),
+		execute: async function (this: PageAgentCore, { indices }) {
+			// 从全量 history 按 stepIndex 取原始 step，逐字返回
+		},
+	}),
+)
 ```
 
 - 取回内容作为该步 `action.output` 进入 history → 自然出现在后续投影窗口（亦受后续压缩约束）。
@@ -165,7 +171,7 @@ tools.set('recall_steps', tool({
 
 ### 8.2 新会话与近溢出横幅
 
-- 「+ 新会话」（`resetConversation`）仍是唯一硬重置，沿用 §UIUX §6 的收束动效，开新 `conversationId`。
+- 「+ 新会话」（`resetConversation`）仍是唯一硬重置；呈现遵循 [统一 UIUX §10](../../context/UIUX.md#10-侧边栏对话与历史) 的用户确认例外，恢复约 520ms 收拢到历史动效后开启新 `conversationId`。
 - **近溢出提示采用横幅（banner）**，非模态、非 toast：当会话逼近 `hardTokens`、用户正要继续时，于侧边栏对话区顶部 / 输入框上方展示一条横幅：
   - 文案：上下文已较长，建议开启新会话以获得更好效果；
   - 主操作：`新会话`（= `resetConversation`）；次操作：`继续当前会话`（关闭横幅并允许继续，后续走 FIFO 淘汰）。

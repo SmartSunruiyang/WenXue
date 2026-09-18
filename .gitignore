@@ -29,6 +29,7 @@ secrets.*
 *.tmp
 tmp/
 .cache/
+.pnpm-store/
 .codegraph/
 .cloudbase-deploy/
 .worktrees/

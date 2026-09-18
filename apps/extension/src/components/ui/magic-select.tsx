@@ -1,5 +1,13 @@
-import { Check, ChevronDown, Sparkles } from 'lucide-react'
-import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronDown } from 'lucide-react'
+import {
+	type KeyboardEvent,
+	type ReactNode,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -31,176 +39,188 @@ export function MagicSelect<T extends string>({
 	triggerClassName,
 	menuClassName,
 }: MagicSelectProps<T>) {
-	const selectedOption = useMemo(
-		() => options.find((option) => option.value === value),
-		[options, value],
-	)
+	const generatedId = useId()
+	const triggerId = id ?? generatedId
+	const menuId = `${triggerId}-listbox`
+	const selectedOption = options.find((option) => option.value === value)
 	const [open, setOpen] = useState(false)
-	const [closing, setClosing] = useState(false)
-	const [hoveredValue, setHoveredValue] = useState<T | null>(null)
-	const rootRef = useRef<HTMLDivElement | null>(null)
-	const closeTimerRef = useRef<number | null>(null)
+	const rootRef = useRef<HTMLDivElement>(null)
+	const triggerRef = useRef<HTMLButtonElement>(null)
+	const menuRef = useRef<HTMLDivElement>(null)
+	const initialIndex = useRef(0)
 
-	const closeMenu = () => {
-		if (!open || closing) return
-		setClosing(true)
-		setHoveredValue(null)
-		closeTimerRef.current = window.setTimeout(() => {
-			setOpen(false)
-			setClosing(false)
-			closeTimerRef.current = null
-		}, 160)
+	const closeMenu = (restoreFocus = false) => {
+		setOpen(false)
+		if (restoreFocus) triggerRef.current?.focus()
 	}
-
-	const openMenu = () => {
-		if (closeTimerRef.current) {
-			window.clearTimeout(closeTimerRef.current)
-			closeTimerRef.current = null
-		}
-		setClosing(false)
-		setHoveredValue(null)
+	const openMenu = (fromEnd = false) => {
+		const selectedIndex = options.findIndex((option) => option.value === value)
+		initialIndex.current = selectedIndex >= 0 ? selectedIndex : fromEnd ? options.length - 1 : 0
 		setOpen(true)
 	}
 
-	const toggleMenu = () => {
-		if (open) {
-			closeMenu()
-		} else {
-			openMenu()
+	useLayoutEffect(() => {
+		if (!open) return
+		const menu = menuRef.current
+		const trigger = triggerRef.current
+		if (!menu || !trigger) return
+		// The top layer escapes scrolling containers while retaining the dialog's DOM/focus boundary.
+		menu.showPopover?.()
+		const positionMenu = () => {
+			const rect = trigger.getBoundingClientRect()
+			const below = window.innerHeight - rect.bottom - 14
+			const above = rect.top - 14
+			const upward = below < 220 && above > below
+			menu.style.width = `${Math.min(rect.width, window.innerWidth - 16)}px`
+			menu.style.maxHeight = `${Math.max(40, Math.min(288, upward ? above : below))}px`
+			menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8))}px`
+			menu.style.top = `${upward ? Math.max(8, rect.top - menu.offsetHeight - 6) : rect.bottom + 6}px`
 		}
-	}
-
-	useEffect(() => {
+		positionMenu()
+		const initialOption =
+			menu.querySelectorAll<HTMLButtonElement>('[role="option"]')[initialIndex.current]
+		if (initialOption) {
+			initialOption.focus({ preventScroll: true })
+			menu.scrollTop = Math.max(
+				0,
+				initialOption.offsetTop + initialOption.offsetHeight - menu.clientHeight,
+			)
+		}
+		window.addEventListener('resize', positionMenu)
+		const onScroll = (event: Event) => {
+			if (!menu.contains(event.target as Node)) positionMenu()
+		}
+		document.addEventListener('scroll', onScroll, true)
 		return () => {
-			if (closeTimerRef.current) {
-				window.clearTimeout(closeTimerRef.current)
-			}
+			window.removeEventListener('resize', positionMenu)
+			document.removeEventListener('scroll', onScroll, true)
 		}
-	}, [])
+	}, [open])
 
 	useEffect(() => {
 		if (!open) return
-
-		const handlePointerDown = (event: PointerEvent) => {
-			if (!rootRef.current?.contains(event.target as Node)) {
-				closeMenu()
-			}
+		const outside = (event: PointerEvent) => {
+			if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
 		}
-		const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-			if (event.key === 'Escape') closeMenu()
-		}
+		document.addEventListener('pointerdown', outside)
+		return () => document.removeEventListener('pointerdown', outside)
+	}, [open])
 
-		document.addEventListener('pointerdown', handlePointerDown)
-		window.addEventListener('keydown', handleKeyDown)
-		return () => {
-			document.removeEventListener('pointerdown', handlePointerDown)
-			window.removeEventListener('keydown', handleKeyDown)
-		}
-	}, [open, closing])
-
-	const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-		if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
+	const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (event.key === 'Escape') {
 			event.preventDefault()
-			openMenu()
+			event.stopPropagation()
+			closeMenu(true)
+			return
 		}
+		if (event.key === 'Tab') {
+			// Return to the trigger before the browser advances to the adjacent control.
+			closeMenu(true)
+			return
+		}
+		const buttons = Array.from(
+			menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? [],
+		)
+		const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
+		let next: number
+		if (event.key === 'ArrowDown') next = (current + 1) % buttons.length
+		else if (event.key === 'ArrowUp') next = (current - 1 + buttons.length) % buttons.length
+		else if (event.key === 'Home') next = 0
+		else if (event.key === 'End') next = buttons.length - 1
+		else return
+		event.preventDefault()
+		buttons[next]?.focus()
 	}
 
 	return (
-		<div ref={rootRef} className={cn('relative', className)}>
+		<div
+			ref={rootRef}
+			className={cn('relative', className)}
+			onBlur={(event) => {
+				if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false)
+			}}
+		>
 			<button
-				id={id}
+				ref={triggerRef}
+				id={triggerId}
 				type="button"
 				role="combobox"
+				aria-haspopup="listbox"
 				aria-expanded={open}
-				aria-controls={id ? `${id}-listbox` : undefined}
-				onClick={toggleMenu}
-				onKeyDown={handleTriggerKeyDown}
+				aria-controls={open ? menuId : undefined}
+				onClick={() => (open ? closeMenu() : openMenu())}
+				onKeyDown={(event) => {
+					if (['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+						event.preventDefault()
+						openMenu(event.key === 'ArrowUp')
+					}
+				}}
 				className={cn(
-					'group relative flex h-9 w-full cursor-pointer items-center justify-between gap-2 overflow-hidden rounded-md border border-input bg-background px-2 text-left text-xs transition-all duration-200',
-					'hover:border-primary/40 hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-					open && 'border-primary/50 bg-muted/50 shadow-sm',
+					'flex h-10 w-full cursor-pointer items-center justify-between gap-2 rounded-lg border border-input bg-background px-3 text-left text-sm outline-none transition-colors duration-150 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
 					triggerClassName,
 				)}
 			>
-				<span className="pointer-events-none absolute inset-x-2 top-0 h-px scale-x-0 bg-gradient-to-r from-transparent via-primary/70 to-transparent transition-transform duration-300 group-hover:scale-x-100 group-focus-visible:scale-x-100" />
-				<span className="flex min-w-0 items-center gap-1.5">
-					{selectedOption?.icon ?? (
-						<Sparkles
-							className={cn(
-								'size-3 shrink-0 text-muted-foreground transition-all duration-200',
-								open && 'rotate-12 text-primary',
-							)}
-							aria-hidden="true"
-						/>
-					)}
+				<span className="flex min-w-0 items-center gap-2">
+					{selectedOption?.icon}
 					<span className={cn('truncate', !selectedOption && 'text-muted-foreground')}>
 						{selectedOption?.label ?? placeholder}
 					</span>
 				</span>
 				<ChevronDown
 					className={cn(
-						'size-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
-						open && 'rotate-180 text-primary',
+						'size-4 shrink-0 text-muted-foreground transition-transform duration-150',
+						open && 'rotate-180',
 					)}
 					aria-hidden="true"
 				/>
 			</button>
-
 			{open && (
 				<div
-					id={id ? `${id}-listbox` : undefined}
+					ref={menuRef}
+					id={menuId}
 					role="listbox"
-					onMouseLeave={() => setHoveredValue(null)}
+					aria-labelledby={triggerId}
+					popover="manual"
+					onKeyDown={handleMenuKeyDown}
+					style={{ position: 'fixed', inset: 'auto', margin: 0 }}
 					className={cn(
-						'absolute z-50 mt-2 max-h-56 w-full origin-top overflow-y-auto rounded-md border bg-background p-1 shadow-xl transition-all duration-200',
-						closing ? '-translate-y-1 scale-95 opacity-0' : 'translate-y-0 scale-100 opacity-100',
+						'overflow-y-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-[0_4px_8px_rgb(0_0_0/0.08)]',
 						menuClassName,
 					)}
 				>
-					<div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent" />
-					{options.map((option) => {
-						const selected = option.value === value
-						const selectedHighlighted =
-							selected && (hoveredValue === null || hoveredValue === option.value)
-						return (
-							<button
-								key={option.value}
-								type="button"
-								role="option"
-								aria-selected={selected}
-								data-selected-highlighted={selectedHighlighted ? 'true' : 'false'}
-								onMouseEnter={() => setHoveredValue(option.value)}
-								onClick={() => {
-									onChange(option.value)
-									closeMenu()
-								}}
-								className={cn(
-									'group/option flex w-full cursor-pointer items-center justify-between gap-2 rounded-sm px-2 py-2 text-left text-xs transition-all duration-150',
-									'hover:bg-muted hover:pl-2.5 focus-visible:bg-muted focus-visible:outline-none',
-									selectedHighlighted && 'bg-primary/10 text-primary',
-								)}
-							>
-								<span className="flex min-w-0 items-center gap-2">
-									{option.icon && <span className="shrink-0">{option.icon}</span>}
-									<span className="min-w-0">
-										<span className="block truncate font-medium">{option.label}</span>
-										{option.description && (
-											<span className="mt-0.5 block truncate text-[10px] leading-4 text-muted-foreground">
-												{option.description}
-											</span>
-										)}
-									</span>
-								</span>
-								<Check
-									className={cn(
-										'size-3.5 shrink-0 transition-all duration-150',
-										selected ? 'scale-100 opacity-100' : 'scale-75 opacity-0',
+					{options.map((option) => (
+						<button
+							key={option.value}
+							type="button"
+							role="option"
+							aria-selected={option.value === value}
+							tabIndex={-1}
+							onClick={() => {
+								onChange(option.value)
+								closeMenu(true)
+							}}
+							className={cn(
+								'flex min-h-10 w-full cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+								option.value === value && 'bg-muted',
+							)}
+						>
+							<span className="flex min-w-0 items-center gap-2">
+								{option.icon && <span className="shrink-0">{option.icon}</span>}
+								<span className="min-w-0">
+									<span className="block break-words">{option.label}</span>
+									{option.description && (
+										<span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+											{option.description}
+										</span>
 									)}
-									aria-hidden="true"
-								/>
-							</button>
-						)
-					})}
+								</span>
+							</span>
+							<Check
+								className={cn('size-4 shrink-0', option.value !== value && 'invisible')}
+								aria-hidden="true"
+							/>
+						</button>
+					))}
 				</div>
 			)}
 		</div>

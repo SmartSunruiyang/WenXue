@@ -1,12 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { Check, LoaderCircle } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { ExtConfig } from '@/agent/useAgent'
-import { SETTINGS_SECTIONS, SettingsForm, type SettingsSectionId } from '@/components/SettingsForm'
+import {
+	SETTINGS_SECTIONS,
+	SettingsForm,
+	type SettingsSaveStatus,
+	type SettingsSectionId,
+} from '@/components/SettingsForm'
 import { Logo } from '@/components/misc'
 import { isConfigStorageChange, loadStoredConfig, saveStoredConfig } from '@/lib/configStorage'
 import { useI18n } from '@/lib/i18n'
 import { settingsConfigKey } from '@/lib/settingsConfig'
 import { cn } from '@/lib/utils'
+
+import './options.css'
 
 export { SETTINGS_PAGE_VERSION } from '@/components/SettingsForm'
 
@@ -49,7 +57,7 @@ export default function App() {
 	const [config, setConfig] = useState<ExtConfig | null>(null)
 	const [externalConfigRevision, setExternalConfigRevision] = useState(0)
 	const [activeSection, setActiveSection] = useState<SettingsSectionId>('model')
-	const [saved, setSaved] = useState(false)
+	const [saveStatus, setSaveStatus] = useState<SettingsSaveStatus>('idle')
 	const configRef = useRef<ExtConfig | null>(null)
 	const reloadVersionRef = useRef(0)
 	const pendingLocalSavesRef = useRef(0)
@@ -151,7 +159,7 @@ export default function App() {
 		}
 	}, [config])
 
-	const handleAutoSave = async (nextConfig: ExtConfig) => {
+	const handleAutoSave = useCallback(async (nextConfig: ExtConfig) => {
 		pendingLocalSavesRef.current++
 		reloadVersionRef.current++
 		const save = saveQueueRef.current.then(() => saveStoredConfig(chrome.storage.local, nextConfig))
@@ -170,45 +178,27 @@ export default function App() {
 				scheduleReloadRef.current()
 			}
 		}
-	}
-
-	const handleSaved = () => {
-		setSaved(true)
-		window.setTimeout(() => setSaved(false), 1800)
-	}
+	}, [])
 
 	const scrollToSection = (sectionId: SettingsSectionId) => {
 		setActiveSection(sectionId)
-		document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+		document.getElementById(sectionId)?.scrollIntoView({
+			behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+				? 'instant'
+				: 'smooth',
+			block: 'start',
+		})
 	}
 
 	return (
-		<div className="min-h-screen bg-background text-foreground">
-			<header className="sticky top-0 z-30 border-b bg-background/92 backdrop-blur-md">
-				<div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-5">
-					<div className="flex min-w-0 items-center gap-3">
-						<Logo className="size-9" />
-						<div className="min-w-0">
-							<h1 className="truncate text-lg font-semibold">{t('settingsPageTitle')}</h1>
-							<p className="truncate text-sm text-muted-foreground">{t('settingsPageSubtitle')}</p>
-						</div>
+		<div className="settings-page">
+			<div className="settings-page-layout">
+				<aside className="settings-page-sidebar">
+					<div className="settings-page-brand" aria-label="WenXue">
+						<Logo className="size-8" />
+						<span>WenXue</span>
 					</div>
-					<div
-						role="status"
-						aria-live="polite"
-						className={cn(
-							'text-xs text-muted-foreground transition-opacity',
-							saved ? 'opacity-100' : 'opacity-0',
-						)}
-					>
-						{t('settingsSaved')}
-					</div>
-				</div>
-			</header>
-
-			<div className="mx-auto grid max-w-7xl grid-cols-[minmax(0,1fr)] gap-10 px-6 py-8 md:grid-cols-[220px_minmax(0,1fr)] lg:gap-14">
-				<aside className="min-w-0 md:sticky md:top-28 md:self-start">
-					<nav className="flex min-w-0 max-w-full gap-1.5 overflow-x-auto border-b pb-3 md:flex-col md:overflow-visible md:rounded-md md:border md:bg-muted/20 md:p-1.5">
+					<nav className="settings-page-navigation" aria-label={t('settingsPageTitle')}>
 						{SETTINGS_SECTIONS.map((section) => (
 							<SettingsSectionTab
 								key={section.id}
@@ -220,17 +210,40 @@ export default function App() {
 					</nav>
 				</aside>
 
-				<main className="min-w-0">
+				<main className="settings-page-main">
+					<header className="settings-page-header">
+						<h1>{t('settingsPageTitle')}</h1>
+						<p>{t('settingsPageSubtitle')}</p>
+						<div className="settings-page-save-status" role="status" aria-live="polite">
+							{saveStatus === 'saving' ? (
+								<>
+									<LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+									{t('settingsSaving')}
+								</>
+							) : saveStatus === 'saved' ? (
+								<>
+									<Check className="size-3.5" aria-hidden="true" />
+									{t('settingsSaved')}
+								</>
+							) : saveStatus === 'error' ? (
+								t('settingsSaveError')
+							) : (
+								t('settingsAutoSave')
+							)}
+						</div>
+					</header>
 					{config ? (
 						<SettingsForm
 							key={externalConfigRevision}
 							config={config}
 							onSave={handleAutoSave}
 							mode="page"
-							onSaved={handleSaved}
+							onSaveStatusChange={setSaveStatus}
 						/>
 					) : (
-						<div className="py-12 text-sm text-muted-foreground">{t('loading')}</div>
+						<div className="settings-page-loading" role="status">
+							{t('loading')}
+						</div>
 					)}
 				</main>
 			</div>
@@ -250,23 +263,11 @@ function SettingsSectionTab({
 	return (
 		<button
 			type="button"
-			aria-current={active ? 'page' : undefined}
+			aria-current={active ? 'location' : undefined}
 			onClick={onClick}
-			className={cn(
-				'group relative h-10 shrink-0 cursor-pointer overflow-hidden rounded-sm border border-transparent px-3 text-left text-sm transition-colors duration-200',
-				'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-				active
-					? 'bg-background text-foreground shadow-xs'
-					: 'text-muted-foreground hover:bg-background/70 hover:text-foreground',
-			)}
+			className={cn('settings-page-nav-item', active && 'is-active')}
 		>
-			<span
-				className={cn(
-					'pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary transition-opacity duration-200',
-					active ? 'opacity-100' : 'opacity-0',
-				)}
-			/>
-			<span className="truncate font-medium">{title}</span>
+			{title}
 		</button>
 	)
 }

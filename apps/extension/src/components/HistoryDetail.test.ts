@@ -8,6 +8,8 @@ import { HistoryDetailActions } from './HistoryDetail'
 
 const SESSION: SessionRecord = {
 	id: 'session-1',
+	conversationId: 'conversation-1',
+	updatedAt: 1,
 	task: 'Repeat this task',
 	history: [],
 	status: 'completed',

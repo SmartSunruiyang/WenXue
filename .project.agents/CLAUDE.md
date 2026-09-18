@@ -60,7 +60,7 @@ The target Chromium AI browser follows `.project.agents/docs/refactor/ai-browser
   - Start at `README.md`; it defines the document map, authority hierarchy, propagation rules, and G0-G6 gates.
   - `01-product/PRD.md` and `02-design/ARCHITECTURE.md` are authoritative for target behavior and architecture.
   - `02-design/DECISIONS.md` / `INFRASTRUCTURE.md` and `03-delivery/` define accepted choices and delivery evidence.
-  - `04-ui/UIUX.md` currently freezes functional interaction invariants only; visual design is deferred.
+  - `04-ui/UIUX.md` preserves target functional invariants and references the single shared visual authority in `docs/context/UIUX.md` (approved 2026-09-18).
   - The engineering documents in `docs/context/` remain authoritative for the current runtime until cutover; its `PRD.md` is only a compatibility pointer. A compatibility or migration change updates both affected domains.
 
 - **Superpowers specs and plans live under `.project.agents/docs/superpowers/`.**

@@ -8,10 +8,14 @@ export function SettingsEntry() {
 	return (
 		<button
 			type="button"
-			onClick={() => openExtensionOptionsPage()}
+			onClick={() =>
+				openExtensionOptionsPage().catch((error) =>
+					console.error('[NewTab] Failed to open settings:', error),
+				)
+			}
 			aria-label={t('ntOpenSettings')}
 			title={t('ntOpenSettings')}
-			className="flex size-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+			className="newtab-icon-button"
 		>
 			<Settings className="size-4" />
 		</button>
@@ -26,7 +30,7 @@ export function RefreshEntry() {
 			onClick={() => window.location.reload()}
 			aria-label={t('ntRefreshPage')}
 			title={t('ntRefreshPage')}
-			className="flex size-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+			className="newtab-icon-button"
 		>
 			<RefreshCw className="size-4" />
 		</button>

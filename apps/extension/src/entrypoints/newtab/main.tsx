@@ -6,6 +6,7 @@ import { I18nProvider } from '@/lib/i18n'
 import App from './App'
 
 import '@/assets/index.css'
+import './NewTabPage.css'
 
 // 新标签页固定白底（浅色），不跟随系统深色
 document.documentElement.classList.remove('dark')
@@ -15,5 +16,5 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 		<I18nProvider>
 			<App />
 		</I18nProvider>
-	</ErrorBoundary>
+	</ErrorBoundary>,
 )

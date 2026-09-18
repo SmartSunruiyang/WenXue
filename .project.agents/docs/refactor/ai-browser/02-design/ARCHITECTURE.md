@@ -916,7 +916,7 @@ G0 已通过，AI 浏览器目标运行时使用独立文档域，不把目标�
 4. [PLAN](../03-delivery/PLAN.md) 与 [READINESS](../03-delivery/READINESS.md) 管理 G1～G6 的执行和
    开工门禁；[TESTING](../03-delivery/TESTING.md) 与 [MIGRATION](../03-delivery/MIGRATION.md)
    管理证据、迁移和回滚。
-5. [UIUX](../04-ui/UIUX.md) 当前只冻结功能性交互不变量，视觉设计在独立阶段评审。
+5. [UIUX](../04-ui/UIUX.md) 冻结目标运行时的功能性交互不变量，并引用已批准的问学统一视觉规范；浏览器原生控件融合仍在相应阶段验收。
 6. 项目级 AGENTS、CLAUDE、SELF_CONSTRAINTS 与 VIBECODING_GUIDE 必须指向本目录；旧 spec/plan
    路径只保留兼容入口。
 7. 只有兼容层、数据迁移或切换策略发生变化时，才同步更新 legacy 与 target 两个文档域。

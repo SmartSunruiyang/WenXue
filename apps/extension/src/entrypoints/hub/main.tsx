@@ -9,6 +9,7 @@ import { installLlmFetchLogging } from '@/lib/loggingFetch'
 import App from './App'
 
 import '@/assets/index.css'
+import './HubPage.css'
 
 // Install logging before anything else
 configureLogger({ context: 'hub', sink: 'message' })
@@ -24,5 +25,5 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 				<App />
 			</I18nProvider>
 		</ErrorBoundary>
-	</React.StrictMode>
+	</React.StrictMode>,
 )

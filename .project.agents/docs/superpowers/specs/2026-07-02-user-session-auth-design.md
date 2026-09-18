@@ -1,5 +1,7 @@
 # User Session Auth Refactor Design
 
+> 2026-09-18 视觉规范更新：本文的功能 / 运行时契约继续有效；所有颜色、排版、布局、动效和组件样式以 [统一 UIUX](../../context/UIUX.md) 为准，旧视觉示例仅为历史。
+
 ## Problem
 
 The current M4.5 auth chain uses locally generated `wxm_` machine tokens, manual token display/copy/sync, `machine_accounts`, `machineId`, and `tokenHash` for LLM gateway authorization. This conflicts with the next product direction: WenXue desktop should be an account-based launcher, the extension should receive and refresh a user session automatically, and gateway/admin/tokens should all be user scoped.

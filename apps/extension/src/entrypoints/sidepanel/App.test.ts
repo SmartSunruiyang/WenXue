@@ -3,10 +3,10 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { act, createElement, type ComponentProps } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEMO_CONFIG } from '@/agent/constants'
 import {
@@ -19,6 +19,7 @@ import {
 	ModelMenu,
 	SIDEPANEL_AGENT_OPTIONS,
 	SidepanelHistoryButton,
+	TaskInput,
 	getSidepanelControlState,
 	getSidepanelModelGroups,
 	pickSendAction,
@@ -196,5 +197,121 @@ describe('ModelMenu', () => {
 			container.remove()
 			Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: false })
 		}
+	})
+})
+
+describe('TaskInput typewriter placeholder', () => {
+	const firstHint = '在作业页面让 AI 帮你完成'
+	const secondHint = '直接输入你想要 AI 做什么'
+	let container: HTMLDivElement
+	let root: Root
+
+	beforeEach(() => {
+		vi.useFakeTimers()
+		vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+		vi.stubGlobal(
+			'matchMedia',
+			vi.fn(() => ({ matches: false })),
+		)
+		container = document.createElement('div')
+		document.body.append(container)
+		root = createRoot(container)
+	})
+
+	afterEach(async () => {
+		await act(async () => root.unmount())
+		container.remove()
+		vi.useRealTimers()
+		vi.unstubAllGlobals()
+	})
+
+	const renderInput = async (props: Partial<ComponentProps<typeof TaskInput>> = {}) => {
+		await act(async () => {
+			root.render(
+				createElement(TaskInput, {
+					value: '',
+					onChange: () => {},
+					placeholder: undefined,
+					...props,
+				}),
+			)
+		})
+		return container.querySelector('textarea')!
+	}
+
+	const nextVisibleChange = async (input: HTMLTextAreaElement) => {
+		const previous = input.placeholder
+		for (let step = 0; step < 12; step++) {
+			await act(async () => vi.advanceTimersToNextTimerAsync())
+			if (input.placeholder !== previous) return input.placeholder
+		}
+		throw new Error(`Placeholder did not change from ${JSON.stringify(previous)}`)
+	}
+
+	it('types, deletes, and advances to the next hint when placeholder is explicitly undefined', async () => {
+		const input = await renderInput()
+		expect(input.placeholder).toBe('_')
+
+		const characters = Array.from(firstHint)
+		for (let length = 1; length <= characters.length; length++) {
+			expect(await nextVisibleChange(input)).toBe(`${characters.slice(0, length).join('')}_`)
+		}
+		for (let length = characters.length - 1; length >= 0; length--) {
+			expect(await nextVisibleChange(input)).toBe(`${characters.slice(0, length).join('')}_`)
+		}
+		expect(await nextVisibleChange(input)).toBe(`${Array.from(secondHint)[0]}_`)
+		expect(await nextVisibleChange(input)).toBe(`${Array.from(secondHint).slice(0, 2).join('')}_`)
+	})
+
+	it('pauses while focused and restarts after blur while forwarding focus handlers', async () => {
+		const onFocus = vi.fn()
+		const onBlur = vi.fn()
+		const input = await renderInput({ onFocus, onBlur })
+		expect(await nextVisibleChange(input)).toBe('在_')
+		await act(async () => input.focus())
+		expect(document.activeElement).toBe(input)
+		expect(input.placeholder).toBe('')
+		await act(async () => vi.advanceTimersByTimeAsync(10_000))
+		expect(input.placeholder).toBe('')
+		expect(onFocus).toHaveBeenCalledTimes(1)
+		await act(async () => input.blur())
+		expect(await nextVisibleChange(input)).toBe('在_')
+		expect(onBlur).toHaveBeenCalledTimes(1)
+	})
+
+	it('pauses with nonempty input and resumes when the controlled value is cleared', async () => {
+		const input = await renderInput()
+		expect(await nextVisibleChange(input)).toBe('在_')
+		await renderInput({ value: '帮我总结这个网页' })
+		expect(input.value).toBe('帮我总结这个网页')
+		expect(input.placeholder).toBe('')
+		await act(async () => vi.advanceTimersByTimeAsync(10_000))
+		expect(input.placeholder).toBe('')
+		await renderInput({ value: '' })
+		expect(await nextVisibleChange(input)).toBe('在_')
+	})
+
+	it('preserves the explicit answerQuestion placeholder instead of replacing it with animation', async () => {
+		const answerQuestion = '输入回答...（Enter 发送）'
+		const input = await renderInput({ placeholder: answerQuestion })
+		expect(input.placeholder).toBe(answerQuestion)
+		await act(async () => vi.advanceTimersByTimeAsync(10_000))
+		expect(input.placeholder).toBe(answerQuestion)
+		await act(async () => input.focus())
+		expect(input.placeholder).toBe(answerQuestion)
+		await act(async () => input.blur())
+		expect(input.placeholder).toBe(answerQuestion)
+	})
+
+	it('uses the complete static hint and no animation timers for reduced motion', async () => {
+		vi.stubGlobal(
+			'matchMedia',
+			vi.fn(() => ({ matches: true })),
+		)
+		const input = await renderInput()
+		expect(input.placeholder).toBe(firstHint)
+		await act(async () => vi.advanceTimersByTimeAsync(60_000))
+		expect(input.placeholder).toBe(firstHint)
+		expect(vi.getTimerCount()).toBe(0)
 	})
 })

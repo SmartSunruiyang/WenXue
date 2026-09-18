@@ -538,15 +538,18 @@ function useTypingPlaceholder(words: string[], active: boolean): string {
 	return `${text}_`
 }
 
-function TaskInput(props: React.ComponentProps<typeof InputGroupTextarea>) {
+export function TaskInput(props: React.ComponentProps<typeof InputGroupTextarea>) {
 	const { t } = useI18n()
 	const [focused, setFocused] = useState(false)
 	const hints = useMemo(() => TASK_HINT_KEYS.map((key) => t(key)), [t])
-	const placeholder = useTypingPlaceholder(hints, !props.value && !focused)
+	const placeholder = useTypingPlaceholder(
+		hints,
+		!props.value && !focused && props.placeholder === undefined,
+	)
 	return (
 		<InputGroupTextarea
-			placeholder={placeholder}
 			{...props}
+			placeholder={props.placeholder ?? placeholder}
 			onFocus={(e) => {
 				setFocused(true)
 				props.onFocus?.(e)

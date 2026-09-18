@@ -4,6 +4,8 @@ import { BrandHero } from '@/components/newtab/BrandHero'
 import { OnboardingChecklist } from '@/components/newtab/OnboardingChecklist'
 import { QuickLinksGrid } from '@/components/newtab/QuickLinksGrid'
 import { RefreshEntry, SettingsEntry } from '@/components/newtab/SettingsEntry'
+import { Button } from '@/components/ui/button'
+import { useI18n } from '@/lib/i18n'
 import type { QuickLink } from '@/lib/quickLinks'
 import {
 	loadOnboardingDone,
@@ -13,44 +15,67 @@ import {
 } from '@/lib/quickLinksStorage'
 
 export default function App() {
+	const { t } = useI18n()
 	const [state, setState] = useState<{ links: QuickLink[]; onboardingDone: boolean } | null>(null)
+	const [error, setError] = useState<'load' | 'save' | null>(null)
 
 	useEffect(() => {
-		Promise.all([loadQuickLinks(), loadOnboardingDone()]).then(([links, onboardingDone]) => {
-			setState({ links, onboardingDone })
-		})
+		Promise.all([loadQuickLinks(), loadOnboardingDone()])
+			.then(([links, onboardingDone]) => setState({ links, onboardingDone }))
+			.catch(() => setError('load'))
 	}, [])
 
 	const updateLinks = (next: QuickLink[]) => {
 		setState((current) => (current ? { ...current, links: next } : current))
-		saveQuickLinks(chrome.storage.local, next)
+		setError(null)
+		saveQuickLinks(chrome.storage.local, next).catch(() => setError('save'))
 	}
 	const markOnboarding = (done: boolean) => {
 		setState((current) => (current ? { ...current, onboardingDone: done } : current))
-		saveOnboardingDone(chrome.storage.local, done)
+		setError(null)
+		saveOnboardingDone(chrome.storage.local, done).catch(() => setError('save'))
+	}
+	const retry = () => {
+		if (!state) return window.location.reload()
+		Promise.all([
+			saveQuickLinks(chrome.storage.local, state.links),
+			saveOnboardingDone(chrome.storage.local, state.onboardingDone),
+		])
+			.then(() => setError(null))
+			.catch(() => setError('save'))
 	}
 
 	return (
-		<div className="wx-newtab-page relative min-h-screen w-full overflow-hidden bg-white text-foreground">
-			{state && (
-				<>
-					<div data-newtab-enter className="absolute right-5 top-5 z-20 flex gap-2">
-						<RefreshEntry />
-						<SettingsEntry />
+		<div className="newtab-page">
+			<nav className="newtab-tools" aria-label={t('settingsMenu')}>
+				<RefreshEntry />
+				<SettingsEntry />
+			</nav>
+			<main className="newtab-main">
+				<BrandHero />
+				{error && (
+					<div className="newtab-error" role="alert">
+						<p>{t(error === 'load' ? 'ntLoadError' : 'ntSaveError')}</p>
+						<Button type="button" variant="outline" onClick={retry}>
+							{t('ntRetry')}
+						</Button>
 					</div>
-					<main className="relative z-10 mx-auto flex min-h-screen w-full max-w-2xl flex-col items-center justify-center gap-8 px-6 py-16">
-						<div data-newtab-enter>
-							<BrandHero />
+				)}
+				{state ? (
+					<>
+						<QuickLinksGrid links={state.links} onChange={updateLinks} />
+						<OnboardingChecklist done={state.onboardingDone} onDone={markOnboarding} />
+					</>
+				) : (
+					!error && (
+						<div className="newtab-loading" role="status" aria-label={t('loading')}>
+							<span />
+							<span />
+							<span />
 						</div>
-						<div data-newtab-enter className="w-full">
-							<QuickLinksGrid links={state.links} onChange={updateLinks} />
-						</div>
-						<div data-newtab-enter>
-							<OnboardingChecklist done={state.onboardingDone} onDone={markOnboarding} />
-						</div>
-					</main>
-				</>
-			)}
+					)
+				)}
+			</main>
 		</div>
 	)
 }

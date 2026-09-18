@@ -165,7 +165,7 @@ If the extension manifest is missing in dev mode, return `"unknown"` and let `br
 
 ### D5 — ConsoleUI remains operational, not marketing
 
-The control window follows `UIUX.md §6/§7`: compact, utilitarian, status-first. Do not make a landing page or hero. Do not add marketing copy. Do not add visual tokens beyond existing Tailwind/shadcn-style semantic intent.
+The control window follows the [unified UIUX desktop rules](../../context/UIUX.md#7-桌面窗口与页面): content-first hierarchy, real status, familiar controls, and shared semantic tokens. Do not add marketing copy or a separate visual system.
 
 ### D6 — MainBootstrap owns Electron lifecycle only
 

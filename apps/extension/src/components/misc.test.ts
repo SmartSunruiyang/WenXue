@@ -41,7 +41,13 @@ describe('Logo', () => {
 
 describe('EmptyState', () => {
 	test('renders only the centered animated brand mark and slogan on the sidepanel home', () => {
-		const emptyState = EmptyState() as ReactElement<{ className: string; children: ReactElement[] }>
+		const emptyState = EmptyState() as ReactElement<{
+			className: string
+			children: [
+				ReactElement<{ className: string; children: ReactElement<{ className: string }> }>,
+				ReactElement<{ className: string }>,
+			]
+		}>
 		const [logoWrap, slogan] = emptyState.props.children
 		const logo = logoWrap.props.children as ReactElement<{ className: string }>
 

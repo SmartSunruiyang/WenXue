@@ -16,7 +16,7 @@
 .wx-ops-backdrop {
 	position: fixed;
 	inset: 0;
-	z-index: 2147483000;
+	z-index: var(--wx-layer-modal, 1000);
 	display: grid;
 	place-items: center;
 	padding: 20px;
@@ -38,14 +38,13 @@
 .wx-ops-dialog {
 	position: relative;
 	display: grid;
-	grid-template-columns: 4px 40px minmax(0, 1fr);
+	grid-template-columns: 56px minmax(0, 1fr);
 	width: min(100%, 560px);
 	max-height: calc(100dvh - 40px);
 	overflow: hidden;
 	border: 1px solid var(--wx-ops-border);
-	border-radius: 8px;
+	border-radius: 16px;
 	background: var(--wx-ops-background);
-	box-shadow: 0 18px 60px color-mix(in srgb, var(--wx-ops-foreground) 16%, transparent);
 	animation: wx-ops-enter 180ms ease-out;
 }
 
@@ -55,26 +54,15 @@
 }
 
 .wx-ops-rail {
-	grid-row: 1;
-	grid-column: 1;
-	background: var(--wx-ops-muted);
-}
-
-.wx-ops-dialog--important .wx-ops-rail,
-.wx-ops-dialog--mandatory .wx-ops-rail {
-	background: var(--wx-ops-destructive);
-}
-
-.wx-ops-dialog--update .wx-ops-rail {
-	background: var(--wx-ops-primary);
+	display: none;
 }
 
 .wx-ops-icon {
 	display: flex;
-	grid-column: 2;
+	grid-column: 1;
 	align-items: flex-start;
 	justify-content: center;
-	padding-top: 25px;
+	padding: 30px 0 0 16px;
 	color: var(--wx-ops-muted);
 }
 
@@ -90,11 +78,11 @@
 .wx-ops-content {
 	position: relative;
 	display: grid;
-	grid-column: 3;
+	grid-column: 2;
 	gap: 12px;
 	min-width: 0;
 	max-height: calc(100dvh - 40px);
-	padding: 24px 24px 20px 12px;
+	padding: 28px 28px 24px 0;
 	overflow-y: auto;
 	overscroll-behavior: contain;
 }
@@ -102,15 +90,15 @@
 .wx-ops-eyebrow {
 	color: var(--wx-ops-muted);
 	font-size: 12px;
-	font-weight: 650;
-	letter-spacing: 0.04em;
+	font-weight: 500;
+	letter-spacing: normal;
 }
 
 .wx-ops-content h2 {
 	margin: 0;
 	padding-right: 30px;
-	font-size: 18px;
-	font-weight: 650;
+	font-size: 22px;
+	font-weight: 600;
 	line-height: 1.35;
 	overflow-wrap: anywhere;
 }
@@ -129,11 +117,11 @@
 	top: 18px;
 	right: 18px;
 	display: grid;
-	width: 30px;
-	height: 30px;
+	width: 32px;
+	height: 32px;
 	place-items: center;
 	border: 0;
-	border-radius: 6px;
+	border-radius: 999px;
 	background: transparent;
 	color: var(--wx-ops-muted);
 }
@@ -153,13 +141,13 @@
 	background: transparent;
 	color: var(--wx-ops-primary);
 	font-size: 13px;
-	font-weight: 650;
+	font-weight: 500;
 }
 
 .wx-ops-detail small {
 	color: var(--wx-ops-muted);
 	font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-	font-size: 11px;
+	font-size: 12px;
 	font-weight: 400;
 }
 
@@ -174,7 +162,7 @@
 	border-radius: 999px;
 	background: var(--wx-ops-muted-surface);
 	font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-	font-size: 11px;
+	font-size: 12px;
 }
 
 .wx-ops-update-meta {
@@ -244,32 +232,32 @@
 .wx-ops-progress small {
 	color: var(--wx-ops-muted);
 	font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-	font-size: 11px;
+	font-size: 12px;
 }
 
 .wx-ops-actions {
 	position: sticky;
-	bottom: -20px;
+	bottom: -24px;
 	display: flex;
 	justify-content: flex-end;
 	gap: 8px;
-	margin-bottom: -20px;
-	padding: 6px 0 20px;
+	margin-bottom: -24px;
+	padding: 12px 0 24px;
 	background: var(--wx-ops-background);
 }
 
 .wx-ops-button {
 	display: inline-flex;
-	min-height: 36px;
+	min-height: 40px;
 	align-items: center;
 	justify-content: center;
 	gap: 7px;
 	padding: 0 14px;
 	border: 1px solid transparent;
-	border-radius: 8px;
+	border-radius: 999px;
 	font: inherit;
 	font-size: 13px;
-	font-weight: 650;
+	font-weight: 500;
 	cursor: pointer;
 }
 
@@ -305,7 +293,6 @@
 @keyframes wx-ops-enter {
 	from {
 		opacity: 0;
-		transform: translateY(5px);
 	}
 }
 
@@ -322,7 +309,7 @@
 
 @media (max-width: 580px) {
 	.wx-ops-dialog {
-		grid-template-columns: 4px 34px minmax(0, 1fr);
+		grid-template-columns: 48px minmax(0, 1fr);
 	}
 
 	.wx-ops-content {
@@ -336,4 +323,11 @@
 	.wx-ops-button {
 		width: 100%;
 	}
+}
+
+.wx-ops-button--primary:hover:not(:disabled) {
+	filter: brightness(1.15);
+}
+.wx-ops-button--secondary:hover:not(:disabled) {
+	background: var(--wx-ops-muted-surface);
 }

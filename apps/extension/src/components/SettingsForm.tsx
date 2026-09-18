@@ -1,11 +1,12 @@
 import {
+	ArrowUpRight,
+	Check,
 	CornerUpLeft,
 	Eye,
 	EyeOff,
 	FoldVertical,
 	Home,
 	Plus,
-	Sparkles,
 	Trash2,
 	UnfoldVertical,
 	X,
@@ -38,6 +39,8 @@ import {
 } from '@/lib/modelConfig'
 import { buildSettingsConfig, settingsConfigKey } from '@/lib/settingsConfig'
 import { cn } from '@/lib/utils'
+
+import './SettingsForm.css'
 
 export const SETTINGS_SECTIONS = [
 	{
@@ -76,12 +79,15 @@ export const SETTINGS_PAGE_VERSION = 'v0.0.1'
 export const WENXUE_WEBSITE_URL = 'https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/'
 export const WENXUE_GITHUB_URL = 'https://github.com/SmartSunruiyang/WenXue'
 
+export type SettingsSaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
 interface SettingsFormProps {
 	config: ExtConfig | null
 	onSave: (config: ExtConfig) => Promise<void>
 	onClose?: () => void
 	mode?: 'panel' | 'page'
 	onSaved?: () => void
+	onSaveStatusChange?: (status: SettingsSaveStatus) => void
 }
 
 function createCustomModelId(): string {
@@ -108,16 +114,7 @@ function ProviderLogo({
 				: (providerName?.trim().slice(0, 1).toUpperCase() ?? '自')
 
 	return (
-		<span
-			className={cn(
-				'flex size-5 shrink-0 items-center justify-center rounded-sm border text-[10px] font-semibold leading-none shadow-xs',
-				provider === 'deepseek' && 'border-cyan-500/25 bg-cyan-500/10 text-cyan-700',
-				provider === 'qwen' && 'border-amber-500/25 bg-amber-500/10 text-amber-700',
-				provider === 'custom' && 'border-primary/25 bg-primary/10 text-primary',
-				className,
-			)}
-			aria-hidden="true"
-		>
+		<span className={cn('settings-provider-logo', className)} aria-hidden="true">
 			{label || '自'}
 		</span>
 	)
@@ -129,6 +126,7 @@ export function SettingsForm({
 	onClose,
 	mode = 'panel',
 	onSaved,
+	onSaveStatusChange,
 }: SettingsFormProps) {
 	const { t, setLang } = useI18n()
 	const [selectedModelId, setSelectedModelId] = useState(
@@ -151,7 +149,6 @@ export function SettingsForm({
 	const [logMaxEntries, setLogMaxEntries] = useState(config?.logMaxEntries ?? 5000)
 	const [advancedOpen, setAdvancedOpen] = useState(mode === 'page')
 	const [modelDialogOpen, setModelDialogOpen] = useState(false)
-	const [modelDialogClosing, setModelDialogClosing] = useState(false)
 	const [draftProvider, setDraftProvider] = useState<ModelProvider>('deepseek')
 	const [draftProviderName, setDraftProviderName] = useState('')
 	const [draftBaseURL, setDraftBaseURL] = useState(
@@ -164,7 +161,11 @@ export function SettingsForm({
 	const isPage = mode === 'page'
 	const hydratedRef = useRef(false)
 	const lastSavedKeyRef = useRef<string | null>(null)
-	const closeDialogTimerRef = useRef<number | null>(null)
+	const pendingSavesRef = useRef(0)
+	const modelDialogRef = useRef<HTMLDivElement>(null)
+	const dialogTriggerRef = useRef<HTMLElement | null>(null)
+	const [saveStatus, setSaveStatus] = useState<SettingsSaveStatus>('idle')
+	const [saveAttempt, setSaveAttempt] = useState(0)
 
 	useEffect(() => {
 		if (!config || hydratedRef.current) return
@@ -219,44 +220,64 @@ export function SettingsForm({
 	}, [])
 
 	const openModelDialog = useCallback(() => {
-		if (closeDialogTimerRef.current) {
-			window.clearTimeout(closeDialogTimerRef.current)
-			closeDialogTimerRef.current = null
-		}
+		dialogTriggerRef.current = document.activeElement as HTMLElement | null
 		resetModelDraft()
-		setModelDialogClosing(false)
 		setModelDialogOpen(true)
 	}, [resetModelDraft])
 
 	const closeModelDialog = useCallback(() => {
-		if (modelDialogClosing) return
-		setModelDialogClosing(true)
-		closeDialogTimerRef.current = window.setTimeout(() => {
-			setModelDialogOpen(false)
-			setModelDialogClosing(false)
-			resetModelDraft()
-			closeDialogTimerRef.current = null
-		}, 180)
-	}, [modelDialogClosing, resetModelDraft])
-
-	useEffect(() => {
-		return () => {
-			if (closeDialogTimerRef.current) {
-				window.clearTimeout(closeDialogTimerRef.current)
-			}
-		}
-	}, [])
+		setModelDialogOpen(false)
+		resetModelDraft()
+	}, [resetModelDraft])
 
 	useEffect(() => {
 		if (!modelDialogOpen) return
 
+		const dialog = modelDialogRef.current
+		if (!dialog) return
+		const previousOverflow = document.body.style.overflow
+		document.body.style.overflow = 'hidden'
+		dialog.querySelector<HTMLElement>('[role="combobox"]')?.focus()
+
 		const handleKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') closeModelDialog()
+			if (event.key === 'Escape') {
+				if (dialog.querySelector('[role="combobox"][aria-expanded="true"]')) return
+				event.preventDefault()
+				closeModelDialog()
+			}
+			if (event.key !== 'Tab') return
+			const controls = Array.from(
+				dialog.querySelectorAll<HTMLElement>(':is(button, input, [tabindex]):not(:disabled)'),
+			).filter((element) => element.tabIndex >= 0 && !element.closest('[hidden]'))
+			const first = controls[0]
+			const last = controls.at(-1)
+			if (!first || !last) return
+			if (
+				event.shiftKey &&
+				(document.activeElement === first || !dialog.contains(document.activeElement))
+			) {
+				event.preventDefault()
+				last.focus()
+			} else if (
+				!event.shiftKey &&
+				(document.activeElement === last || !dialog.contains(document.activeElement))
+			) {
+				event.preventDefault()
+				first.focus()
+			}
 		}
 
 		window.addEventListener('keydown', handleKeyDown)
-		return () => window.removeEventListener('keydown', handleKeyDown)
+		return () => {
+			document.body.style.overflow = previousOverflow
+			window.removeEventListener('keydown', handleKeyDown)
+			dialogTriggerRef.current?.focus()
+		}
 	}, [closeModelDialog, modelDialogOpen])
+
+	useEffect(() => {
+		onSaveStatusChange?.(saveStatus)
+	}, [onSaveStatusChange, saveStatus])
 
 	const handleDraftProviderChange = (provider: ModelProvider) => {
 		const preset = getModelProviderPreset(provider)
@@ -389,173 +410,192 @@ export function SettingsForm({
 		],
 	)
 	const currentConfigKey = useMemo(() => settingsConfigKey(currentConfig), [currentConfig])
+	const latestConfigKeyRef = useRef(currentConfigKey)
+	latestConfigKeyRef.current = currentConfigKey
 
 	useEffect(() => {
 		if (!ready || !hydratedRef.current || !config) return
-		if (lastSavedKeyRef.current === currentConfigKey) return
+		if (lastSavedKeyRef.current === currentConfigKey) {
+			if (pendingSavesRef.current === 0) {
+				setSaveStatus((status) => (status === 'idle' ? status : 'saved'))
+			}
+			return
+		}
 
+		let stale = false
+		setSaveStatus('saving')
 		const timer = window.setTimeout(() => {
 			setLang(uiLanguage)
+			pendingSavesRef.current++
 			onSave(currentConfig)
 				.then(() => {
 					lastSavedKeyRef.current = currentConfigKey
+					if (stale) return
 					onSaved?.()
 				})
 				.catch((error) => {
 					console.error('[SettingsForm] Failed to auto-save settings:', error)
+					if (!stale) setSaveStatus('error')
+				})
+				.finally(() => {
+					pendingSavesRef.current--
+					if (
+						pendingSavesRef.current === 0 &&
+						lastSavedKeyRef.current === latestConfigKeyRef.current
+					) {
+						setSaveStatus('saved')
+					}
 				})
 		}, 500)
 
-		return () => window.clearTimeout(timer)
-	}, [config, currentConfig, currentConfigKey, onSave, onSaved, ready, setLang, uiLanguage])
+		return () => {
+			stale = true
+			window.clearTimeout(timer)
+		}
+	}, [
+		config,
+		currentConfig,
+		currentConfigKey,
+		onSave,
+		onSaved,
+		ready,
+		setLang,
+		uiLanguage,
+		saveAttempt,
+	])
 
 	return (
-		<div className={cn(isPage ? 'flex flex-col' : 'relative flex flex-col gap-4 p-4')}>
-			{!isPage && (
-				<div className="flex items-center justify-between">
-					<h2 className="text-base font-semibold">{t('settings')}</h2>
-					{onClose && (
-						<Button
-							variant="ghost"
-							size="icon-sm"
-							onClick={onClose}
-							className="absolute top-2 right-3 cursor-pointer"
-							aria-label={t('back')}
-						>
-							<CornerUpLeft className="size-3.5" />
-						</Button>
-					)}
-				</div>
-			)}
-
-			<SettingsSection
-				id="model"
-				title={t('settingsSectionModel')}
-				description={t('settingsSectionModelDesc')}
-				mode={mode}
-			>
-				<div className="grid gap-6">
-					<div className="grid gap-5 md:grid-cols-2">
-						<div className="flex flex-col gap-2">
-							<label htmlFor="default-model" className="text-xs text-muted-foreground">
-								{t('defaultModel')}
-							</label>
-							<MagicSelect
-								id="default-model"
-								value={selectedModelId}
-								options={modelOptions}
-								onChange={setSelectedModelId}
-							/>
+		<div className={cn('settings-form', isPage ? 'settings-form--page' : 'settings-form--panel')}>
+			<div className="settings-form-content" inert={modelDialogOpen || undefined}>
+				{!isPage && (
+					<header className="settings-panel-header">
+						<div>
+							<h2>{t('settings')}</h2>
+							<p role="status" aria-live="polite">
+								{saveStatus === 'saving'
+									? t('settingsSaving')
+									: saveStatus === 'saved'
+										? t('settingsSaved')
+										: t('settingsAutoSave')}
+							</p>
 						</div>
-
-						<div className="flex flex-col gap-2">
-							<label htmlFor="vision-model" className="text-xs text-muted-foreground">
-								{t('visionModel')}
-							</label>
-							<MagicSelect
-								id="vision-model"
-								value={visionModelId}
-								options={visionModelOptions}
-								onChange={setVisionModelId}
-							/>
-						</div>
-					</div>
-
-					<div className="rounded-md border bg-muted/20 p-4">
-						<div className="mb-4 flex items-start justify-between gap-4">
-							<div className="grid gap-1">
-								<h3 className="text-sm font-medium">{t('customModels')}</h3>
-								<p className="text-xs leading-5 text-muted-foreground">{t('customModelsDesc')}</p>
-							</div>
+						{onClose && (
 							<Button
-								type="button"
-								variant="outline"
-								size="icon-sm"
-								onClick={openModelDialog}
-								className="shrink-0 cursor-pointer"
-								aria-label={t('addCustomModel')}
+								variant="ghost"
+								size="icon"
+								onClick={onClose}
+								aria-label={t('back')}
+								title={t('back')}
 							>
-								<Plus className="size-3.5" />
+								<CornerUpLeft className="size-4" />
+							</Button>
+						)}
+					</header>
+				)}
+				{saveStatus === 'error' && (
+					<div className="settings-save-error" role="alert">
+						<p>{t('settingsSaveError')}</p>
+						<Button variant="outline" onClick={() => setSaveAttempt((attempt) => attempt + 1)}>
+							{t('settingsRetrySave')}
+						</Button>
+					</div>
+				)}
+
+				<SettingsSection
+					id="model"
+					title={t('settingsSectionModel')}
+					description={t('settingsSectionModelDesc')}
+				>
+					<SettingRow label={t('defaultModel')} htmlFor="default-model">
+						<MagicSelect
+							id="default-model"
+							value={selectedModelId}
+							options={modelOptions}
+							onChange={setSelectedModelId}
+						/>
+					</SettingRow>
+					<SettingRow label={t('visionModel')} htmlFor="vision-model">
+						<MagicSelect
+							id="vision-model"
+							value={visionModelId}
+							options={visionModelOptions}
+							onChange={setVisionModelId}
+						/>
+					</SettingRow>
+
+					<div className="settings-custom-models">
+						<div className="settings-models-header">
+							<div>
+								<h3>{t('customModels')}</h3>
+								<p>{t('customModelsDesc')}</p>
+							</div>
+							<Button type="button" onClick={openModelDialog} aria-label={t('addCustomModel')}>
+								<Plus className="size-4" />
+								<span>{t('addCustomModel')}</span>
 							</Button>
 						</div>
-
 						{customModels.length > 0 ? (
-							<div className="grid gap-3">
+							<ul className="settings-model-list" aria-label={t('customModels')}>
 								{customModels.map((customModel) => (
-									<div
-										key={customModel.id}
-										className="flex items-center justify-between gap-4 rounded-md border bg-background p-3"
-									>
-										<div className="min-w-0">
-											<div className="flex min-w-0 items-center gap-2">
-												<span className="flex shrink-0 items-center gap-1 rounded border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-													<ProviderLogo
-														provider={customModel.provider}
-														providerName={customModel.providerName}
-														className="size-4 text-[9px]"
-													/>
-													{getCustomModelProviderLabel(customModel)}
-												</span>
-												<span className="truncate text-xs font-medium">{customModel.model}</span>
+									<li key={customModel.id} className="settings-model-row">
+										<ProviderLogo
+											provider={customModel.provider}
+											providerName={customModel.providerName}
+											className="settings-model-avatar"
+										/>
+										<div className="settings-model-info">
+											<div className="settings-model-name">
+												<span title={customModel.model}>{customModel.model}</span>
 												{selectedModelId === customModel.id && (
-													<span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+													<span className="settings-model-selected">
+														<Check className="size-3" aria-hidden="true" />
 														{t('selectedModel')}
 													</span>
 												)}
 											</div>
-											<p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">
-												{customModel.baseURL}
-											</p>
-											<p className="mt-1 text-[11px] text-muted-foreground">
+											<p>
+												{getCustomModelProviderLabel(customModel)}
+												<span aria-hidden="true"> · </span>
 												{customModel.apiKey ? t('modelApiKeySet') : t('modelApiKeyMissing')}
+											</p>
+											<p className="settings-model-url" title={customModel.baseURL}>
+												{customModel.baseURL}
 											</p>
 										</div>
 										<Button
 											type="button"
 											variant="ghost"
 											size="icon-sm"
-											className="shrink-0 cursor-pointer text-muted-foreground hover:text-destructive"
+											className="settings-remove-model"
 											onClick={() => handleRemoveCustomModel(customModel.id)}
-											aria-label={t('removeModel')}
+											aria-label={`${t('removeModel')} ${customModel.model}`}
+											title={t('removeModel')}
 										>
-											<Trash2 className="size-3.5" />
+											<Trash2 className="size-4" />
 										</Button>
-									</div>
+									</li>
 								))}
-							</div>
+							</ul>
 						) : (
-							<div className="rounded-md border border-dashed bg-background/70 p-6 text-center text-xs leading-5 text-muted-foreground">
-								{t('noCustomModels')}
-							</div>
+							<p className="settings-model-empty">{t('noCustomModels')}</p>
 						)}
 					</div>
-				</div>
-			</SettingsSection>
+				</SettingsSection>
 
-			<SettingsSection
-				id="language"
-				title={t('settingsSectionLanguage')}
-				description={t('settingsSectionLanguageDesc')}
-				mode={mode}
-			>
-				<div className="grid gap-5 md:grid-cols-2">
-					<div className="flex flex-col gap-2">
-						<label htmlFor="ui-language" className="text-xs text-muted-foreground">
-							{t('uiLanguageLabel')}
-						</label>
+				<SettingsSection
+					id="language"
+					title={t('settingsSectionLanguage')}
+					description={t('settingsSectionLanguageDesc')}
+				>
+					<SettingRow label={t('uiLanguageLabel')} htmlFor="ui-language">
 						<MagicSelect
 							id="ui-language"
 							value={uiLanguage}
 							options={uiLanguageOptions}
 							onChange={setUILanguage}
-							triggerClassName="h-9"
 						/>
-					</div>
-
-					<div className="flex flex-col gap-2">
-						<label htmlFor="response-language" className="text-xs text-muted-foreground">
-							{t('responseLanguage')}
-						</label>
+					</SettingRow>
+					<SettingRow label={t('responseLanguage')} htmlFor="response-language">
 						<MagicSelect
 							id="response-language"
 							value={language ?? ''}
@@ -563,299 +603,272 @@ export function SettingsForm({
 							onChange={(nextLanguage) =>
 								setLanguage((nextLanguage || undefined) as LanguagePreference)
 							}
-							triggerClassName="h-9"
 						/>
-					</div>
-				</div>
-			</SettingsSection>
+					</SettingRow>
+				</SettingsSection>
 
-			<SettingsSection
-				id="advanced"
-				title={t('settingsSectionAdvanced')}
-				description={t('settingsSectionAdvancedDesc')}
-				mode={mode}
-			>
-				{!isPage && (
-					<button
-						type="button"
-						onClick={() => setAdvancedOpen(!advancedOpen)}
-						className="flex cursor-pointer items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground"
-					>
-						{t('advanced')}
-						{advancedOpen ? (
-							<FoldVertical className="size-3" />
-						) : (
-							<UnfoldVertical className="size-3" />
-						)}
-					</button>
-				)}
-
-				{advancedOpen && (
-					<div className="grid gap-5">
-						<div className="flex flex-col gap-2">
-							<label htmlFor="system-instruction" className="text-xs text-muted-foreground">
-								{t('systemInstruction')}
-							</label>
-							<Textarea
-								id="system-instruction"
-								placeholder={t('systemInstructionPlaceholder')}
-								value={systemInstruction}
-								onChange={(e) => setSystemInstruction(e.target.value)}
-								rows={4}
-								className="min-h-28 resize-y text-sm leading-6"
-							/>
-						</div>
-
-						<div className="divide-y rounded-md border bg-muted/15 px-4">
-							<label className="flex min-h-14 cursor-pointer items-center justify-between gap-5 py-3">
-								<span className="grid gap-1">
-									<span className="text-sm text-muted-foreground">{t('experimentalLlmsTxt')}</span>
-									<span className="text-xs leading-5 text-muted-foreground/80">
-										{t('experimentalLlmsTxtHelp')}
-									</span>
-								</span>
-								<Switch checked={experimentalLlmsTxt} onCheckedChange={setExperimentalLlmsTxt} />
-							</label>
-
-							<label className="flex min-h-14 cursor-pointer items-center justify-between gap-5 py-3">
-								<span className="text-sm text-muted-foreground">
-									{t('experimentalIncludeAllTabs')}
-								</span>
+				<SettingsSection
+					id="advanced"
+					title={t('settingsSectionAdvanced')}
+					description={t('settingsSectionAdvancedDesc')}
+				>
+					{!isPage && (
+						<button
+							type="button"
+							onClick={() => setAdvancedOpen(!advancedOpen)}
+							className="settings-advanced-toggle"
+							aria-expanded={advancedOpen}
+							aria-controls="advanced-fields"
+						>
+							{t('advanced')}
+							{advancedOpen ? (
+								<FoldVertical className="size-4" />
+							) : (
+								<UnfoldVertical className="size-4" />
+							)}
+						</button>
+					)}
+					{advancedOpen && (
+						<div id="advanced-fields">
+							<div className="settings-instruction-field">
+								<label htmlFor="system-instruction">{t('systemInstruction')}</label>
+								<Textarea
+									id="system-instruction"
+									placeholder={t('systemInstructionPlaceholder')}
+									value={systemInstruction}
+									onChange={(event) => setSystemInstruction(event.target.value)}
+									rows={4}
+								/>
+							</div>
+							<SettingRow
+								label={t('experimentalLlmsTxt')}
+								htmlFor="experimental-llms-txt"
+								description={t('experimentalLlmsTxtHelp')}
+								compact
+							>
 								<Switch
+									id="experimental-llms-txt"
+									checked={experimentalLlmsTxt}
+									onCheckedChange={setExperimentalLlmsTxt}
+								/>
+							</SettingRow>
+							<SettingRow
+								label={t('experimentalIncludeAllTabs')}
+								htmlFor="experimental-all-tabs"
+								compact
+							>
+								<Switch
+									id="experimental-all-tabs"
 									checked={experimentalIncludeAllTabs}
 									onCheckedChange={setExperimentalIncludeAllTabs}
 								/>
-							</label>
+							</SettingRow>
 						</div>
-					</div>
-				)}
-			</SettingsSection>
+					)}
+				</SettingsSection>
 
-			<SettingsSection
-				id="logs"
-				title={t('settingsSectionLogs')}
-				description={t('settingsSectionLogsDesc')}
-				mode={mode}
-			>
-				<div className="grid gap-5 sm:grid-cols-2">
-					<div className="flex flex-col gap-2">
-						<label className="text-xs text-muted-foreground">{t('logRetentionDays')}</label>
+				<SettingsSection
+					id="logs"
+					title={t('settingsSectionLogs')}
+					description={t('settingsSectionLogsDesc')}
+				>
+					<SettingRow label={t('logRetentionDays')} htmlFor="log-retention-days">
 						<Input
+							id="log-retention-days"
 							type="number"
 							min={1}
 							max={365}
 							value={logRetentionDays}
-							onChange={(e) => setLogRetentionDays(Number(e.target.value) || 3)}
-							className="h-9 text-sm"
+							onChange={(event) => setLogRetentionDays(Number(event.target.value) || 3)}
 						/>
-					</div>
-					<div className="flex flex-col gap-2">
-						<label className="text-xs text-muted-foreground">{t('logMaxEntries')}</label>
+					</SettingRow>
+					<SettingRow label={t('logMaxEntries')} htmlFor="log-max-entries">
 						<Input
+							id="log-max-entries"
 							type="number"
 							min={100}
 							max={100000}
 							value={logMaxEntries}
-							onChange={(e) => setLogMaxEntries(Number(e.target.value) || 5000)}
-							className="h-9 text-sm"
+							onChange={(event) => setLogMaxEntries(Number(event.target.value) || 5000)}
 						/>
+					</SettingRow>
+				</SettingsSection>
+
+				<SettingsSection
+					id="about"
+					title={t('settingsSectionAbout')}
+					description={t('settingsSectionAboutDesc')}
+				>
+					<div className="settings-about-version">
+						<span>{t('version')}</span>
+						<span>{SETTINGS_PAGE_VERSION}</span>
 					</div>
-				</div>
-			</SettingsSection>
-
-			<SettingsSection
-				id="about"
-				title={t('settingsSectionAbout')}
-				description={t('settingsSectionAboutDesc')}
-				mode={mode}
-			>
-				<div className="grid gap-4 text-sm text-muted-foreground sm:grid-cols-2">
-					<span>
-						{t('version')}{' '}
-						<span className="font-mono text-foreground">{SETTINGS_PAGE_VERSION}</span>
-					</span>
-
 					<a
 						href={WENXUE_GITHUB_URL}
 						target="_blank"
 						rel="noopener noreferrer"
-						className="flex items-center gap-2 hover:text-foreground"
+						className="settings-about-link"
 					>
-						<svg role="img" viewBox="0 0 24 24" className="size-4 fill-current">
+						<svg viewBox="0 0 24 24" className="size-4 fill-current" aria-hidden="true">
 							<path d={siGithub.path} />
 						</svg>
 						<span>{t('sourceCode')}</span>
+						<ArrowUpRight className="size-4" aria-hidden="true" />
 					</a>
-
 					<a
 						href={WENXUE_WEBSITE_URL}
 						target="_blank"
 						rel="noopener noreferrer"
-						className="flex items-center gap-2 hover:text-foreground"
+						className="settings-about-link"
 					>
-						<Home className="size-4" />
+						<Home className="size-4" aria-hidden="true" />
 						<span>{t('homePage')}</span>
+						<ArrowUpRight className="size-4" aria-hidden="true" />
 					</a>
-				</div>
-			</SettingsSection>
+				</SettingsSection>
+			</div>
 
 			{modelDialogOpen && (
 				<div
-					className={cn(
-						'fixed inset-0 z-50 flex items-end justify-center bg-background/70 p-4 backdrop-blur-sm transition-opacity duration-200 sm:items-center',
-						modelDialogClosing ? 'opacity-0' : 'opacity-100',
-					)}
+					className="settings-dialog-overlay"
 					onMouseDown={(event) => {
 						if (event.currentTarget === event.target) closeModelDialog()
 					}}
 				>
 					<div
+						ref={modelDialogRef}
 						role="dialog"
 						aria-modal="true"
 						aria-labelledby="custom-model-dialog-title"
-						className={cn(
-							'relative w-full max-w-md overflow-hidden rounded-lg border bg-background shadow-2xl transition-all duration-200',
-							modelDialogClosing
-								? 'translate-y-3 scale-95 opacity-0'
-								: 'translate-y-0 scale-100 opacity-100',
-						)}
+						aria-describedby="custom-model-dialog-description"
+						className="settings-model-dialog"
 					>
-						<div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent" />
-						<div className="flex items-start justify-between gap-4 border-b p-4">
-							<div className="flex gap-3">
-								<div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted">
-									<Sparkles className="size-4 text-primary" />
-								</div>
-								<div className="grid gap-1">
-									<h2 id="custom-model-dialog-title" className="text-sm font-semibold">
-										{t('addCustomModel')}
-									</h2>
-									<p className="text-[11px] leading-5 text-muted-foreground">
-										{t('addCustomModelDesc')}
-									</p>
-								</div>
+						<header className="settings-dialog-header">
+							<div>
+								<h2 id="custom-model-dialog-title">{t('addCustomModel')}</h2>
+								<p id="custom-model-dialog-description">{t('addCustomModelDesc')}</p>
 							</div>
 							<Button
 								type="button"
 								variant="ghost"
 								size="icon-sm"
 								onClick={closeModelDialog}
-								className="cursor-pointer"
 								aria-label={t('close')}
+								title={t('close')}
 							>
-								<X className="size-3.5" />
+								<X className="size-4" />
 							</Button>
-						</div>
-
-						<div className="grid gap-3 p-4">
-							<div className="flex flex-col gap-1.5">
-								<label htmlFor="custom-model-provider" className="text-xs text-muted-foreground">
-									{t('provider')}
-								</label>
-								<MagicSelect
-									id="custom-model-provider"
-									value={draftProvider}
-									options={providerOptions}
-									onChange={handleDraftProviderChange}
-								/>
-							</div>
-
-							{draftProvider === 'custom' && (
-								<div className="flex flex-col gap-1.5 transition-all duration-200">
-									<label htmlFor="custom-provider-name" className="text-xs text-muted-foreground">
-										{t('customProviderName')}
-									</label>
-									<Input
-										id="custom-provider-name"
-										value={draftProviderName}
-										onChange={(event) => setDraftProviderName(event.target.value)}
-										placeholder={t('customProviderNamePlaceholder')}
-										className="h-9 text-xs"
+						</header>
+						<form
+							onSubmit={(event) => {
+								event.preventDefault()
+								if (canAddCustomModel) handleAddCustomModel()
+							}}
+						>
+							<div className="settings-dialog-fields">
+								<div className="settings-dialog-field">
+									<label htmlFor="custom-model-provider">{t('provider')}</label>
+									<MagicSelect
+										id="custom-model-provider"
+										value={draftProvider}
+										options={providerOptions}
+										onChange={handleDraftProviderChange}
 									/>
 								</div>
-							)}
-
-							<div className="flex flex-col gap-1.5">
-								<label htmlFor="custom-model-url" className="text-xs text-muted-foreground">
-									{t('customModelUrl')}
-								</label>
-								<Input
-									id="custom-model-url"
-									value={draftBaseURL}
-									onChange={(event) => setDraftBaseURL(event.target.value)}
-									className="h-9 font-mono text-xs"
-								/>
-							</div>
-
-							<div className="flex flex-col gap-1.5">
-								<label htmlFor="custom-model-api-key" className="text-xs text-muted-foreground">
-									{t('customModelApiKey')}
-								</label>
-								<div className="flex items-center gap-2">
+								{draftProvider === 'custom' && (
+									<div className="settings-dialog-field">
+										<label htmlFor="custom-provider-name">{t('customProviderName')}</label>
+										<Input
+											id="custom-provider-name"
+											value={draftProviderName}
+											onChange={(event) => setDraftProviderName(event.target.value)}
+											placeholder={t('customProviderNamePlaceholder')}
+											autoComplete="off"
+										/>
+									</div>
+								)}
+								<div className="settings-dialog-field">
+									<label htmlFor="custom-model-url">{t('customModelUrl')}</label>
 									<Input
-										id="custom-model-api-key"
-										type={showDraftApiKey ? 'text' : 'password'}
-										value={draftApiKey}
-										onChange={(event) => setDraftApiKey(event.target.value)}
-										className="h-9 text-xs"
+										id="custom-model-url"
+										value={draftBaseURL}
+										onChange={(event) => setDraftBaseURL(event.target.value)}
+										autoComplete="url"
+										spellCheck={false}
 									/>
-									<Button
-										type="button"
-										variant="outline"
-										size="icon"
-										className="h-9 w-9 shrink-0 cursor-pointer"
-										onClick={() => setShowDraftApiKey(!showDraftApiKey)}
-										aria-label={showDraftApiKey ? t('hideApiKey') : t('showApiKey')}
-									>
-										{showDraftApiKey ? (
-											<EyeOff className="size-3.5" />
-										) : (
-											<Eye className="size-3.5" />
-										)}
-									</Button>
+								</div>
+								<div className="settings-dialog-field">
+									<label htmlFor="custom-model-api-key">{t('customModelApiKey')}</label>
+									<div className="settings-secret-field">
+										<Input
+											id="custom-model-api-key"
+											type={showDraftApiKey ? 'text' : 'password'}
+											value={draftApiKey}
+											onChange={(event) => setDraftApiKey(event.target.value)}
+											autoComplete="off"
+											spellCheck={false}
+										/>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											onClick={() => setShowDraftApiKey(!showDraftApiKey)}
+											aria-label={showDraftApiKey ? t('hideApiKey') : t('showApiKey')}
+											title={showDraftApiKey ? t('hideApiKey') : t('showApiKey')}
+										>
+											{showDraftApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+										</Button>
+									</div>
+								</div>
+								<div className="settings-dialog-field">
+									<label htmlFor="custom-model-name">{t('customModelName')}</label>
+									<Input
+										id="custom-model-name"
+										value={draftModel}
+										onChange={(event) => setDraftModel(event.target.value)}
+										placeholder={t('customModelNamePlaceholder')}
+										autoComplete="off"
+										spellCheck={false}
+									/>
 								</div>
 							</div>
-
-							<div className="flex flex-col gap-1.5">
-								<label htmlFor="custom-model-name" className="text-xs text-muted-foreground">
-									{t('customModelName')}
-								</label>
-								<Input
-									id="custom-model-name"
-									value={draftModel}
-									onChange={(event) => setDraftModel(event.target.value)}
-									placeholder={t('customModelNamePlaceholder')}
-									className="h-9 text-xs"
-								/>
-							</div>
-						</div>
-
-						<div className="flex justify-end gap-2 border-t p-4">
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								onClick={closeModelDialog}
-								className="cursor-pointer"
-							>
-								{t('cancel')}
-							</Button>
-							<Button
-								type="button"
-								size="sm"
-								onClick={handleAddCustomModel}
-								disabled={!canAddCustomModel}
-								className="cursor-pointer"
-							>
-								<Plus className="size-3.5" />
-								{t('add')}
-							</Button>
-						</div>
+							<footer className="settings-dialog-footer">
+								<Button type="button" variant="outline" onClick={closeModelDialog}>
+									{t('cancel')}
+								</Button>
+								<Button type="submit" disabled={!canAddCustomModel}>
+									<Plus className="size-4" />
+									{t('add')}
+								</Button>
+							</footer>
+						</form>
 					</div>
 				</div>
 			)}
+		</div>
+	)
+}
 
-			{onClose && <div className="pb-4" />}
+function SettingRow({
+	label,
+	htmlFor,
+	description,
+	compact,
+	children,
+}: {
+	label: string
+	htmlFor: string
+	description?: string
+	compact?: boolean
+	children: ReactNode
+}) {
+	return (
+		<div className={cn('settings-field-row', compact && 'settings-field-row--compact')}>
+			<div className="settings-field-copy">
+				<label htmlFor={htmlFor}>{label}</label>
+				{description && <p>{description}</p>}
+			</div>
+			<div className="settings-field-control">{children}</div>
 		</div>
 	)
 }
@@ -864,34 +877,20 @@ function SettingsSection({
 	id,
 	title,
 	description,
-	mode,
 	children,
 }: {
 	id: SettingsSectionId
 	title: string
 	description: string
-	mode: 'panel' | 'page'
 	children: ReactNode
 }) {
-	const isPage = mode === 'page'
-
 	return (
-		<section
-			id={id}
-			className={cn(
-				'scroll-mt-28',
-				isPage
-					? 'grid gap-6 border-b border-border/70 py-10 first:pt-0 last:border-b-0 last:pb-8 lg:grid-cols-[minmax(150px,200px)_minmax(0,1fr)] lg:gap-10'
-					: 'flex flex-col gap-3',
-			)}
-		>
-			{isPage && (
-				<div className="grid content-start gap-2">
-					<h2 className="text-lg font-semibold">{title}</h2>
-					<p className="text-sm leading-6 text-muted-foreground">{description}</p>
-				</div>
-			)}
-			{isPage ? <div className="min-w-0">{children}</div> : children}
+		<section id={id} className="settings-section" aria-labelledby={`${id}-title`}>
+			<header className="settings-section-heading">
+				<h2 id={`${id}-title`}>{title}</h2>
+				<p>{description}</p>
+			</header>
+			<div className="settings-section-body">{children}</div>
 		</section>
 	)
 }

@@ -9,6 +9,7 @@ import { installLlmFetchLogging } from '@/lib/loggingFetch'
 import App from './App'
 
 import '@/assets/index.css'
+import './Sidepanel.css'
 
 // Install logging before anything else
 configureLogger({ context: 'sidepanel', sink: 'message' })
@@ -16,6 +17,7 @@ installLlmFetchLogging()
 
 // Force light mode
 document.documentElement.classList.remove('dark')
+document.documentElement.classList.add('wx-sidepanel')
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
 	<React.StrictMode>
@@ -24,5 +26,5 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 				<App />
 			</I18nProvider>
 		</ErrorBoundary>
-	</React.StrictMode>
+	</React.StrictMode>,
 )

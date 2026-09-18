@@ -27,7 +27,7 @@ describe('updateChannel', () => {
 })
 
 describe('buildControlWindowOptions', () => {
-	it('uses the redesigned borderless app window size and macOS title controls', () => {
+	it('uses a resizable macOS glass window with native controls inside the navigation rail', () => {
 		const options = buildControlWindowOptions({
 			platform: 'darwin',
 			iconPath: '/icon.png',
@@ -45,15 +45,25 @@ describe('buildControlWindowOptions', () => {
 			frame: true,
 			autoHideMenuBar: true,
 			titleBarStyle: 'hiddenInset',
-			trafficLightPosition: { x: 18, y: 18 },
+			trafficLightPosition: { x: 10, y: 20 },
+			backgroundColor: '#00000000',
+			vibrancy: 'under-window',
+			visualEffectState: 'active',
+			webPreferences: {
+				preload: '/preload.js',
+				contextIsolation: true,
+				nodeIntegration: false,
+				sandbox: true,
+			},
 		})
+		expect(options.transparent).toBeUndefined()
 		expect(options.titleBarOverlay).toBeUndefined()
 		expect(options.icon).toBe('/icon.png')
 	})
 
-	it('uses title bar overlay safe area on Windows', () => {
+	it.each(['win32', 'linux'] as const)('keeps the opaque frameless window on %s', (platform) => {
 		const options = buildControlWindowOptions({
-			platform: 'win32',
+			platform,
 			iconPath: '/icon.png',
 			preloadPath: '/preload.js',
 		})
@@ -62,8 +72,19 @@ describe('buildControlWindowOptions', () => {
 		expect(options.frame).toBe(false)
 		expect(options.autoHideMenuBar).toBe(true)
 		expect(options.titleBarOverlay).toBeUndefined()
+		expect(options.trafficLightPosition).toBeUndefined()
+		expect(options.backgroundColor).toBeUndefined()
+		expect(options.vibrancy).toBeUndefined()
+		expect(options.visualEffectState).toBeUndefined()
+		expect(options.transparent).toBeUndefined()
 		expect(options.title).toBe('问学')
 		expect(options.icon).toBe('/icon.png')
+		expect(options.webPreferences).toEqual({
+			preload: '/preload.js',
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+		})
 	})
 
 	it('lets packaged apps use the bundle or executable icon', () => {

@@ -1,8 +1,10 @@
+import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { Button } from '@/components/ui/button'
 import { useI18n } from '@/lib/i18n'
-import type { QuickLink } from '@/lib/quickLinks'
+import { normalizeUrl, type QuickLink } from '@/lib/quickLinks'
 
 interface Props {
 	initial?: QuickLink
@@ -15,99 +17,100 @@ export function QuickLinkEditor({ initial, onSubmit, onClose }: Props) {
 	const [title, setTitle] = useState(initial?.title ?? '')
 	const [url, setUrl] = useState(initial?.url ?? '')
 	const [icon, setIcon] = useState(initial?.icon ?? '')
-	const [closing, setClosing] = useState(false)
-	const closeTimer = useRef<number | null>(null)
-
-	const submit = () => {
-		if (!title.trim() || !url.trim()) return
-		onSubmit({ title, url, icon })
-	}
-
-	const requestClose = () => {
-		if (closing) return
-		setClosing(true)
-		closeTimer.current = window.setTimeout(() => onClose(), 280)
-	}
+	const [urlTouched, setUrlTouched] = useState(false)
+	const dialogRef = useRef<HTMLDialogElement>(null)
+	const titleRef = useRef<HTMLInputElement>(null)
+	const validUrl = normalizeUrl(url) !== null
+	const canSave = Boolean(title.trim()) && validUrl
 
 	useEffect(() => {
-		return () => {
-			if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
-		}
+		const dialog = dialogRef.current
+		dialog?.showModal()
+		titleRef.current?.focus()
+		return () => dialog?.close()
 	}, [])
 
-	useEffect(() => {
-		const onKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') requestClose()
-		}
-		window.addEventListener('keydown', onKey)
-		return () => window.removeEventListener('keydown', onKey)
-	}, [onClose])
+	const close = () => {
+		dialogRef.current?.close()
+		onClose()
+	}
 
 	return createPortal(
-		<div
-			className={`wx-editor-overlay fixed inset-0 z-50 flex items-center justify-center ${closing ? 'wx-editor-overlay--closing' : ''}`}
-			onClick={requestClose}
+		<dialog
+			ref={dialogRef}
+			className="newtab-editor"
+			aria-labelledby="newtab-editor-title"
+			onCancel={(event) => {
+				event.preventDefault()
+				close()
+			}}
+			onClick={(event) => {
+				if (event.target === event.currentTarget) close()
+			}}
 		>
-			<div
-				className={`wx-editor-panel w-80 max-w-[90vw] rounded-xl border bg-card p-4 shadow-2xl ${closing ? 'wx-editor-panel--closing' : ''}`}
-				onClick={(e) => e.stopPropagation()}
-				role="dialog"
-				aria-modal="true"
-				aria-label={initial ? t('ntEditLink') : t('ntAddLink')}
+			<form
+				onSubmit={(event) => {
+					event.preventDefault()
+					if (!canSave) return
+					dialogRef.current?.close()
+					onSubmit({ title, url, icon })
+				}}
 			>
-				<p className="mb-3 text-sm font-semibold">
-					{initial ? t('ntEditLink') : t('ntAddLink')}
-				</p>
-				<form
-					onSubmit={(e) => {
-						e.preventDefault()
-						submit()
-					}}
-				>
-					<label className="block space-y-1">
-						<span className="text-xs text-muted-foreground">{t('ntLinkTitle')}</span>
-						<input
-							autoFocus
-							value={title}
-							onChange={(e) => setTitle(e.target.value)}
-							className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						/>
-					</label>
-					<label className="mt-3 block space-y-1">
-						<span className="text-xs text-muted-foreground">{t('ntLinkUrl')}</span>
-						<input
-							value={url}
-							onChange={(e) => setUrl(e.target.value)}
-							placeholder="example.com"
-							className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						/>
-					</label>
-					<label className="mt-3 block space-y-1">
-						<span className="text-xs text-muted-foreground">{t('ntLinkIcon')}</span>
-						<input
-							value={icon}
-							onChange={(e) => setIcon(e.target.value)}
-							className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						/>
-					</label>
-					<div className="mt-4 flex justify-end gap-2">
-						<button
-							type="button"
-							onClick={requestClose}
-							className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent cursor-pointer"
-						>
-							{t('ntCancel')}
-						</button>
-						<button
-							type="submit"
-							className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 cursor-pointer"
-						>
-							{t('ntSave')}
-						</button>
-					</div>
-				</form>
-			</div>
-		</div>,
+				<header>
+					<h2 id="newtab-editor-title">{initial ? t('ntEditLink') : t('ntAddLink')}</h2>
+					<button
+						type="button"
+						onClick={close}
+						className="newtab-icon-button"
+						aria-label={t('ntCancel')}
+						title={t('ntCancel')}
+					>
+						<X className="size-4" />
+					</button>
+				</header>
+				<label>
+					<span>{t('ntLinkTitle')}</span>
+					<input
+						ref={titleRef}
+						autoFocus
+						required
+						maxLength={40}
+						value={title}
+						onChange={(event) => setTitle(event.target.value)}
+					/>
+				</label>
+				<label>
+					<span>{t('ntLinkUrl')}</span>
+					<input
+						required
+						inputMode="url"
+						value={url}
+						onChange={(event) => setUrl(event.target.value)}
+						onBlur={() => setUrlTouched(true)}
+						placeholder="example.com"
+						aria-invalid={urlTouched && !validUrl}
+						aria-describedby={urlTouched && !validUrl ? 'newtab-url-error' : undefined}
+					/>
+					{urlTouched && !validUrl && (
+						<span className="newtab-field-error" id="newtab-url-error">
+							{t('ntInvalidUrl')}
+						</span>
+					)}
+				</label>
+				<label>
+					<span>{t('ntLinkIcon')}</span>
+					<input value={icon} onChange={(event) => setIcon(event.target.value)} />
+				</label>
+				<footer>
+					<Button type="button" variant="outline" onClick={close}>
+						{t('ntCancel')}
+					</Button>
+					<Button type="submit" disabled={!canSave}>
+						{t('ntSave')}
+					</Button>
+				</footer>
+			</form>
+		</dialog>,
 		document.body,
 	)
 }
