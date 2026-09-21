@@ -3,12 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 export const websiteSloganSrc = '/assets/wenxue-slogan.png'
 
-export type SiteNavbarLinkKind = 'docs' | 'download' | 'github'
+export type SiteNavbarLinkKind = 'docs' | 'privacy' | 'download' | 'github'
 export type SiteNavbarPlacement = 'left' | 'right'
 
 export interface SiteNavbarCopy {
 	brandAlt: string
 	docs: string
+	privacy: string
 	download: string
 	github: string
 }
@@ -24,10 +25,7 @@ export interface SiteNavbarLink {
 interface SiteNavbarProps {
 	copy: SiteNavbarCopy
 	githubUrl: string
-	isDocsActive?: boolean
-	onDocs: () => void
-	onDownload: () => void
-	onHome: () => void
+	activePage: 'home' | 'docs' | 'privacy'
 }
 
 export function buildSiteNavbarLinks(copy: SiteNavbarCopy, githubUrl: string): SiteNavbarLink[] {
@@ -35,6 +33,11 @@ export function buildSiteNavbarLinks(copy: SiteNavbarCopy, githubUrl: string): S
 		{
 			kind: 'docs',
 			label: copy.docs,
+			placement: 'left',
+		},
+		{
+			kind: 'privacy',
+			label: copy.privacy,
 			placement: 'left',
 		},
 		{
@@ -52,22 +55,20 @@ export function buildSiteNavbarLinks(copy: SiteNavbarCopy, githubUrl: string): S
 	]
 }
 
-export default function SiteNavbar({
-	copy,
-	githubUrl,
-	isDocsActive = false,
-	onDocs,
-	onDownload,
-	onHome,
-}: SiteNavbarProps) {
+export default function SiteNavbar({ copy, githubUrl, activePage }: SiteNavbarProps) {
+	const isDocsActive = activePage === 'docs'
+	const isPrivacyActive = activePage === 'privacy'
 	const links = buildSiteNavbarLinks(copy, githubUrl)
 	const docsLink = links.find((link) => link.kind === 'docs')
+	const privacyLink = links.find((link) => link.kind === 'privacy')
 	const downloadLink = links.find((link) => link.kind === 'download')
 	const githubLink = links.find((link) => link.kind === 'github')
 	const [isScrolled, setIsScrolled] = useState(false)
 	const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
 	const linksRef = useRef<HTMLDivElement | null>(null)
 	const docsButtonRef = useRef<HTMLButtonElement | null>(null)
+	const privacyButtonRef = useRef<HTMLButtonElement | null>(null)
+	const menuButtonRef = useRef<HTMLButtonElement | null>(null)
 	const highlightRef = useRef<HTMLSpanElement | null>(null)
 
 	const hideHighlight = useCallback(() => {
@@ -102,8 +103,13 @@ export default function SiteNavbar({
 			return
 		}
 
+		if (isPrivacyActive && privacyButtonRef.current) {
+			showHighlight(privacyButtonRef.current)
+			return
+		}
+
 		hideHighlight()
-	}, [hideHighlight, isDocsActive, showHighlight])
+	}, [hideHighlight, isDocsActive, isPrivacyActive, showHighlight])
 
 	useEffect(() => {
 		const handleScroll = () => setIsScrolled(window.scrollY > 50)
@@ -133,22 +139,49 @@ export default function SiteNavbar({
 
 	const handleDocs = () => {
 		setIsMobileMenuOpen(false)
-		onDocs()
+		window.location.hash = 'docs/overview'
+	}
+
+	const handlePrivacy = () => {
+		setIsMobileMenuOpen(false)
+		window.location.hash = 'privacy/privacy-policy'
+	}
+
+	const scrollBehavior = () =>
+		window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'
+
+	const handleHome = () => {
+		setIsMobileMenuOpen(false)
+		if (!window.location.hash || window.location.hash === '#') {
+			window.scrollTo({ top: 0, behavior: scrollBehavior() })
+		} else {
+			window.location.hash = ''
+		}
 	}
 
 	const handleDownload = () => {
 		setIsMobileMenuOpen(false)
-		onDownload()
+		if (window.location.hash === '#download') {
+			document.getElementById('download')?.scrollIntoView({ behavior: scrollBehavior() })
+		} else {
+			window.location.hash = 'download'
+		}
 	}
 
 	return (
 		<header
 			className={`site-navbar ${isScrolled ? 'site-navbar-scrolled' : ''}`}
 			aria-label="WenXue"
+			onKeyDown={(event) => {
+				if (event.key === 'Escape' && isMobileMenuOpen) {
+					setIsMobileMenuOpen(false)
+					menuButtonRef.current?.focus()
+				}
+			}}
 		>
 			<div className="site-navbar-inner">
 				<div className="site-navbar-left">
-					<button className="site-navbar-logo" onClick={onHome} type="button">
+					<button className="site-navbar-logo" onClick={handleHome} type="button">
 						<img src={websiteSloganSrc} alt={copy.brandAlt} />
 					</button>
 					<span className="site-navbar-divider" aria-hidden="true">
@@ -159,6 +192,7 @@ export default function SiteNavbar({
 							<span className="site-navbar-link-highlight" ref={highlightRef} aria-hidden="true" />
 							<button
 								className={`site-navbar-link ${isDocsActive ? 'site-navbar-link-active' : ''}`}
+								aria-current={isDocsActive ? 'page' : undefined}
 								onBlur={resetHighlight}
 								onClick={handleDocs}
 								onFocus={(event) => showHighlight(event.currentTarget)}
@@ -167,6 +201,18 @@ export default function SiteNavbar({
 								type="button"
 							>
 								{docsLink?.label ?? copy.docs}
+							</button>
+							<button
+								className={`site-navbar-link ${isPrivacyActive ? 'site-navbar-link-active' : ''}`}
+								aria-current={isPrivacyActive ? 'page' : undefined}
+								onBlur={resetHighlight}
+								onClick={handlePrivacy}
+								onFocus={(event) => showHighlight(event.currentTarget)}
+								onMouseEnter={(event) => showHighlight(event.currentTarget)}
+								ref={privacyButtonRef}
+								type="button"
+							>
+								{privacyLink?.label ?? copy.privacy}
 							</button>
 						</div>
 					</nav>
@@ -191,6 +237,7 @@ export default function SiteNavbar({
 						<span>{githubLink?.label ?? copy.github}</span>
 					</a>
 					<button
+						ref={menuButtonRef}
 						aria-controls="site-navbar-mobile-menu"
 						aria-expanded={isMobileMenuOpen}
 						aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
@@ -207,11 +254,25 @@ export default function SiteNavbar({
 
 				<div
 					aria-hidden={!isMobileMenuOpen}
+					inert={!isMobileMenuOpen}
 					className={`site-navbar-mobile-menu ${isMobileMenuOpen ? 'site-navbar-mobile-menu-open' : ''}`}
 					id="site-navbar-mobile-menu"
 				>
-					<button className="site-navbar-mobile-link" onClick={handleDocs} type="button">
+					<button
+						className="site-navbar-mobile-link"
+						aria-current={isDocsActive ? 'page' : undefined}
+						onClick={handleDocs}
+						type="button"
+					>
 						{docsLink?.label ?? copy.docs}
+					</button>
+					<button
+						className="site-navbar-mobile-link"
+						aria-current={isPrivacyActive ? 'page' : undefined}
+						onClick={handlePrivacy}
+						type="button"
+					>
+						{privacyLink?.label ?? copy.privacy}
 					</button>
 					<button className="site-navbar-mobile-link" onClick={handleDownload} type="button">
 						{downloadLink?.label ?? copy.download}

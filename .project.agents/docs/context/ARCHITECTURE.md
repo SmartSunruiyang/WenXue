@@ -536,12 +536,12 @@ fork 应用层（apps/extension）：
 
 ```
 ## 模块名：WebsiteSite
-- 职责：问学对外官网首页与文档页体验；首屏 DotField 品牌背景、VariableProximity 主标题 hover、React Bits 官网 `ln-navbar` 风格固定导航（默认透明任务栏，滚动后收束成悬浮胶囊；左侧透明 slogan 无底图 + Docs，右侧下载 + GitHub，无中英切换入口）、浏览器 hero 演示、下载 CTA 与三栏文档站（hash 子页 / 左侧固定大目录 / 中间 README 式正文 / 右侧固定章节目录）
+- 职责：问学对外官网首页、文档与隐私页面体验；白色底色的 DotField 首页、VariableProximity 主标题交互与 GSAP 入场、原 TiltHover 按钮和视频 / 教学步骤动效、原固定导航（默认透明，滚动后收束为悬浮胶囊；品牌 + 文档 + 隐私，右侧下载 + GitHub）、真实浏览器视频演示、下载 CTA；文档提供 hash 子页、站内内容搜索、分组导航、页内目录与前后篇链接；隐私页提供隐私协议 / 用户须知切换与章节锚点。首页与导航保留 UIUX §12 用户明确要求的原设计例外，文档与隐私沿用中性阅读视觉
 - 不负责：不启动浏览器；不注入插件；不存储 API Key；不调用 LLM；不读取插件/桌面本地数据
 - 输入：透明品牌资产、静态文案、构建期环境变量或静态下载链接（后续 CloudBase 托管时接入）
 - 输出：静态 HTML/CSS/JS 站点（CloudBase 静态托管目标）
 - 关键类型/接口：无跨运行时接口；React + motion 组件仅持有本页交互状态
-- 持有状态：仅浏览器内瞬态 UI 状态（演示步骤、演示任务选项、语言与页面视图）
+- 持有状态：仅浏览器内瞬态 UI 状态（页面与章节、文档搜索、移动导航展开、演示步骤与演示任务选项）
 ```
 
 ### 2.6 一方共享客户端操作域（packages/client-operations）
@@ -1029,9 +1029,12 @@ WenXue/
 	│   │   ├── server.mjs               # 极小静态文件服务器，SPA fallback 到 index.html
 	│   │   ├── src/
 	│   │   └── public/
-	│   └── website/                     # 官网域：WebsiteSite（DotField 首页、浏览器 hero、下载 CTA、三栏文档页）
+	│   └── website/                     # 官网域：WebsiteSite（纯白首页、视频演示、文档、隐私与用户须知）
 │       ├── src/
 │       │   ├── App.tsx
+│       │   ├── DocsPage.tsx / docsContent.ts / DocsPage.css
+│       │   ├── PrivacyPage.tsx / policyContent.ts / PrivacyPage.css
+│       │   ├── siteRoute.ts
 │       │   ├── DotField.tsx
 │       │   ├── SiteNavbar.tsx
 │       │   └── styles.css
