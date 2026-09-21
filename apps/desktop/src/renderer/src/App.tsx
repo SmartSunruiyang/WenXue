@@ -914,7 +914,9 @@ export default function App() {
 	}
 
 	return (
-		<main className={`app-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
+		<main
+			className={`app-shell ${shellInfo.platform === 'darwin' ? 'app-shell--macos' : ''} ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}
+		>
 			<aside
 				className={`sidebar drag-region ${shellInfo.hasSystemTrafficLights ? 'sidebar--traffic' : ''}`}
 				aria-label="启动器导航"

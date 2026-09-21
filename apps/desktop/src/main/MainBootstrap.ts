@@ -87,6 +87,9 @@ export async function startMainBootstrap(): Promise<void> {
 		currentWindow.focus()
 	})
 	await electron.app.whenReady()
+	if (process.platform === 'darwin') {
+		electron.nativeTheme.themeSource = 'light'
+	}
 
 	const paths = new AppPaths(electron.app.getPath('userData'))
 	await paths.ensure()
@@ -326,8 +329,15 @@ export function buildControlWindowOptions(input: {
 		maximizable: true,
 		frame: input.platform === 'darwin',
 		autoHideMenuBar: true,
-		trafficLightPosition: input.platform === 'darwin' ? { x: 18, y: 18 } : undefined,
 		titleBarStyle: input.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+		...(input.platform === 'darwin'
+			? {
+					trafficLightPosition: { x: 22, y: 20 },
+					backgroundColor: '#00000000',
+					vibrancy: 'sidebar',
+					visualEffectState: 'followWindow',
+				}
+			: {}),
 		...(input.iconPath ? { icon: input.iconPath } : {}),
 		webPreferences: {
 			preload: input.preloadPath,
