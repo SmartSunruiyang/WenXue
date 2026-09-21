@@ -267,6 +267,25 @@ extraResources:
   - 2026-07-17 清理与切换：隔离静态托管探针路由与本轮上传的 `admin/`、`__admin_probe/` 文件已删除；正式七条后台路由随后全部切换到 Gateway。
   - 2026-07-18 验收：Gateway 030 与 AdminApi 012 均为 `NORMAL` 且承接 100% 流量；健康与 update policy 返回 200，三类未授权边界返回 401，CORS 预检为 204/`*`，`/admin` 及其实际 JS/CSS 均返回 200。
 
+#### 自定义域名（2026-09-18）
+
+- 官网入口：`https://askwenxue.com/`；后台入口：`https://askwenxue.com/admin/`。
+- 阿里云 DNS：根域名 `@` 使用 CNAME 指向
+  `askwenxue.com.tcbaccess.tencentcloudbase.com`，以 CloudBase HTTP 网关当前返回的
+  `Cname` 为准，不使用默认测试域名或固定 IP。此次 DNS 记录由用户自行配置。
+- CloudBase 环境保持 `wenxue-d8gz76tacc3659f05`，域名接入为 `DIRECT`，复用已绑定的
+  SSL 证书，协议为 `HTTP_TO_HTTPS`；HTTP 请求返回 307 并保留请求路径。
+- 自定义域名下共 14 条路由：`/` 指向 `STATIC_STORE/staticstore`，关闭路径透传；
+  `/admin`、`/admin/`、`/admin/assets` 及默认域名已有的 10 条 `/api/admin/v1/`
+  管理路由指向 `CBR/wenxue-llm-gateway`，开启完整路径透传。网关按最长前缀匹配，
+  `/admin/assets` 覆盖其下的 JS/CSS 文件，新路由不使用 `*` 路径通配符。
+- 安全域名中的 `askwenxue.com` 为 `ENABLE`。管理 API 继续由现有服务验证 bearer
+  和管理员角色；不改变账户、数据库权限或默认域名路由。
+- 验证：公网官网、`/admin`、`/admin/` 和两站实际引用的 JS/CSS 返回 200；真实浏览器
+  正常显示官网及后台登录页；无 bearer 的 `/api/admin/v1/me` 与 `/api/admin/v1/users`
+  返回 401。未使用管理员凭据验证登录后的业务操作。具体证据及回滚范围见
+  `../../log/2026-09-18-restore-askwenxue-domain.md`。
+
 ### 7.3 应用内消息与版本分发（M4.7 / M5.1）
 
 - **一方协议**：`@wenxue/client-operations` 是 desktop、admin、admin-api、llm-gateway 共用的 wire
