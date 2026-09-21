@@ -11,12 +11,19 @@ const ALLOWED_CHAT_MODELS = new Set(['qwen3.7-max', 'qwen3.7-plus'])
 const BROWSER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 const ACTIVATION_TIMEOUT_MS = 10_000
 const TOKEN_USAGE_COLLECTION = 'token_usage'
+const TOKEN_PRICING_VERSION = 'qwen3.7-list-2026-09-22'
+const COST_UNITS_PER_CNY = 10_000_000
+const PLUS_STANDARD_INPUT_LIMIT = 256_000
+const PLUS_STANDARD_PRICES = { input: 2, output: 8, cached: 0.4, creation: 2.5, explicit: 0.2 }
+const PLUS_LONG_INPUT_PRICES = { input: 6, output: 24, cached: 1.2, creation: 7.5, explicit: 0.6 }
+const MAX_PRICES = { input: 12, output: 36, cached: 2.4, creation: 15, explicit: 1.2 }
 
-/** @typedef {{ inputTokens: number, outputTokens: number, totalTokens: number }} TokenUsage */
+/** @typedef {'implicit' | 'explicit'} CacheMode */
+/** @typedef {{ inputTokens: number, outputTokens: number, totalTokens: number, cachedInputTokens?: number, cacheCreationInputTokens?: number }} TokenUsage */
 /** @typedef {{ uid: string }} GatewayUser */
 /** @typedef {(uid: string, timeoutMs: number) => Promise<{ uid: string, active: boolean } | null>} AuthUserLookup */
 /** @typedef {{ [key: string]: unknown }} JsonRecord */
-/** @typedef {{ _id: string, ts: number, uid: string, browserId?: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number, requestId: string, createdAt: string }} CloudUsageRecord */
+/** @typedef {TokenUsage & { _id: string, ts: number, uid: string, browserId?: string, model: string, cacheMode?: CacheMode, estimatedCostCny?: number, pricingVersion?: string, latencyMs: number, requestId: string, createdAt: string }} CloudUsageRecord */
 
 export class GatewayError extends Error {
 	/**
@@ -270,6 +277,7 @@ export function extractUsageFromSseFrame(frame) {
  *   browserId?: string,
  *   model: string,
  *   usage: TokenUsage,
+ *   cacheMode?: CacheMode,
  *   latencyMs: number,
  *   requestId: string,
  *   now?: () => number,
@@ -277,6 +285,8 @@ export function extractUsageFromSseFrame(frame) {
  */
 export function buildUsageRecord(input) {
 	const ts = input.now ? input.now() : Date.now()
+	const cacheMode =
+		input.cacheMode ?? ((input.usage.cacheCreationInputTokens ?? 0) > 0 ? 'explicit' : 'implicit')
 	return {
 		_id: `${input.uid}:${input.requestId}:${ts}`,
 		ts,
@@ -286,10 +296,45 @@ export function buildUsageRecord(input) {
 		inputTokens: input.usage.inputTokens,
 		outputTokens: input.usage.outputTokens,
 		totalTokens: input.usage.totalTokens,
+		cachedInputTokens: input.usage.cachedInputTokens ?? 0,
+		cacheCreationInputTokens: input.usage.cacheCreationInputTokens ?? 0,
+		cacheMode,
+		estimatedCostCny: estimateTokenCostCny(input.model, input.usage, cacheMode),
+		pricingVersion: TOKEN_PRICING_VERSION,
 		latencyMs: input.latencyMs,
 		requestId: input.requestId,
 		createdAt: new Date(ts).toISOString(),
 	}
+}
+
+/**
+ * @param {string} model
+ * @param {TokenUsage} usage
+ * @param {CacheMode} [cacheMode]
+ */
+export function estimateTokenCostCny(model, usage, cacheMode = 'implicit') {
+	const prices =
+		model === 'qwen3.7-plus'
+			? usage.inputTokens <= PLUS_STANDARD_INPUT_LIMIT
+				? PLUS_STANDARD_PRICES
+				: PLUS_LONG_INPUT_PRICES
+			: model === 'qwen3.7-max'
+				? MAX_PRICES
+				: null
+	if (!prices) return 0
+
+	const cachedTokens = usage.cachedInputTokens ?? 0
+	const creationTokens = usage.cacheCreationInputTokens ?? 0
+	const ordinaryTokens = usage.inputTokens - cachedTokens - creationTokens
+	const cachedPrice =
+		cacheMode === 'explicit' || creationTokens > 0 ? prices.explicit : prices.cached
+	// Tenths of CNY per million tokens yield exact integer units of 0.0000001 CNY.
+	const costUnits =
+		ordinaryTokens * Math.round(prices.input * 10) +
+		cachedTokens * Math.round(cachedPrice * 10) +
+		creationTokens * Math.round(prices.creation * 10) +
+		usage.outputTokens * Math.round(prices.output * 10)
+	return costUnits / COST_UNITS_PER_CNY
 }
 
 /**
@@ -607,18 +652,35 @@ export function normalizeUsage(value) {
 		return null
 	}
 	const inputTokens =
-		readNumber(value.prompt_tokens) ??
-		readNumber(value.input_tokens) ??
-		readNumber(value.inputTokens)
+		readTokenCount(value.prompt_tokens) ??
+		readTokenCount(value.input_tokens) ??
+		readTokenCount(value.inputTokens)
 	const outputTokens =
-		readNumber(value.completion_tokens) ??
-		readNumber(value.output_tokens) ??
-		readNumber(value.outputTokens)
-	const totalTokens = readNumber(value.total_tokens) ?? readNumber(value.totalTokens)
+		readTokenCount(value.completion_tokens) ??
+		readTokenCount(value.output_tokens) ??
+		readTokenCount(value.outputTokens)
+	const totalTokens = readTokenCount(value.total_tokens) ?? readTokenCount(value.totalTokens)
 	if (inputTokens === null || outputTokens === null || totalTokens === null) {
 		return null
 	}
-	return { inputTokens, outputTokens, totalTokens }
+	const details = value.prompt_tokens_details ?? value.input_tokens_details
+	if (details === undefined || details === null) return { inputTokens, outputTokens, totalTokens }
+	if (!isRecord(details)) return null
+	const cachedInputTokens = readTokenCount(details.cached_tokens ?? 0)
+	const cacheCreationInputTokens = readTokenCount(details.cache_creation_input_tokens ?? 0)
+	if (
+		cachedInputTokens === null ||
+		cacheCreationInputTokens === null ||
+		cachedInputTokens + cacheCreationInputTokens > inputTokens
+	) {
+		return null
+	}
+	return { inputTokens, outputTokens, totalTokens, cachedInputTokens, cacheCreationInputTokens }
+}
+
+/** @param {unknown} value */
+function readTokenCount(value) {
+	return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
 /**
@@ -709,12 +771,29 @@ function buildMeasuredUsageRecord(input) {
 		browserId: input.browserId,
 		model: readString(input.body.model) ?? 'unknown',
 		usage: input.usage,
+		cacheMode: hasExplicitCacheControl(input.body) ? 'explicit' : undefined,
 		latencyMs: finishedAt - input.startedAt,
 		requestId: input.requestId,
 		now: () => finishedAt,
 	})
 	assertUsageRecordSafe(record)
 	return record
+}
+
+/** @param {JsonRecord} body */
+function hasExplicitCacheControl(body) {
+	/** @param {unknown} value */
+	const hasMarker = (value) =>
+		isRecord(value) && isRecord(value.cache_control) && value.cache_control.type === 'ephemeral'
+	return (
+		(Array.isArray(body.messages) &&
+			body.messages.some(
+				(message) =>
+					hasMarker(message) ||
+					(isRecord(message) && Array.isArray(message.content) && message.content.some(hasMarker)),
+			)) ||
+		(Array.isArray(body.tools) && body.tools.some(hasMarker))
+	)
 }
 
 /**
@@ -811,14 +890,6 @@ function cloneJsonObject(value) {
 
 /**
  * @param {unknown} value
- * @returns {number | null}
- */
-function readNumber(value) {
-	return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-/**
- * @param {unknown} value
  * @returns {string | null}
  */
 function readString(value) {
@@ -848,6 +919,10 @@ function normalizeCloudUsageRecord(value) {
 	const requestId = readString(value.requestId) ?? ''
 	const createdAt =
 		readString(value.createdAt) ?? (typeof ts === 'number' ? new Date(ts).toISOString() : '')
+	const cachedInputTokens = readEjsonNumber(value.cachedInputTokens) ?? 0
+	const cacheCreationInputTokens = readEjsonNumber(value.cacheCreationInputTokens) ?? 0
+	const estimatedCostCny = readEjsonNumber(value.estimatedCostCny)
+	const pricingVersion = readString(value.pricingVersion)
 	if (
 		!id ||
 		!uid ||
@@ -868,6 +943,13 @@ function normalizeCloudUsageRecord(value) {
 		inputTokens,
 		outputTokens,
 		totalTokens,
+		...(value.cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+		...(value.cacheCreationInputTokens === undefined ? {} : { cacheCreationInputTokens }),
+		...(value.cacheMode === 'implicit' || value.cacheMode === 'explicit'
+			? { cacheMode: value.cacheMode }
+			: {}),
+		...(estimatedCostCny === null ? {} : { estimatedCostCny }),
+		...(pricingVersion === null ? {} : { pricingVersion }),
 		latencyMs,
 		requestId,
 		createdAt,
@@ -886,7 +968,8 @@ function toTokenUsageRecord(record) {
 		inputTokens: record.inputTokens,
 		outputTokens: record.outputTokens,
 		totalTokens: record.totalTokens,
-		estimatedCostCny: 0,
+		estimatedCostCny:
+			record.estimatedCostCny ?? estimateTokenCostCny(record.model, record, record.cacheMode),
 	}
 }
 
@@ -895,6 +978,14 @@ function toTokenUsageRecord(record) {
  * @param {keyof ReturnType<typeof toTokenUsageRecord>} key
  */
 function sumTokenRecords(records, key) {
+	if (key === 'estimatedCostCny') {
+		return (
+			records.reduce(
+				(total, record) => total + Math.round(record.estimatedCostCny * COST_UNITS_PER_CNY),
+				0,
+			) / COST_UNITS_PER_CNY
+		)
+	}
 	return records.reduce((total, record) => {
 		const value = record[key]
 		return typeof value === 'number' ? total + value : total
@@ -920,10 +1011,15 @@ function bucketTokenRecords(records, keyOf) {
 		current.inputTokens += record.inputTokens
 		current.outputTokens += record.outputTokens
 		current.totalTokens += record.totalTokens
-		current.estimatedCostCny = roundCurrency(current.estimatedCostCny + record.estimatedCostCny)
+		current.estimatedCostCny =
+			(Math.round(current.estimatedCostCny * COST_UNITS_PER_CNY) +
+				Math.round(record.estimatedCostCny * COST_UNITS_PER_CNY)) /
+			COST_UNITS_PER_CNY
 		buckets.set(key, current)
 	}
-	return Array.from(buckets.values()).sort((a, b) => b.totalTokens - a.totalTokens)
+	return Array.from(buckets.values())
+		.map((entry) => ({ ...entry, estimatedCostCny: roundCurrency(entry.estimatedCostCny) }))
+		.sort((a, b) => b.totalTokens - a.totalTokens)
 }
 
 /**

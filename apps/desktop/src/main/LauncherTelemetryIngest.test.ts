@@ -28,6 +28,32 @@ afterEach(async () => {
 })
 
 describe('LauncherTelemetryIngest', () => {
+	it.each([
+		{ count: 100, cost: 0.000002, expected: 0.0002 },
+		{ count: 250, cost: 0.0000002, expected: 0.0001 },
+	])('adds small costs before rounding: %j', async ({ count, cost, expected }) => {
+		await ingest.ingest({
+			browserId: 'research',
+			tokenUsage: Array.from({ length: count }, (_, index) => ({
+				id: `small-cost-${index}`,
+				ts: Date.UTC(2026, 8, 22),
+				model: 'qwen3.7-plus',
+				inputTokens: 1,
+				outputTokens: 0,
+				totalTokens: 1,
+				estimatedCostCny: cost,
+			})),
+		})
+
+		const summary = await tokenUsageStore.summary()
+		expect(summary.estimatedCostCny).toBe(expected)
+		for (const buckets of [summary.byBrowser, summary.byModel, summary.daily]) {
+			expect(buckets).toHaveLength(1)
+			expect(buckets[0]).toMatchObject({ totalTokens: count, estimatedCostCny: expected })
+		}
+		expect(summary.recent[0].estimatedCostCny).toBe(cost)
+	})
+
 	it('persists launcher logs and extracts token usage from LLM usage payloads', async () => {
 		const ts = Date.now()
 
