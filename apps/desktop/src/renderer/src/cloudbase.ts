@@ -295,7 +295,6 @@ function recordEmailResendCooldown(email: string, cooldown: EmailResendCooldown)
 
 export function validateLauncherRegistration(nickname: string, password: string): string | null {
 	const name = nickname.trim()
-	if (!name) return strings.auth.emailErrors.nicknameRequired
 	if (
 		Array.from(name).length > NICKNAME_MAX_LENGTH ||
 		Array.from(name).some(
@@ -303,10 +302,10 @@ export function validateLauncherRegistration(nickname: string, password: string)
 		)
 	)
 		return strings.auth.emailErrors.nicknameLength
-	return validatePassword(password)
+	return validateLauncherPassword(password)
 }
 
-function validatePassword(password: string): string | null {
+export function validateLauncherPassword(password: string): string | null {
 	if (!password) return strings.auth.validation.passwordRequired
 	const requirements = getLauncherPasswordRequirements(password)
 	if (!requirements.length) return strings.auth.validation.passwordLength
@@ -378,7 +377,7 @@ export async function sendLauncherPasswordResetCode(
 					expiresAt: flow.tokenExpiresAt,
 					cancel: flow.cancel,
 					async complete(password: string) {
-						const error = validatePassword(password)
+						const error = validateLauncherPassword(password)
 						if (error) throw new Error(error)
 						return runEmailOperation(flow, strings.auth.emailErrors.reset, async () => {
 							assertVerificationToken(flow)
@@ -532,7 +531,9 @@ function createEmailRegistration(
 								email,
 								verification_token: verificationToken,
 								password,
-								name: nickname.trim(),
+								name:
+									nickname.trim() ||
+									`user${String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0')}`,
 							})
 							flow.signUpSucceeded = true
 							assertFlowActive(flow)

@@ -1,6 +1,6 @@
-import { ArrowLeft, Check, Eye, EyeOff, LoaderCircle, Minus, Upload, X } from 'lucide-react'
+import { ArrowLeft, Check, Eye, EyeOff, LoaderCircle, Minus, UserRound, X } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
 	getLauncherEmailResendAt,
 	getLauncherPasswordComparison,
@@ -10,8 +10,10 @@ import {
 	sendLauncherEmailCode,
 	sendLauncherPasswordResetCode,
 	signInLauncher,
+	validateLauncherPassword,
 	validateLauncherRegistration,
 	type LauncherAuthSession,
+	type PasswordCharacterMatch,
 } from './cloudbase'
 import { strings } from './strings'
 
@@ -25,7 +27,7 @@ type PasswordReset = Awaited<ReturnType<ResetChallenge['verify']>>
 type Screen =
 	| { kind: 'email' | 'password' | 'reset-email' }
 	| { kind: 'email-code'; challenge: EmailChallenge }
-	| { kind: 'register'; registration: Registration }
+	| { kind: 'register-password' | 'register-profile'; registration: Registration }
 	| { kind: 'reset-code'; challenge: ResetChallenge }
 	| { kind: 'reset-password'; reset: PasswordReset }
 
@@ -34,15 +36,20 @@ export function EmailAuthScreen({
 	frameless,
 	onAuthenticated,
 	onClearError,
+	onOpenExternal,
 	windowControls,
 }: {
 	error: string | null
 	frameless: boolean
 	onAuthenticated: (session: LauncherAuthSession) => Promise<void>
 	onClearError: () => void
+	onOpenExternal?: (url: string) => void
 	windowControls?: ReactNode
 }) {
 	const id = useId()
+	const [introVisible, setIntroVisible] = useState(
+		() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+	)
 	const [screen, setScreen] = useState<Screen>({ kind: 'email' })
 	const [email, setEmail] = useState('')
 	const [code, setCode] = useState('')
@@ -64,22 +71,22 @@ export function EmailAuthScreen({
 	const copy = strings.auth.email
 	const isCode = screen.kind === 'email-code' || screen.kind === 'reset-code'
 	const isEmailEntry = screen.kind === 'email' || screen.kind === 'reset-email'
-	const newPassword = screen.kind === 'register' || screen.kind === 'reset-password'
-	const registrationState = screen.kind === 'register' ? screen.registration.state : null
+	const isRegistration = screen.kind === 'register-password' || screen.kind === 'register-profile'
+	const newPassword = screen.kind === 'register-password' || screen.kind === 'reset-password'
+	const registrationState = isRegistration ? screen.registration.state : null
 	const profileSubmitted =
 		registrationState !== null &&
 		registrationState !== 'pending' &&
 		registrationState !== 'needs-verification'
-	const expiresAt =
-		screen.kind === 'register'
-			? registrationState === 'pending'
-				? screen.registration.expiresAt
+	const expiresAt = isRegistration
+		? registrationState === 'pending'
+			? screen.registration.expiresAt
+			: null
+		: screen.kind === 'reset-password'
+			? screen.reset.expiresAt
+			: isCode
+				? screen.challenge.expiresAt
 				: null
-			: screen.kind === 'reset-password'
-				? screen.reset.expiresAt
-				: isCode
-					? screen.challenge.expiresAt
-					: null
 	const expired = expiresAt !== null && now >= expiresAt
 	const resendAt = Math.max(getLauncherEmailResendAt(email), isCode ? screen.challenge.resendAt : 0)
 	const resendSeconds = Math.max(0, Math.ceil((resendAt - now) / 1000))
@@ -117,8 +124,23 @@ export function EmailAuthScreen({
 	}
 
 	useEffect(() => {
+		if (!introVisible) return
+		const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
+		const finishIntro = () => setIntroVisible(false)
+		const handleMotionPreference = () => {
+			if (motionPreference.matches) finishIntro()
+		}
+		const timeoutId = window.setTimeout(finishIntro, 2100)
+		motionPreference.addEventListener('change', handleMotionPreference)
+		return () => {
+			window.clearTimeout(timeoutId)
+			motionPreference.removeEventListener('change', handleMotionPreference)
+		}
+	}, [introVisible])
+
+	useEffect(() => {
 		headingRef.current?.focus()
-	}, [screen.kind])
+	}, [screen.kind, introVisible])
 
 	const navigate = (kind: 'email' | 'password' | 'reset-email', nextNotice?: string) => {
 		clearResources()
@@ -159,13 +181,10 @@ export function EmailAuthScreen({
 				if (failureDestination) {
 					navigate(failureDestination)
 					setLocalError(errorMessage)
-				} else if (
-					screen.kind === 'register' &&
-					screen.registration.state === 'needs-verification'
-				) {
+				} else if (isRegistration && screen.registration.state === 'needs-verification') {
 					navigate('email')
 					setLocalError(readCloudBaseErrorMessage(nextError, strings.auth.emailErrors.register))
-				} else if (screen.kind === 'register' && screen.registration.state === 'needs-login') {
+				} else if (isRegistration && screen.registration.state === 'needs-login') {
 					navigate('password', strings.auth.emailErrors.activationReauthenticate)
 				} else {
 					setLocalError(errorMessage)
@@ -210,12 +229,12 @@ export function EmailAuthScreen({
 	const submit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault()
 		if (busyRef.current || expired) return
-		if (screen.kind === 'register' && screen.registration.state === 'needs-verification') {
+		if (isRegistration && screen.registration.state === 'needs-verification') {
 			navigate('email')
 			setLocalError(strings.auth.emailErrors.register)
 			return
 		}
-		if (screen.kind === 'register' && screen.registration.state === 'needs-login') {
+		if (isRegistration && screen.registration.state === 'needs-login') {
 			navigate('password', strings.auth.emailErrors.activationReauthenticate)
 			return
 		}
@@ -223,11 +242,11 @@ export function EmailAuthScreen({
 			await sendCode(screen.kind === 'reset-email')
 			return
 		}
-		if (newPassword && !profileSubmitted) {
-			const validation = validateLauncherRegistration(
-				screen.kind === 'register' ? nickname : 'password-reset',
-				password,
-			)
+		if ((newPassword || isRegistration) && !profileSubmitted) {
+			const validation =
+				screen.kind === 'register-profile'
+					? validateLauncherRegistration(nickname, password)
+					: validateLauncherPassword(password)
 			if (validation) {
 				setLocalError(validation)
 				return
@@ -240,6 +259,13 @@ export function EmailAuthScreen({
 				)
 				return
 			}
+		}
+		if (screen.kind === 'register-password') {
+			setLocalError(null)
+			setNotice(null)
+			onClearError()
+			setScreen({ kind: 'register-profile', registration: screen.registration })
+			return
 		}
 		await run(async (isCurrent) => {
 			if (screen.kind === 'password') {
@@ -255,11 +281,11 @@ export function EmailAuthScreen({
 					await onAuthenticated(result.session)
 				} else {
 					resourcesRef.current.add(result.registration)
-					setScreen({ kind: 'register', registration: result.registration })
+					setScreen({ kind: 'register-password', registration: result.registration })
 					setCode('')
 					setNow(Date.now())
 				}
-			} else if (screen.kind === 'register') {
+			} else if (screen.kind === 'register-profile') {
 				const session = await screen.registration.complete({ nickname, password, avatar })
 				if (isCurrent()) await onAuthenticated(session)
 			} else if (screen.kind === 'reset-code') {
@@ -284,34 +310,38 @@ export function EmailAuthScreen({
 			? copy.title
 			: screen.kind === 'password'
 				? copy.passwordTitle
-				: screen.kind === 'register'
-					? copy.registerTitle
-					: screen.kind === 'reset-email'
-						? copy.resetTitle
-						: screen.kind === 'reset-password'
-							? copy.newPasswordTitle
-							: copy.codeTitle
+				: screen.kind === 'register-password'
+					? copy.registerPasswordTitle
+					: screen.kind === 'register-profile'
+						? copy.registerTitle
+						: screen.kind === 'reset-email'
+							? copy.resetTitle
+							: screen.kind === 'reset-password'
+								? copy.newPasswordTitle
+								: copy.codeTitle
 	const submitLabel =
 		screen.kind === 'email'
 			? copy.continueEmail
 			: screen.kind === 'password'
 				? copy.login
-				: screen.kind === 'register'
-					? registrationState === 'confirming-account'
-						? copy.retryAccountConfirmation
-						: copy.completeRegistration
-					: screen.kind === 'reset-email'
-						? copy.sendResetCode
-						: screen.kind === 'reset-password'
-							? copy.resetPassword
-							: copy.verify
+				: screen.kind === 'register-password'
+					? copy.next
+					: screen.kind === 'register-profile'
+						? registrationState === 'confirming-account'
+							? copy.retryAccountConfirmation
+							: copy.completeRegistration
+						: screen.kind === 'reset-email'
+							? copy.sendResetCode
+							: screen.kind === 'reset-password'
+								? copy.resetPassword
+								: copy.verify
 	const shownError = expired ? strings.auth.emailErrors.expired : (localError ?? error)
 	const canSubmit =
 		!busy &&
 		!expired &&
 		(!isEmailEntry || resendSeconds === 0) &&
 		(newPassword
-			? Boolean(password && confirmation && (screen.kind !== 'register' || nickname.trim()))
+			? Boolean(password && confirmation)
 			: isCode
 				? Boolean(code.trim())
 				: screen.kind === 'password'
@@ -322,233 +352,306 @@ export function EmailAuthScreen({
 		<main className={`auth-shell email-auth-shell ${frameless ? 'app-shell--frameless' : ''}`}>
 			<div className="top-drag-zone drag-region" />
 			{windowControls}
-			<section className="email-auth no-drag" aria-labelledby={`${id}-title`}>
-				<header className="email-auth__heading">
-					<h1 id={`${id}-title`} ref={headingRef} tabIndex={-1}>
-						{title}
-					</h1>
-				</header>
-				<div className="email-auth__card">
-					{screen.kind !== 'email' ? (
-						<button
-							className="email-auth__back"
-							disabled={busy}
-							onClick={() => navigate(screen.kind.startsWith('reset') ? 'password' : 'email')}
-							type="button"
-						>
-							<ArrowLeft size={15} aria-hidden />
-							{screen.kind.startsWith('reset') ? copy.backPassword : copy.backEmail}
-						</button>
-					) : null}
-					{screen.kind === 'email' ? (
-						<>
+			{introVisible ? (
+				<div className="auth-intro" aria-hidden="true">
+					<div className="auth-intro__brand">
+						<img className="auth-intro__logo" src="logo.png" alt="" />
+						<div className="auth-intro__slogan">
+							<img src="slogan.png" alt="" />
+						</div>
+					</div>
+				</div>
+			) : (
+				<section
+					key={screen.kind}
+					className={`email-auth no-drag ${screen.kind === 'email' ? 'email-auth--welcome' : 'email-auth--step'}`}
+					aria-labelledby={`${id}-title`}
+				>
+					<header className="email-auth__heading">
+						<h1 id={`${id}-title`} ref={headingRef} tabIndex={-1}>
+							{title}
+						</h1>
+						{isRegistration ? (
+							<ol className="email-auth__steps" aria-label={copy.registrationSteps}>
+								<li
+									aria-current={screen.kind === 'register-password' ? 'step' : undefined}
+									data-complete={screen.kind === 'register-profile'}
+								>
+									<span aria-hidden>
+										{screen.kind === 'register-profile' ? <Check size={12} /> : '1'}
+									</span>
+									{copy.passwordStep}
+								</li>
+								<li aria-current={screen.kind === 'register-profile' ? 'step' : undefined}>
+									<span aria-hidden>2</span>
+									{copy.profileStep}
+								</li>
+							</ol>
+						) : null}
+					</header>
+					<div className="email-auth__card">
+						{screen.kind !== 'email' ? (
 							<button
-								className="email-auth__secondary"
+								className="email-auth__back"
 								disabled={busy}
-								onClick={() => navigate('password')}
+								onClick={() => navigate(screen.kind.startsWith('reset') ? 'password' : 'email')}
 								type="button"
 							>
-								{copy.passwordEntry}
+								<ArrowLeft size={15} aria-hidden />
+								{screen.kind.startsWith('reset') ? copy.backPassword : copy.backEmail}
 							</button>
-							<div className="email-auth__divider">{copy.or}</div>
-						</>
-					) : null}
-					{isCode ? (
-						<p className="email-auth__description">
-							{copy.codeSent}
-							<strong>{email}</strong>
-						</p>
-					) : null}
-					{screen.kind === 'register' ? (
-						<p className="email-auth__description">
-							{registrationState === 'avatar-pending'
-								? copy.avatarPendingDescription
-								: profileSubmitted
-									? copy.accountCreatedDescription
-									: copy.registerDescription}
-							<strong>{email}</strong>
-						</p>
-					) : null}
-					{screen.kind === 'reset-email' ? (
-						<p className="email-auth__description">{copy.resetDescription}</p>
-					) : null}
-					{screen.kind === 'reset-password' ? (
-						<p className="email-auth__description">{email}</p>
-					) : null}
-					<form
-						className="email-auth__form"
-						onSubmit={(event) => void submit(event)}
-						aria-busy={busy}
-					>
-						{!isCode && !newPassword ? (
-							<label className="auth-field" htmlFor={`${id}-email`}>
-								<span className={screen.kind === 'email' ? 'sr-only' : undefined}>
-									{copy.emailLabel}
-								</span>
-								<input
-									id={`${id}-email`}
-									autoComplete="email"
-									autoCapitalize="none"
-									spellCheck={false}
-									type="email"
-									required
-									disabled={busy}
-									placeholder={copy.emailPlaceholder}
-									value={email}
-									onChange={(event) => {
-										setEmail(event.target.value)
-										setNow(Date.now())
-										setLocalError(null)
-										setNotice(null)
-										onClearError()
-									}}
-								/>
-							</label>
 						) : null}
-						{isCode ? (
-							<label className="auth-field" htmlFor={`${id}-code`}>
-								<span>{copy.codeLabel}</span>
-								<input
-									id={`${id}-code`}
-									autoComplete="one-time-code"
-									inputMode="numeric"
-									pattern="[0-9]{6}"
-									maxLength={6}
-									required
-									disabled={busy || expired}
-									placeholder={copy.codePlaceholder}
-									value={code}
-									onChange={(event) => setCode(event.target.value)}
-								/>
-							</label>
-						) : null}
-						{screen.kind === 'register' ? (
+						{screen.kind === 'email' ? (
 							<>
-								<div className="email-auth__avatar-field">
-									<button
-										aria-label={copy.avatarUpload}
-										className="email-auth__avatar"
-										disabled={busy}
-										onClick={() => avatarInputRef.current?.click()}
-										type="button"
-									>
-										{avatarPreview ? (
-											<img alt={copy.avatarPreview} src={avatarPreview} />
-										) : (
-											<Upload aria-hidden size={20} />
-										)}
-									</button>
-									<div>
-										<label className="email-auth__avatar-label" htmlFor={`${id}-avatar`}>
-											{copy.avatarLabel}
-										</label>
-										<p>{copy.avatarHint}</p>
-										{avatar ? (
-											<button
-												className="email-auth__link"
-												disabled={busy}
-												onClick={() => {
-													selectAvatar()
-													if (avatarInputRef.current) avatarInputRef.current.value = ''
-												}}
-												type="button"
-											>
-												{copy.avatarRemove}
-											</button>
-										) : null}
-									</div>
-									<input
-										className="sr-only"
-										id={`${id}-avatar`}
-										ref={avatarInputRef}
-										type="file"
-										accept="image/png,image/jpeg,image/webp"
-										disabled={busy}
-										onChange={(event) => selectAvatar(event.target.files?.[0])}
-									/>
-								</div>
-								<label className="auth-field" htmlFor={`${id}-nickname`}>
-									<span>{copy.nicknameLabel}</span>
-									<input
-										id={`${id}-nickname`}
-										autoComplete="nickname"
-										required
-										disabled={busy || expired || profileSubmitted}
-										maxLength={32}
-										value={nickname}
-										onChange={(event) => setNickname(event.target.value)}
-										placeholder={copy.nicknamePlaceholder}
-									/>
-								</label>
+								<button
+									className="email-auth__secondary"
+									disabled={busy}
+									onClick={() => navigate('password')}
+									type="button"
+								>
+									<UserRound size={18} aria-hidden />
+									{copy.passwordEntry}
+								</button>
+								<div className="email-auth__divider">{copy.or}</div>
 							</>
 						) : null}
-						{screen.kind === 'password' || newPassword ? (
-							<PasswordFields
-								key={screen.kind}
-								id={id}
-								password={password}
-								confirmation={confirmation}
-								setPassword={setPassword}
-								setConfirmation={setConfirmation}
-								creating={newPassword}
-								disabled={busy || expired || profileSubmitted}
-							/>
-						) : null}
-						{screen.kind === 'password' ? (
-							<button
-								className="email-auth__link email-auth__forgot"
-								disabled={busy}
-								onClick={() => navigate('reset-email')}
-								type="button"
-							>
-								{copy.forgotPassword}
-							</button>
-						) : null}
-						{notice ? (
-							<p className="email-auth__notice" role="status">
-								{notice}
-							</p>
-						) : null}
-						{shownError ? (
-							<p className="auth-alert" role="alert">
-								{shownError}
-							</p>
-						) : null}
-						<button className="email-auth__primary" disabled={!canSubmit} type="submit">
-							{busy ? (
-								<>
-									<LoaderCircle size={17} className="spin" aria-hidden />
-									{copy.processing}
-								</>
-							) : isEmailEntry && resendSeconds > 0 ? (
-								copy.resendCountdown(resendSeconds)
-							) : (
-								submitLabel
-							)}
-						</button>
 						{isCode ? (
-							<button
-								className="email-auth__link"
-								disabled={busy || resendSeconds > 0}
-								onClick={() => void sendCode(screen.kind === 'reset-code')}
-								type="button"
-							>
-								{resendSeconds > 0 ? copy.resendCountdown(resendSeconds) : copy.resend}
-							</button>
+							<p className="email-auth__description">
+								{copy.codeSent}
+								<strong>{email}</strong>
+							</p>
 						) : null}
-						{expired && newPassword ? (
-							<button
-								className="email-auth__link"
-								disabled={busy}
-								onClick={() => navigate(screen.kind === 'reset-password' ? 'reset-email' : 'email')}
-								type="button"
-							>
-								{copy.verifyAgain}
-							</button>
+						{isRegistration ? (
+							<p className="email-auth__description">
+								{registrationState === 'avatar-pending'
+									? copy.avatarPendingDescription
+									: profileSubmitted
+										? copy.accountCreatedDescription
+										: screen.kind === 'register-profile'
+											? copy.registerDescription
+											: null}
+								<strong>{email}</strong>
+							</p>
 						) : null}
-					</form>
-				</div>
-			</section>
+						{screen.kind === 'reset-email' ? (
+							<p className="email-auth__description">{copy.resetDescription}</p>
+						) : null}
+						{screen.kind === 'reset-password' ? (
+							<p className="email-auth__description">{email}</p>
+						) : null}
+						<form
+							className="email-auth__form"
+							onSubmit={(event) => void submit(event)}
+							aria-busy={busy}
+						>
+							{isEmailEntry || screen.kind === 'password' ? (
+								<label className="auth-field" htmlFor={`${id}-email`}>
+									<span className={screen.kind === 'email' ? 'sr-only' : undefined}>
+										{copy.emailLabel}
+									</span>
+									<input
+										id={`${id}-email`}
+										autoComplete="email"
+										autoCapitalize="none"
+										spellCheck={false}
+										type="email"
+										required
+										disabled={busy}
+										placeholder={copy.emailPlaceholder}
+										value={email}
+										onChange={(event) => {
+											setEmail(event.target.value)
+											setNow(Date.now())
+											setLocalError(null)
+											setNotice(null)
+											onClearError()
+										}}
+									/>
+								</label>
+							) : null}
+							{isCode ? (
+								<label className="auth-field" htmlFor={`${id}-code`}>
+									<span>{copy.codeLabel}</span>
+									<input
+										id={`${id}-code`}
+										autoComplete="one-time-code"
+										inputMode="numeric"
+										pattern="[0-9]{6}"
+										maxLength={6}
+										required
+										disabled={busy || expired}
+										placeholder={copy.codePlaceholder}
+										value={code}
+										onChange={(event) => setCode(event.target.value)}
+									/>
+								</label>
+							) : null}
+							{screen.kind === 'register-profile' ? (
+								<>
+									<div className="email-auth__avatar-field">
+										<button
+											aria-label={copy.avatarUpload}
+											className="email-auth__avatar"
+											disabled={busy}
+											onClick={() => avatarInputRef.current?.click()}
+											type="button"
+										>
+											{avatarPreview ? (
+												<img alt={copy.avatarPreview} src={avatarPreview} />
+											) : (
+												<UserRound aria-hidden size={28} />
+											)}
+										</button>
+										<div>
+											<label className="email-auth__avatar-label" htmlFor={`${id}-avatar`}>
+												{copy.avatarLabel}
+											</label>
+											<p>{copy.avatarHint}</p>
+											{avatar ? (
+												<button
+													className="email-auth__link"
+													disabled={busy}
+													onClick={() => {
+														selectAvatar()
+														if (avatarInputRef.current) avatarInputRef.current.value = ''
+													}}
+													type="button"
+												>
+													{copy.avatarRemove}
+												</button>
+											) : null}
+										</div>
+										<input
+											className="sr-only"
+											id={`${id}-avatar`}
+											ref={avatarInputRef}
+											type="file"
+											accept="image/png,image/jpeg,image/webp"
+											disabled={busy}
+											onChange={(event) => selectAvatar(event.target.files?.[0])}
+										/>
+									</div>
+									<label className="auth-field" htmlFor={`${id}-nickname`}>
+										<span>{copy.nicknameLabel}</span>
+										<input
+											id={`${id}-nickname`}
+											autoComplete="nickname"
+											disabled={busy || expired || profileSubmitted}
+											maxLength={32}
+											value={nickname}
+											onChange={(event) => setNickname(event.target.value)}
+											placeholder={copy.nicknamePlaceholder}
+											aria-describedby={`${id}-nickname-hint`}
+										/>
+										<span id={`${id}-nickname-hint`} className="auth-field__hint">
+											{copy.nicknameHint}
+										</span>
+									</label>
+								</>
+							) : null}
+							{screen.kind === 'password' || newPassword ? (
+								<PasswordFields
+									key={screen.kind}
+									id={id}
+									password={password}
+									confirmation={confirmation}
+									setPassword={setPassword}
+									setConfirmation={setConfirmation}
+									creating={newPassword}
+									disabled={busy || expired || profileSubmitted}
+								/>
+							) : null}
+							{screen.kind === 'password' ? (
+								<button
+									className="email-auth__link email-auth__forgot"
+									disabled={busy}
+									onClick={() => navigate('reset-email')}
+									type="button"
+								>
+									{copy.forgotPassword}
+								</button>
+							) : null}
+							{notice ? (
+								<p className="email-auth__notice" role="status">
+									{notice}
+								</p>
+							) : null}
+							{shownError ? (
+								<p className="auth-alert" role="alert">
+									{shownError}
+								</p>
+							) : null}
+							<button className="email-auth__primary" disabled={!canSubmit} type="submit">
+								{busy ? (
+									<>
+										<LoaderCircle size={17} className="spin" aria-hidden />
+										{copy.processing}
+									</>
+								) : isEmailEntry && resendSeconds > 0 ? (
+									copy.resendCountdown(resendSeconds)
+								) : (
+									submitLabel
+								)}
+							</button>
+							{screen.kind === 'email' ? (
+								<p className="email-auth__privacy">
+									{copy.privacyBefore}
+									<a
+										href="https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/"
+										target="_blank"
+										rel="noreferrer"
+										onClick={(event) => {
+											if (!onOpenExternal) return
+											event.preventDefault()
+											onOpenExternal(event.currentTarget.href)
+										}}
+									>
+										{copy.privacyLink}
+									</a>
+									{copy.privacyAfter}
+								</p>
+							) : null}
+							{screen.kind === 'register-profile' && !profileSubmitted ? (
+								<button
+									className="email-auth__link"
+									disabled={busy || expired}
+									type="button"
+									onClick={() => {
+										setLocalError(null)
+										onClearError()
+										setScreen({ kind: 'register-password', registration: screen.registration })
+									}}
+								>
+									<ArrowLeft size={15} aria-hidden />
+									{copy.previousStep}
+								</button>
+							) : null}
+							{isCode ? (
+								<button
+									className="email-auth__link"
+									disabled={busy || resendSeconds > 0}
+									onClick={() => void sendCode(screen.kind === 'reset-code')}
+									type="button"
+								>
+									{resendSeconds > 0 ? copy.resendCountdown(resendSeconds) : copy.resend}
+								</button>
+							) : null}
+							{expired && (newPassword || isRegistration) ? (
+								<button
+									className="email-auth__link"
+									disabled={busy}
+									onClick={() =>
+										navigate(screen.kind === 'reset-password' ? 'reset-email' : 'email')
+									}
+									type="button"
+								>
+									{copy.verifyAgain}
+								</button>
+							) : null}
+						</form>
+					</div>
+				</section>
+			)}
 		</main>
 	)
 }
@@ -572,8 +675,13 @@ function PasswordFields({
 }) {
 	const [visible, setVisible] = useState(false)
 	const [confirmationVisible, setConfirmationVisible] = useState(false)
+	const [activeConfirmationIndex, setActiveConfirmationIndex] = useState(-1)
 	const requirements = getLauncherPasswordRequirements(password)
 	const comparison = getLauncherPasswordComparison(password, confirmation)
+	const showPasswordComparison = creating && password.length > 0 && confirmation.length > 0
+	const confirmationHasError = Boolean(
+		confirmation && (!password || comparison.firstMismatchIndex >= 0 || comparison.extraLength),
+	)
 	const confirmationHint = !confirmation
 		? strings.auth.hint.confirmation.idle
 		: !password
@@ -589,28 +697,41 @@ function PasswordFields({
 		<>
 			<div className="auth-field">
 				<label htmlFor={`${id}-password`}>{strings.auth.field.password}</label>
-				<div className="auth-password">
+				<div
+					className={`auth-password ${showPasswordComparison ? 'auth-password--comparing' : ''}`}
+				>
 					<input
 						id={`${id}-password`}
 						aria-describedby={creating ? `${id}-requirements` : undefined}
 						autoComplete={creating ? 'new-password' : 'current-password'}
+						autoCapitalize="none"
+						spellCheck={false}
 						type={visible ? 'text' : 'password'}
 						required
 						disabled={disabled}
 						value={password}
 						onChange={(event) => setPassword(event.target.value)}
 					/>
+					{showPasswordComparison ? (
+						<PasswordComparison
+							password={password}
+							visible={visible}
+							states={comparison.states}
+							activeIndex={activeConfirmationIndex}
+						/>
+					) : null}
 					<button
 						aria-label={
 							visible ? strings.auth.action.hidePassword : strings.auth.action.showPassword
 						}
 						aria-pressed={visible}
+						aria-controls={`${id}-password`}
 						className="auth-password__toggle"
 						disabled={disabled}
 						onClick={() => setVisible((value) => !value)}
 						type="button"
 					>
-						{visible ? <EyeOff size={16} /> : <Eye size={16} />}
+						{visible ? <EyeOff size={16} aria-hidden /> : <Eye size={16} aria-hidden />}
 					</button>
 				</div>
 				{creating ? (
@@ -642,15 +763,22 @@ function PasswordFields({
 						<input
 							id={`${id}-confirmation`}
 							aria-describedby={`${id}-comparison`}
-							aria-invalid={Boolean(
-								confirmation && (comparison.firstMismatchIndex >= 0 || comparison.extraLength),
-							)}
+							aria-invalid={confirmationHasError}
 							autoComplete="new-password"
+							autoCapitalize="none"
+							spellCheck={false}
 							type={confirmationVisible ? 'text' : 'password'}
 							required
 							disabled={disabled}
 							value={confirmation}
-							onChange={(event) => setConfirmation(event.target.value)}
+							onChange={(event) => {
+								const value = event.target.value
+								setConfirmation(value)
+								setActiveConfirmationIndex(
+									Array.from(value.slice(0, event.target.selectionStart ?? value.length)).length -
+										1,
+								)
+							}}
 						/>
 						<button
 							aria-label={
@@ -659,24 +787,76 @@ function PasswordFields({
 									: strings.auth.action.showConfirmPassword
 							}
 							aria-pressed={confirmationVisible}
+							aria-controls={`${id}-confirmation`}
 							className="auth-password__toggle"
 							disabled={disabled}
 							onClick={() => setConfirmationVisible((value) => !value)}
 							type="button"
 						>
-							{confirmationVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+							{confirmationVisible ? (
+								<EyeOff size={16} aria-hidden />
+							) : (
+								<Eye size={16} aria-hidden />
+							)}
 						</button>
 					</div>
 					<p
 						className="auth-field__hint auth-confirmation-hint"
 						id={`${id}-comparison`}
 						aria-live="polite"
-						data-state={!confirmation ? 'idle' : password === confirmation ? 'valid' : 'invalid'}
+						data-state={!confirmation ? 'idle' : confirmationHasError ? 'invalid' : 'valid'}
 					>
 						{confirmationHint}
 					</p>
 				</div>
 			) : null}
 		</>
+	)
+}
+
+function PasswordComparison({
+	password,
+	visible,
+	states,
+	activeIndex,
+}: {
+	password: string
+	visible: boolean
+	states: PasswordCharacterMatch[]
+	activeIndex: number
+}) {
+	const viewportRef = useRef<HTMLDivElement>(null)
+	useLayoutEffect(() => {
+		const viewport = viewportRef.current
+		if (!viewport) return
+		const alignActiveCharacter = () => {
+			const index = Math.max(0, Math.min(activeIndex, viewport.children.length - 1))
+			const character = viewport.children[index] as HTMLElement | undefined
+			if (!character) return
+			const bounds = viewport.getBoundingClientRect()
+			const { left, right } = character.getBoundingClientRect()
+			if (left < bounds.left) viewport.scrollLeft -= Math.ceil(bounds.left - left)
+			else if (right > bounds.right) {
+				viewport.scrollLeft += Math.ceil(right - bounds.right)
+			}
+		}
+		alignActiveCharacter()
+		const observer = new ResizeObserver(alignActiveCharacter)
+		observer.observe(viewport)
+		return () => observer.disconnect()
+	}, [password, visible, activeIndex])
+	return (
+		<div className="auth-password__comparison" aria-hidden="true" ref={viewportRef}>
+			{Array.from(password).map((character, index) => (
+				<span
+					className="auth-password__character"
+					data-state={states[index]}
+					// eslint-disable-next-line @eslint-react/no-array-index-key -- Fixed positions retain cells; state changes replay only that cell's animation.
+					key={`${index}:${states[index]}`}
+				>
+					{visible ? character : '•'}
+				</span>
+			))}
+		</div>
 	)
 }

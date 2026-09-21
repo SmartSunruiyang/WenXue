@@ -893,6 +893,14 @@ export default function App() {
 					onAuthenticated={handleAuthenticated}
 					onClearError={() => setMessage(null)}
 					frameless={shellInfo.frameless}
+					onOpenExternal={(url) => {
+						void window.wenxue.app.openExternal(url).then(
+							(result) => {
+								if (!result.ok) setMessage(result.error ?? strings.auth.email.privacyOpenError)
+							},
+							() => setMessage(strings.auth.email.privacyOpenError),
+						)
+					}}
 					windowControls={
 						<WindowControls
 							onError={setMessage}

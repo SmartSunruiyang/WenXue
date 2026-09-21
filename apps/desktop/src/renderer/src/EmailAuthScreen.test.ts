@@ -41,10 +41,11 @@ const password = 'ValidPass1!'
 let container: HTMLDivElement
 let root: Root
 let onAuthenticated: ReturnType<typeof vi.fn>
+let reducedMotion: MediaQueryList
 
 function button(label: string) {
 	const target = Array.from(container.querySelectorAll('button')).find(
-		(item) => item.textContent === label,
+		(item) => item.textContent === label || item.getAttribute('aria-label') === label,
 	)
 	if (!target) throw new Error(`Missing button: ${label}`)
 	return target
@@ -66,6 +67,28 @@ async function submit() {
 			.querySelector('form')!
 			.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
 	})
+}
+async function selectAvatar() {
+	const avatar = new File(['avatar'], 'avatar.png', { type: 'image/png' })
+	const target = container.querySelector<HTMLInputElement>('input[type="file"]')!
+	await act(async () => {
+		Object.defineProperty(target, 'files', { configurable: true, value: [avatar] })
+		target.dispatchEvent(new Event('change', { bubbles: true }))
+	})
+	return avatar
+}
+async function renderScreen(onOpenExternal?: (url: string) => void) {
+	await act(async () =>
+		root.render(
+			createElement(EmailAuthScreen, {
+				error: null,
+				frameless: false,
+				onAuthenticated,
+				onClearError: vi.fn(),
+				onOpenExternal,
+			}),
+		),
+	)
 }
 function registrationFixture() {
 	const registration = {
@@ -91,48 +114,133 @@ async function verifyEmail() {
 	await input('code', '123456')
 	await submit()
 }
+async function enterProfile() {
+	await input('password', password)
+	await input('confirmation', password)
+	await submit()
+}
 
 beforeEach(async () => {
 	vi.clearAllMocks()
 	auth.resendAt.mockReset().mockReturnValue(0)
+	reducedMotion = Object.assign(new EventTarget(), {
+		matches: true,
+		media: '(prefers-reduced-motion: reduce)',
+		onchange: null,
+		addListener: vi.fn(),
+		removeListener: vi.fn(),
+	}) as MediaQueryList
+	vi.stubGlobal('matchMedia', vi.fn().mockReturnValue(reducedMotion))
+	vi.stubGlobal(
+		'ResizeObserver',
+		class {
+			observe() {}
+			unobserve() {}
+			disconnect() {}
+		},
+	)
+	vi.stubGlobal(
+		'URL',
+		class extends URL {
+			static createObjectURL = vi.fn().mockReturnValue('blob:avatar-preview')
+			static revokeObjectURL = vi.fn()
+		},
+	)
 	Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 	container = document.createElement('div')
 	document.body.append(container)
 	root = createRoot(container)
 	onAuthenticated = vi.fn().mockResolvedValue(undefined)
-	await act(async () =>
-		root.render(
-			createElement(EmailAuthScreen, {
-				error: null,
-				frameless: false,
-				onAuthenticated,
-				onClearError: vi.fn(),
-			}),
-		),
-	)
+	await renderScreen()
 })
 afterEach(async () => {
 	await act(async () => root.unmount())
 	container.remove()
 	vi.useRealTimers()
+	vi.unstubAllGlobals()
 })
 
 describe('email authentication screens', () => {
-	it('shows the two approved email entries without a phone, username or separate registration entry', () => {
-		expect(button(strings.auth.email.passwordEntry)).toBeTruthy()
+	it('shows the welcome title, account icon and Chinese privacy link with the approved email entries', () => {
+		expect(container.querySelector('h1')?.textContent).toBe('欢迎回来')
+		expect(button('使用账号密码登录').querySelector('svg[aria-hidden="true"]')).toBeTruthy()
 		expect(button(strings.auth.email.continueEmail)).toBeTruthy()
 		expect(container.querySelector('input[type="email"]')).toBeTruthy()
+		const privacy = container.querySelector<HTMLAnchorElement>('a')!
+		expect(privacy.textContent).toBe('隐私协议')
+		expect(privacy.href).toBe('https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/')
+		expect(privacy.parentElement?.textContent).toMatch(/继续.*隐私协议/)
 		expect(container.textContent).not.toMatch(/手机号|用户名|Google|注册账号/)
 	})
 
-	it('waits for nickname and matching password before completing a verified registration', async () => {
+	it('opens the privacy link through the supplied desktop intent', async () => {
+		const onOpenExternal = vi.fn()
+		await renderScreen(onOpenExternal)
+		const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+		await act(async () => container.querySelector('a')!.dispatchEvent(event))
+		expect(event.defaultPrevented).toBe(true)
+		expect(onOpenExternal).toHaveBeenCalledWith(
+			'https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/',
+		)
+	})
+
+	it('shows the form immediately when reduced motion is requested', () => {
+		expect(container.querySelector('.auth-intro')).toBeNull()
+		expect(container.querySelector('form')).toBeTruthy()
+	})
+
+	it('plays the 2100ms opening once and keeps it finished during internal navigation', async () => {
+		await act(async () => root.unmount())
+		vi.useFakeTimers()
+		Object.assign(reducedMotion, { matches: false })
+		root = createRoot(container)
+		await renderScreen()
+		expect(container.querySelector('.auth-intro')).toBeTruthy()
+		expect(container.querySelector('form')).toBeNull()
+		await act(async () => vi.advanceTimersByTime(2099))
+		expect(container.querySelector('.auth-intro')).toBeTruthy()
+		await act(async () => vi.advanceTimersByTime(1))
+		expect(container.querySelector('.auth-intro')).toBeNull()
+		expect(container.querySelector('h1')?.textContent).toBe(strings.auth.email.title)
+		await click(strings.auth.email.passwordEntry)
+		await click(strings.auth.email.backEmail)
+		expect(container.querySelector('.auth-intro')).toBeNull()
+		expect(container.querySelector('form')).toBeTruthy()
+	})
+
+	it('ends an opening animation immediately when reduced motion is enabled', async () => {
+		await act(async () => root.unmount())
+		vi.useFakeTimers()
+		Object.assign(reducedMotion, { matches: false })
+		root = createRoot(container)
+		await renderScreen()
+		expect(container.querySelector('.auth-intro')).toBeTruthy()
+		await act(async () => {
+			Object.assign(reducedMotion, { matches: true })
+			reducedMotion.dispatchEvent(Object.assign(new Event('change'), { matches: true }))
+		})
+		expect(container.querySelector('.auth-intro')).toBeNull()
+		expect(container.querySelector('form')).toBeTruthy()
+		await act(async () => {
+			Object.assign(reducedMotion, { matches: false })
+			reducedMotion.dispatchEvent(Object.assign(new Event('change'), { matches: false }))
+			vi.advanceTimersByTime(2100)
+		})
+		expect(container.querySelector('.auth-intro')).toBeNull()
+	})
+
+	it('validates matching passwords before opening the optional profile step and creates the account only there', async () => {
 		const { registration } = registrationFixture()
 		await verifyEmail()
-		expect(container.querySelector('h1')?.textContent).toBe(strings.auth.email.registerTitle)
+		expect(container.querySelector('h1')?.textContent).toBe(
+			strings.auth.email.registerPasswordTitle,
+		)
+		expect(document.activeElement).toBe(container.querySelector('h1'))
+		expect(container.querySelector('input[autocomplete="nickname"]')).toBeNull()
+		expect(container.querySelector('input[type="file"]')).toBeNull()
 		expect(registration.complete).not.toHaveBeenCalled()
 		expect(onAuthenticated).not.toHaveBeenCalled()
-		expect(button(strings.auth.email.completeRegistration).disabled).toBe(true)
-		await input('nickname', '重复昵称')
+		expect(button(strings.auth.email.next).disabled).toBe(true)
 		await input('password', password)
 		await input('confirmation', 'Different1!')
 		await submit()
@@ -142,6 +250,15 @@ describe('email authentication screens', () => {
 		)
 		await input('confirmation', password)
 		await submit()
+		expect(container.querySelector('h1')?.textContent).toBe(strings.auth.email.registerTitle)
+		expect(document.activeElement).toBe(container.querySelector('h1'))
+		expect(container.querySelector('input[autocomplete="new-password"]')).toBeNull()
+		expect(container.querySelector('input[type="email"]')).toBeNull()
+		expect(registration.complete).not.toHaveBeenCalled()
+		expect(onAuthenticated).not.toHaveBeenCalled()
+		expect(button(strings.auth.email.completeRegistration).disabled).toBe(false)
+		await input('nickname', '重复昵称')
+		await submit()
 		expect(registration.complete).toHaveBeenCalledWith({
 			nickname: '重复昵称',
 			password,
@@ -150,26 +267,167 @@ describe('email authentication screens', () => {
 		expect(onAuthenticated).toHaveBeenCalledWith(session)
 	})
 
-	it('discards verified registration and profile drafts when returning, requiring email verification again', async () => {
+	it('shows masked per-character matching while keeping password visibility controls independent', async () => {
+		registrationFixture()
+		await verifyEmail()
+		await input('password', password)
+		await act(async () =>
+			container.querySelector<HTMLInputElement>('input[id$="-confirmation"]')!.focus(),
+		)
+		await input('confirmation', 'Vx')
+		const comparison = () => container.querySelector('.auth-password__comparison')!
+		const characterStates = () =>
+			Array.from(comparison().querySelectorAll('.auth-password__character')).map((character) =>
+				character.getAttribute('data-state'),
+			)
+		expect(characterStates()).toEqual([
+			'match',
+			'mismatch',
+			...Array(password.length - 2).fill('pending'),
+		])
+		expect(comparison().getAttribute('aria-hidden')).toBe('true')
+		expect(comparison().textContent).toMatch(/^[•●·]+$/)
+		expect(container.textContent).not.toContain(password)
+		expect(container.textContent).toContain(strings.auth.hint.confirmation.mismatch(2))
+		await input('confirmation', password.slice(0, 2))
+		expect(characterStates()).toEqual([
+			'match',
+			'match',
+			...Array(password.length - 2).fill('pending'),
+		])
+		expect(container.textContent).toContain(
+			strings.auth.hint.confirmation.progress(2, password.length),
+		)
+		await click(strings.auth.action.showPassword)
+		expect(container.querySelector<HTMLInputElement>('input[id$="-password"]')?.type).toBe('text')
+		expect(container.querySelector<HTMLInputElement>('input[id$="-confirmation"]')?.type).toBe(
+			'password',
+		)
+		expect(comparison().textContent).toBe(password)
+		await click(strings.auth.action.showConfirmPassword)
+		await click(strings.auth.action.hidePassword)
+		expect(container.querySelector<HTMLInputElement>('input[id$="-password"]')?.type).toBe(
+			'password',
+		)
+		expect(container.querySelector<HTMLInputElement>('input[id$="-confirmation"]')?.type).toBe(
+			'text',
+		)
+		expect(comparison().textContent).toMatch(/^[•●·]+$/)
+		await input('confirmation', password)
+		expect(characterStates()).toEqual(Array(password.length).fill('match'))
+		expect(container.textContent).toContain(strings.auth.hint.confirmation.matched)
+	})
+
+	it('submits the final profile only once while account completion is pending', async () => {
+		const { registration } = registrationFixture()
+		let resolve!: (value: LauncherAuthSession) => void
+		registration.complete.mockReturnValue(
+			new Promise((done) => {
+				resolve = done
+			}),
+		)
+		await verifyEmail()
+		await enterProfile()
+		await submit()
+		await submit()
+		expect(registration.complete).toHaveBeenCalledOnce()
+		expect(container.querySelector('form')?.getAttribute('aria-busy')).toBe('true')
+		expect(button(strings.auth.email.previousStep).disabled).toBe(true)
+		expect(onAuthenticated).not.toHaveBeenCalled()
+		await act(async () => resolve(session))
+		expect(onAuthenticated).toHaveBeenCalledOnce()
+	})
+
+	it.each(['', '   '])(
+		'allows the service to generate a nickname when the draft is %j',
+		async (nickname) => {
+			const { registration } = registrationFixture()
+			await verifyEmail()
+			await enterProfile()
+			expect(
+				container.querySelector<HTMLInputElement>('input[autocomplete="nickname"]')?.required,
+			).toBe(false)
+			await input('nickname', nickname)
+			expect(button(strings.auth.email.completeRegistration).disabled).toBe(false)
+			await submit()
+			expect(registration.complete).toHaveBeenCalledOnce()
+			const profile = registration.complete.mock.calls[0][0]
+			expect(profile.nickname.trim()).toBe('')
+			expect(profile.password).toBe(password)
+			expect(profile.avatar).toBeUndefined()
+			expect(onAuthenticated).toHaveBeenCalledWith(session)
+		},
+	)
+
+	it('keeps the verified registration and profile draft when returning to the password step', async () => {
 		const { challenge, registration } = registrationFixture()
 		await verifyEmail()
+		await enterProfile()
 		await input('nickname', '未完成用户')
-		await input('password', password)
-		await click(strings.auth.email.backEmail)
-		expect(registration.cancel).toHaveBeenCalledOnce()
-		expect(challenge.cancel).toHaveBeenCalledOnce()
+		const avatar = await selectAvatar()
+		await click(strings.auth.email.previousStep)
+		expect(container.querySelector('h1')?.textContent).toBe(
+			strings.auth.email.registerPasswordTitle,
+		)
+		expect(container.querySelector<HTMLInputElement>('input[id$="-password"]')?.value).toBe(
+			password,
+		)
+		expect(container.querySelector<HTMLInputElement>('input[id$="-confirmation"]')?.value).toBe(
+			password,
+		)
+		expect(registration.cancel).not.toHaveBeenCalled()
+		expect(challenge.cancel).not.toHaveBeenCalled()
 		expect(registration.complete).not.toHaveBeenCalled()
-		await submit()
-		expect(auth.sendEmail).toHaveBeenCalledTimes(2)
-		await input('code', '123456')
+		const editedPassword = 'ChangedPass2!'
+		await input('password', editedPassword)
+		await input('confirmation', editedPassword)
 		await submit()
 		expect(container.querySelector<HTMLInputElement>('input[autocomplete="nickname"]')?.value).toBe(
-			'',
+			'未完成用户',
 		)
-		expect(
-			container.querySelector<HTMLInputElement>('input[autocomplete="new-password"]')?.value,
-		).toBe('')
+		expect(container.querySelector<HTMLImageElement>('img[alt]')?.src).toBe('blob:avatar-preview')
+		expect(auth.sendEmail).toHaveBeenCalledOnce()
+		await submit()
+		expect(registration.complete).toHaveBeenCalledWith({
+			nickname: '未完成用户',
+			password: editedPassword,
+			avatar,
+		})
 	})
+
+	it.each(['password', 'profile'] as const)(
+		'discards verification and every draft when exiting the %s registration step',
+		async (step) => {
+			const { challenge, registration } = registrationFixture()
+			await verifyEmail()
+			await input('password', password)
+			await input('confirmation', password)
+			if (step === 'profile') {
+				await submit()
+				await input('nickname', '未完成用户')
+				await selectAvatar()
+			}
+			await click(strings.auth.email.backEmail)
+			expect(registration.cancel).toHaveBeenCalledOnce()
+			expect(challenge.cancel).toHaveBeenCalledOnce()
+			expect(registration.complete).not.toHaveBeenCalled()
+			if (step === 'profile') {
+				expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:avatar-preview')
+			}
+			registrationFixture()
+			await verifyEmail()
+			expect(auth.sendEmail).toHaveBeenCalledTimes(2)
+			expect(container.querySelector<HTMLInputElement>('input[id$="-password"]')?.value).toBe('')
+			expect(container.querySelector<HTMLInputElement>('input[id$="-confirmation"]')?.value).toBe(
+				'',
+			)
+			await enterProfile()
+			expect(
+				container.querySelector<HTMLInputElement>('input[autocomplete="nickname"]')?.value,
+			).toBe('')
+			expect(container.querySelector('img[alt]')).toBeNull()
+		},
+	)
 
 	it('logs an existing email in after code verification and supports the same email with a password', async () => {
 		const { challenge } = registrationFixture()
@@ -222,18 +480,30 @@ describe('email authentication screens', () => {
 		).toBe('')
 	})
 
-	it('expires an uncompleted registration and only offers restarting email verification', async () => {
-		const { registration } = registrationFixture()
-		registration.expiresAt = Date.now() - 1000
-		await verifyEmail()
-		expect(button(strings.auth.email.completeRegistration).disabled).toBe(true)
-		expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-			strings.auth.emailErrors.expired,
-		)
-		await click(strings.auth.email.verifyAgain)
-		expect(registration.cancel).toHaveBeenCalledOnce()
-		expect(container.querySelector('h1')?.textContent).toBe(strings.auth.email.title)
-	})
+	it.each(['password', 'profile'] as const)(
+		'expires the %s registration step without creating an account and offers restarting verification',
+		async (step) => {
+			vi.useFakeTimers()
+			const { registration } = registrationFixture()
+			registration.expiresAt = Date.now() + 1000
+			await verifyEmail()
+			if (step === 'profile') await enterProfile()
+			await act(async () => vi.advanceTimersByTime(1000))
+			expect(
+				button(
+					step === 'password' ? strings.auth.email.next : strings.auth.email.completeRegistration,
+				).disabled,
+			).toBe(true)
+			expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+				strings.auth.emailErrors.expired,
+			)
+			await submit()
+			expect(registration.complete).not.toHaveBeenCalled()
+			await click(strings.auth.email.verifyAgain)
+			expect(registration.cancel).toHaveBeenCalledOnce()
+			expect(container.querySelector('h1')?.textContent).toBe(strings.auth.email.title)
+		},
+	)
 
 	it('allows retrying avatar completion after account creation without editing the saved credentials', async () => {
 		const { registration } = registrationFixture()
@@ -243,20 +513,27 @@ describe('email authentication screens', () => {
 			throw new Error(strings.auth.emailErrors.avatarUpload)
 		})
 		await verifyEmail()
+		await enterProfile()
 		await input('nickname', '小问')
-		await input('password', password)
-		await input('confirmation', password)
+		const avatar = await selectAvatar()
 		await submit()
 		expect(
 			container.querySelector<HTMLInputElement>('input[autocomplete="nickname"]')?.disabled,
 		).toBe(true)
-		expect(
-			container.querySelector<HTMLInputElement>('input[autocomplete="new-password"]')?.disabled,
-		).toBe(true)
+		expect(container.querySelector('input[autocomplete="new-password"]')).toBeNull()
+		expect(container.textContent).not.toContain(strings.auth.email.previousStep)
 		expect(button(strings.auth.email.completeRegistration).disabled).toBe(false)
 		expect(container.textContent).toContain(strings.auth.email.avatarPendingDescription)
+		expect(registration.complete).toHaveBeenLastCalledWith({ nickname: '小问', password, avatar })
+		await click(strings.auth.email.avatarRemove)
+		expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:avatar-preview')
 		await submit()
 		expect(registration.complete).toHaveBeenCalledTimes(2)
+		expect(registration.complete).toHaveBeenLastCalledWith({
+			nickname: '小问',
+			password,
+			avatar: undefined,
+		})
 		expect(onAuthenticated).toHaveBeenCalledWith(session)
 	})
 
@@ -268,9 +545,8 @@ describe('email authentication screens', () => {
 			throw new Error(strings.auth.emailErrors.activationRetry)
 		})
 		await verifyEmail()
+		await enterProfile()
 		await input('nickname', '小问')
-		await input('password', password)
-		await input('confirmation', password)
 		await submit()
 		expect(container.textContent).toContain(strings.auth.email.accountCreatedDescription)
 		expect(container.textContent).not.toContain(strings.auth.email.avatarPendingDescription)
@@ -280,6 +556,8 @@ describe('email authentication screens', () => {
 		expect(
 			container.querySelector<HTMLInputElement>('input[autocomplete="nickname"]')?.disabled,
 		).toBe(true)
+		expect(container.querySelector('input[autocomplete="new-password"]')).toBeNull()
+		expect(container.textContent).not.toContain(strings.auth.email.previousStep)
 		expect(button(strings.auth.email.retryAccountConfirmation).disabled).toBe(false)
 		await click(strings.auth.email.retryAccountConfirmation)
 		expect(registration.complete).toHaveBeenCalledTimes(2)
@@ -295,9 +573,8 @@ describe('email authentication screens', () => {
 			throw new Error(strings.auth.emailErrors.activationReauthenticate)
 		})
 		await verifyEmail()
+		await enterProfile()
 		await input('nickname', '小问')
-		await input('password', password)
-		await input('confirmation', password)
 		await submit()
 		expect(container.querySelector('h1')?.textContent).toBe(strings.auth.email.passwordTitle)
 		expect(container.querySelector('[role="status"]')?.textContent).toBe(
@@ -330,9 +607,8 @@ describe('email authentication screens', () => {
 			throw new Error(strings.auth.emailErrors.register)
 		})
 		await verifyEmail()
+		await enterProfile()
 		await input('nickname', '尚未创建的昵称')
-		await input('password', password)
-		await input('confirmation', password)
 		await submit()
 		expect(container.querySelector('h1')?.textContent).toBe(strings.auth.email.title)
 		expect(container.querySelector('[role="alert"]')?.textContent).toBe(
@@ -350,12 +626,13 @@ describe('email authentication screens', () => {
 		registrationFixture()
 		await verifyEmail()
 		expect(auth.sendEmail).toHaveBeenCalledTimes(2)
-		expect(container.querySelector<HTMLInputElement>('input[autocomplete="nickname"]')?.value).toBe(
-			'',
-		)
 		expect(
 			container.querySelector<HTMLInputElement>('input[autocomplete="new-password"]')?.value,
 		).toBe('')
+		await enterProfile()
+		expect(container.querySelector<HTMLInputElement>('input[autocomplete="nickname"]')?.value).toBe(
+			'',
+		)
 		expect(registration.complete).toHaveBeenCalledOnce()
 	})
 

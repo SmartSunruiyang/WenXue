@@ -83,15 +83,18 @@ describe('email credentials and public sessions', () => {
 		)
 		expect(mocks.signInWithPassword).not.toHaveBeenCalled()
 	})
-	it('accepts non-unique display names while enforcing new-password rules', () => {
+	it('accepts optional display names while enforcing nonempty name and new-password rules', () => {
 		expect(service.validateLauncherRegistration(' 问学用户 ', PASSWORD)).toBeNull()
 		expect(service.validateLauncherRegistration('😀'.repeat(32), PASSWORD)).toBeNull()
-		expect(service.validateLauncherRegistration(' ', PASSWORD)).toBe(
-			strings.auth.emailErrors.nicknameRequired,
-		)
+		expect(service.validateLauncherRegistration('', PASSWORD)).toBeNull()
+		expect(service.validateLauncherRegistration(' \t\n　', PASSWORD)).toBeNull()
 		expect(service.validateLauncherRegistration('😀'.repeat(33), PASSWORD)).toBe(
 			strings.auth.emailErrors.nicknameLength,
 		)
+		expect(service.validateLauncherRegistration('问\u0000学', PASSWORD)).toBe(
+			strings.auth.emailErrors.nicknameLength,
+		)
+		expect(service.validateLauncherPassword(PASSWORD)).toBeNull()
 		for (const [password, key] of [
 			['', 'passwordRequired'],
 			['Aa1!', 'passwordLength'],
@@ -101,10 +104,13 @@ describe('email credentials and public sessions', () => {
 			['AuthTest9\n', 'passwordCharacterSet'],
 			['Auth😀Test9!', 'passwordCharacterSet'],
 			['Authentication', 'passwordComplexity'],
-		] as const)
+		] as const) {
 			expect(service.validateLauncherRegistration('昵称', password)).toBe(
 				strings.auth.validation[key],
 			)
+			expect(service.validateLauncherRegistration('', password)).toBe(strings.auth.validation[key])
+			expect(service.validateLauncherPassword(password)).toBe(strings.auth.validation[key])
+		}
 	})
 	it('reports password rules independently and keeps Unicode comparison positions aligned', () => {
 		expect(service.getLauncherPasswordRequirements('AuthTe1')).toEqual({

@@ -22,13 +22,13 @@ const EMAIL = 'alice@example.com'
 const PASSWORD = 'AuthTest9!'
 const INPUT = { nickname: '昵称', password: PASSWORD }
 const FILE_ID = 'cloud://environment.bucket/avatars/user-1/avatar.png'
-function data(userId = 'user-1', email = EMAIL, picture?: string) {
+function data(userId = 'user-1', email = EMAIL, picture?: string, name = '昵称') {
 	return {
 		session: {
 			access_token: 'access-secret',
 			refresh_token: 'refresh-secret',
 			expires_in: 3600,
-			user: { id: userId, email, user_metadata: { name: '昵称', picture } },
+			user: { id: userId, email, user_metadata: { name, picture } },
 		},
 	}
 }
@@ -262,10 +262,37 @@ describe('verification before explicit account creation', () => {
 		form.cancel()
 		expect(mocks.signOut).not.toHaveBeenCalled()
 	})
-	it('requires valid nickname, password and avatar before any account creation', async () => {
+	it.each([
+		['', 0, 'user000000'],
+		[' \t\n ', 0.0042, 'user004200'],
+		['　', 0.9999999, 'user999999'],
+	])(
+		'assigns a six-digit display name to blank nickname %j at completion',
+		async (nickname, randomValue, name) => {
+			const random = vi.spyOn(Math, 'random').mockReturnValue(randomValue)
+			const { registration: form } = await registration()
+			expect(random).not.toHaveBeenCalled()
+			mocks.getSession.mockResolvedValue({ data: data('user-1', EMAIL, undefined, name) })
+			await expect(form.complete({ nickname, password: PASSWORD })).resolves.toMatchObject({
+				userId: 'user-1',
+				nickname: name,
+			})
+			expect(mocks.signUp).toHaveBeenCalledWith({
+				email: EMAIL,
+				verification_token: 'verification-secret',
+				password: PASSWORD,
+				name,
+			})
+			expect(random).toHaveBeenCalledOnce()
+		},
+	)
+	it('rejects invalid nonempty nickname, password and avatar before any account creation', async () => {
 		const { registration: form } = await registration()
-		await expect(form.complete({ nickname: '', password: PASSWORD })).rejects.toThrow(
-			strings.auth.emailErrors.nicknameRequired,
+		await expect(form.complete({ nickname: '长'.repeat(33), password: PASSWORD })).rejects.toThrow(
+			strings.auth.emailErrors.nicknameLength,
+		)
+		await expect(form.complete({ nickname: '问\u0000学', password: PASSWORD })).rejects.toThrow(
+			strings.auth.emailErrors.nicknameLength,
 		)
 		await expect(form.complete({ nickname: '昵称', password: 'short' })).rejects.toThrow(
 			strings.auth.validation.passwordLength,
@@ -533,6 +560,28 @@ describe('existing accounts and password reset', () => {
 })
 
 describe('avatar retry and concurrent auth safety', () => {
+	it('keeps the generated display name and UID through account confirmation and avatar retries', async () => {
+		const random = vi.spyOn(Math, 'random').mockReturnValue(0.0042)
+		const { registration: form } = await registration()
+		const name = 'user004200'
+		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		const input = { nickname: '', password: PASSWORD, avatar }
+		mocks.getSession.mockResolvedValue({ data: data('user-1', EMAIL, undefined, name) })
+		mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 503 }))
+		mocks.uploadFile.mockRejectedValueOnce(new Error('storage unavailable'))
+		await expect(form.complete(input)).rejects.toThrow(strings.auth.emailErrors.activationRetry)
+		expect(form.state).toBe('confirming-account')
+		await expect(form.complete(input)).rejects.toThrow(strings.auth.emailErrors.avatarUpload)
+		expect(form.state).toBe('avatar-pending')
+		await expect(form.complete(input)).resolves.toMatchObject({ userId: 'user-1', nickname: name })
+		expect(mocks.signUp).toHaveBeenCalledOnce()
+		expect(mocks.signUp).toHaveBeenCalledWith(expect.objectContaining({ name }))
+		expect(random).toHaveBeenCalledOnce()
+		expect(mocks.fetch).toHaveBeenCalledTimes(2)
+		expect(mocks.uploadFile).toHaveBeenCalledTimes(2)
+		for (const [upload] of mocks.uploadFile.mock.calls)
+			expect(upload.cloudPath).toMatch(/^avatars\/user-1\//)
+	})
 	it('uploads under the new UID only after registration and persists the fileID', async () => {
 		const { registration: form } = await registration()
 		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
