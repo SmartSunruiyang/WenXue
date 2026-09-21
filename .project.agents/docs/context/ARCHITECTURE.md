@@ -314,6 +314,8 @@
 - 持有状态：仅 UI 态
 ```
 
+ConsoleUI 内部 `OnboardingTour.tsx` 展示本地实机录制的分步教程与 Logo / slogan 收尾；`onboardingProgress.ts` 维护素材清单、就绪判断及按账号隔离的本机显示偏好。只有构建包含全部六段正式素材时，认证与画像加载完成后，无画像且尚未处理教程的账号才进入引导；已有画像的账号默认不打断，关于页可重播。缺少任一素材时不进入教程、不显示重播入口，也不写入完成状态。公告、更新提示或窗口关闭确认出现时暂停教程；`WindowCloseDialog` 通过内部可选 `onOpenChange` 回调通知 App，保持单一关闭状态订阅。播放不创建画像、不调用 LLM、不新增 IPC 或桌面控制插件通道。跳过直接进入工作台；最后片段结束进入品牌页，由「开始探索」完成退出。
+
 ConsoleUI 的 `cloudbase.ts` 封装邮箱挑战、验证码登录、延迟注册、密码登录、忘记密码及头像存储。
 账号设置复用该适配器更新 CloudBase Auth 的昵称和永久头像引用，保存前后验证同一 UID，向 App 返回
 无凭据的公开资料。`AccountSettings` 为 ConsoleUI 内部资料视图；内部 `DesktopOverlays` 提供自绘

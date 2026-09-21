@@ -51,6 +51,13 @@ import {
 import { ConfirmationProvider, PopupMenu, SelectField, useConfirmation } from './DesktopOverlays'
 import { DesktopReleaseSignalService } from './DesktopReleaseSignalService'
 import { EmailAuthScreen } from './EmailAuthScreen'
+import {
+	finishOnboarding,
+	hasOnboardingMedia,
+	shouldOfferOnboarding,
+	type OnboardingOutcome,
+} from './onboardingProgress'
+import { OnboardingTour } from './OnboardingTour'
 import { executeSafeSignOut } from './safeSignOut'
 import { strings } from './strings'
 import type {
@@ -68,6 +75,15 @@ import type {
 import { WindowCloseDialog } from './WindowCloseDialog'
 
 const isMacPlatform = navigator.userAgent.includes('Macintosh')
+const onboardingMediaAvailable = hasOnboardingMedia(
+	Object.keys(
+		import.meta.glob('../public/onboarding/*.mp4', {
+			query: '?url',
+			import: 'default',
+			eager: true,
+		}),
+	),
+)
 declare const __WENXUE_UPDATE_CHANNEL__: string
 
 type RouteId = 'browsers' | 'logs' | 'tokens' | 'settings'
@@ -150,20 +166,22 @@ const defaultShellInfo: AppShellInfo = {
 }
 
 export default function App() {
+	const [closePromptOpen, setClosePromptOpen] = useState(false)
 	return (
 		<ConfirmationProvider labels={strings.dialog.actions}>
-			<DesktopApp />
-			<WindowCloseDialog copy={strings.windowClose} />
+			<DesktopApp closePromptOpen={closePromptOpen} />
+			<WindowCloseDialog copy={strings.windowClose} onOpenChange={setClosePromptOpen} />
 		</ConfirmationProvider>
 	)
 }
 
-function DesktopApp() {
+function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 	const confirm = useConfirmation()
 	const [route, setRoute] = useState<RouteId>('browsers')
 	const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('account')
 	const [authReady, setAuthReady] = useState(false)
 	const [authUser, setAuthUser] = useState<LauncherPublicUser | null>(null)
+	const [onboardingAccountId, setOnboardingAccountId] = useState<string | null>(null)
 	const [profiles, setProfiles] = useState<BrowserProfile[]>([])
 	const [statuses, setStatuses] = useState<Record<string, BrowserStatus>>({})
 	const [logs, setLogs] = useState<LauncherLogEntry[]>([])
@@ -305,7 +323,7 @@ function DesktopApp() {
 		}
 	}, [authUser])
 
-	const loadWorkspaceData = useCallback(async () => {
+	const loadWorkspaceData = useCallback(async (userId: string) => {
 		const [nextProfiles, nextStatuses, nextLogs, nextSettings, nextTokens, nextVersions] =
 			await Promise.all([
 				window.wenxue.browser.listProfiles(),
@@ -315,6 +333,9 @@ function DesktopApp() {
 				window.wenxue.tokens.getSummary(),
 				window.wenxue.app.getVersions(),
 			])
+		setOnboardingAccountId(
+			shouldOfferOnboarding(userId, nextProfiles.length, onboardingMediaAvailable) ? userId : null,
+		)
 		setProfiles(nextProfiles)
 		setStatuses(nextStatuses)
 		setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
@@ -383,7 +404,7 @@ function DesktopApp() {
 			if (!synced.ok) {
 				throw new Error(synced.error ?? '账号 session 同步失败')
 			}
-			const nextVersions = await loadWorkspaceData()
+			const nextVersions = await loadWorkspaceData(session.userId)
 			if (mounted) {
 				setAuthUser(toPublicUser(session))
 				setAuthReady(true)
@@ -726,7 +747,7 @@ function DesktopApp() {
 			if (!result.ok) {
 				throw new Error(result.error ?? '账号 session 同步失败')
 			}
-			const nextVersions = await loadWorkspaceData()
+			const nextVersions = await loadWorkspaceData(session.userId)
 			setAuthUser(toPublicUser(session))
 			void announcementServiceRef.current
 				?.start(session, desktopPlatform(shellInfo.platform), nextVersions.app)
@@ -781,6 +802,7 @@ function DesktopApp() {
 				announcementServiceRef.current?.stop()
 				setTokensLoading(false)
 				setAuthUser(null)
+				setOnboardingAccountId(null)
 				setProfiles([])
 				setStatuses({})
 				setLogs([])
@@ -907,6 +929,15 @@ function DesktopApp() {
 		if (!result.ok) setMessage(result.error ?? strings.error.closeWindow)
 	}, [])
 
+	const exitOnboarding = (outcome: OnboardingOutcome) => {
+		if (!authUser) return
+		const saved = finishOnboarding(authUser.userId, outcome)
+		setOnboardingAccountId(null)
+		setRoute('browsers')
+		setAvatarOpen(false)
+		if (!saved) setMessage(strings.onboarding.saveProgressError)
+	}
+
 	const interruptionLayer = (
 		<DesktopInterruptionLayer
 			announcement={authUser ? announcement : null}
@@ -954,6 +985,31 @@ function DesktopApp() {
 							() => setMessage(strings.auth.email.privacyOpenError),
 						)
 					}}
+					windowControls={
+						<WindowControls
+							onError={setMessage}
+							shellInfo={shellInfo}
+							setShellInfo={setShellInfo}
+						/>
+					}
+				/>
+				{interruptionLayer}
+			</>
+		)
+	}
+
+	if (onboardingAccountId === authUser.userId) {
+		return (
+			<>
+				<OnboardingTour
+					key={authUser.userId}
+					frameless={shellInfo.frameless}
+					onExit={exitOnboarding}
+					suspended={Boolean(
+						closePromptOpen ||
+						announcement ||
+						visibleDesktopUpdateKey(updateState, dismissedUpdate),
+					)}
 					windowControls={
 						<WindowControls
 							onError={setMessage}
@@ -1133,6 +1189,7 @@ function DesktopApp() {
 							logsMutating
 						}
 						checkForUpdates={() => checkForUpdates('about')}
+						onReplayOnboarding={() => setOnboardingAccountId(authUser.userId)}
 						savedTick={savedTick}
 						saving={savingSettings}
 						section={settingsSection}
@@ -1149,6 +1206,21 @@ function DesktopApp() {
 			{interruptionLayer}
 		</main>
 	)
+}
+
+function visibleDesktopUpdateKey(state: UpdateState, dismissed: string | null): string | null {
+	const release = 'release' in state ? state.release : undefined
+	if (!release) return null
+	const key = `${release.releaseId}:${release.mode}:${state.phase}`
+	if (key === dismissed) return null
+	return state.phase === 'available' ||
+		state.phase === 'downloading' ||
+		state.phase === 'ready' ||
+		state.phase === 'opening' ||
+		state.phase === 'handedOff' ||
+		state.phase === 'error'
+		? key
+		: null
 }
 
 function DesktopInterruptionLayer({
@@ -1175,18 +1247,9 @@ function DesktopInterruptionLayer({
 	updateState: UpdateState
 }) {
 	const release = 'release' in updateState ? updateState.release : undefined
-	const updateKey = release ? `${release.releaseId}:${release.mode}:${updateState.phase}` : null
+	const updateKey = visibleDesktopUpdateKey(updateState, dismissedUpdate)
 	const mandatory = release?.mode === 'mandatory'
-	const updateVisible = Boolean(
-		updateKey &&
-		dismissedUpdate !== updateKey &&
-		(updateState.phase === 'available' ||
-			updateState.phase === 'downloading' ||
-			updateState.phase === 'ready' ||
-			updateState.phase === 'opening' ||
-			updateState.phase === 'handedOff' ||
-			updateState.phase === 'error'),
-	)
+	const updateVisible = updateKey !== null
 
 	if (mandatory && updateVisible) {
 		return (
@@ -2332,6 +2395,7 @@ function SettingsPage({
 	logoutBusy,
 	accountDisabled,
 	checkForUpdates,
+	onReplayOnboarding,
 	savedTick,
 	saving,
 	section,
@@ -2349,6 +2413,7 @@ function SettingsPage({
 	logoutBusy: boolean
 	accountDisabled: boolean
 	checkForUpdates: () => Promise<void>
+	onReplayOnboarding: () => void
 	savedTick: boolean
 	saving: boolean
 	section: SettingsSectionId
@@ -2576,6 +2641,13 @@ function SettingsPage({
 										<FolderOpen size={15} />
 										{strings.settings.about.openLogs}
 									</button>
+
+									{onboardingMediaAvailable ? (
+										<button className="soft-button" onClick={onReplayOnboarding} type="button">
+											<RefreshCw size={15} />
+											{strings.onboarding.reopen}
+										</button>
+									) : null}
 								</div>
 							</section>
 						) : null}

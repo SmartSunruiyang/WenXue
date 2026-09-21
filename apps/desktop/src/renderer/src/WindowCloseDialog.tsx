@@ -14,11 +14,21 @@ export interface WindowCloseDialogCopy {
 	communicationError: string
 }
 
-export function WindowCloseDialog({ copy }: { copy: WindowCloseDialogCopy }) {
+export function WindowCloseDialog({
+	copy,
+	onOpenChange,
+}: {
+	copy: WindowCloseDialogCopy
+	onOpenChange?: (open: boolean) => void
+}) {
 	const [prompt, setPrompt] = useState<WindowClosePromptState>(null)
 	const [busy, setBusy] = useState(false)
 	const [failed, setFailed] = useState(false)
 	const submitting = useRef(false)
+
+	useEffect(() => {
+		onOpenChange?.(prompt !== null)
+	}, [prompt, onOpenChange])
 
 	useEffect(() => {
 		let disposed = false

@@ -266,6 +266,17 @@ afterEach(async () => {
 })
 
 describe('App account integration', () => {
+	it('keeps a fresh account usable and hides tutorial replay when recordings are missing', async () => {
+		vi.stubGlobal('localStorage', { getItem: vi.fn().mockReturnValue(null), setItem: vi.fn() })
+		await render()
+		expect(container.querySelector('.onboarding-tour')).toBeNull()
+		expect(homeAvatar().src).toBe(session.avatarUrl)
+		await openAccount()
+		await click(strings.settings.sections.about)
+		expect(container.textContent).not.toContain(strings.onboarding.reopen)
+		expect(window.localStorage.setItem).not.toHaveBeenCalled()
+	})
+
 	it.each(['restored session', 'authentication callback'])(
 		'%s supplies the same avatar to the home rail and account menu',
 		async (entry) => {

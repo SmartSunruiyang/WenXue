@@ -15,7 +15,7 @@
 ## 云端修改
 
 - 用户选择自行配置阿里云 DNS，提供的记录为 `@ CNAME
-  askwenxue.com.tcbaccess.tencentcloudbase.com`；随后 Google Public DNS 实际返回该记录。
+askwenxue.com.tcbaccess.tencentcloudbase.com`；随后 Google Public DNS 实际返回该记录。
 - 复用现有 SSL 证书，启用 `HTTP_TO_HTTPS`，接入方式仍为 `DIRECT`。
 - 将 `/admin` 切换到现有 `wenxue-llm-gateway` 并开启路径透传。
 - 新增 `/` → `STATIC_STORE/staticstore`；新增 `/admin/`、`/admin/assets` 和以下 10 条
