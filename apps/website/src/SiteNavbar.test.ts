@@ -5,11 +5,12 @@ import { buildSiteNavbarLinks, websiteSloganSrc, type SiteNavbarCopy } from './S
 const copy: SiteNavbarCopy = {
 	brandAlt: '问学 ask for everything',
 	docs: '文档',
+	privacy: '隐私',
 	download: '下载问学',
 	github: 'GitHub',
 }
 
-test('buildSiteNavbarLinks mirrors the React Bits style nav content without language switching', () => {
+test('buildSiteNavbarLinks places privacy immediately after docs in the navigation', () => {
 	const links = buildSiteNavbarLinks(copy, 'https://github.com/SmartSunruiyang/WenXue')
 
 	assert.equal(websiteSloganSrc, '/assets/wenxue-slogan.png')
@@ -17,6 +18,7 @@ test('buildSiteNavbarLinks mirrors the React Bits style nav content without lang
 		links.map((link) => [link.kind, link.label, link.placement]),
 		[
 			['docs', '文档', 'left'],
+			['privacy', '隐私', 'left'],
 			['download', '下载问学', 'right'],
 			['github', 'GitHub', 'right'],
 		],
