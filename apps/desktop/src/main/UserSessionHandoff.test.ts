@@ -1,5 +1,5 @@
 import { request } from 'node:http'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { UserSessionHandoff } from './UserSessionHandoff'
 import type { UserSession } from './UserSessionStore'
 
@@ -14,7 +14,8 @@ const sampleSession: UserSession & { browserId: string } = {
 
 describe('UserSessionHandoff', () => {
 	it('serves a one-shot localhost page and resolves completion', async () => {
-		const handoff = new UserSessionHandoff({ timeoutMs: 1000 })
+		const log = vi.fn()
+		const handoff = new UserSessionHandoff({ log }, { timeoutMs: 1000 })
 		let openedUrl = ''
 
 		const result = await handoff.run(sampleSession, async (url) => {
@@ -25,21 +26,55 @@ describe('UserSessionHandoff', () => {
 			expect(html).toContain('access-token')
 			expect(html).toContain('refresh-token')
 			expect(html).toContain('akldabonmimlicnjlflnapfeklbfemhj')
+			expect(html).toContain('WENXUE_USER_SESSION_HANDOFF_CLOSE')
+			expect(html).not.toContain('正在同步问学账号')
+			expect(html).not.toContain('账号已同步')
 			await post(`${url}/complete`, { ok: true })
 		})
 
 		expect(openedUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/wenxue-user-session-handoff\//)
 		expect(result).toEqual({ ok: true })
+		expect(log).toHaveBeenCalledWith(
+			'UserSessionHandoff',
+			'info',
+			'session handoff completed for profile research',
+		)
+		expect(JSON.stringify(log.mock.calls)).not.toContain('access-token')
+		expect(JSON.stringify(log.mock.calls)).not.toContain('refresh-token')
+		expect(JSON.stringify(log.mock.calls)).not.toContain('/wenxue-user-session-handoff/')
 	})
 
 	it('returns extension errors from the complete callback', async () => {
-		const handoff = new UserSessionHandoff({ timeoutMs: 1000 })
+		const log = vi.fn()
+		const handoff = new UserSessionHandoff({ log }, { timeoutMs: 1000 })
 
 		const result = await handoff.run(sampleSession, async (url) => {
 			await post(`${url}/complete`, { ok: false, error: 'no extension' })
 		})
 
 		expect(result).toEqual({ ok: false, error: 'no extension' })
+		expect(log).toHaveBeenCalledWith(
+			'UserSessionHandoff',
+			'warn',
+			'session handoff rejected for profile research',
+		)
+		expect(JSON.stringify(log.mock.calls)).not.toContain('no extension')
+	})
+
+	it('logs a credential-free failure when the handoff times out', async () => {
+		const log = vi.fn()
+		const handoff = new UserSessionHandoff({ log }, { timeoutMs: 10 })
+
+		await expect(handoff.run(sampleSession, async () => undefined)).rejects.toThrow(
+			'问学账号同步超时',
+		)
+		expect(log).toHaveBeenLastCalledWith(
+			'UserSessionHandoff',
+			'error',
+			'session handoff failed for profile research',
+		)
+		expect(JSON.stringify(log.mock.calls)).not.toContain('access-token')
+		expect(JSON.stringify(log.mock.calls)).not.toContain('refresh-token')
 	})
 })
 

@@ -2,9 +2,9 @@ import { installQuestionSolverBackgroundLifecycle } from '@/agent/questionSolver
 import { setupTabEventsPort } from '@/agent/TabsController.background'
 import { configureLogger } from '@/lib/logger'
 import { purge } from '@/lib/logStore'
-import { saveExtensionUserSession } from '@/lib/userSession'
 
 import { routeBackgroundMessage } from './internal/backgroundMessageRouter'
+import { createExternalMessageRouter } from './internal/externalMessageRouter'
 
 const LOG_PURGE_ALARM = 'log-purge'
 const DEFAULT_RETENTION_DAYS = 3
@@ -36,30 +36,13 @@ export default defineBackground(() => {
 
 	// external messages (from localhost launcher page via externally_connectable)
 
-	chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-		if (message.type === 'OPEN_HUB') {
-			openOrFocusHubTab(message.wsPort).then(() => {
-				if (sender.tab?.id) chrome.tabs.remove(sender.tab.id)
-				sendResponse({ ok: true })
-			})
-			return true
-		}
-		if (message.type === 'WENXUE_USER_SESSION') {
-			if (!isLocalhostExternalSender(sender)) {
-				sendResponse({ ok: false, error: 'Unauthorized sender' })
-				return
-			}
-			saveExtensionUserSession(chrome.storage.local, message.session).then(
-				(session) => sendResponse({ ok: true, userId: session.userId }),
-				(error: unknown) =>
-					sendResponse({
-						ok: false,
-						error: error instanceof Error ? error.message : 'Invalid user session',
-					}),
-			)
-			return true
-		}
-	})
+	chrome.runtime.onMessageExternal.addListener(
+		createExternalMessageRouter({
+			storage: chrome.storage.local,
+			tabs: chrome.tabs,
+			openOrFocusHubTab,
+		}),
+	)
 
 	// setup
 
@@ -79,20 +62,6 @@ async function openOrFocusHubTab(wsPort: number) {
 	}
 
 	await chrome.tabs.create({ url: `${hubUrl}?ws=${wsPort}`, pinned: true, active: true })
-}
-
-function isLocalhostExternalSender(sender: chrome.runtime.MessageSender): boolean {
-	const source = sender.origin ?? sender.url ?? sender.tab?.url
-	if (!source) return false
-	try {
-		const url = new URL(source)
-		return (
-			url.protocol === 'http:' &&
-			(url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]')
-		)
-	} catch {
-		return false
-	}
 }
 
 async function runPurge(): Promise<void> {

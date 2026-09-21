@@ -81,7 +81,7 @@ interface CloudBaseAuthClient {
 		verification_token: string
 		new_password: string
 	}): Promise<unknown>
-	updateUserBasicInfo(input: { picture: string }): Promise<void>
+	updateUserBasicInfo(input: { name?: string; picture?: string }): Promise<void>
 	createCaptchaData(input: {
 		state: string
 	}): Promise<{ data: string; token: string; expires_in: number }>
@@ -138,6 +138,12 @@ export interface LauncherPublicUser {
 	nickname?: string
 	avatarUrl?: string
 	expiresAt: number
+}
+
+export interface LauncherProfileUpdate {
+	userId: string
+	nickname: string
+	avatar?: File
 }
 
 export interface LauncherEmailRegistration {
@@ -245,6 +251,7 @@ export const cloudbaseConfig = { envId, region, hasAccessKey: Boolean(accessKey)
 let app: CloudBaseApp | null | undefined
 let auth: CloudBaseAuthClient | null | undefined
 const emailResendCooldowns = new Map<string, EmailResendCooldown>()
+const profileAvatarUploads = new WeakMap<File, { userId: string; fileID: string }>()
 let authMutationPending = false
 let authMutationTimedOut = false
 let authOutcomeUnknown = false
@@ -294,6 +301,10 @@ function recordEmailResendCooldown(email: string, cooldown: EmailResendCooldown)
 }
 
 export function validateLauncherRegistration(nickname: string, password: string): string | null {
+	return validateNickname(nickname) ?? validateLauncherPassword(password)
+}
+
+function validateNickname(nickname: string): string | null {
 	const name = nickname.trim()
 	if (
 		Array.from(name).length > NICKNAME_MAX_LENGTH ||
@@ -302,7 +313,7 @@ export function validateLauncherRegistration(nickname: string, password: string)
 		)
 	)
 		return strings.auth.emailErrors.nicknameLength
-	return validateLauncherPassword(password)
+	return null
 }
 
 export function validateLauncherPassword(password: string): string | null {
@@ -571,20 +582,9 @@ function createEmailRegistration(
 					}
 					if (avatar) {
 						try {
-							const cloudbaseApp = getApp()
-							if (!cloudbaseApp) throw new Error(strings.auth.emailErrors.avatarUpload)
 							if (!avatarFileID || uploadedAvatar !== avatar) {
-								const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[
-									avatar.type
-								]
-								const uploaded = await cloudbaseApp.uploadFile({
-									cloudPath: `avatars/${session.userId}/${crypto.randomUUID()}.${extension}`,
-									filePath: avatar,
-								})
-								if (!readString(uploaded.fileID)?.startsWith('cloud://'))
-									throw new Error(strings.auth.emailErrors.avatarUpload)
+								avatarFileID = await uploadLauncherAvatar(session.userId, avatar)
 								uploadedAvatar = avatar
-								avatarFileID = uploaded.fileID
 							}
 							assertFlowActive(flow)
 							await authClient.updateUserBasicInfo({ picture: avatarFileID })
@@ -611,6 +611,19 @@ function validateAvatar(avatar?: File): void {
 		throw new Error(strings.auth.emailErrors.avatarType)
 	if (avatar.size <= 0 || avatar.size > AVATAR_MAX_BYTES)
 		throw new Error(strings.auth.emailErrors.avatarSize)
+}
+
+async function uploadLauncherAvatar(userId: string, avatar: File): Promise<string> {
+	const cloudbaseApp = getApp()
+	if (!cloudbaseApp) throw new Error(strings.auth.emailErrors.avatarUpload)
+	const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[avatar.type]
+	const uploaded = await cloudbaseApp.uploadFile({
+		cloudPath: `avatars/${userId}/${crypto.randomUUID()}.${extension}`,
+		filePath: avatar,
+	})
+	if (!readString(uploaded.fileID)?.startsWith('cloud://'))
+		throw new Error(strings.auth.emailErrors.avatarUpload)
+	return uploaded.fileID
 }
 
 function verificationExpiresAt(seconds?: number): number {
@@ -743,6 +756,7 @@ function readEmailAuthError(value: unknown, fallback: string): string {
 	if (isAbortError(value)) return strings.auth.error.timeout
 	if (value instanceof Error) {
 		const safeMessages: string[] = [
+			...Object.values(strings.account.errors),
 			...Object.values(strings.auth.emailErrors),
 			...Object.values(strings.auth.captcha),
 			...Object.values(strings.auth.error),
@@ -914,6 +928,61 @@ export async function refreshLauncherSession(refreshToken?: string): Promise<Lau
 		})
 	} catch (error) {
 		throw new Error(readEmailAuthError(error, strings.auth.error.loginSession))
+	}
+}
+
+export async function updateLauncherProfile({
+	userId,
+	nickname,
+	avatar,
+}: LauncherProfileUpdate): Promise<LauncherPublicUser> {
+	const name = nickname.trim()
+	if (!name) throw new Error(strings.account.errors.nicknameRequired)
+	const validation = validateNickname(name)
+	if (validation) throw new Error(validation)
+	validateAvatar(avatar)
+	assertAuthMutationIdle()
+	const authClient = getAuth()
+	if (!authClient) throw new Error(strings.auth.error.publishableKey)
+	const readProfileSession = async () => {
+		if (authMutationTimedOut) throw new AuthRequestTimeoutError(strings.auth.error.timeout)
+		const result = await authClient.getSession()
+		if (result.error) throw result.error
+		const session = readLauncherAuthSession(result.data)
+		if (!session || session.userId !== userId)
+			throw new Error(strings.auth.emailErrors.sessionChanged)
+		if (authMutationTimedOut) throw new AuthRequestTimeoutError(strings.auth.error.timeout)
+		return { session, data: result.data }
+	}
+	try {
+		return await runAuthMutation(async () => {
+			await readProfileSession()
+			let picture: string | undefined
+			if (avatar) {
+				const cached = profileAvatarUploads.get(avatar)
+				picture =
+					cached?.userId === userId ? cached.fileID : await uploadLauncherAvatar(userId, avatar)
+				profileAvatarUploads.set(avatar, { userId, fileID: picture })
+				await readProfileSession()
+			}
+			await authClient.updateUserBasicInfo({ name, ...(picture ? { picture } : {}) })
+			const updated = await readProfileSession()
+			if (
+				updated.session.nickname !== name ||
+				(picture && readAvatarReference(updated.data) !== picture)
+			)
+				throw new Error(strings.account.errors.save)
+			const session = await readSessionWithAvatar(updated.data)
+			if (!session) throw new Error(strings.auth.emailErrors.sessionChanged)
+			if (picture && !session.avatarUrl) throw new Error(strings.auth.emailErrors.avatarUpload)
+			await readProfileSession()
+			return toPublicUser(session)
+		})
+	} catch (error) {
+		const message = readEmailAuthError(error, strings.account.errors.save)
+		throw new Error(
+			message === strings.auth.emailErrors.avatarUpload ? strings.account.errors.save : message,
+		)
 	}
 }
 

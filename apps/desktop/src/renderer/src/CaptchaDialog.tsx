@@ -7,25 +7,12 @@ import {
 	submitLauncherCaptcha,
 	subscribeLauncherCaptcha,
 } from './captchaChallenge'
+import { DesktopDialog } from './DesktopOverlays'
 import { strings } from './strings'
 
 export function CaptchaDialog() {
 	const challenge = useSyncExternalStore(subscribeLauncherCaptcha, getLauncherCaptchaSnapshot)
-	const dialogRef = useRef<HTMLDialogElement>(null)
 	const inputRef = useRef<HTMLInputElement>(null)
-	const challengeId = challenge?.id
-
-	useEffect(() => {
-		const dialog = dialogRef.current
-		if (!dialog || challengeId === undefined) return
-		const previousFocus = document.activeElement
-		dialog.showModal()
-		inputRef.current?.focus()
-		return () => {
-			dialog.close()
-			if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus()
-		}
-	}, [challengeId])
 
 	useEffect(() => {
 		if (challenge?.status === 'ready') inputRef.current?.focus()
@@ -36,42 +23,20 @@ export function CaptchaDialog() {
 	const busy = challenge.status !== 'ready'
 
 	return (
-		<dialog
-			ref={dialogRef}
-			className="launcher-captcha-dialog"
-			aria-labelledby="launcher-captcha-title"
-			aria-describedby="launcher-captcha-description"
-			onCancel={(event) => {
-				event.preventDefault()
-				cancelLauncherCaptcha()
-			}}
-			style={{
-				width: 'min(400px, calc(100vw - 40px))',
-				margin: 'auto',
-				maxHeight: 'calc(100vh - 40px)',
-				overflow: 'auto',
-				padding: 24,
-				border: '1px solid var(--wx-border, #dedede)',
-				borderRadius: 14,
-				background: 'var(--wx-surface, #fff)',
-				color: 'var(--wx-foreground)',
-				zIndex: 10000,
-			}}
+		<DesktopDialog
+			key={challenge.id}
+			title={copy.title}
+			description={copy.description}
+			onClose={cancelLauncherCaptcha}
+			initialFocusRef={inputRef}
 		>
-			<style>{'.launcher-captcha-dialog::backdrop { background: rgb(0 0 0 / 35%); }'}</style>
 			<form
-				style={{ display: 'grid', gap: 16 }}
+				style={{ display: 'grid', gap: 16, marginTop: 16 }}
 				onSubmit={(event) => {
 					event.preventDefault()
 					void submitLauncherCaptcha(inputRef.current?.value ?? '')
 				}}
 			>
-				<h2 id="launcher-captcha-title" style={{ margin: 0, fontSize: 20 }}>
-					{copy.title}
-				</h2>
-				<p id="launcher-captcha-description" style={{ margin: 0, fontSize: 14 }}>
-					{copy.description}
-				</p>
 				<div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
 					<img
 						src={challenge.image}
@@ -130,6 +95,6 @@ export function CaptchaDialog() {
 					</button>
 				</div>
 			</form>
-		</dialog>
+		</DesktopDialog>
 	)
 }

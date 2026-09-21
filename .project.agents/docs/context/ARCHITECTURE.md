@@ -113,7 +113,8 @@
 
 ```
 ## 模块名：LaunchConfig
-- 职责：由 { userDataDir, extensionDir, startUrl?, debugPipe? } 组装 CfT argv
+- 职责：由 { userDataDir, extensionDir, startUrls?, debugPipe? } 组装 CfT argv；有序 URL 中首项为
+  前台标签，其余为后台标签
   （--disable-extensions-except、--load-extension、--no-first-run 等全集见 TECH-INFRA §4.3）
 - 不负责：不触文件系统；不 spawn；不持状态
 - 输入：调用方传入的路径参数
@@ -205,10 +206,14 @@
 
 ```
 ## 模块名：UserSessionHandoff
-- 职责：创建一次性 localhost handoff 页面，把用户 session 与本次启动的 browserId 经 `externally_connectable` 交给问学插件 background；画像 ID 仅用于用量归属
+- 职责：创建一次性 localhost 无界面 handoff 页面，把用户 session 与本次启动的 browserId 经
+  `externally_connectable` 交给问学插件 background；页面作为后台临时标签，结果回传后由插件关闭；
+  画像 ID 仅用于用量归属
 - 不负责：不执行登录/刷新；不控制 Agent；不持久化提示词正文、API Key、access token 或 refresh token
-- 输入：UserSessionStore 的当前会话、DesktopBridge 已验证归属的画像 ID、固定扩展 ID、BrowserSupervisor 打开的 URL
-- 输出：DesktopBridge 的 handoff 成功/失败结果；插件 `WenXueUserSession`
+- 输入：UserSessionStore 的当前会话、DesktopBridge 已验证归属的画像 ID、固定扩展 ID、
+  BrowserSupervisor 打开的 URL、AppLogger
+- 输出：DesktopBridge 的 handoff 成功/失败结果；插件 `WenXueUserSession`；不含凭据或 nonce URL 的
+  桌面生命周期日志
 - 关键类型/接口：run(session & { browserId: string }, openUrl) -> { ok, error? }
 - 持有状态：单次 HTTP server 生命周期内的 nonce 与完成状态
 ```
@@ -310,6 +315,11 @@
 ```
 
 ConsoleUI 的 `cloudbase.ts` 封装邮箱挑战、验证码登录、延迟注册、密码登录、忘记密码及头像存储。
+账号设置复用该适配器更新 CloudBase Auth 的昵称和永久头像引用，保存前后验证同一 UID，向 App 返回
+无凭据的公开资料。`AccountSettings` 为 ConsoleUI 内部资料视图；内部 `DesktopOverlays` 提供自绘
+菜单、选择器与询问弹窗，复用统一键盘、焦点、Portal 与减少动态效果行为，不新增业务模块或依赖。
+窗口关闭询问由 MainBootstrap 保留关闭决策，经 DesktopBridge 事件和类型化应答呈现于 ConsoleUI，
+取消或 renderer 失效时不执行关闭；安全关闭失败通过同一应用内弹层说明并允许用户重试。
 `EmailAuthScreen.tsx` 是 ConsoleUI 内部视图，消费挑战并管理邮箱、验证码、注册资料与重置密码表单；
 注册按密码/确认、头像/昵称两步呈现，步骤间返回保留内存草稿，不消费验证凭据。
 昵称可重复，仅展示，不作为登录凭据；空白昵称由 `cloudbase.ts` 在最终注册时生成 `user` 加六位数字。
@@ -577,6 +587,7 @@ graph TD
         BrowserSupervisor --> BrowserResources
         BrowserSupervisor --> ProfileStore
         BrowserSupervisor --> AppLogger
+        UserSessionHandoff --> AppLogger
         BrowserProfileStore --> AppPaths
         BrowserProfileStore --> ProfileStore
         LauncherSettingsStore --> AppPaths
@@ -677,6 +688,13 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 //   app:minimizeWindow     invoke () => Promise<{ ok: boolean; error?: string }>
 //   app:toggleMaximizeWindow invoke () => Promise<{ ok: boolean; error?: string }>
 //   app:requestClose       invoke () => Promise<{ ok: boolean; error?: string }>  // 触发 MainBootstrap 关闭策略
+//   app:getClosePrompt     invoke () => Promise<WindowClosePromptState>
+//   app:respondToClosePrompt invoke (requestId: string, choice: WindowCloseChoice) => Promise<{ ok: boolean }>
+//   app:close-prompt-changed event (state: WindowClosePromptState)              // main → renderer
+//                            // 仅当前窗口 main frame 允许查询/应答，一次性 requestId 防旧/重复回应
+//                            // WindowClosePromptState = { requestId: string; kind: 'confirm' | 'error' } | null
+//                            // WindowCloseChoice = 'cancel' | 'launcherOnly' | 'closeBrowsers' | 'dismiss'
+//                            // confirm 不接受 dismiss，error 只接受 dismiss；重载/崩溃/窗口关闭取消等待
 //   logs:query             invoke (filter?: LauncherLogFilter) => Promise<LauncherLogEntry[]>
 //   logs:clear             invoke () => Promise<{ ok: boolean; error?: string }>
 //   settings:get           invoke () => Promise<LauncherSettings>
@@ -701,8 +719,9 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 //   updates:state-changed  event  (state: UpdateState)                           // main → renderer
 
 // module: BrowserSupervisor
-//   launch(profileId = 'default', opts?: { startUrl?: string }): Promise<void>
-//   // I1：running 时不二次 spawn，转为聚焦；DesktopBridge 的 session handoff 提供 startUrl，缺省打开 chrome://newtab
+//   launch(profileId = 'default', opts?: { startUrls?: string[] }): Promise<void>
+//   // I1：running 时不二次 spawn，转为聚焦；DesktopBridge 按 [WENXUE_NEW_TAB_URL, handoffUrl]
+//   // 提供有序标签，保证扩展新标签页在前台、handoff 在后台；缺省只打开 chrome://newtab
 //   stop(profileId: string): Promise<void>
 //   status(): BrowserStatus                             // 聚合状态：任一 running/launching/error 优先
 //   statuses(): Record<string, BrowserStatus>
@@ -720,7 +739,7 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 
 // module: LaunchConfig（纯函数）
 //   buildArgv(opts: { userDataDir: string; extensionDir: string;
-//                     startUrl?: string; debugPipe?: boolean }): string[]
+//                     startUrls?: string[]; debugPipe?: boolean }): string[]
 //   // debugPipe 仅冒烟测试可为 true（TECH-INFRA §4.3）
 
 // module: BrowserResources（纯函数）
@@ -930,7 +949,7 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 - **vendor 四包**：上游测试套件随包保留，`pnpm -r test` 必绿；对 vendor 的本地补丁必须配套回归测试。`@page-agent/core` 的续接/压缩补丁需覆盖 `user_message`、`followUp`、历史投影、摘要降级、`recall_steps`、硬阈值淘汰与恢复历史后续接。
 - **SidepanelApp 会话续接**：`useAgent` 覆盖 execute/followUp/restoreConversation 的状态同步，`db` 覆盖 v1/v2→v3 迁移与 `conversationId` upsert，`ContextBanner` 覆盖近溢出判定与横幅文案。
 - **启动器 App 化新增单测**：BrowserProfileStore 持久化、目录对齐、串行并发写、账号过滤、跨账号 mutation 拒绝与旧记录失败关闭；ProfileStore/BrowserSupervisor 覆盖跨进程启动标记、负锁二次确认、多画像并行、同画像 I1、SIGTERM/SIGKILL/error 与未跟踪画像占用时的失败关闭；DesktopBridge 覆盖所有画像入口的主进程账号校验、transition 锁、状态过滤、退出前批量停止与 foreign ID 不泄露；LauncherTelemetryIngest 日志/tokens 导入与二次清洗；窗口外壳选项纯函数。
-- **UserSessionStore / UserSessionHandoff / UsageCloudClient**：覆盖主进程受信网关 token→uid 校验、uid 不匹配/401/畸形/超时失败关闭、同账号刷新、有效 session 跨账号覆盖拒绝、未登录拒绝启动/云端 summary、按 userId 读取与缓存云端 summary、云端失败时读同 userId 缓存、一次性 localhost handoff 成功/失败与重复完成保护；ConsoleUI 退出覆盖 Cloud signOut 结果未知与 clear 失败时不解除保护。
+- **UserSessionStore / UserSessionHandoff / UsageCloudClient**：覆盖主进程受信网关 token→uid 校验、uid 不匹配/401/畸形/超时失败关闭、同账号刷新、有效 session 跨账号覆盖拒绝、未登录拒绝启动/云端 summary、按 userId 读取与缓存云端 summary、云端失败时读同 userId 缓存、一次性 localhost handoff 成功/失败与重复完成保护、前台新标签/后台交接顺序、交接标签仅关闭自身及桌面生命周期日志无凭据；ConsoleUI 退出覆盖 Cloud signOut 结果未知与 clear 失败时不解除保护。
 - **插件 Logging**：`logRedaction` 覆盖 API Key/Authorization/Bearer 深度脱敏及超长/base64 截断；`logStore` 覆盖 v1/v2→v3 升级、追加、筛选、导出、清空、按时间与最旧优先裁剪；`logger` 覆盖 background direct 与其他上下文 message 路由及批量刷新；`loggingFetch` 覆盖 LLM URL 匹配、非 LLM 透传、流式响应不受破坏与正文脱敏。
 - **VisualObservation**：覆盖 v2 协议握手与单次自刷新、跨 extension realm 的 Web Lock 单飞、v1 明确不兼容、目标 tab 必填及切换/导航 TOCTOU、旧 background/消息拒绝结构化降级、AbortError 传播、Qwen 强制工具参数与重试消息顺序、CloudBase 错误 envelope、自定义无鉴权端点/内置网关鉴权前置、输出/日志禁止 data URI 回灌；发布前以真实 CfT 走协议握手 + 截图 data URL + tab id 一致性 smoke。
 - **VisualCapabilities / QuestionSolver**：覆盖 legacy Observe 输入/输出兼容、scene suggestion 不自动回答、`inspect/answer/fill` 写权限、capability registry、23 个 production variant source-attributed fixture、task lease/run/request/cancel 与 stale-result、全 frame interruption、attempt/question/page fingerprint、synthetic embedded-answer 映射及 production allowlist 为空、text/vision 路由、exact-state + snapshot/restore、DOM/视觉验证状态机、导航后 frame 重发现、no-submit 与 maturity；本地双 loopback origin fixture server 与 synthetic RPC 覆盖 cross-origin 结构、前台所有权和两任务隔离，真实 Chromium 扩展 smoke 仍是发布前门禁。
@@ -951,6 +970,7 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
   包括系统未签名警告与用户明确继续；开发预览不构成验收。
 - **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。
+- **桌面资料与自绘弹层**：资料保存前后 UID 一致、头像上传失败重试、公开返回值无凭据；App 恢复/注册/设置保存后头像与菜单同步；菜单/选择器键盘与焦点恢复、取消确认无副作用；窗口关闭的一次性应答、来源校验、取消、失败及 renderer 失效保持打开。
 - **仅手动**：ConsoleUI、SidepanelApp 的视觉与交互（按 `UIUX.md` 与 PRD 验收标准）。
 
 ## 6. 目录结构（与 §2 模块清单一一对应）

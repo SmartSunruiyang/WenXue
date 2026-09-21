@@ -22,6 +22,13 @@ export interface ProfileMutationResult extends LaunchResult {
 	profile?: BrowserProfile
 }
 
+export type WindowCloseChoice = 'cancel' | 'launcherOnly' | 'closeBrowsers' | 'dismiss'
+
+export type WindowClosePromptState = {
+	requestId: string
+	kind: 'confirm' | 'error'
+} | null
+
 export type OpenLogsResult = LaunchResult
 
 export interface AppVersions {
@@ -205,6 +212,9 @@ declare global {
 				minimizeWindow(): Promise<LaunchResult>
 				toggleMaximizeWindow(): Promise<LaunchResult>
 				requestClose(): Promise<LaunchResult>
+				getClosePrompt(): Promise<WindowClosePromptState>
+				respondToClosePrompt(requestId: string, choice: WindowCloseChoice): Promise<LaunchResult>
+				onClosePromptChange(cb: (state: WindowClosePromptState) => void): () => void
 			}
 		}
 	}

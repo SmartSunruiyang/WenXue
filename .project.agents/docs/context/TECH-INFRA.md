@@ -134,8 +134,9 @@ main 的 DesktopUpdateService 不加载 CloudBase Web SDK。模块卡片和依�
 | `--no-first-run`              | —                             | 跳过首次运行向导                                                                            |
 | `--no-default-browser-check`  | —                             | 不弹"设为默认浏览器"                                                                        |
 | `--hide-crash-restore-bubble` | —                             | 上次崩溃后不弹恢复气泡                                                                      |
+| `--disable-infobars`          | —                             | 隐藏不可手动关闭的 Chrome for Testing 顶部说明栏                                             |
 | `--remote-debugging-pipe`     | 仅冒烟测试注入                | CDP 校验插件加载；**日常启动不开启**（避免暴露调试面）                                      |
-| 位置参数                      | 欢迎页 URL（可选）            | 首屏引导（指向插件使用说明静态页）                                                          |
+| 位置参数                      | 有序启动 URL（可选）          | 首项为前台标签、其余为后台标签；会话交接使用“新标签页、一次性 localhost 页”的顺序           |
 
 ### 4.4 IPC 接口（preload 经 contextBridge 暴露）
 
@@ -244,7 +245,7 @@ extraResources:
 - 公网默认入口：统一功能入口使用 `https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com`；底层排障入口为 `https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com`，2026-09-18 `/healthz` 已验证 200；客户端原 `run.wxcloudrun.com` 入口也已验证同一新逻辑。
 - NoSQL 容量边界：2026-07-15 环境资源点配额 40000 已耗尽，数据库 REST 与 server SDK 写均返回 `EXCEED_REQUEST_LIMIT`。注册、登录、激活与网关用户授权因此改为只依赖 CloudBase Auth 原生 `ACTIVE/BLOCKED` 状态，不消耗 NoSQL 资源点；`token_usage` 写入与 usage/admin NoSQL 查询仍可能受该配额影响，写入失败按既有 best-effort 处理，展示层保留本地缓存兜底，资源点恢复前不得把云端计量/后台状态页表述为可用验收。
 - 用户 session：邮箱密码登录、邮箱验证码登录与密码重置使用 CloudBase Web Auth SDK；`usernamePassword` 平台开关必须保留以支持邮箱密码，email 开启、phone 关闭、anonymous 关闭。注册昵称可重复且仅展示；密码 8–32 位、首字符英文字母，仅允许 ASCII 字母数字与 `()!@#$%^&*|?><_-`，至少含四类字符中的三类。登录仅要求密码非空。验证码有效期遵从平台返回值；网络等待以 12 秒为界，人机挑战等待用户输入时暂停计时。不可中止的 SDK 请求保持互斥直到实际完成，取消/超时后的晚到登录清理会话。忘记密码使用 `target:'USER'` 邮箱验证与 `resetPassword`，成功返回密码登录，不改变 UID。桌面端不生成或展示 `wxm_` token；内置环境 publishable key 不是管理密钥。
-- 会话交接：M2 使用一次性 localhost 页面 + `externally_connectable` 把 `userId`、`accessToken`、`refreshToken`、`expiresAt`、网关地址及本次启动的 browserId 交给插件 background；不经远端服务，不向 Agent 发送控制指令。扩展刷新凭据时保留归属，内置模型通过 customFetch 携带画像请求头；自定义模型不添加该头。
+- 会话交接：M2 使用一次性 localhost 页面 + `externally_connectable` 把 `userId`、`accessToken`、`refreshToken`、`expiresAt`、网关地址及本次启动的 browserId 交给插件 background；不经远端服务，不向 Agent 发送控制指令。启动参数把问学新标签页置于前台、交接页置于后台；交接页不渲染状态 UI，结果回传后扩展只关闭该发送方标签。开始/成功/拒绝/超时只写桌面端脱敏日志，不写 session、token 或 nonce URL。扩展刷新凭据时保留归属，内置模型通过 customFetch 携带画像请求头；自定义模型不添加该头。
 - 切换纪律：M3 已把内置模型运行时配置切到网关，`apiKey` 字段只注入插件侧当前 access token；M5 已删除本地百炼 Key 与本地直连兜底开关，旧 DashScope 直连 baseURL 仅用于自动迁移到网关默认配置。
 - 用量展示：M4 新增桌面 `UsageCloudClient`，通过主进程当前用户 session 调 `GET /v1/usage/summary`；成功后按 userId 写 `<userData>/token-usage-summary-cache.json`，失败时 `tokens:getSummary` 回退本地 `TokenUsageStore`。浏览器分组展示与导出使用本机当前画像名称，cloud 显示“未关联浏览器”；新归属需要更新客户端并重新启动画像，历史缺失 ID 的记录不能可靠回填。
 

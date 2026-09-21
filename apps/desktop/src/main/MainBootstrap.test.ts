@@ -1,6 +1,9 @@
+import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import {
 	buildControlWindowOptions,
+	createControlWindow,
+	createWindowClosePrompt,
 	desktopIconFile,
 	handleBrowserRunningClose,
 	updateChannel,
@@ -99,84 +102,84 @@ describe('buildControlWindowOptions', () => {
 
 describe('handleBrowserRunningClose', () => {
 	it('does not prompt when browser is idle', async () => {
-		const showMessageBox = vi.fn(async () => ({ response: 0 }))
+		const requestConfirmation = vi.fn(async () => 'launcherOnly' as const)
 		const requestShutdown = vi.fn(async () => undefined)
 
 		await expect(
 			handleBrowserRunningClose({
 				hasActiveProfiles: () => false,
-				showMessageBox,
+				requestConfirmation,
 				requestShutdown,
 			}),
 		).resolves.toBe('allow')
 
-		expect(showMessageBox).not.toHaveBeenCalled()
+		expect(requestConfirmation).not.toHaveBeenCalled()
 		expect(requestShutdown).not.toHaveBeenCalled()
 	})
 
 	it('keeps browser running by default', async () => {
-		const showMessageBox = vi.fn(async () => ({ response: 0 }))
+		const requestConfirmation = vi.fn(async () => 'launcherOnly' as const)
 		const requestShutdown = vi.fn(async () => undefined)
 
 		await expect(
 			handleBrowserRunningClose({
 				hasActiveProfiles: () => true,
-				showMessageBox,
+				requestConfirmation,
 				requestShutdown,
 			}),
 		).resolves.toBe('allow')
 
-		expect(showMessageBox).toHaveBeenCalledOnce()
+		expect(requestConfirmation).toHaveBeenCalledOnce()
 		expect(requestShutdown).not.toHaveBeenCalled()
 	})
 
 	it('does not prompt when settings keep browsers running on close', async () => {
-		const showMessageBox = vi.fn(async () => ({ response: 0 }))
+		const requestConfirmation = vi.fn(async () => 'launcherOnly' as const)
 		const requestShutdown = vi.fn(async () => undefined)
 
 		await expect(
 			handleBrowserRunningClose({
 				hasActiveProfiles: () => true,
 				exitWithBrowsers: () => 'launcherOnly',
-				showMessageBox,
+				requestConfirmation,
 				requestShutdown,
 			}),
 		).resolves.toBe('allow')
 
-		expect(showMessageBox).not.toHaveBeenCalled()
+		expect(requestConfirmation).not.toHaveBeenCalled()
 		expect(requestShutdown).not.toHaveBeenCalled()
 	})
 
 	it('requests browser shutdown without prompting when settings say to close browsers', async () => {
-		const showMessageBox = vi.fn(async () => ({ response: 0 }))
+		const requestConfirmation = vi.fn(async () => 'launcherOnly' as const)
 		const requestShutdown = vi.fn(async () => undefined)
 
 		await expect(
 			handleBrowserRunningClose({
 				hasActiveProfiles: () => true,
 				exitWithBrowsers: () => 'closeBrowsers',
-				showMessageBox,
+				requestConfirmation,
 				requestShutdown,
 			}),
 		).resolves.toBe('allow')
 
-		expect(showMessageBox).not.toHaveBeenCalled()
+		expect(requestConfirmation).not.toHaveBeenCalled()
 		expect(requestShutdown).toHaveBeenCalledOnce()
 	})
 
 	it('requests browser shutdown when user chooses close browser', async () => {
-		const showMessageBox = vi.fn(async () => ({ response: 1 }))
+		const requestConfirmation = vi.fn(async () => 'closeBrowsers' as const)
 		const requestShutdown = vi.fn(async () => undefined)
 
 		await expect(
 			handleBrowserRunningClose({
 				hasActiveProfiles: () => true,
-				showMessageBox,
+				requestConfirmation,
 				requestShutdown,
 			}),
 		).resolves.toBe('allow')
 
-		expect(showMessageBox).toHaveBeenCalledOnce()
+		expect(requestConfirmation).toHaveBeenCalledOnce()
 		expect(requestShutdown).toHaveBeenCalledOnce()
 	})
 
@@ -188,7 +191,7 @@ describe('handleBrowserRunningClose', () => {
 			handleBrowserRunningClose({
 				hasActiveProfiles: () => true,
 				exitWithBrowsers: () => 'closeBrowsers',
-				showMessageBox: vi.fn(async () => ({ response: 0 })),
+				requestConfirmation: vi.fn(async () => 'launcherOnly' as const),
 				requestShutdown: vi.fn(async () => {
 					throw shutdownError
 				}),
@@ -197,5 +200,172 @@ describe('handleBrowserRunningClose', () => {
 		).resolves.toBe('prevented')
 
 		expect(onError).toHaveBeenCalledWith(shutdownError)
+	})
+})
+
+describe('window close confirmation', () => {
+	it('cancels without closing browsers or the launcher', async () => {
+		const requestShutdown = vi.fn(async () => undefined)
+		await expect(
+			handleBrowserRunningClose({
+				hasActiveProfiles: () => true,
+				requestConfirmation: async () => 'cancel',
+				requestShutdown,
+			}),
+		).resolves.toBe('prevented')
+		expect(requestShutdown).not.toHaveBeenCalled()
+	})
+
+	it('keeps the launcher open when confirmed browser shutdown fails', async () => {
+		const onError = vi.fn()
+		await expect(
+			handleBrowserRunningClose({
+				hasActiveProfiles: () => true,
+				requestConfirmation: async () => 'closeBrowsers',
+				requestShutdown: async () => {
+					throw new Error('still running')
+				},
+				onError,
+			}),
+		).resolves.toBe('prevented')
+		expect(onError).toHaveBeenCalledOnce()
+	})
+
+	it('accepts only a current prompt response once', async () => {
+		const sendState = vi.fn()
+		const prompt = createWindowClosePrompt(sendState, () => true)
+		const pending = prompt.requestConfirmation()
+		const request = prompt.getState()!
+		expect(prompt.requestConfirmation()).toBe(pending)
+		expect(prompt.respond('stale', 'closeBrowsers')).toBe(false)
+		expect(prompt.respond(request.requestId, 'dismiss')).toBe(false)
+		expect(prompt.respond(request.requestId, 'launcherOnly')).toBe(true)
+		expect(prompt.respond(request.requestId, 'closeBrowsers')).toBe(false)
+		await expect(pending).resolves.toBe('launcherOnly')
+		expect(prompt.getState()).toBeNull()
+		expect(sendState).toHaveBeenLastCalledWith(null)
+	})
+
+	it('cancels suspended requests and invalidates their ids', async () => {
+		const prompt = createWindowClosePrompt(vi.fn(), () => true)
+		const pending = prompt.requestConfirmation()
+		const oldId = prompt.getState()!.requestId
+		prompt.cancel()
+		await expect(pending).resolves.toBe('cancel')
+		const next = prompt.requestConfirmation()
+		expect(prompt.getState()!.requestId).not.toBe(oldId)
+		expect(prompt.respond(oldId, 'closeBrowsers')).toBe(false)
+		prompt.cancel()
+		await expect(next).resolves.toBe('cancel')
+	})
+
+	it('fails closed when the renderer cannot present the request', async () => {
+		const prompt = createWindowClosePrompt(vi.fn(), () => false)
+		await expect(prompt.requestConfirmation()).resolves.toBe('cancel')
+		expect(prompt.getState()).toBeNull()
+		const disconnected = createWindowClosePrompt(
+			() => {
+				throw new Error('gone')
+			},
+			() => true,
+		)
+		await expect(disconnected.requestConfirmation()).resolves.toBe('cancel')
+	})
+
+	it('shows a separate failure notice which cannot grant permission to close', async () => {
+		const prompt = createWindowClosePrompt(vi.fn(), () => true)
+		prompt.showFailure()
+		const request = prompt.getState()!
+		expect(request.kind).toBe('error')
+		expect(prompt.respond(request.requestId, 'closeBrowsers')).toBe(false)
+		expect(prompt.respond(request.requestId, 'launcherOnly')).toBe(false)
+		expect(prompt.respond(request.requestId, 'dismiss')).toBe(true)
+		expect(prompt.getState()).toBeNull()
+	})
+})
+
+class FakeControlWindow extends EventEmitter {
+	webContents = Object.assign(new EventEmitter(), {
+		send: vi.fn(),
+		isDestroyed: () => false,
+	})
+	isDestroyed = () => false
+	loadFile = vi.fn(async () => undefined)
+	loadURL = vi.fn(async () => undefined)
+	close = vi.fn(() => this.emit('close', { preventDefault: vi.fn() }))
+}
+
+function createControlWindowHarness() {
+	const requestShutdown = vi.fn(async () => undefined)
+	const result = createControlWindow(
+		{ BrowserWindow: FakeControlWindow } as unknown as Parameters<typeof createControlWindow>[0],
+		{ hasActiveProfiles: () => true, requestShutdown } as unknown as Parameters<
+			typeof createControlWindow
+		>[1],
+		{ get: async () => ({ behavior: { exitWithBrowsers: 'ask' } }) } as unknown as Parameters<
+			typeof createControlWindow
+		>[2],
+		{ log: vi.fn() } as unknown as Parameters<typeof createControlWindow>[3],
+		undefined,
+	)
+	const window = result.window as unknown as FakeControlWindow
+	window.webContents.emit('did-finish-load')
+	return { ...result, window, requestShutdown }
+}
+
+describe('control window close lifecycle', () => {
+	it.each(['navigation', 'render-process-gone', 'destroyed', 'closed'])(
+		'cancels pending confirmation on %s and prevents a stale response from exiting',
+		async (event) => {
+			const { window, closePrompt, requestShutdown } = createControlWindowHarness()
+			window.close()
+			await vi.waitFor(() => expect(closePrompt.getState()?.kind).toBe('confirm'))
+			const requestId = closePrompt.getState()!.requestId
+			if (event === 'navigation') {
+				window.webContents.emit('did-start-navigation', {}, 'file:///app', false, true)
+			} else if (event === 'closed') {
+				window.emit('closed')
+			} else {
+				window.webContents.emit(event)
+			}
+			expect(closePrompt.getState()).toBeNull()
+			expect(closePrompt.respond(requestId, 'closeBrowsers')).toBe(false)
+			await new Promise((resolve) => setImmediate(resolve))
+			expect(window.close).toHaveBeenCalledOnce()
+			expect(requestShutdown).not.toHaveBeenCalled()
+		},
+	)
+
+	it('allows a fresh close request after reloading', async () => {
+		const { window, closePrompt } = createControlWindowHarness()
+		window.close()
+		await vi.waitFor(() => expect(closePrompt.getState()?.kind).toBe('confirm'))
+		window.webContents.emit('did-start-navigation', {}, 'file:///app', false, true)
+		await new Promise((resolve) => setImmediate(resolve))
+		window.webContents.emit('did-finish-load')
+		window.close()
+		await vi.waitFor(() => expect(closePrompt.getState()?.kind).toBe('confirm'))
+		expect(closePrompt.respond(closePrompt.getState()!.requestId, 'cancel')).toBe(true)
+	})
+
+	it('does not close after an accepted response races with a renderer reload', async () => {
+		const { window, closePrompt, requestShutdown } = createControlWindowHarness()
+		window.close()
+		await vi.waitFor(() => expect(closePrompt.getState()?.kind).toBe('confirm'))
+		closePrompt.respond(closePrompt.getState()!.requestId, 'closeBrowsers')
+		window.webContents.emit('did-start-navigation', {}, 'file:///app', false, true)
+		await new Promise((resolve) => setImmediate(resolve))
+		expect(window.close).toHaveBeenCalledOnce()
+		expect(requestShutdown).not.toHaveBeenCalled()
+	})
+
+	it('presents browser shutdown failures through the application prompt', async () => {
+		const { window, closePrompt, requestShutdown } = createControlWindowHarness()
+		requestShutdown.mockRejectedValueOnce(new Error('still running'))
+		window.close()
+		await vi.waitFor(() => expect(closePrompt.getState()?.kind).toBe('confirm'))
+		closePrompt.respond(closePrompt.getState()!.requestId, 'closeBrowsers')
+		await vi.waitFor(() => expect(closePrompt.getState()?.kind).toBe('error'))
+		expect(window.close).toHaveBeenCalledOnce()
 	})
 })

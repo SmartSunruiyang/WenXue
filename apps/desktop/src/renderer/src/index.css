@@ -21,10 +21,17 @@
 	--wx-coral-pulse: oklch(0.5 0.09 75);
 	--wx-error-red: oklch(0.52 0.19 27);
 	--wx-shadow: rgb(0 0 0 / 0.06);
-	--wx-focus: oklch(0.42 0 0);
+	--wx-focus: oklch(0.62 0.03 255);
+	--wx-focus-glow: 0 0 0 3px oklch(0.67 0.025 255 / 0.1), 0 0 9px oklch(0.62 0.03 255 / 0.16);
+	--wx-avatar-radius: 12px;
 	--wx-hover: oklch(0.955 0 0);
 	--wx-selected: oklch(0.94 0 0);
 	--wx-window-control-safe: 0px;
+	--wx-layer-window: 60;
+	--wx-layer-menu: 80;
+	--wx-layer-notice: 900;
+	--wx-layer-modal: 1000;
+	--wx-layer-dialog: 1100;
 }
 
 @layer base {
@@ -53,14 +60,6 @@
 	input,
 	select {
 		font: inherit;
-	}
-
-	button:focus-visible,
-	input:focus-visible,
-	select:focus-visible,
-	summary:focus-visible {
-		outline: 2px solid var(--wx-focus);
-		outline-offset: 2px;
 	}
 
 	input::placeholder {
@@ -122,11 +121,6 @@ body:has(.app-shell--macos) {
 	box-shadow:
 		0 0 0 1px var(--wx-shell-outline),
 		0 2px 6px var(--wx-shadow);
-}
-
-.app-shell--macos .avatar-menu {
-	top: 58px;
-	left: calc(100% + 8px);
 }
 
 .app-shell--macos .page-header {
@@ -466,7 +460,7 @@ body:has(.app-shell--macos) {
 	overflow: hidden;
 	padding: 0;
 	border: 1px solid var(--wx-border);
-	border-radius: 50%;
+	border-radius: var(--wx-avatar-radius);
 	background: var(--wx-surface);
 	color: var(--wx-muted);
 	cursor: pointer;
@@ -637,9 +631,9 @@ body:has(.app-shell--macos) {
 	color: var(--wx-muted);
 }
 .email-auth__privacy a:focus-visible {
-	outline: 2px solid var(--wx-focus);
-	outline-offset: 3px;
+	outline: none;
 	border-radius: 2px;
+	box-shadow: var(--wx-focus-glow);
 }
 .email-auth button:active:not(:disabled) {
 	opacity: 0.8;
@@ -684,8 +678,10 @@ body:has(.app-shell--macos) {
 	height: 38px;
 	margin-top: 24px;
 	place-items: center;
+	padding: 0;
+	overflow: hidden;
 	border: 0;
-	border-radius: 12px;
+	border-radius: var(--wx-avatar-radius);
 	background: var(--wx-surface);
 	cursor: pointer;
 	box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
@@ -786,19 +782,7 @@ body:has(.app-shell--macos) {
 }
 
 .avatar-menu {
-	position: absolute;
-	top: 44px;
-	left: 76px;
-	z-index: 40;
-	display: flex;
-	width: 280px;
-	flex-direction: column;
-	gap: 4px;
-	padding: 12px;
-	border: 1px solid var(--wx-border);
-	border-radius: 8px;
-	background: var(--wx-panel-strong);
-	box-shadow: 0 4px 8px var(--wx-shadow);
+	width: 296px;
 }
 
 .avatar-menu__head {
@@ -807,7 +791,6 @@ body:has(.app-shell--macos) {
 	gap: 12px;
 	padding: 8px 8px 16px;
 	margin-bottom: 4px;
-	border-bottom: 1px solid var(--wx-border);
 }
 
 .avatar-menu__mark {
@@ -817,7 +800,7 @@ body:has(.app-shell--macos) {
 	width: 48px;
 	height: 48px;
 	place-items: center;
-	border-radius: 8px;
+	border-radius: var(--wx-avatar-radius);
 	background: var(--wx-surface);
 	border: 1px solid var(--wx-border);
 }
@@ -846,23 +829,6 @@ body:has(.app-shell--macos) {
 	font-size: 12px;
 }
 
-.avatar-menu button {
-	display: flex;
-	height: 34px;
-	align-items: center;
-	gap: 10px;
-	border: 0;
-	border-radius: 8px;
-	background: transparent;
-	color: var(--wx-foreground);
-	cursor: pointer;
-	padding-inline: 12px;
-}
-
-.avatar-menu button:hover:not(:disabled) {
-	background: var(--wx-hover);
-}
-
 .avatar-menu__head > div:last-child {
 	min-width: 0;
 }
@@ -873,9 +839,12 @@ body:has(.app-shell--macos) {
 	white-space: nowrap;
 }
 
-.avatar-menu button:disabled {
-	cursor: not-allowed;
-	opacity: 0.48;
+.avatar-menu .menu-meta {
+	margin-left: auto;
+	font-variant-numeric: tabular-nums;
+}
+.menu-danger {
+	color: var(--wx-error-red);
 }
 
 .main-surface {
@@ -903,7 +872,7 @@ body:has(.app-shell--macos) {
 	position: absolute;
 	top: 0;
 	right: 0;
-	z-index: 2147483647;
+	z-index: var(--wx-layer-window);
 	display: grid;
 	width: 138px;
 	height: 38px;
@@ -1091,11 +1060,11 @@ body:has(.app-shell--macos) {
 }
 .search-field:focus-within {
 	border-color: var(--wx-focus);
-	outline: 2px solid var(--wx-focus);
-	outline-offset: 2px;
+	box-shadow: var(--wx-focus-glow);
 }
 .search-field input:focus-visible {
 	outline: none;
+	box-shadow: none;
 }
 .search-clear {
 	display: grid;
@@ -1257,15 +1226,6 @@ body:has(.app-shell--macos) {
 	border-radius: 10px;
 	transition: background-color 160ms ease-out;
 }
-.log-row:not(:last-child)::after {
-	position: absolute;
-	bottom: 0;
-	right: 12px;
-	left: 104px;
-	height: 1px;
-	background: var(--wx-border);
-	content: '';
-}
 .log-row:hover,
 .log-row:has(button[aria-expanded='true']) {
 	background: var(--wx-surface-subtle);
@@ -1353,7 +1313,6 @@ body:has(.app-shell--macos) {
 	align-items: end;
 	gap: 32px;
 	padding-block: 12px 24px;
-	border-bottom: 1px solid var(--wx-border);
 }
 .token-overview__total,
 .token-overview__details > div {
@@ -1402,7 +1361,6 @@ body:has(.app-shell--macos) {
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 40px;
 	padding-bottom: 28px;
-	border-bottom: 1px solid var(--wx-border);
 }
 .token-panel,
 .token-flow,
@@ -1421,7 +1379,6 @@ body:has(.app-shell--macos) {
 }
 .token-flow {
 	padding-bottom: 28px;
-	border-bottom: 1px solid var(--wx-border);
 }
 .usage-bar {
 	display: flex;
@@ -1478,7 +1435,6 @@ body:has(.app-shell--macos) {
 	min-width: 0;
 	overflow: hidden;
 	padding: 16px 12px;
-	border-bottom: 1px solid var(--wx-border);
 	font-size: 13px;
 	text-align: left;
 	text-overflow: ellipsis;
@@ -1501,9 +1457,6 @@ body:has(.app-shell--macos) {
 	padding-right: 0;
 	text-align: right;
 	font-variant-numeric: tabular-nums;
-}
-.usage-history tbody tr:last-child td {
-	border-bottom: 0;
 }
 .usage-history td.usage-history__empty {
 	width: auto;
@@ -1582,10 +1535,6 @@ body:has(.app-shell--macos) {
 	align-items: center;
 	gap: 32px;
 	padding: 20px 0;
-	border-bottom: 1px solid var(--wx-border);
-}
-.setting-row:last-child {
-	border-bottom: 0;
 }
 .setting-copy {
 	display: grid;
@@ -1620,8 +1569,7 @@ body:has(.app-shell--macos) {
 	font-size: 12px;
 	pointer-events: none;
 }
-.setting-row input,
-.setting-row select {
+.setting-row input {
 	width: 100%;
 	min-width: 0;
 	height: 40px;
@@ -1642,8 +1590,7 @@ body:has(.app-shell--macos) {
 .setting-row input[aria-invalid='true'] {
 	border-color: var(--wx-error-red);
 }
-.setting-row input:disabled,
-.setting-row select:disabled {
+.setting-row input:disabled {
 	opacity: 0.45;
 	cursor: wait;
 }
@@ -1659,10 +1606,6 @@ body:has(.app-shell--macos) {
 }
 .version-list > * {
 	padding-block: 20px;
-	border-bottom: 1px solid var(--wx-border);
-}
-.version-list > :nth-last-child(-n + 2) {
-	border-bottom: 0;
 }
 .version-list span {
 	font-size: 14px;
@@ -1749,7 +1692,7 @@ body:has(.app-shell--macos) {
 	position: fixed;
 	top: 48px;
 	left: 50%;
-	z-index: 2147482000;
+	z-index: var(--wx-layer-notice);
 	display: grid;
 	grid-template-columns: auto minmax(0, 1fr) auto;
 	width: min(680px, calc(100vw - 48px));
@@ -1916,5 +1859,59 @@ body:has(.app-shell--macos) {
 		animation-iteration-count: 1 !important;
 		scroll-behavior: auto !important;
 		transition-duration: 1ms !important;
+	}
+}
+
+:is(button, input, textarea, select, summary, a):focus-visible {
+	outline: none;
+	box-shadow: var(--wx-focus-glow);
+}
+:is(input, textarea, select):focus-visible {
+	border-color: var(--wx-focus);
+}
+.search-field,
+:is(input, textarea, button, select) {
+	transition:
+		border-color 160ms ease-out,
+		box-shadow 160ms ease-out,
+		background-color 160ms ease-out;
+}
+.settings-save-state[hidden] {
+	display: none;
+}
+@media (forced-colors: active) {
+	:is(button, input, textarea, select, summary, a):focus-visible {
+		outline: 2px solid Highlight;
+		outline-offset: 2px;
+	}
+	.search-field:focus-within {
+		outline: 2px solid Highlight;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.search-field,
+	:is(input, textarea, button, select) {
+		transition: none;
+	}
+}
+
+.wx-ops-button:focus-visible,
+.wx-ops-close:focus-visible,
+.wx-ops-detail:focus-visible {
+	outline: none;
+	box-shadow: var(--wx-focus-glow);
+}
+.setting-control .wx-select-field {
+	width: 100%;
+	min-height: 40px;
+	border-radius: 10px;
+}
+@media (forced-colors: active) {
+	.wx-ops-button:focus-visible,
+	.wx-ops-close:focus-visible,
+	.wx-ops-detail:focus-visible,
+	.email-auth__privacy a:focus-visible {
+		outline: 2px solid Highlight;
+		outline-offset: 2px;
 	}
 }

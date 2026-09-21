@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { WindowCloseChoice, WindowClosePromptState } from '../main/DesktopBridge'
 
 contextBridge.exposeInMainWorld('wenxue', {
 	browser: {
@@ -66,5 +67,13 @@ contextBridge.exposeInMainWorld('wenxue', {
 		minimizeWindow: () => ipcRenderer.invoke('app:minimizeWindow'),
 		toggleMaximizeWindow: () => ipcRenderer.invoke('app:toggleMaximizeWindow'),
 		requestClose: () => ipcRenderer.invoke('app:requestClose'),
+		getClosePrompt: () => ipcRenderer.invoke('app:getClosePrompt'),
+		respondToClosePrompt: (requestId: string, choice: WindowCloseChoice) =>
+			ipcRenderer.invoke('app:respondToClosePrompt', requestId, choice),
+		onClosePromptChange: (cb: (state: WindowClosePromptState) => void) => {
+			const listener = (_event: IpcRendererEvent, state: WindowClosePromptState) => cb(state)
+			ipcRenderer.on('app:close-prompt-changed', listener)
+			return () => ipcRenderer.off('app:close-prompt-changed', listener)
+		},
 	},
 })

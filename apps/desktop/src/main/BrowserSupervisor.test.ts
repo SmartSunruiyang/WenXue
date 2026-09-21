@@ -316,19 +316,21 @@ describe('BrowserSupervisor', () => {
 		expect(events).toEqual(['launching', 'running'])
 	})
 
-	it('opens a requested start URL when focusing an already running profile', async () => {
+	it('opens requested URLs in order when focusing an already running profile', async () => {
 		const { supervisor, child, spawns, focusCalls } = createSupervisorHarness()
 
-		await supervisor.launch('default', { startUrl: 'chrome://newtab' })
+		await supervisor.launch('default', { startUrls: ['chrome://newtab'] })
 		child.emit('spawn')
 		await supervisor.launch('default', {
-			startUrl: 'http://127.0.0.1:4321/wenxue-user-session-handoff/test',
+			startUrls: ['chrome://newtab', 'http://127.0.0.1:4321/wenxue-user-session-handoff/test'],
 		})
 
 		expect(spawns).toHaveLength(1)
 		expect(focusCalls).toHaveLength(1)
-		expect(focusCalls[0].argv).toContain('http://127.0.0.1:4321/wenxue-user-session-handoff/test')
-		expect(focusCalls[0].argv).not.toContain('chrome://newtab')
+		expect(focusCalls[0].argv.slice(-2)).toEqual([
+			'chrome://newtab',
+			'http://127.0.0.1:4321/wenxue-user-session-handoff/test',
+		])
 	})
 
 	it('requests browser shutdown and resolves after exit', async () => {

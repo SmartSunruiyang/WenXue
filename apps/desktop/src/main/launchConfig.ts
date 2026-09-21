@@ -1,7 +1,7 @@
 export interface LaunchOptions {
 	userDataDir: string
 	extensionDir: string
-	startUrl?: string
+	startUrls?: string[]
 	debugPipe?: boolean
 }
 
@@ -13,13 +13,14 @@ export function buildArgv(opts: LaunchOptions): string[] {
 		'--no-first-run',
 		'--no-default-browser-check',
 		'--hide-crash-restore-bubble',
+		'--disable-infobars',
 	]
 
 	if (opts.debugPipe) {
 		argv.push('--remote-debugging-pipe')
 	}
-	if (opts.startUrl) {
-		argv.push(opts.startUrl)
+	if (opts.startUrls) {
+		argv.push(...opts.startUrls)
 	}
 
 	return argv

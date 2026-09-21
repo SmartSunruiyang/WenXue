@@ -25,7 +25,7 @@ export interface BrowserSupervisorDeps {
 }
 
 export interface BrowserLaunchOptions {
-	startUrl?: string
+	startUrls?: string[]
 }
 
 type StatusListener = (status: BrowserStatus) => void
@@ -69,11 +69,11 @@ export class BrowserSupervisor {
 			throw new Error(`浏览器配置 ${profileId} 仍在关闭中，请先重试停止。`)
 		}
 		if (status === 'running' && current) {
-			const focusArgv = options.startUrl
+			const focusArgv = options.startUrls
 				? buildArgv({
 						userDataDir: await this.deps.profiles.ensureProfile(profileId),
 						extensionDir: this.deps.resources.extensionDir(),
-						startUrl: options.startUrl,
+						startUrls: options.startUrls,
 					})
 				: current.argv
 			await this.focusExisting(current.binary, focusArgv)
@@ -110,7 +110,7 @@ export class BrowserSupervisor {
 			argv = buildArgv({
 				userDataDir,
 				extensionDir: this.deps.resources.extensionDir(),
-				startUrl: options.startUrl ?? 'chrome://newtab',
+				startUrls: options.startUrls ?? ['chrome://newtab'],
 			})
 			child = this.spawnBrowser(binary, argv)
 		} catch (error) {

@@ -3,7 +3,6 @@ import { AnnouncementDialog, UpdateDialog } from '@wenxue/client-operations/reac
 import type { LucideIcon } from 'lucide-react'
 import {
 	Activity,
-	ArrowUpDown,
 	ArrowUpRight,
 	Check,
 	ChevronDown,
@@ -28,17 +27,20 @@ import {
 	Settings,
 	Square,
 	Trash2,
+	UserRound,
 	X,
 } from 'lucide-react'
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { AccountSettings } from './AccountSettings'
 import {
 	getLauncherSession,
 	readCloudBaseErrorMessage,
 	refreshLauncherSession,
 	signOutLauncher,
 	toPublicUser,
+	updateLauncherProfile,
 	type LauncherAuthSession,
 	type LauncherPublicUser,
 } from './cloudbase'
@@ -46,6 +48,7 @@ import {
 	DesktopAnnouncementService,
 	type DesktopAnnouncementSnapshot,
 } from './DesktopAnnouncementService'
+import { ConfirmationProvider, PopupMenu, SelectField, useConfirmation } from './DesktopOverlays'
 import { DesktopReleaseSignalService } from './DesktopReleaseSignalService'
 import { EmailAuthScreen } from './EmailAuthScreen'
 import { executeSafeSignOut } from './safeSignOut'
@@ -62,12 +65,13 @@ import type {
 	TokenUsageBucket,
 	TokenUsageSummary,
 } from './wenxue'
+import { WindowCloseDialog } from './WindowCloseDialog'
 
 const isMacPlatform = navigator.userAgent.includes('Macintosh')
 declare const __WENXUE_UPDATE_CHANNEL__: string
 
 type RouteId = 'browsers' | 'logs' | 'tokens' | 'settings'
-type SettingsSectionId = 'launch' | 'behavior' | 'logs' | 'kernel' | 'about'
+type SettingsSectionId = 'account' | 'launch' | 'behavior' | 'logs' | 'kernel' | 'about'
 type ProfileSortMode = 'recent' | 'name' | 'status'
 type ProfileFilter = 'all' | BrowserStatus
 type LogSource = LauncherLogEntry['source']
@@ -78,6 +82,7 @@ const routeItems: Array<{ id: RouteId; label: string; icon: LucideIcon }> = [
 ]
 
 const settingsSections: Array<{ id: SettingsSectionId; label: string }> = [
+	{ id: 'account', label: strings.settings.sections.account },
 	{ id: 'launch', label: strings.settings.sections.launch },
 	{ id: 'behavior', label: strings.settings.sections.behavior },
 	{ id: 'logs', label: strings.settings.sections.logs },
@@ -145,8 +150,18 @@ const defaultShellInfo: AppShellInfo = {
 }
 
 export default function App() {
+	return (
+		<ConfirmationProvider labels={strings.dialog.actions}>
+			<DesktopApp />
+			<WindowCloseDialog copy={strings.windowClose} />
+		</ConfirmationProvider>
+	)
+}
+
+function DesktopApp() {
+	const confirm = useConfirmation()
 	const [route, setRoute] = useState<RouteId>('browsers')
-	const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('launch')
+	const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('account')
 	const [authReady, setAuthReady] = useState(false)
 	const [authUser, setAuthUser] = useState<LauncherPublicUser | null>(null)
 	const [profiles, setProfiles] = useState<BrowserProfile[]>([])
@@ -177,6 +192,7 @@ export default function App() {
 	const [pendingProfileIds, setPendingProfileIds] = useState<string[]>([])
 	const [logoutBusy, setLogoutBusy] = useState(false)
 	const [savingSettings, setSavingSettings] = useState(false)
+	const [savingProfile, setSavingProfile] = useState(false)
 	const [tokensLoading, setTokensLoading] = useState(false)
 	const [savedTick, setSavedTick] = useState(false)
 	const [message, setMessage] = useState<string | null>(null)
@@ -188,6 +204,8 @@ export default function App() {
 	const addingProfileRef = useRef(false)
 	const batchLaunchingRef = useRef(false)
 	const logoutBusyRef = useRef(false)
+	const savingProfileRef = useRef(false)
+	const profileRevisionRef = useRef(0)
 	const logRefreshErrorRef = useRef<string | null>(null)
 	const announcementErrorRef = useRef<string | null>(null)
 	const logsMutationBusyRef = useRef(false)
@@ -202,10 +220,14 @@ export default function App() {
 	const releaseSignalServiceRef = useRef<DesktopReleaseSignalService | null>(null)
 	announcementServiceRef.current ??= new DesktopAnnouncementService({
 		refreshSession: async (current) => {
+			const profileRevision = profileRevisionRef.current
 			const refreshed = await refreshLauncherSession()
 			if (refreshed.userId !== current.userId) return null
 			const synced = await window.wenxue.auth.setSession(refreshed)
 			if (!synced.ok) throw new Error(synced.error ?? '账号 session 刷新失败')
+			if (!savingProfileRef.current && profileRevision === profileRevisionRef.current) {
+				setAuthUser((user) => (user?.userId === refreshed.userId ? toPublicUser(refreshed) : user))
+			}
 			return refreshed
 		},
 	})
@@ -398,17 +420,6 @@ export default function App() {
 		if (authUser && route === 'tokens') void refreshTokens()
 	}, [authUser, refreshTokens, route])
 
-	useEffect(() => {
-		if (!avatarOpen) return
-		const closeOnEscape = (event: KeyboardEvent) => {
-			if (event.key !== 'Escape') return
-			setAvatarOpen(false)
-			avatarButtonRef.current?.focus()
-		}
-		window.addEventListener('keydown', closeOnEscape)
-		return () => window.removeEventListener('keydown', closeOnEscape)
-	}, [avatarOpen])
-
 	useEffect(
 		() => () => {
 			if (savedTimerRef.current !== null) window.clearTimeout(savedTimerRef.current)
@@ -535,7 +546,15 @@ export default function App() {
 
 	const removeProfile = useCallback(
 		async (profileId: string) => {
-			if (!window.confirm('删除该浏览器画像？登录态、Cookie 与缓存会一并清除。')) return
+			if (
+				!(await confirm({
+					title: strings.dialog.removeProfile.title,
+					description: strings.dialog.removeProfile.description,
+					confirmLabel: strings.browser.action.remove,
+					danger: true,
+				}))
+			)
+				return
 			if (!beginProfileAction(profileId)) return
 			setMessage(null)
 			try {
@@ -554,7 +573,7 @@ export default function App() {
 				endProfileAction(profileId)
 			}
 		},
-		[beginProfileAction, endProfileAction],
+		[beginProfileAction, confirm, endProfileAction],
 	)
 
 	const openProfileFolder = useCallback(
@@ -729,6 +748,7 @@ export default function App() {
 	const handleLogout = useCallback(async () => {
 		if (
 			logoutBusyRef.current ||
+			savingProfileRef.current ||
 			addingProfileRef.current ||
 			batchLaunchingRef.current ||
 			pendingProfileActionsRef.current.size > 0 ||
@@ -776,7 +796,7 @@ export default function App() {
 				setLogLevels(['info', 'warn', 'error'])
 				setActiveLogSources(logSources)
 				setFollowLogs(true)
-				setSettingsSection('launch')
+				setSettingsSection('account')
 				setSavedTick(false)
 				setRoute('browsers')
 				setAvatarOpen(false)
@@ -785,6 +805,39 @@ export default function App() {
 			setLogoutBusy(false)
 		}
 	}, [refreshProfiles])
+
+	const saveProfile = useCallback(
+		async (input: { nickname: string; avatar?: File }) => {
+			if (!authUser || logoutBusyRef.current || savingProfileRef.current) {
+				throw new Error(strings.auth.emailErrors.pending)
+			}
+			const userId = authUser.userId
+			savingProfileRef.current = true
+			profileRevisionRef.current += 1
+			setSavingProfile(true)
+			try {
+				const user = await updateLauncherProfile({ userId, ...input })
+				setAuthUser((current) => (current?.userId === user.userId ? user : current))
+			} finally {
+				savingProfileRef.current = false
+				profileRevisionRef.current += 1
+				setSavingProfile(false)
+			}
+		},
+		[authUser],
+	)
+
+	const requestLogout = useCallback(async () => {
+		setAvatarOpen(false)
+		if (
+			await confirm({
+				title: strings.dialog.logout.title,
+				description: strings.dialog.logout.description,
+				confirmLabel: strings.dialog.logout.confirm,
+			})
+		)
+			await handleLogout()
+	}, [confirm, handleLogout])
 
 	const acknowledgeAnnouncement = useCallback(async () => {
 		const current = announcementServiceRef.current?.current()
@@ -971,30 +1024,30 @@ export default function App() {
 						}}
 					/>
 				</div>
-				{avatarOpen ? (
-					<AvatarMenu
-						logoutBusy={logoutBusy}
-						setAvatarOpen={setAvatarOpen}
-						setRoute={setRoute}
-						setSettingsSection={setSettingsSection}
-						user={authUser}
-						versions={versions}
-						workspaceBusy={
-							addingProfile ||
-							batchLaunching ||
-							pendingProfileIds.length > 0 ||
-							savingSettings ||
-							logsMutating
-						}
-						onLogout={handleLogout}
-					/>
-				) : null}
+				<AvatarMenu
+					open={avatarOpen}
+					anchorRef={avatarButtonRef}
+					logoutBusy={logoutBusy}
+					setAvatarOpen={setAvatarOpen}
+					setRoute={setRoute}
+					setSettingsSection={setSettingsSection}
+					user={authUser}
+					versions={versions}
+					workspaceBusy={
+						addingProfile ||
+						batchLaunching ||
+						pendingProfileIds.length > 0 ||
+						savingSettings ||
+						savingProfile ||
+						logsMutating
+					}
+					onLogout={requestLogout}
+				/>
 			</aside>
 
 			<section
 				aria-busy={logoutBusy}
 				className={`main-surface ${logoutBusy ? 'main-surface--busy' : ''}`}
-				onPointerDown={() => setAvatarOpen(false)}
 			>
 				<div className="top-drag-zone drag-region" />
 				<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
@@ -1066,6 +1119,19 @@ export default function App() {
 				) : null}
 				{route === 'settings' ? (
 					<SettingsPage
+						user={authUser}
+						onSaveProfile={saveProfile}
+						onLogout={requestLogout}
+						logoutBusy={logoutBusy}
+						accountDisabled={
+							logoutBusy ||
+							addingProfile ||
+							batchLaunching ||
+							pendingProfileIds.length > 0 ||
+							savingSettings ||
+							savingProfile ||
+							logsMutating
+						}
 						checkForUpdates={() => checkForUpdates('about')}
 						savedTick={savedTick}
 						saving={savingSettings}
@@ -1265,6 +1331,8 @@ function RailButton({ active, children, icon: Icon, label, onClick }: RailButton
 }
 
 function AvatarMenu({
+	open,
+	anchorRef,
 	logoutBusy,
 	onLogout,
 	setAvatarOpen,
@@ -1274,6 +1342,8 @@ function AvatarMenu({
 	versions,
 	workspaceBusy,
 }: {
+	open: boolean
+	anchorRef: RefObject<HTMLButtonElement | null>
 	logoutBusy: boolean
 	onLogout: () => Promise<void>
 	setAvatarOpen: (open: boolean) => void
@@ -1283,30 +1353,14 @@ function AvatarMenu({
 	versions: AppVersions
 	workspaceBusy: boolean
 }) {
-	const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-		if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
-		const items = Array.from(
-			event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'),
-		)
-		const activeIndex = items.indexOf(document.activeElement as HTMLButtonElement)
-		event.preventDefault()
-		if (event.key === 'Home' || event.key === 'End') {
-			items[event.key === 'Home' ? 0 : items.length - 1]?.focus()
-			return
-		}
-		const direction = event.key === 'ArrowDown' ? 1 : -1
-		items[(activeIndex + direction + items.length) % items.length]?.focus()
-	}
-
 	return (
-		<div
-			aria-label="账号菜单"
+		<PopupMenu
+			open={open}
+			anchorRef={anchorRef}
+			onClose={() => setAvatarOpen(false)}
+			label={strings.account.menuLabel}
 			className="avatar-menu no-drag"
-			onBlur={(event) => {
-				if (!event.currentTarget.contains(event.relatedTarget)) setAvatarOpen(false)
-			}}
-			onKeyDown={handleMenuKeyDown}
-			role="menu"
+			placement="right-start"
 		>
 			<div className="avatar-menu__head">
 				<div className="avatar-menu__mark">
@@ -1322,17 +1376,16 @@ function AvatarMenu({
 				</div>
 			</div>
 			<button
-				autoFocus
 				onClick={() => {
-					setSettingsSection('launch')
+					setSettingsSection('account')
 					setRoute('settings')
 					setAvatarOpen(false)
 				}}
 				role="menuitem"
 				type="button"
 			>
-				<Settings size={15} />
-				设置
+				<UserRound size={16} />
+				{strings.settings.sections.account}
 			</button>
 
 			<button
@@ -1345,19 +1398,20 @@ function AvatarMenu({
 				type="button"
 			>
 				<Info size={15} />
-				关于 {versions.app}
+				{strings.settings.sections.about} <span className="menu-meta">{versions.app}</span>
 			</button>
 			<button
+				data-danger
 				disabled={logoutBusy || workspaceBusy}
 				onClick={() => void onLogout()}
 				role="menuitem"
-				title={workspaceBusy ? '请等待当前操作完成后再退出' : undefined}
+				title={workspaceBusy ? strings.dialog.logout.busy : undefined}
 				type="button"
 			>
 				{logoutBusy ? <LoaderCircle className="spin" size={15} /> : <LogOut size={15} />}
-				{logoutBusy ? '正在退出' : '退出登录'}
+				{logoutBusy ? strings.dialog.logout.pending : strings.dialog.logout.confirm}
 			</button>
-		</div>
+		</PopupMenu>
 	)
 }
 
@@ -1488,20 +1542,18 @@ function BrowserPage(props: BrowserPageProps) {
 							</button>
 						) : null}
 					</div>
-					<label className="browser-sort">
-						<ArrowUpDown aria-hidden size={16} />
-						<select
-							aria-label={strings.browser.sortLabel}
-							disabled={props.batchLaunching}
-							onChange={(event) => props.setProfileSort(event.target.value as ProfileSortMode)}
-							value={props.profileSort}
-						>
-							<option value="recent">{strings.browser.sort.recent}</option>
-							<option value="name">{strings.browser.sort.name}</option>
-							<option value="status">{strings.browser.sort.status}</option>
-						</select>
-						<ChevronDown aria-hidden size={14} />
-					</label>
+					<SelectField
+						className="browser-sort"
+						label={strings.browser.sortLabel}
+						disabled={props.batchLaunching}
+						onChange={(value) => props.setProfileSort(value as ProfileSortMode)}
+						value={props.profileSort}
+						options={[
+							{ value: 'recent', label: strings.browser.sort.recent },
+							{ value: 'name', label: strings.browser.sort.name },
+							{ value: 'status', label: strings.browser.sort.status },
+						]}
+					/>
 					<button
 						aria-pressed={selectionMode}
 						className="browser-button browser-button--secondary"
@@ -1639,107 +1691,9 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile; selecti
 	const failed = status === 'error'
 	const actionPending = props.pendingProfileIds.includes(props.profile.id)
 	const menuButtonRef = useRef<HTMLButtonElement>(null)
-	const menuRef = useRef<HTMLDivElement>(null)
 	const [menuOpen, setMenuOpen] = useState(false)
-	const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null)
-
-	const closeMenu = useCallback((returnFocus = false) => {
-		setMenuOpen(false)
-		if (returnFocus) {
-			window.requestAnimationFrame(() => menuButtonRef.current?.focus())
-		}
-	}, [])
-
-	const toggleMenu = () => {
-		if (menuOpen) {
-			closeMenu(true)
-			return
-		}
-
-		const trigger = menuButtonRef.current
-		if (!trigger) return
-		const bounds = trigger.getBoundingClientRect()
-		const menuWidth = 184
-		const estimatedHeight = failed ? 192 : 156
-		const fitsBelow = bounds.bottom + 6 + estimatedHeight <= window.innerHeight - 8
-		setMenuPosition({
-			left: Math.min(
-				Math.max(8, bounds.right - menuWidth),
-				Math.max(8, window.innerWidth - menuWidth - 8),
-			),
-			top: fitsBelow ? bounds.bottom + 6 : Math.max(8, bounds.top - estimatedHeight - 6),
-		})
-		setMenuOpen(true)
-	}
-
-	useEffect(() => {
-		if (!menuOpen) return
-
-		const focusFrame = window.requestAnimationFrame(() => {
-			menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-		})
-		const handlePointerDown = (event: PointerEvent) => {
-			const target = event.target as Node | null
-			if (menuButtonRef.current?.contains(target) || menuRef.current?.contains(target)) return
-			closeMenu()
-		}
-		const handleKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				event.preventDefault()
-				closeMenu(true)
-				return
-			}
-
-			const menu = menuRef.current
-			if (!menu?.contains(document.activeElement)) return
-			const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
-			const activeIndex = items.indexOf(document.activeElement as HTMLButtonElement)
-
-			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-				event.preventDefault()
-				const direction = event.key === 'ArrowDown' ? 1 : -1
-				items[(activeIndex + direction + items.length) % items.length]?.focus()
-				return
-			}
-			if (event.key === 'Home' || event.key === 'End') {
-				event.preventDefault()
-				items[event.key === 'Home' ? 0 : items.length - 1]?.focus()
-				return
-			}
-			if (event.key === 'Tab') {
-				event.preventDefault()
-				const backwards = event.shiftKey
-				setMenuOpen(false)
-				window.requestAnimationFrame(() => {
-					const trigger = menuButtonRef.current
-					if (!trigger) return
-					if (backwards) {
-						trigger.focus()
-						return
-					}
-					const controls = Array.from(
-						document.querySelectorAll<HTMLElement>(
-							'button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
-						),
-					)
-					controls[controls.indexOf(trigger) + 1]?.focus()
-				})
-			}
-		}
-		const handleViewportChange = () => closeMenu()
-
-		document.addEventListener('pointerdown', handlePointerDown, true)
-		document.addEventListener('keydown', handleKeyDown)
-		window.addEventListener('resize', handleViewportChange)
-		window.addEventListener('scroll', handleViewportChange, true)
-		return () => {
-			window.cancelAnimationFrame(focusFrame)
-			document.removeEventListener('pointerdown', handlePointerDown, true)
-			document.removeEventListener('keydown', handleKeyDown)
-			window.removeEventListener('resize', handleViewportChange)
-			window.removeEventListener('scroll', handleViewportChange, true)
-		}
-	}, [closeMenu, menuOpen])
+	const closeMenu = () => setMenuOpen(false)
+	const toggleMenu = () => setMenuOpen((open) => !open)
 
 	const toggleSelected = () => {
 		if (props.batchLaunching || actionPending || launching) return
@@ -1880,81 +1834,77 @@ function ProfileRow(props: BrowserPageProps & { profile: BrowserProfile; selecti
 					</button>
 				</div>
 			</div>
-			{menuOpen && menuPosition
-				? createPortal(
-						<div
-							aria-label={`${props.profile.displayName} · ${strings.browser.action.more}`}
-							className="row-more__menu browser-profile-menu"
-							id={`profile-menu-${props.profile.id}`}
-							ref={menuRef}
-							role="menu"
-							style={menuPosition}
-						>
-							{failed ? (
-								<button
-									onClick={() => {
-										closeMenu()
-										props.viewLogs()
-									}}
-									role="menuitem"
-									type="button"
-								>
-									<ScrollText size={15} />
-									{strings.browser.action.logs}
-								</button>
-							) : null}
-							<button
-								onClick={() => {
-									closeMenu()
-									props.setEditingId(props.profile.id)
-									props.setDraftName(props.profile.displayName)
-								}}
-								role="menuitem"
-								type="button"
-							>
-								<Pencil size={15} />
-								{strings.browser.action.rename}
-							</button>
-							<button
-								disabled={launching || running}
-								onClick={() => {
-									closeMenu()
-									void props.duplicateProfile(props.profile.id)
-								}}
-								role="menuitem"
-								type="button"
-							>
-								<Copy size={15} />
-								{strings.browser.action.duplicate}
-							</button>
-							<button
-								onClick={() => {
-									closeMenu()
-									void props.openProfileFolder(props.profile.id)
-								}}
-								role="menuitem"
-								type="button"
-							>
-								<FolderOpen size={15} />
-								{strings.browser.action.folder}
-							</button>
-							<button
-								className="danger-icon"
-								disabled={launching || running}
-								onClick={() => {
-									closeMenu()
-									void props.removeProfile(props.profile.id)
-								}}
-								role="menuitem"
-								type="button"
-							>
-								<Trash2 size={15} />
-								{strings.browser.action.remove}
-							</button>
-						</div>,
-						document.body,
-					)
-				: null}
+			<PopupMenu
+				open={menuOpen}
+				anchorRef={menuButtonRef}
+				onClose={closeMenu}
+				label={`${props.profile.displayName} · ${strings.browser.action.more}`}
+				className="browser-profile-menu"
+				id={`profile-menu-${props.profile.id}`}
+			>
+				{failed ? (
+					<button
+						onClick={() => {
+							closeMenu()
+							props.viewLogs()
+						}}
+						role="menuitem"
+						type="button"
+					>
+						<ScrollText size={15} />
+						{strings.browser.action.logs}
+					</button>
+				) : null}
+				<button
+					onClick={() => {
+						closeMenu()
+						props.setEditingId(props.profile.id)
+						props.setDraftName(props.profile.displayName)
+					}}
+					role="menuitem"
+					type="button"
+				>
+					<Pencil size={15} />
+					{strings.browser.action.rename}
+				</button>
+				<button
+					disabled={launching || running}
+					onClick={() => {
+						closeMenu()
+						void props.duplicateProfile(props.profile.id)
+					}}
+					role="menuitem"
+					type="button"
+				>
+					<Copy size={15} />
+					{strings.browser.action.duplicate}
+				</button>
+				<button
+					onClick={() => {
+						closeMenu()
+						void props.openProfileFolder(props.profile.id)
+					}}
+					role="menuitem"
+					type="button"
+				>
+					<FolderOpen size={15} />
+					{strings.browser.action.folder}
+				</button>
+				<button
+					className="danger-icon"
+					data-danger
+					disabled={launching || running}
+					onClick={() => {
+						closeMenu()
+						void props.removeProfile(props.profile.id)
+					}}
+					role="menuitem"
+					type="button"
+				>
+					<Trash2 size={15} />
+					{strings.browser.action.remove}
+				</button>
+			</PopupMenu>
 		</li>
 	)
 }
@@ -1990,6 +1940,7 @@ function LogsPage({
 	setLogLevels: (levels: LogLevel[]) => void
 	setLogQuery: (query: string) => void
 }) {
+	const confirm = useConfirmation()
 	const logStreamRef = useRef<HTMLDivElement>(null)
 	const logSearchRef = useRef<HTMLInputElement>(null)
 	const profileNames = new Map(profiles.map((profile) => [profile.id, profile.displayName]))
@@ -2017,8 +1968,16 @@ function LogsPage({
 						<button
 							className="soft-button"
 							disabled={clearingLogs || totalLogCount === 0}
-							onClick={() => {
-								if (window.confirm(strings.logs.confirmClear)) void clearLogs()
+							onClick={async () => {
+								if (
+									await confirm({
+										title: strings.dialog.clearLogs.title,
+										description: strings.logs.confirmClear,
+										confirmLabel: strings.logs.clear,
+										danger: true,
+									})
+								)
+									await clearLogs()
 							}}
 							type="button"
 						>
@@ -2356,6 +2315,11 @@ function TokenPanel({
 }
 
 function SettingsPage({
+	user,
+	onSaveProfile,
+	onLogout,
+	logoutBusy,
+	accountDisabled,
 	checkForUpdates,
 	savedTick,
 	saving,
@@ -2368,6 +2332,11 @@ function SettingsPage({
 	updateSettings,
 	versions,
 }: {
+	user: LauncherPublicUser
+	onSaveProfile: (input: { nickname: string; avatar?: File }) => Promise<void>
+	onLogout: () => Promise<void>
+	logoutBusy: boolean
+	accountDisabled: boolean
 	checkForUpdates: () => Promise<void>
 	savedTick: boolean
 	saving: boolean
@@ -2388,7 +2357,7 @@ function SettingsPage({
 						<h1>{strings.settings.title}</h1>
 						<p>{strings.settings.description}</p>
 					</div>
-					<div aria-live="polite" className="settings-save-state">
+					<div aria-live="polite" className="settings-save-state" hidden={section === 'account'}>
 						{saving ? (
 							<>
 								<LoaderCircle className="spin" size={15} />
@@ -2420,6 +2389,15 @@ function SettingsPage({
 						))}
 					</nav>
 					<div aria-busy={saving} className="settings-panels" inert={saving}>
+						{section === 'account' ? (
+							<AccountSettings
+								user={user}
+								onSave={onSaveProfile}
+								onLogout={onLogout}
+								logoutBusy={logoutBusy}
+								disabled={accountDisabled}
+							/>
+						) : null}
 						{section === 'launch' ? (
 							<section className="settings-panel">
 								<h2>{strings.settings.sections.launch}</h2>
@@ -2709,18 +2687,17 @@ function SelectSetting({
 	value: string
 }) {
 	return (
-		<label className="setting-row">
+		<div className="setting-row">
 			<SettingCopy label={label} />
 			<div className="setting-control">
-				<select onChange={(event) => void onChange(event.target.value)} value={value}>
-					{options.map((option) => (
-						<option key={option.value} value={option.value}>
-							{option.label}
-						</option>
-					))}
-				</select>
+				<SelectField
+					label={label}
+					onChange={(nextValue) => void onChange(nextValue)}
+					value={value}
+					options={options}
+				/>
 			</div>
-		</label>
+		</div>
 	)
 }
 

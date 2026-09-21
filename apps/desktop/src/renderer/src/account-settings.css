@@ -1,0 +1,184 @@
+.account-settings {
+	width: min(100%, 640px);
+}
+
+.account-settings__heading h2 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+	letter-spacing: -0.3px;
+}
+
+.account-settings p {
+	margin: 0;
+	color: var(--wx-muted);
+	font-size: 12px;
+	line-height: 1.6;
+}
+
+.account-settings__heading p {
+	margin-top: 6px;
+	font-size: 13px;
+}
+
+.account-settings__form {
+	display: grid;
+	gap: 22px;
+	padding-top: 28px;
+}
+
+.account-settings__avatar-row {
+	display: flex;
+	align-items: center;
+	gap: 20px;
+	padding-bottom: 8px;
+}
+
+.account-settings__avatar {
+	display: grid;
+	flex-shrink: 0;
+	place-items: center;
+	width: 72px;
+	height: 72px;
+	overflow: hidden;
+	border: 1px solid var(--wx-border);
+	border-radius: var(--wx-avatar-radius);
+	background: var(--wx-surface-subtle);
+	color: var(--wx-muted);
+}
+
+.account-settings__avatar img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.account-settings__avatar-actions,
+.account-settings__field {
+	display: grid;
+	min-width: 0;
+	gap: 8px;
+}
+
+.account-settings__avatar-buttons,
+.account-settings__uid-row,
+.account-settings__save-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.account-settings__avatar-buttons,
+.account-settings__save-row {
+	flex-wrap: wrap;
+}
+
+.account-settings__field label {
+	font-size: 13px;
+	font-weight: 500;
+}
+
+.account-settings__input {
+	width: 100%;
+	min-width: 0;
+	height: 40px;
+	padding: 9px 12px;
+	border: 1px solid var(--wx-border);
+	border-radius: 9px;
+	background: var(--wx-surface);
+	color: var(--wx-foreground);
+	font-size: 14px;
+	transition:
+		border-color 150ms ease,
+		box-shadow 150ms ease;
+}
+
+.account-settings__input[readonly] {
+	background: var(--wx-surface-subtle);
+	color: var(--wx-muted);
+}
+
+.account-settings__input--uid {
+	font-family: ui-monospace, monospace;
+	font-size: 12px;
+}
+
+.account-settings__button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	min-height: 36px;
+	padding: 8px 13px;
+	border: 1px solid var(--wx-border);
+	border-radius: 9px;
+	background: var(--wx-surface);
+	color: var(--wx-foreground);
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 18px;
+	cursor: pointer;
+	transition:
+		background 150ms ease,
+		box-shadow 150ms ease;
+}
+
+.account-settings__button:hover:not(:disabled) {
+	background: var(--wx-hover);
+}
+
+.account-settings__button--quiet {
+	border-color: transparent;
+	color: var(--wx-muted);
+}
+
+.account-settings__button--primary {
+	border-color: transparent;
+	background: var(--wx-primary);
+	color: var(--wx-primary-foreground);
+}
+
+.account-settings__button--primary:hover:not(:disabled) {
+	background: color-mix(in oklch, var(--wx-primary) 85%, var(--wx-surface));
+}
+
+.account-settings__button--logout {
+	color: var(--wx-error-red);
+}
+
+.account-settings__button--logout:hover:not(:disabled) {
+	background: color-mix(in oklch, var(--wx-error-red) 5%, var(--wx-surface));
+}
+
+.account-settings__copy {
+	flex-shrink: 0;
+	width: 40px;
+	height: 40px;
+	padding: 0;
+}
+
+.account-settings__button:disabled,
+.account-settings__input:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+.account-settings .account-settings__error {
+	color: var(--wx-error-red);
+}
+
+.account-settings__logout-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 20px;
+	margin-top: 28px;
+	padding-top: 24px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.account-settings__input,
+	.account-settings__button {
+		transition: none;
+	}
+}

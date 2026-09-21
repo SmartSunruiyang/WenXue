@@ -11,7 +11,7 @@
 	--browser-selected: oklch(0.94 0 0);
 	--browser-border: oklch(0.92 0 0);
 	--browser-control-border: oklch(0.64 0 0);
-	--browser-focus: oklch(0.42 0 0);
+	--browser-focus: var(--wx-focus);
 	--browser-success: oklch(0.46 0.1 150);
 	--browser-pending: oklch(0.5 0.09 75);
 	--browser-error: oklch(0.52 0.19 27);
@@ -41,8 +41,8 @@
 
 .page--browsers :where(button, input, select):focus-visible,
 .browser-profile-menu button:focus-visible {
-	outline: 2px solid var(--browser-focus);
-	outline-offset: 3px;
+	outline: none;
+	box-shadow: var(--wx-focus-glow);
 }
 
 .page--browsers :where(button, input, select):disabled,
@@ -187,8 +187,7 @@
 
 .browser-search:focus-within {
 	border-color: var(--browser-focus);
-	outline: 2px solid var(--browser-focus);
-	outline-offset: 2px;
+	box-shadow: var(--wx-focus-glow);
 }
 
 .browser-search > svg {
@@ -214,6 +213,7 @@
 
 .page--browsers .browser-search input:focus-visible {
 	outline: none;
+	box-shadow: none;
 }
 
 .browser-search input::-webkit-search-cancel-button {
@@ -239,40 +239,9 @@
 }
 
 .browser-sort {
-	position: relative;
-	display: flex;
 	width: 148px;
 	flex: 0 0 auto;
-	align-items: center;
-	color: var(--browser-muted);
-}
-
-.browser-sort > svg {
-	position: absolute;
-	left: 12px;
-	pointer-events: none;
-}
-
-.browser-sort > svg:last-child {
-	right: 12px;
-	left: auto;
-}
-
-.browser-sort select {
-	width: 100%;
-	height: 40px;
-	appearance: none;
-	padding: 0 32px 0 36px;
-	border: 1px solid var(--browser-border);
 	border-radius: 999px;
-	background: var(--browser-surface);
-	color: var(--browser-foreground);
-	font-size: 13px;
-	cursor: pointer;
-}
-
-.browser-sort select:hover:not(:disabled) {
-	background: var(--browser-subtle);
 }
 
 .browser-filterbar {
@@ -379,16 +348,6 @@
 	border-radius: 8px;
 	background: transparent;
 	transition: background-color 160ms ease;
-}
-
-.page--browsers .profile-row:not(:last-child)::after {
-	position: absolute;
-	right: 12px;
-	bottom: 0;
-	left: 66px;
-	height: 1px;
-	background: var(--browser-border);
-	content: '';
 }
 
 .page--browsers .profile-row:hover {
@@ -527,8 +486,8 @@
 }
 
 .page--browsers .checkbox-control input:focus-visible + span {
-	outline: 2px solid var(--browser-focus);
-	outline-offset: 3px;
+	outline: none;
+	box-shadow: var(--wx-focus-glow);
 }
 
 .page--browsers .checkbox-control:has(input:disabled) {
@@ -736,44 +695,6 @@
 	line-height: 1.5;
 }
 
-.row-more__menu.browser-profile-menu {
-	position: fixed;
-	z-index: 80;
-	display: grid;
-	width: 184px;
-	gap: 2px;
-	padding: 6px;
-	border: 1px solid var(--browser-border);
-	border-radius: 12px;
-	background: var(--browser-surface);
-	box-shadow: var(--browser-menu-shadow);
-}
-
-.browser-profile-menu button {
-	display: inline-flex;
-	width: 100%;
-	height: 34px;
-	align-items: center;
-	justify-content: flex-start;
-	gap: 10px;
-	padding: 0 9px;
-	border: 0;
-	border-radius: 7px;
-	background: transparent;
-	color: var(--browser-foreground);
-	font-size: 13px;
-	text-align: left;
-}
-
-.browser-profile-menu button:hover:not(:disabled),
-.browser-profile-menu button:focus-visible {
-	background: var(--browser-subtle);
-}
-
-.browser-profile-menu button:focus-visible {
-	outline-offset: 0;
-}
-
 .page--browsers .browser-button--secondary:active:not(:disabled),
 .browser-search button:active:not(:disabled),
 .browser-filters button:active:not(:disabled),
@@ -882,5 +803,14 @@
 		animation: none;
 		transition: none;
 		scroll-behavior: auto;
+	}
+}
+
+@media (forced-colors: active) {
+	.page--browsers :where(button, input):focus-visible,
+	.page--browsers .checkbox-control input:focus-visible + span,
+	.browser-search:focus-within {
+		outline: 2px solid Highlight;
+		outline-offset: 2px;
 	}
 }

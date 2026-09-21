@@ -1,0 +1,231 @@
+.wx-popup-menu,
+.wx-select-list {
+	position: fixed;
+	z-index: var(--wx-layer-menu);
+	min-width: 192px;
+	padding: 6px;
+	overflow: auto;
+	overscroll-behavior: contain;
+	border: 1px solid var(--wx-border);
+	border-radius: 12px;
+	background: var(--wx-surface);
+	color: var(--wx-foreground);
+	box-shadow: 0 4px 8px var(--wx-shadow);
+	animation: wx-overlay-enter 160ms ease-out;
+	-webkit-app-region: no-drag;
+}
+
+.wx-popup-menu [role='menuitem'],
+.wx-select-option {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 36px;
+	padding: 8px 10px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.5;
+	text-align: left;
+	cursor: pointer;
+	transition: background-color 160ms ease-out;
+}
+
+.wx-popup-menu [role='menuitem']:hover,
+.wx-popup-menu [role='menuitem']:focus-visible,
+.wx-select-option[data-active] {
+	background: var(--wx-hover);
+}
+
+.wx-popup-menu [role='menuitem']:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+.wx-popup-menu [role='menuitem'][data-danger] {
+	color: var(--wx-error-red);
+}
+
+.wx-select-field {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	min-height: 36px;
+	padding: 8px 14px 8px 12px;
+	border: 1px solid var(--wx-border);
+	border-radius: 8px;
+	background: var(--wx-surface);
+	color: var(--wx-foreground);
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.5;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		border-color 160ms ease-out,
+		box-shadow 160ms ease-out;
+}
+
+.wx-select-field > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.wx-select-field__chevron {
+	flex: 0 0 auto;
+	color: var(--wx-muted);
+	transition: transform 160ms ease-out;
+}
+
+.wx-select-field[aria-expanded='true'] .wx-select-field__chevron {
+	transform: rotate(180deg);
+}
+
+.wx-select-field:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.wx-select-option {
+	justify-content: space-between;
+}
+
+.wx-select-option > span {
+	overflow-wrap: anywhere;
+}
+
+.wx-select-option svg {
+	flex: 0 0 auto;
+}
+
+.wx-select-option[aria-selected='true'] {
+	font-weight: 600;
+}
+
+.wx-dialog-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: var(--wx-layer-dialog);
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	background: color-mix(in srgb, var(--wx-foreground) 24%, transparent);
+	animation: wx-backdrop-enter 160ms ease-out;
+	-webkit-app-region: no-drag;
+}
+
+.wx-dialog {
+	width: min(440px, 100%);
+	max-height: calc(100dvh - 48px);
+	padding: 24px;
+	overflow: auto;
+	border: 1px solid var(--wx-border);
+	border-radius: 12px;
+	background: var(--wx-surface);
+	color: var(--wx-foreground);
+	box-shadow: 0 4px 8px var(--wx-shadow);
+	animation: wx-overlay-enter 160ms ease-out;
+}
+
+.wx-dialog__title {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+	line-height: 1.5;
+}
+
+.wx-dialog__description {
+	margin: 10px 0 0;
+	color: var(--wx-muted);
+	font-size: 14px;
+	line-height: 1.7;
+	overflow-wrap: anywhere;
+	white-space: pre-line;
+}
+
+.wx-dialog__actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 24px;
+}
+
+.wx-dialog__button {
+	min-height: 36px;
+	padding: 8px 16px;
+	border: 1px solid var(--wx-border);
+	border-radius: 8px;
+	background: var(--wx-surface);
+	color: var(--wx-foreground);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	transition:
+		background-color 160ms ease-out,
+		box-shadow 160ms ease-out;
+}
+
+.wx-dialog__button:hover {
+	background: var(--wx-hover);
+}
+
+.wx-dialog__button--primary {
+	border-color: var(--wx-primary);
+	background: var(--wx-primary);
+	color: var(--wx-primary-foreground);
+}
+
+.wx-dialog__button--danger {
+	border-color: var(--wx-error-red);
+	background: var(--wx-error-red);
+	color: var(--wx-primary-foreground);
+}
+
+.wx-dialog__button--primary:hover {
+	background: color-mix(in srgb, var(--wx-primary) 85%, var(--wx-surface));
+}
+
+.wx-dialog__button--danger:hover {
+	background: color-mix(in srgb, var(--wx-error-red) 85%, var(--wx-surface));
+}
+
+@keyframes wx-overlay-enter {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes wx-backdrop-enter {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.wx-popup-menu,
+	.wx-select-list,
+	.wx-dialog-backdrop,
+	.wx-dialog {
+		animation: none;
+	}
+	.wx-select-field__chevron {
+		transition: none;
+	}
+}

@@ -10,7 +10,7 @@ import type { DeepPartial, LauncherSettings, LauncherSettingsStore } from './Lau
 import type { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import type { TokenUsageStore } from './TokenUsageStore'
 import type { UsageCloudClient } from './UsageCloudClient'
-import type { UserSessionHandoff } from './UserSessionHandoff'
+import { WENXUE_NEW_TAB_URL, type UserSessionHandoff } from './UserSessionHandoff'
 import type { PublicUserSession, UserSession, UserSessionStore } from './UserSessionStore'
 
 export interface IpcMainLike {
@@ -34,6 +34,13 @@ export interface LaunchResult {
 	ok: boolean
 	error?: string
 }
+
+export type WindowCloseChoice = 'cancel' | 'launcherOnly' | 'closeBrowsers' | 'dismiss'
+
+export type WindowClosePromptState = {
+	requestId: string
+	kind: 'confirm' | 'error'
+} | null
 
 export type OpenLogsResult = LaunchResult
 
@@ -79,6 +86,9 @@ export interface DesktopBridgeOptions {
 	minimizeWindow: () => void
 	toggleMaximizeWindow: () => void
 	requestClose: () => void
+	getControlWindowWebContents: () => { mainFrame: unknown } | undefined
+	getClosePrompt: () => WindowClosePromptState
+	respondToClosePrompt: (requestId: string, choice: WindowCloseChoice) => boolean
 	sendStatus: (status: BrowserStatus) => void
 	sendProfileStatus: (payload: { profileId: string; status: BrowserStatus }) => void
 	sendUpdateState: (state: UpdateState) => void
@@ -174,7 +184,9 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 					assertAccountStillActive(session.userId)
 					await options.profileStore.get(session.userId, profileId)
 					assertAccountStillActive(session.userId)
-					await options.supervisor.launch(profileId, { startUrl: url })
+					await options.supervisor.launch(profileId, {
+						startUrls: [WENXUE_NEW_TAB_URL, url],
+					})
 				},
 			)
 			if (!result.ok) {
@@ -405,6 +417,30 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 		options.requestClose()
 		return { ok: true }
 	})
+
+	options.ipcMain.handle('app:getClosePrompt', async (event): Promise<WindowClosePromptState> => {
+		if (!isControlWindowEvent(event, options.getControlWindowWebContents())) return null
+		return options.getClosePrompt()
+	})
+
+	options.ipcMain.handle(
+		'app:respondToClosePrompt',
+		async (event, requestId, choice): Promise<LaunchResult> => {
+			if (
+				!isControlWindowEvent(event, options.getControlWindowWebContents()) ||
+				typeof requestId !== 'string' ||
+				requestId.length === 0 ||
+				requestId.length > 128 ||
+				(choice !== 'cancel' &&
+					choice !== 'launcherOnly' &&
+					choice !== 'closeBrowsers' &&
+					choice !== 'dismiss')
+			) {
+				return { ok: false }
+			}
+			return { ok: options.respondToClosePrompt(requestId, choice) }
+		},
+	)
 
 	options.ipcMain.handle('app:quit', async (): Promise<LaunchResult> => {
 		try {
@@ -799,4 +835,13 @@ function requireStringArg(value: unknown, label: string): string {
 function requireUpdateCheckReason(value: unknown): 'manual' | 'signal' {
 	if (value === 'manual' || value === 'signal') return value
 	throw new Error('Invalid update check reason')
+}
+
+function isControlWindowEvent(
+	event: unknown,
+	webContents: { mainFrame: unknown } | undefined,
+): boolean {
+	if (!webContents || !event || typeof event !== 'object') return false
+	const source = event as { sender?: unknown; senderFrame?: unknown }
+	return source.sender === webContents && source.senderFrame === webContents.mainFrame
 }

@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { AppLogger } from './AppLogger'
 import type { UserSession } from './UserSessionStore'
 
 export const WENXUE_EXTENSION_ID = 'akldabonmimlicnjlflnapfeklbfemhj'
+export const WENXUE_NEW_TAB_URL = `chrome-extension://${WENXUE_EXTENSION_ID}/newtab.html`
 
 const DEFAULT_TIMEOUT_MS = 15_000
 const MAX_COMPLETE_BODY_BYTES = 4096
@@ -34,7 +36,10 @@ export class UserSessionHandoff {
 	private readonly publicHost: string
 	private readonly createHttpServer: typeof createServer
 
-	constructor(options: UserSessionHandoffOptions = {}) {
+	constructor(
+		private readonly logger: Pick<AppLogger, 'log'>,
+		options: UserSessionHandoffOptions = {},
+	) {
 		this.extensionId = options.extensionId ?? WENXUE_EXTENSION_ID
 		this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
 		this.listenHost = options.listenHost ?? '127.0.0.1'
@@ -46,6 +51,11 @@ export class UserSessionHandoff {
 		session: BrowserUserSession,
 		openUrl: (url: string) => Promise<void>,
 	): Promise<UserSessionHandoffResult> {
+		this.logger.log(
+			'UserSessionHandoff',
+			'info',
+			`starting session handoff for profile ${session.browserId}`,
+		)
 		const nonce = randomUUID()
 		const basePath = `/wenxue-user-session-handoff/${nonce}`
 		let complete: (result: UserSessionHandoffResult) => void = () => undefined
@@ -56,19 +66,33 @@ export class UserSessionHandoff {
 			this.handleRequest({ request, response, basePath, session, complete })
 		})
 
-		await listen(server, this.listenHost)
-		const address = server.address()
-		if (!address || typeof address === 'string') {
-			await close(server)
-			throw new Error('无法创建用户 session 交接服务')
-		}
-
-		const url = `http://${this.publicHost}:${address.port}${basePath}`
+		let listening = false
 		try {
+			await listen(server, this.listenHost)
+			listening = true
+			const address = server.address()
+			if (!address || typeof address === 'string') {
+				throw new Error('无法创建用户 session 交接服务')
+			}
+
+			const url = `http://${this.publicHost}:${address.port}${basePath}`
 			await openUrl(url)
-			return await withTimeout(completion, this.timeoutMs)
+			const result = await withTimeout(completion, this.timeoutMs)
+			this.logger.log(
+				'UserSessionHandoff',
+				result.ok ? 'info' : 'warn',
+				`session handoff ${result.ok ? 'completed' : 'rejected'} for profile ${session.browserId}`,
+			)
+			return result
+		} catch (error) {
+			this.logger.log(
+				'UserSessionHandoff',
+				'error',
+				`session handoff failed for profile ${session.browserId}`,
+			)
+			throw error
 		} finally {
-			await close(server)
+			if (listening) await close(server)
 		}
 	}
 
@@ -112,47 +136,43 @@ function renderHandoffPage(session: BrowserUserSession, extensionId: string): st
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>问学账号会话交接</title>
-<style>
-body{margin:0;display:grid;min-height:100vh;place-items:center;background:#fff;color:#111;font:14px system-ui,-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
-main{display:grid;gap:10px;text-align:center}
-strong{font-size:18px}
-span{color:#666}
-</style>
+<meta name="robots" content="noindex,nofollow" />
+<style>html,body{margin:0;min-height:100%;background:#fff}</style>
 </head>
-<body>
-<main>
-<strong id="title">正在同步问学账号</strong>
-<span id="detail">请保持此标签页打开。</span>
-</main>
+<body aria-hidden="true">
 <script>
 const message = ${message};
-const title = document.getElementById('title');
-const detail = document.getElementById('detail');
-function finish(payload) {
-  fetch(location.pathname + '/complete', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }).catch(() => {});
+const closeMessage = { type: 'WENXUE_USER_SESSION_HANDOFF_CLOSE' };
+function closeHandoffTab() {
+  if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.sendMessage) return;
+  chrome.runtime.sendMessage(${JSON.stringify(extensionId)}, closeMessage, () => {
+    void chrome.runtime.lastError;
+  });
+}
+async function finish(payload) {
+  try {
+    await fetch(location.pathname + '/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } finally {
+    closeHandoffTab();
+  }
 }
 if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
-  title.textContent = '无法连接问学插件';
-  detail.textContent = '当前浏览器未开放外部扩展消息。';
-  finish({ ok: false, error: 'chrome.runtime.sendMessage unavailable' });
+  void finish({ ok: false, error: 'chrome.runtime.sendMessage unavailable' });
 } else {
   chrome.runtime.sendMessage(${JSON.stringify(extensionId)}, message, (response) => {
     const lastError = chrome.runtime.lastError && chrome.runtime.lastError.message;
     if (lastError || !response || response.ok !== true) {
-      title.textContent = '账号同步失败';
-      detail.textContent = lastError || (response && response.error) || '问学插件未返回成功状态。';
-      finish({ ok: false, error: detail.textContent });
+      void finish({
+        ok: false,
+        error: lastError || (response && response.error) || '问学插件未返回成功状态。'
+      });
       return;
     }
-    title.textContent = '账号已同步';
-    detail.textContent = '可以关闭此标签页并继续使用问学。';
-    finish({ ok: true });
+    void finish({ ok: true });
   });
 }
 </script>

@@ -15,6 +15,7 @@ describe('buildArgv', () => {
 			'--no-first-run',
 			'--no-default-browser-check',
 			'--hide-crash-restore-bubble',
+			'--disable-infobars',
 		])
 	})
 
@@ -28,13 +29,13 @@ describe('buildArgv', () => {
 		).toContain('--remote-debugging-pipe')
 	})
 
-	it('appends startUrl as the final positional argument', () => {
+	it('appends startUrls in foreground-to-background order', () => {
 		const argv = buildArgv({
 			userDataDir: '/profile',
 			extensionDir: '/extension',
-			startUrl: 'https://example.com',
+			startUrls: ['chrome://newtab', 'https://example.com/handoff'],
 		})
 
-		expect(argv.at(-1)).toBe('https://example.com')
+		expect(argv.slice(-2)).toEqual(['chrome://newtab', 'https://example.com/handoff'])
 	})
 })

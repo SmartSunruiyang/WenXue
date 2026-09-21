@@ -605,13 +605,19 @@ describe('avatar retry and concurrent auth safety', () => {
 	it('retries an avatar failure against the same created account without repeating sign-up', async () => {
 		const { registration: form } = await registration()
 		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		mocks.updateUserBasicInfo.mockImplementation(async () => {
+			mocks.getSession.mockResolvedValue({ data: data('user-1', EMAIL, FILE_ID) })
+		})
 		mocks.uploadFile.mockRejectedValueOnce(new Error('storage unavailable'))
 		await expect(form.complete({ ...INPUT, avatar })).rejects.toThrow(
 			strings.auth.emailErrors.avatarUpload,
 		)
 		expect(form.state).toBe('avatar-pending')
 		expect(mocks.signOut).not.toHaveBeenCalled()
-		await expect(form.complete({ ...INPUT, avatar })).resolves.toMatchObject({ userId: 'user-1' })
+		await expect(form.complete({ ...INPUT, avatar })).resolves.toMatchObject({
+			userId: 'user-1',
+			avatarUrl: 'https://storage.example/avatar.png?temporary',
+		})
 		expect(mocks.signUp).toHaveBeenCalledOnce()
 		expect(mocks.uploadFile).toHaveBeenCalledTimes(2)
 	})
@@ -630,11 +636,16 @@ describe('avatar retry and concurrent auth safety', () => {
 	it('reuses the uploaded file when only the profile update failed', async () => {
 		const { registration: form } = await registration()
 		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		mocks.updateUserBasicInfo.mockImplementation(async () => {
+			mocks.getSession.mockResolvedValue({ data: data('user-1', EMAIL, FILE_ID) })
+		})
 		mocks.updateUserBasicInfo.mockRejectedValueOnce(new Error('profile unavailable'))
 		await expect(form.complete({ ...INPUT, avatar })).rejects.toThrow(
 			strings.auth.emailErrors.avatarUpload,
 		)
-		await form.complete({ ...INPUT, avatar })
+		await expect(form.complete({ ...INPUT, avatar })).resolves.toMatchObject({
+			avatarUrl: 'https://storage.example/avatar.png?temporary',
+		})
 		expect(mocks.signUp).toHaveBeenCalledOnce()
 		expect(mocks.uploadFile).toHaveBeenCalledOnce()
 		expect(mocks.updateUserBasicInfo).toHaveBeenCalledTimes(2)

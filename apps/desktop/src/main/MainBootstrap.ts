@@ -3,6 +3,7 @@ import type {
 	BrowserWindowConstructorOptions,
 	Event as ElectronEvent,
 } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { createAppLogger, type AppLogger } from './AppLogger'
@@ -10,7 +11,11 @@ import { AppPaths } from './AppPaths'
 import { BrowserProfileStore } from './BrowserProfileStore'
 import { createBrowserResources } from './BrowserResources'
 import { BrowserSupervisor } from './BrowserSupervisor'
-import { registerDesktopBridge } from './DesktopBridge'
+import {
+	registerDesktopBridge,
+	type WindowCloseChoice,
+	type WindowClosePromptState,
+} from './DesktopBridge'
 import { DesktopUpdateService } from './DesktopUpdateService'
 import { LauncherLogStore } from './LauncherLogStore'
 import { LauncherSettingsStore, type LauncherSettings } from './LauncherSettingsStore'
@@ -37,7 +42,7 @@ const DESKTOP_ICON_FILES: Record<'darwin' | 'win32' | 'fallback', string> = {
 export interface ClosePromptDeps {
 	hasActiveProfiles: () => boolean
 	exitWithBrowsers?: () => Promise<ExitWithBrowsers> | ExitWithBrowsers
-	showMessageBox: () => Promise<{ response: number }>
+	requestConfirmation: () => Promise<Exclude<WindowCloseChoice, 'dismiss'>>
 	requestShutdown: () => Promise<void>
 	onError?: (error: unknown) => void
 }
@@ -57,8 +62,9 @@ export async function handleBrowserRunningClose(deps: ClosePromptDeps): Promise<
 			return 'allow'
 		}
 
-		const { response } = await deps.showMessageBox()
-		if (response === 1) {
+		const choice = await deps.requestConfirmation()
+		if (choice === 'cancel') return 'prevented'
+		if (choice === 'closeBrowsers') {
 			await deps.requestShutdown()
 		}
 
@@ -73,9 +79,71 @@ export async function handleBrowserRunningClose(deps: ClosePromptDeps): Promise<
 	}
 }
 
+export function createWindowClosePrompt(
+	sendState: (state: WindowClosePromptState) => void,
+	isAvailable: () => boolean,
+) {
+	let state: WindowClosePromptState = null
+	let pending: {
+		promise: Promise<Exclude<WindowCloseChoice, 'dismiss'>>
+		resolve: (choice: Exclude<WindowCloseChoice, 'dismiss'>) => void
+	} | null = null
+
+	const cancel = () => {
+		const current = pending
+		pending = null
+		state = null
+		current?.resolve('cancel')
+	}
+
+	return {
+		getState: (): WindowClosePromptState => state,
+		requestConfirmation: (): Promise<Exclude<WindowCloseChoice, 'dismiss'>> => {
+			if (!isAvailable()) return Promise.resolve('cancel')
+			if (pending) return pending.promise
+			let resolve!: (choice: Exclude<WindowCloseChoice, 'dismiss'>) => void
+			const promise = new Promise<Exclude<WindowCloseChoice, 'dismiss'>>((done) => {
+				resolve = done
+			})
+			pending = { promise, resolve }
+			state = { requestId: randomUUID(), kind: 'confirm' }
+			try {
+				sendState(state)
+			} catch {
+				cancel()
+			}
+			return promise
+		},
+		respond: (requestId: string, choice: WindowCloseChoice): boolean => {
+			if (!state || state.requestId !== requestId) return false
+			if (state.kind === 'error') {
+				if (choice !== 'dismiss') return false
+				state = null
+				sendState(null)
+				return true
+			}
+			if (choice === 'dismiss' || !pending) return false
+			const current = pending
+			pending = null
+			state = null
+			current.resolve(choice)
+			sendState(null)
+			return true
+		},
+		showFailure: () => {
+			cancel()
+			if (!isAvailable()) return
+			state = { requestId: randomUUID(), kind: 'error' }
+			sendState(state)
+		},
+		cancel,
+	}
+}
+
 export async function startMainBootstrap(): Promise<void> {
 	const electron = await import('electron')
 	let currentWindow: BrowserWindow | undefined
+	let closePrompt: ReturnType<typeof createWindowClosePrompt> | undefined
 	if (!electron.app.requestSingleInstanceLock()) {
 		electron.app.quit()
 		return
@@ -117,8 +185,8 @@ export async function startMainBootstrap(): Promise<void> {
 	const telemetryIngest = new LauncherTelemetryIngest(logStore, tokenUsageStore)
 	const userSessionStore = new UserSessionStore()
 	const usageCloudClient = new UsageCloudClient(paths, userSessionStore)
-	const userSessionHandoff = new UserSessionHandoff()
 	const logger = createAppLogger(paths, logStore)
+	const userSessionHandoff = new UserSessionHandoff(logger)
 	const supervisor = new BrowserSupervisor({ resources, profiles, logger })
 	const updateService = new DesktopUpdateService({
 		paths,
@@ -177,6 +245,10 @@ export async function startMainBootstrap(): Promise<void> {
 			}
 		},
 		requestClose: () => currentWindow?.close(),
+		getControlWindowWebContents: () =>
+			currentWindow && !currentWindow.isDestroyed() ? currentWindow.webContents : undefined,
+		getClosePrompt: () => closePrompt?.getState() ?? null,
+		respondToClosePrompt: (requestId, choice) => closePrompt?.respond(requestId, choice) ?? false,
 		sendStatus: (status) => currentWindow?.webContents.send('browser:status-changed', status),
 		sendProfileStatus: (payload) =>
 			currentWindow?.webContents.send('browser:profile-status-changed', payload),
@@ -184,10 +256,13 @@ export async function startMainBootstrap(): Promise<void> {
 	})
 
 	const createWindow = () => {
-		currentWindow = createControlWindow(electron, supervisor, settingsStore, logger, iconPath)
+		const controlWindow = createControlWindow(electron, supervisor, settingsStore, logger, iconPath)
+		currentWindow = controlWindow.window
+		closePrompt = controlWindow.closePrompt
 		currentWindow.on('closed', () => {
 			if (currentWindow?.isDestroyed()) {
 				currentWindow = undefined
+				closePrompt = undefined
 			}
 		})
 	}
@@ -224,13 +299,13 @@ export function resolveRepoRoot(start: string): string {
 	}
 }
 
-function createControlWindow(
+export function createControlWindow(
 	electron: ElectronModule,
 	supervisor: BrowserSupervisor,
 	settingsStore: LauncherSettingsStore,
 	logger: AppLogger,
 	iconPath: string | undefined,
-): BrowserWindow {
+): { window: BrowserWindow; closePrompt: ReturnType<typeof createWindowClosePrompt> } {
 	const win = new electron.BrowserWindow(
 		buildControlWindowOptions({
 			platform: process.platform,
@@ -240,6 +315,26 @@ function createControlWindow(
 	)
 	let allowClose = false
 	let resolvingClose = false
+	let rendererReady = false
+	let generation = 0
+	const closePrompt = createWindowClosePrompt(
+		(state) => win.webContents.send('app:close-prompt-changed', state),
+		() => rendererReady && !win.isDestroyed() && !win.webContents.isDestroyed(),
+	)
+	const cancelClose = () => {
+		generation += 1
+		rendererReady = false
+		closePrompt.cancel()
+	}
+	win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+		if (isMainFrame && !isInPlace) cancelClose()
+	})
+	win.webContents.on('did-finish-load', () => {
+		rendererReady = true
+	})
+	win.webContents.on('render-process-gone', cancelClose)
+	win.webContents.on('destroyed', cancelClose)
+	win.on('closed', cancelClose)
 
 	win.on('close', (event: ElectronEvent) => {
 		if (allowClose || !supervisor.hasActiveProfiles()) {
@@ -249,46 +344,28 @@ function createControlWindow(
 		event.preventDefault()
 		if (resolvingClose) return
 		resolvingClose = true
+		const closeGeneration = generation
 		void handleBrowserRunningClose({
 			hasActiveProfiles: () => supervisor.hasActiveProfiles(),
 			exitWithBrowsers: async () => (await settingsStore.get()).behavior.exitWithBrowsers,
-			showMessageBox: () =>
-				electron.dialog.showMessageBox(win, {
-					type: 'question',
-					title: '浏览器仍在运行',
-					message: '浏览器仍在运行',
-					detail: '可以只退出问学，也可以一并关闭当前问学浏览器。',
-					buttons: ['仅退出问学', '一并关闭浏览器'],
-					defaultId: 0,
-					cancelId: 0,
-				}),
-			requestShutdown: () => supervisor.requestShutdown(),
+			requestConfirmation: () =>
+				closeGeneration === generation
+					? closePrompt.requestConfirmation()
+					: Promise.resolve('cancel'),
+			requestShutdown: async () => {
+				if (closeGeneration === generation) await supervisor.requestShutdown()
+			},
 			onError: (error) => {
 				logger.log(
 					'MainBootstrap',
 					'error',
 					`failed to close active browsers: ${errorMessage(error)}`,
 				)
-				if (win.isDestroyed()) return
-				void electron.dialog
-					.showMessageBox(win, {
-						type: 'error',
-						title: '浏览器未能安全关闭',
-						message: '问学暂未退出',
-						detail: '仍有浏览器进程未能安全关闭，请稍后重试。',
-						buttons: ['知道了'],
-					})
-					.catch((dialogError) => {
-						logger.log(
-							'MainBootstrap',
-							'error',
-							`failed to show close error: ${errorMessage(dialogError)}`,
-						)
-					})
+				if (closeGeneration === generation) closePrompt.showFailure()
 			},
 		})
 			.then((decision) => {
-				if (decision === 'allow' && !win.isDestroyed()) {
+				if (decision === 'allow' && closeGeneration === generation && !win.isDestroyed()) {
 					allowClose = true
 					win.close()
 				}
@@ -311,7 +388,7 @@ function createControlWindow(
 		void win.loadFile(path.join(__dirname, '../renderer/index.html'))
 	}
 
-	return win
+	return { window: win, closePrompt }
 }
 
 export function buildControlWindowOptions(input: {

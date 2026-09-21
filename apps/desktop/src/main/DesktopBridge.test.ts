@@ -12,7 +12,7 @@ import type { LauncherSettingsStore } from './LauncherSettingsStore'
 import type { LauncherTelemetryIngest } from './LauncherTelemetryIngest'
 import type { TokenUsageStore } from './TokenUsageStore'
 import type { UsageCloudClient } from './UsageCloudClient'
-import type { UserSessionHandoff } from './UserSessionHandoff'
+import { WENXUE_NEW_TAB_URL, type UserSessionHandoff } from './UserSessionHandoff'
 import type { UserSession, UserSessionStore } from './UserSessionStore'
 
 class FakeIpcMain implements IpcMainLike {
@@ -47,6 +47,10 @@ function createBridgeHarness() {
 	const toggleMaximizeWindow = vi.fn()
 	const requestClose = vi.fn()
 	const quitApp = vi.fn(async () => undefined)
+	const controlWindowWebContents = { mainFrame: {} }
+	const closePrompt = { requestId: 'close-request', kind: 'confirm' as const }
+	const getClosePrompt = vi.fn(() => closePrompt)
+	const respondToClosePrompt = vi.fn(() => true)
 	const sampleSession: UserSession = {
 		userId: 'user_123',
 		accessToken: 'user-access-token',
@@ -261,6 +265,9 @@ function createBridgeHarness() {
 		minimizeWindow,
 		toggleMaximizeWindow,
 		requestClose,
+		getControlWindowWebContents: () => controlWindowWebContents,
+		getClosePrompt,
+		respondToClosePrompt,
 		sendStatus,
 		sendProfileStatus,
 		sendUpdateState,
@@ -276,6 +283,10 @@ function createBridgeHarness() {
 		minimizeWindow,
 		toggleMaximizeWindow,
 		requestClose,
+		controlWindowWebContents,
+		closePrompt,
+		getClosePrompt,
+		respondToClosePrompt,
 		quitApp,
 		profileStore,
 		supervisor,
@@ -324,6 +335,8 @@ describe('registerDesktopBridge', () => {
 		expect(Array.from(ipcMain.handlers.keys()).sort()).toEqual(
 			[
 				'app:getVersions',
+				'app:getClosePrompt',
+				'app:respondToClosePrompt',
 				'app:getShellInfo',
 				'app:minimizeWindow',
 				'app:openExternal',
@@ -478,7 +491,7 @@ describe('registerDesktopBridge', () => {
 		expect(profileStore.get).toHaveBeenCalledWith('user_123', 'research')
 		expect(openPath).toHaveBeenCalledWith('/profiles/research')
 		expect(launch).toHaveBeenCalledWith('research', {
-			startUrl: 'http://127.0.0.1:1234/wenxue-user-session-handoff/test',
+			startUrls: [WENXUE_NEW_TAB_URL, 'http://127.0.0.1:1234/wenxue-user-session-handoff/test'],
 		})
 		expect(userSessionHandoffRun).toHaveBeenCalledWith(
 			expect.objectContaining({ userId: 'user_123', browserId: 'research' }),
@@ -1030,6 +1043,9 @@ describe('registerDesktopBridge', () => {
 			minimizeWindow: vi.fn(),
 			toggleMaximizeWindow: vi.fn(),
 			requestClose: vi.fn(),
+			getControlWindowWebContents: () => undefined,
+			getClosePrompt: () => null,
+			respondToClosePrompt: () => false,
 			sendStatus,
 			sendProfileStatus,
 			sendUpdateState: harness.sendUpdateState,
@@ -1074,5 +1090,75 @@ describe('registerDesktopBridge', () => {
 			browser: '149.0.7827.55',
 			extension: '1.2.3',
 		})
+	})
+})
+
+describe('window close IPC', () => {
+	it('only exposes the prompt to the current control window main frame', async () => {
+		const { ipcMain, controlWindowWebContents, closePrompt } = createBridgeHarness()
+		const handler = ipcMain.handlers.get('app:getClosePrompt')!
+		await expect(
+			handler({
+				sender: controlWindowWebContents,
+				senderFrame: controlWindowWebContents.mainFrame,
+			}),
+		).resolves.toEqual(closePrompt)
+		await expect(
+			handler({ sender: {}, senderFrame: controlWindowWebContents.mainFrame }),
+		).resolves.toBeNull()
+		await expect(handler({ sender: controlWindowWebContents, senderFrame: {} })).resolves.toBeNull()
+		await expect(handler(undefined)).resolves.toBeNull()
+	})
+
+	it.each(['cancel', 'launcherOnly', 'closeBrowsers', 'dismiss'])(
+		'accepts a typed %s response from the control window',
+		async (choice) => {
+			const { ipcMain, controlWindowWebContents, respondToClosePrompt } = createBridgeHarness()
+			const event = {
+				sender: controlWindowWebContents,
+				senderFrame: controlWindowWebContents.mainFrame,
+			}
+			await expect(
+				ipcMain.handlers.get('app:respondToClosePrompt')!(event, 'close-request', choice),
+			).resolves.toEqual({ ok: true })
+			expect(respondToClosePrompt).toHaveBeenCalledWith('close-request', choice)
+		},
+	)
+
+	it('rejects foreign windows, subframes and malformed answers before invoking the decision', async () => {
+		const { ipcMain, controlWindowWebContents, respondToClosePrompt } = createBridgeHarness()
+		const event = {
+			sender: controlWindowWebContents,
+			senderFrame: controlWindowWebContents.mainFrame,
+		}
+		const handler = ipcMain.handlers.get('app:respondToClosePrompt')!
+		const attempts = [
+			[undefined, 'close-request', 'launcherOnly'],
+			[
+				{ sender: {}, senderFrame: controlWindowWebContents.mainFrame },
+				'close-request',
+				'closeBrowsers',
+			],
+			[{ sender: controlWindowWebContents, senderFrame: {} }, 'close-request', 'closeBrowsers'],
+			[event, '', 'closeBrowsers'],
+			[event, 'a'.repeat(129), 'closeBrowsers'],
+			[event, 5, 'closeBrowsers'],
+			[event, 'close-request', 'quit'],
+			[event, 'close-request', 1],
+		]
+		for (const args of attempts) await expect(handler(...args)).resolves.toEqual({ ok: false })
+		expect(respondToClosePrompt).not.toHaveBeenCalled()
+	})
+
+	it('reports stale or duplicate responses as rejected', async () => {
+		const { ipcMain, controlWindowWebContents, respondToClosePrompt } = createBridgeHarness()
+		respondToClosePrompt.mockReturnValueOnce(false)
+		await expect(
+			ipcMain.handlers.get('app:respondToClosePrompt')!(
+				{ sender: controlWindowWebContents, senderFrame: controlWindowWebContents.mainFrame },
+				'stale-request',
+				'launcherOnly',
+			),
+		).resolves.toEqual({ ok: false })
 	})
 })

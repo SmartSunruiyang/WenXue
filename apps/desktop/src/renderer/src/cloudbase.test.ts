@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
 	getSession: vi.fn(),
 	refreshSession: vi.fn(),
 	getTempFileURL: vi.fn(),
+	uploadFile: vi.fn(),
+	updateUserBasicInfo: vi.fn(),
 	collection: vi.fn(),
 	where: vi.fn(),
 	watch: vi.fn(),
@@ -35,6 +37,7 @@ beforeEach(async () => {
 		auth: () => mocks,
 		database: () => ({ collection: mocks.collection }),
 		getTempFileURL: mocks.getTempFileURL,
+		uploadFile: mocks.uploadFile,
 	})
 	mocks.collection.mockReturnValue({ where: mocks.where })
 	mocks.where.mockReturnValue({ watch: mocks.watch })
@@ -48,6 +51,178 @@ afterEach(() => {
 	vi.useRealTimers()
 	vi.restoreAllMocks()
 	vi.unstubAllGlobals()
+})
+
+describe('account profile updates', () => {
+	const fileID = 'cloud://environment.bucket/avatars/user-1/new.png'
+	const avatarUrl = 'https://storage.example/new.png?signature=temporary'
+	const input = { userId: 'user-1', nickname: '新昵称' }
+	let current: ReturnType<typeof sessionData>
+
+	beforeEach(() => {
+		current = sessionData()
+		mocks.getSession.mockImplementation(async () => ({ data: current }))
+		mocks.uploadFile.mockResolvedValue({ fileID })
+		mocks.getTempFileURL.mockResolvedValue({ fileList: [{ fileID, tempFileURL: avatarUrl }] })
+		mocks.updateUserBasicInfo.mockImplementation(
+			async (profile: { name: string; picture?: string }) => {
+				current = sessionData({
+					user: {
+						id: 'user-1',
+						email: EMAIL,
+						user_metadata: { name: profile.name, picture: profile.picture ?? avatarUrl },
+					},
+				})
+			},
+		)
+	})
+
+	it('updates the nickname without replacing the existing avatar or exposing credentials', async () => {
+		const result = await service.updateLauncherProfile({ ...input, nickname: ' 新昵称 ' })
+		expect(mocks.updateUserBasicInfo).toHaveBeenCalledWith({ name: '新昵称' })
+		expect(mocks.uploadFile).not.toHaveBeenCalled()
+		expect(result).toMatchObject({ userId: 'user-1', nickname: '新昵称', avatarUrl })
+		expect(JSON.stringify(result)).not.toContain('secret')
+	})
+
+	it('persists the permanent file ID and returns the uploaded image for the home avatar', async () => {
+		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		await expect(service.updateLauncherProfile({ ...input, avatar })).resolves.toMatchObject({
+			nickname: '新昵称',
+			avatarUrl,
+		})
+		expect(mocks.uploadFile).toHaveBeenCalledWith({
+			cloudPath: expect.stringMatching(/^avatars\/user-1\/[^/]+\.png$/),
+			filePath: avatar,
+		})
+		expect(mocks.updateUserBasicInfo).toHaveBeenCalledWith({ name: '新昵称', picture: fileID })
+		expect(JSON.stringify(mocks.updateUserBasicInfo.mock.calls)).not.toContain('temporary')
+	})
+
+	it('retains the upload for a profile-save retry and never signs in or creates an account', async () => {
+		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		mocks.updateUserBasicInfo.mockRejectedValueOnce(new Error('internal access-secret'))
+		await expect(service.updateLauncherProfile({ ...input, avatar })).rejects.toThrow(
+			strings.account.errors.save,
+		)
+		await expect(service.updateLauncherProfile({ ...input, avatar })).resolves.toMatchObject({
+			avatarUrl,
+		})
+		expect(mocks.uploadFile).toHaveBeenCalledOnce()
+		expect(mocks.updateUserBasicInfo).toHaveBeenCalledTimes(2)
+		expect(mocks.signInWithPassword).not.toHaveBeenCalled()
+		expect(mocks.signOut).not.toHaveBeenCalled()
+	})
+
+	it('allows retry after an upload failure without mutating the profile', async () => {
+		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		mocks.uploadFile.mockRejectedValueOnce(new Error('storage unavailable'))
+		await expect(service.updateLauncherProfile({ ...input, avatar })).rejects.toThrow(
+			strings.account.errors.save,
+		)
+		expect(mocks.updateUserBasicInfo).not.toHaveBeenCalled()
+		await expect(service.updateLauncherProfile({ ...input, avatar })).resolves.toMatchObject({
+			avatarUrl,
+		})
+		expect(mocks.uploadFile).toHaveBeenCalledTimes(2)
+	})
+
+	it('validates nickname and avatar before contacting CloudBase', async () => {
+		for (const nickname of ['', ' \t ', '长'.repeat(33), '问\u0000学']) {
+			await expect(service.updateLauncherProfile({ ...input, nickname })).rejects.toThrow()
+		}
+		for (const avatar of [
+			new File(['<svg/>'], 'image.svg', { type: 'image/svg+xml' }),
+			new File([new Uint8Array(2 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' }),
+		]) {
+			await expect(service.updateLauncherProfile({ ...input, avatar })).rejects.toThrow()
+		}
+		expect(mocks.getSession).not.toHaveBeenCalled()
+		expect(mocks.updateUserBasicInfo).not.toHaveBeenCalled()
+	})
+
+	it('keeps an unresolved saved avatar retryable instead of reporting an empty avatar as success', async () => {
+		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		mocks.getTempFileURL.mockResolvedValueOnce({ fileList: [] })
+		await expect(service.updateLauncherProfile({ ...input, avatar })).rejects.toThrow(
+			strings.account.errors.save,
+		)
+		await expect(service.updateLauncherProfile({ ...input, avatar })).resolves.toMatchObject({
+			avatarUrl,
+		})
+		expect(mocks.uploadFile).toHaveBeenCalledOnce()
+	})
+
+	it('uses profile-edit wording when the upload response has no valid file ID', async () => {
+		mocks.uploadFile.mockResolvedValueOnce({ fileID: '' })
+		const request = service.updateLauncherProfile({
+			...input,
+			avatar: new File(['image'], 'avatar.png', { type: 'image/png' }),
+		})
+		await expect(request).rejects.toThrow(strings.account.errors.save)
+		await expect(request).rejects.not.toThrow(/账号已创建|注册|移除头像后继续/)
+	})
+
+	it('refuses a different UID before upload and after an account changes during upload', async () => {
+		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		await expect(
+			service.updateLauncherProfile({ ...input, userId: 'different-user', avatar }),
+		).rejects.toThrow(strings.auth.emailErrors.sessionChanged)
+		expect(mocks.uploadFile).not.toHaveBeenCalled()
+		mocks.uploadFile.mockImplementationOnce(async () => {
+			current = sessionData({ user: { id: 'different-user', email: EMAIL } })
+			return { fileID }
+		})
+		await expect(service.updateLauncherProfile({ ...input, avatar })).rejects.toThrow(
+			strings.auth.emailErrors.sessionChanged,
+		)
+		expect(mocks.updateUserBasicInfo).not.toHaveBeenCalled()
+	})
+
+	it('does not publish another UID or stale data returned after saving', async () => {
+		mocks.updateUserBasicInfo.mockImplementationOnce(async () => {
+			current = sessionData({ user: { id: 'different-user', email: EMAIL } })
+		})
+		await expect(service.updateLauncherProfile(input)).rejects.toThrow(
+			strings.auth.emailErrors.sessionChanged,
+		)
+		current = sessionData()
+		mocks.updateUserBasicInfo.mockResolvedValueOnce(undefined)
+		await expect(service.updateLauncherProfile(input)).rejects.toThrow(strings.account.errors.save)
+	})
+
+	it('rejects an account switch while resolving the newly saved avatar URL', async () => {
+		mocks.getTempFileURL.mockImplementationOnce(async () => {
+			current = sessionData({ user: { id: 'different-user', email: EMAIL } })
+			return { fileList: [{ fileID, tempFileURL: avatarUrl }] }
+		})
+		await expect(
+			service.updateLauncherProfile({
+				...input,
+				avatar: new File(['image'], 'avatar.png', { type: 'image/png' }),
+			}),
+		).rejects.toThrow(strings.auth.emailErrors.sessionChanged)
+	})
+
+	it('blocks concurrent sign-out and does not save after an upload finishes beyond the deadline', async () => {
+		vi.useFakeTimers()
+		let finishUpload!: (value: { fileID: string }) => void
+		mocks.uploadFile.mockImplementationOnce(
+			() => new Promise<{ fileID: string }>((resolve) => (finishUpload = resolve)),
+		)
+		const request = service.updateLauncherProfile({
+			...input,
+			avatar: new File(['image'], 'avatar.png', { type: 'image/png' }),
+		})
+		const rejected = expect(request).rejects.toThrow(strings.auth.error.timeout)
+		await vi.advanceTimersByTimeAsync(0)
+		await expect(service.signOutLauncher()).rejects.toThrow(strings.auth.emailErrors.pending)
+		await vi.advanceTimersByTimeAsync(30_000)
+		await rejected
+		finishUpload({ fileID })
+		await vi.advanceTimersByTimeAsync(0)
+		expect(mocks.updateUserBasicInfo).not.toHaveBeenCalled()
+	})
 })
 
 describe('email credentials and public sessions', () => {
