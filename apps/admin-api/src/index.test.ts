@@ -27,42 +27,38 @@ describe('Admin API CloudBase adapter', () => {
 	})
 
 	it.each([
-		[
-			'a direct Functions Framework JSON event',
-			{ userId: 'user_123', status: 'active', note: 'reviewed' },
-		],
-		[
-			'a wrapped HTTP event',
-			{ body: JSON.stringify({ userId: 'user_123', status: 'active', note: 'reviewed' }) },
-		],
+		['a direct Functions Framework JSON event', { userId: 'user_123', status: 'disabled' }],
+		['a wrapped HTTP event', { body: JSON.stringify({ userId: 'user_123', status: 'disabled' }) }],
 	])('passes %s through as the user status request body', async (_label, event) => {
 		vi.stubEnv('CLOUDBASE_ADMIN_API_KEY', 'test-admin-key')
+		vi.stubEnv('TENCENTCLOUD_SECRETID', 'test-secret-id')
+		vi.stubEnv('TENCENTCLOUD_SECRETKEY', 'test-secret-key')
 		const fetchImpl = vi
 			.fn<typeof fetch>()
 			.mockResolvedValueOnce(Response.json({ active: true, sub: 'admin-uid' }))
 			.mockResolvedValueOnce(Response.json({ _id: 'admin-uid', role: 'admin', status: 'active' }))
 			.mockResolvedValueOnce(
 				Response.json({
-					_id: 'user_123',
-					uid: 'user_123',
-					active: true,
-					createdAt: '2026-07-01T00:00:00.000Z',
-					updatedAt: '2026-07-01T00:00:00.000Z',
-				}),
-			)
-			.mockResolvedValueOnce(
-				Response.json({
-					doc: {
-						_id: 'user_123',
-						uid: 'user_123',
-						active: true,
-						note: 'reviewed',
-						createdAt: '2026-07-01T00:00:00.000Z',
-						updatedAt: '2026-07-14T00:00:00.000Z',
+					Response: {
+						Data: {
+							Total: 1,
+							UserList: [
+								{
+									Uid: 'user_123',
+									Email: 'user@example.com',
+									NickName: '昵称',
+									UserStatus: 'ACTIVE',
+									Type: 'externalUser',
+								},
+							],
+						},
 					},
 				}),
 			)
-			.mockResolvedValueOnce(Response.json({ insertedIds: ['audit-1'] }, { status: 201 }))
+			.mockResolvedValueOnce(Response.json({ _id: 'user_123', uid: 'user_123', note: 'reviewed' }))
+			.mockResolvedValueOnce(Response.json({ insertedIds: ['audit-request'] }, { status: 201 }))
+			.mockResolvedValueOnce(Response.json({ Response: { Data: { Success: true } } }))
+			.mockResolvedValueOnce(Response.json({ insertedIds: ['audit-result'] }, { status: 201 }))
 		vi.stubGlobal('fetch', fetchImpl)
 
 		const response = await userStatus(event, {
@@ -76,10 +72,15 @@ describe('Admin API CloudBase adapter', () => {
 		expect(response.statusCode).toBe(200)
 		expect(JSON.parse(response.body).user).toMatchObject({
 			userId: 'user_123',
-			status: 'active',
+			status: 'disabled',
 			note: 'reviewed',
 		})
-		expect(fetchImpl).toHaveBeenCalledTimes(5)
+		expect(fetchImpl).toHaveBeenCalledTimes(7)
+		expect(new Headers(fetchImpl.mock.calls[5][1]?.headers).get('x-tc-action')).toBe('ModifyUser')
+		expect(JSON.parse(String(fetchImpl.mock.calls[5][1]?.body))).toMatchObject({
+			Uid: 'user_123',
+			UserStatus: 'BLOCKED',
+		})
 	})
 
 	it('reads client update query parameters from the Functions Framework URL', async () => {

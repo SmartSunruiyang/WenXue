@@ -108,6 +108,10 @@ function dispatch(event, context, path) {
 		store: createCloudBaseAdminStore({
 			envId: env.cloudbaseEnvId,
 			apiKey: env.cloudbaseAdminApiKey,
+			region: env.cloudbaseRegion,
+			secretId: env.tencentCloudSecretId,
+			secretKey: env.tencentCloudSecretKey,
+			token: env.tencentCloudToken,
 			timeoutMs: env.requestTimeoutMs,
 		}),
 	})
@@ -117,6 +121,24 @@ function readRuntimeEnv() {
 	return {
 		cloudbaseEnvId: process.env.CLOUDBASE_ENV_ID ?? 'wenxue-d8gz76tacc3659f05',
 		cloudbaseClientId: process.env.CLOUDBASE_AUTH_CLIENT_ID ?? 'wenxue-d8gz76tacc3659f05',
+		cloudbaseRegion: process.env.CLOUDBASE_REGION ?? 'ap-shanghai',
+		tencentCloudSecretId:
+			process.env.TENCENTCLOUD_SECRETID ??
+			process.env.TENCENTCLOUD_SECRET_ID ??
+			process.env.TENCENT_CLOUD_SECRET_ID ??
+			process.env.TENCENT_SECRET_ID ??
+			'',
+		tencentCloudSecretKey:
+			process.env.TENCENTCLOUD_SECRETKEY ??
+			process.env.TENCENTCLOUD_SECRET_KEY ??
+			process.env.TENCENT_CLOUD_SECRET_KEY ??
+			process.env.TENCENT_SECRET_KEY ??
+			'',
+		tencentCloudToken:
+			process.env.TENCENTCLOUD_SESSIONTOKEN ??
+			process.env.TENCENTCLOUD_SESSION_TOKEN ??
+			process.env.TENCENTCLOUD_TOKEN ??
+			'',
 		cloudbaseAdminApiKey:
 			process.env.CLOUDBASE_ADMIN_API_KEY ?? process.env.CLOUDBASE_USAGE_API_KEY ?? '',
 		releaseCiToken: process.env.WENXUE_RELEASE_CI_TOKEN ?? '',

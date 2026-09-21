@@ -1,761 +1,276 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { strings } from './strings'
 
-const cloudbaseMock = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
 	init: vi.fn(),
 	signInWithPassword: vi.fn(),
 	signOut: vi.fn(),
 	getSession: vi.fn(),
 	refreshSession: vi.fn(),
-	fetch: vi.fn(),
-	database: vi.fn(),
+	getTempFileURL: vi.fn(),
 	collection: vi.fn(),
 	where: vi.fn(),
 	watch: vi.fn(),
 }))
-
-vi.mock('@cloudbase/js-sdk', () => ({
-	default: {
-		init: cloudbaseMock.init,
-	},
-}))
-
-import {
-	cloudbaseConfig,
-	getLauncherPasswordComparison,
-	getLauncherPasswordRequirements,
-	getLauncherSession,
-	getLauncherUsernameRequirements,
-	readCloudBaseErrorMessage,
-	readLauncherAuthSession,
-	refreshLauncherSession,
-	registerLauncher,
-	signInLauncher,
-	signOutLauncher,
-	validateLauncherCredentials,
-	watchDesktopSignal,
-} from './cloudbase'
-import { strings } from './strings'
-
-const VALID_PASSWORD = 'AuthTest9!'
-const ACCESS_TOKEN = 'access-token-secret'
-
-function mockSuccessfulSignIn(): void {
-	cloudbaseMock.signInWithPassword.mockResolvedValue({
-		data: {
-			session: {
-				access_token: ACCESS_TOKEN,
-				refresh_token: 'refresh-token',
-				expires_in: 3600,
-				user: {
-					id: 'user_123',
-					user_metadata: {
-						username: 'alice',
-					},
-				},
-			},
+vi.mock('@cloudbase/js-sdk', () => ({ default: { init: mocks.init } }))
+let service: typeof import('./cloudbase')
+const EMAIL = 'alice@example.com'
+const PASSWORD = 'AuthTest9!'
+function sessionData(overrides: Record<string, unknown> = {}) {
+	return {
+		session: {
+			access_token: 'access-secret',
+			refresh_token: 'refresh-secret',
+			expires_in: 3600,
+			user: { id: 'user-1', email: EMAIL, user_metadata: { name: '阿丽' } },
+			...overrides,
 		},
-		error: null,
-	})
+	}
 }
 
-describe('desktop CloudBase auth session parsing', () => {
-	beforeEach(() => {
-		cloudbaseMock.init.mockReturnValue({
-			auth: () => ({
-				signInWithPassword: cloudbaseMock.signInWithPassword,
-				signOut: cloudbaseMock.signOut,
-				getSession: cloudbaseMock.getSession,
-				refreshSession: cloudbaseMock.refreshSession,
-			}),
-			database: cloudbaseMock.database,
-		})
-		cloudbaseMock.signInWithPassword.mockReset()
-		cloudbaseMock.signOut.mockReset()
-		cloudbaseMock.getSession.mockReset()
-		cloudbaseMock.refreshSession.mockReset()
-		cloudbaseMock.fetch.mockReset()
-		cloudbaseMock.database.mockReset()
-		cloudbaseMock.collection.mockReset()
-		cloudbaseMock.where.mockReset()
-		cloudbaseMock.watch.mockReset()
-		cloudbaseMock.database.mockReturnValue({ collection: cloudbaseMock.collection })
-		cloudbaseMock.collection.mockReturnValue({ where: cloudbaseMock.where })
-		cloudbaseMock.where.mockReturnValue({ watch: cloudbaseMock.watch })
-		cloudbaseMock.watch.mockReturnValue({ close: vi.fn() })
-		cloudbaseMock.signOut.mockResolvedValue({ error: null })
-		cloudbaseMock.getSession.mockResolvedValue({ data: null, error: null })
-		vi.stubGlobal('fetch', cloudbaseMock.fetch)
+beforeEach(async () => {
+	vi.resetModules()
+	vi.resetAllMocks()
+	mocks.init.mockReturnValue({
+		auth: () => mocks,
+		database: () => ({ collection: mocks.collection }),
+		getTempFileURL: mocks.getTempFileURL,
 	})
+	mocks.collection.mockReturnValue({ where: mocks.where })
+	mocks.where.mockReturnValue({ watch: mocks.watch })
+	mocks.watch.mockReturnValue({ close: vi.fn() })
+	mocks.signOut.mockResolvedValue({ error: null })
+	mocks.getSession.mockResolvedValue({ data: null, error: null })
+	mocks.signInWithPassword.mockResolvedValue({ data: sessionData(), error: null })
+	service = await import('./cloudbase')
+})
+afterEach(() => {
+	vi.useRealTimers()
+	vi.restoreAllMocks()
+	vi.unstubAllGlobals()
+})
 
-	afterEach(() => {
-		vi.useRealTimers()
-		vi.restoreAllMocks()
-		vi.unstubAllGlobals()
-	})
-
-	it('initializes auth with the bundled publishable key when env override is absent', () => {
-		expect(cloudbaseConfig.hasAccessKey).toBe(true)
-	})
-
-	it('times out a stalled CloudBase sign-out request', async () => {
-		vi.useFakeTimers()
-		cloudbaseMock.signOut.mockReturnValueOnce(new Promise(() => undefined))
-
-		const result = expect(signOutLauncher()).rejects.toMatchObject({
-			message: strings.auth.error.timeout,
-			cloudSignOutOutcome: 'unknown',
-		})
-		await vi.advanceTimersByTimeAsync(12_000)
-		await result
-	})
-
-	it('fails closed when reading the current CloudBase session returns an error', async () => {
-		cloudbaseMock.getSession.mockResolvedValueOnce({
-			data: null,
-			error: { message: 'session lookup failed' },
-		})
-
-		await expect(getLauncherSession()).rejects.toThrow('session lookup failed')
-	})
-
-	it('fails closed when the SDK reports a malformed non-empty session', async () => {
-		cloudbaseMock.getSession.mockResolvedValueOnce({
-			data: { session: { access_token: 'partial-token' } },
-			error: null,
-		})
-
-		await expect(getLauncherSession()).rejects.toThrow(strings.auth.error.loginSession)
-	})
-
-	it('times out a stalled current-session lookup', async () => {
-		vi.useFakeTimers()
-		cloudbaseMock.getSession.mockReturnValueOnce(new Promise(() => undefined))
-
-		const result = expect(getLauncherSession()).rejects.toThrow(strings.auth.error.timeout)
-		await vi.advanceTimersByTimeAsync(12_000)
-		await result
-	})
-
-	it('watches only the selected public-safe desktop signal document', () => {
-		const callbacks = { onChange: vi.fn(), onError: vi.fn() }
-
-		const watcher = watchDesktopSignal('desktop_release_signal', 'electron:stable', callbacks)
-
-		expect(cloudbaseMock.collection).toHaveBeenCalledWith('desktop_release_signal')
-		expect(cloudbaseMock.where).toHaveBeenCalledWith({ _id: 'electron:stable' })
-		expect(cloudbaseMock.watch).toHaveBeenCalledWith(callbacks)
-		expect(watcher).toBe(cloudbaseMock.watch.mock.results[0]?.value)
-	})
-
-	it('matches the account signal read rule without changing the global signal query', () => {
-		const callbacks = { onChange: vi.fn(), onError: vi.fn() }
-
-		watchDesktopSignal('desktop_announcement_signal', 'global', callbacks)
-		expect(cloudbaseMock.where).toHaveBeenLastCalledWith({ _id: 'global' })
-
-		watchDesktopSignal('desktop_announcement_signal', 'user:hashed-id', callbacks)
-		expect(cloudbaseMock.where).toHaveBeenLastCalledWith({
-			_id: 'user:hashed-id',
-			uid: '{openid}',
+describe('email credentials and public sessions', () => {
+	it('uses the configured publishable key and email identity for password login', async () => {
+		expect(service.cloudbaseConfig.hasAccessKey).toBe(true)
+		await expect(
+			service.signInLauncher(' Alice@Example.com ', '1OldPassword!'),
+		).resolves.toMatchObject({ userId: 'user-1', email: EMAIL, nickname: '阿丽' })
+		expect(mocks.signInWithPassword).toHaveBeenCalledWith({
+			email: EMAIL,
+			password: '1OldPassword!',
 		})
 	})
-
-	it('validates username boundaries without trimming input into validity', () => {
-		expect(validateLauncherCredentials('A1234', VALID_PASSWORD)).toBeNull()
-		expect(validateLauncherCredentials(`A${'1'.repeat(23)}`, VALID_PASSWORD)).toBeNull()
-		expect(validateLauncherCredentials('', VALID_PASSWORD)).toBe('usernameRequired')
-		expect(validateLauncherCredentials('A123', VALID_PASSWORD)).toBe('usernameLength')
-		expect(validateLauncherCredentials(`A${'1'.repeat(24)}`, VALID_PASSWORD)).toBe('usernameLength')
-		expect(validateLauncherCredentials('1Abcd', VALID_PASSWORD)).toBe('usernameFormat')
-		expect(validateLauncherCredentials('Abc_12', VALID_PASSWORD)).toBe('usernameFormat')
-		expect(validateLauncherCredentials(' Abc12', VALID_PASSWORD)).toBe('usernameFormat')
-		expect(validateLauncherCredentials('Abc12\n', VALID_PASSWORD)).toBe('usernameFormat')
+	it.each([
+		'',
+		'alice',
+		'a@',
+		'@example.com',
+		'a..b@example.com',
+		'.a@example.com',
+		'a@-example.com',
+		'a@exam ple.com',
+		'a@example.com\n@evil.com',
+	])('rejects invalid email %j before making requests', async (email) => {
+		await expect(service.signInLauncher(email, PASSWORD)).rejects.toThrow(
+			strings.auth.emailErrors.invalidEmail,
+		)
+		expect(mocks.signInWithPassword).not.toHaveBeenCalled()
 	})
-
-	it('reports username requirements independently while input is incomplete or invalid', () => {
-		expect(getLauncherUsernameRequirements('0')).toEqual({
-			length: false,
-			firstCharacter: false,
-			characterSet: true,
-		})
-		expect(getLauncherUsernameRequirements('1Abcd')).toEqual({
-			length: true,
-			firstCharacter: false,
-			characterSet: true,
-		})
-		for (const username of ['Abc_12', 'Abc中文', 'Abc12 ', 'Abc12\n']) {
-			expect(getLauncherUsernameRequirements(username)).toEqual({
-				length: true,
-				firstCharacter: true,
-				characterSet: false,
-			})
-		}
-		expect(getLauncherUsernameRequirements('Alice1')).toEqual({
-			length: true,
-			firstCharacter: true,
-			characterSet: true,
-		})
-	})
-
-	it('reports no username requirements fulfilled after clearing the input', () => {
-		expect(getLauncherUsernameRequirements('')).toEqual({
-			length: false,
-			firstCharacter: false,
-			characterSet: false,
-		})
-	})
-
-	it('validates the CloudBase password boundary and complexity rules', () => {
-		expect(validateLauncherCredentials('Alice1', 'AuthTes1')).toBeNull()
-		expect(validateLauncherCredentials('Alice1', 'AuthTest1')).toBeNull()
-		expect(validateLauncherCredentials('Alice1', 'AuthTest!')).toBeNull()
-		expect(validateLauncherCredentials('Alice1', `Aa1!${'a'.repeat(28)}`)).toBeNull()
-		expect(validateLauncherCredentials('Alice1', 'Aa1()!@#$%^&*|?><_-')).toBeNull()
-		expect(validateLauncherCredentials('Alice1', '')).toBe('passwordRequired')
-		expect(validateLauncherCredentials('Alice1', 'AuthTe1')).toBe('passwordLength')
-		expect(validateLauncherCredentials('Alice1', 'A'.repeat(33))).toBe('passwordLength')
-		expect(validateLauncherCredentials('Alice1', '!AuthTest9')).toBe('passwordFirstCharacter')
-		expect(validateLauncherCredentials('Alice1', '1AuthTest!')).toBe('passwordFirstCharacter')
-		expect(validateLauncherCredentials('Alice1', 'AuthTest9 ')).toBe('passwordCharacterSet')
-		expect(validateLauncherCredentials('Alice1', 'AuthTest9\n')).toBe('passwordCharacterSet')
-		expect(validateLauncherCredentials('Alice1', 'Auth测Test9!')).toBe('passwordCharacterSet')
-		expect(validateLauncherCredentials('Alice1', 'Auth😀Test9!')).toBe('passwordCharacterSet')
-		expect(validateLauncherCredentials('Alice1', 'AuthTest9.')).toBe('passwordCharacterSet')
-		expect(validateLauncherCredentials('Alice1', 'Authentication')).toBe('passwordComplexity')
-	})
-
-	it('reports each password requirement independently during input', () => {
-		expect(getLauncherPasswordRequirements('AuthTes1')).toEqual({
-			length: true,
-			firstCharacter: true,
-			characterSet: true,
-			complexity: true,
-		})
-		expect(getLauncherPasswordRequirements('AuthTe1')).toEqual({
-			length: false,
-			firstCharacter: true,
-			characterSet: true,
-			complexity: true,
-		})
-		expect(getLauncherPasswordRequirements('authtes1')).toEqual({
-			length: true,
-			firstCharacter: true,
-			characterSet: true,
-			complexity: false,
-		})
-		expect(getLauncherPasswordRequirements('0')).toEqual({
-			length: false,
-			firstCharacter: false,
-			characterSet: true,
-			complexity: false,
-		})
-		expect(getLauncherPasswordRequirements('!AuthTest9')).toEqual({
-			length: true,
-			firstCharacter: false,
-			characterSet: true,
-			complexity: true,
-		})
-		for (const password of ['AuthTest9 ', 'AuthTest9\n', 'Auth测Test9!']) {
-			expect(getLauncherPasswordRequirements(password)).toEqual({
-				length: true,
-				firstCharacter: true,
-				characterSet: false,
-				complexity: true,
-			})
-		}
-		expect(getLauncherPasswordRequirements(VALID_PASSWORD)).toEqual({
-			length: true,
-			firstCharacter: true,
-			characterSet: true,
-			complexity: true,
-		})
-		expect(getLauncherPasswordRequirements('')).toEqual({
-			length: false,
-			firstCharacter: false,
-			characterSet: false,
-			complexity: false,
-		})
-	})
-
-	it('allows existing passwords beginning with a digit to reach login authentication', async () => {
-		mockSuccessfulSignIn()
-		expect(validateLauncherCredentials('Alice1', '1AuthTest!', 'login')).toBeNull()
-		await expect(signInLauncher('Alice1', '1AuthTest!')).resolves.toMatchObject({
-			userId: 'user_123',
-		})
-		expect(cloudbaseMock.signInWithPassword).toHaveBeenCalledWith({
-			username: 'Alice1',
-			password: '1AuthTest!',
-		})
-	})
-
-	it('rejects empty login passwords and numeric-leading registration passwords before requests', async () => {
-		await expect(signInLauncher('Alice1', '')).rejects.toThrow(
+	it('requires a password but does not apply new-password rules to an existing login', async () => {
+		await expect(service.signInLauncher(EMAIL, '')).rejects.toThrow(
 			strings.auth.validation.passwordRequired,
 		)
-		await expect(registerLauncher('Alice1', '1AuthTest!')).rejects.toThrow(
-			strings.auth.validation.passwordFirstCharacter,
-		)
-		expect(cloudbaseMock.signInWithPassword).not.toHaveBeenCalled()
-		expect(cloudbaseMock.fetch).not.toHaveBeenCalled()
+		expect(mocks.signInWithPassword).not.toHaveBeenCalled()
 	})
-
-	it('compares each confirmed position independently after a mismatch', () => {
-		expect(getLauncherPasswordComparison('Ab1!', 'Ax1')).toEqual({
-			states: ['match', 'mismatch', 'match', 'pending'],
+	it('accepts non-unique display names while enforcing new-password rules', () => {
+		expect(service.validateLauncherRegistration(' 问学用户 ', PASSWORD)).toBeNull()
+		expect(service.validateLauncherRegistration('😀'.repeat(32), PASSWORD)).toBeNull()
+		expect(service.validateLauncherRegistration(' ', PASSWORD)).toBe(
+			strings.auth.emailErrors.nicknameRequired,
+		)
+		expect(service.validateLauncherRegistration('😀'.repeat(33), PASSWORD)).toBe(
+			strings.auth.emailErrors.nicknameLength,
+		)
+		for (const [password, key] of [
+			['', 'passwordRequired'],
+			['Aa1!', 'passwordLength'],
+			['A'.repeat(33), 'passwordLength'],
+			['1AuthTest!', 'passwordFirstCharacter'],
+			['AuthTest9 ', 'passwordCharacterSet'],
+			['AuthTest9\n', 'passwordCharacterSet'],
+			['Auth😀Test9!', 'passwordCharacterSet'],
+			['Authentication', 'passwordComplexity'],
+		] as const)
+			expect(service.validateLauncherRegistration('昵称', password)).toBe(
+				strings.auth.validation[key],
+			)
+	})
+	it('reports password rules independently and keeps Unicode comparison positions aligned', () => {
+		expect(service.getLauncherPasswordRequirements('AuthTe1')).toEqual({
+			length: false,
+			firstCharacter: true,
+			characterSet: true,
+			complexity: true,
+		})
+		expect(service.getLauncherPasswordRequirements('')).toEqual({
+			length: false,
+			firstCharacter: false,
+			characterSet: false,
+			complexity: false,
+		})
+		expect(service.getLauncherPasswordComparison('A😀b1!', 'A😀x')).toEqual({
+			states: ['match', 'match', 'mismatch', 'pending', 'pending'],
 			confirmedLength: 3,
 			extraLength: 0,
-			firstMismatchIndex: 1,
+			firstMismatchIndex: 2,
 		})
+		expect(service.getLauncherPasswordComparison('Ab1!', 'Ab1!2').extraLength).toBe(1)
 	})
-
-	it('updates password comparisons after correcting, deleting or changing the original', () => {
-		expect(getLauncherPasswordComparison('Ab1!', 'Ab').states).toEqual([
-			'match',
-			'match',
-			'pending',
-			'pending',
-		])
-		expect(getLauncherPasswordComparison('Ab1!', 'A').states).toEqual([
-			'match',
-			'pending',
-			'pending',
-			'pending',
-		])
-		expect(getLauncherPasswordComparison('Ab1!', '').states).toEqual([
-			'pending',
-			'pending',
-			'pending',
-			'pending',
-		])
-		expect(getLauncherPasswordComparison('Ac1!', 'Ab').states).toEqual([
-			'match',
-			'mismatch',
-			'pending',
-			'pending',
-		])
-	})
-
-	it('distinguishes complete matches from extra confirmation characters', () => {
-		expect(getLauncherPasswordComparison('Ab1!', 'Ab1!')).toEqual({
-			states: ['match', 'match', 'match', 'match'],
-			confirmedLength: 4,
-			extraLength: 0,
-			firstMismatchIndex: -1,
-		})
-		expect(getLauncherPasswordComparison('Ab1!', 'Ab1!2')).toEqual({
-			states: ['match', 'match', 'match', 'match'],
-			confirmedLength: 5,
-			extraLength: 1,
-			firstMismatchIndex: -1,
-		})
-		expect(getLauncherPasswordComparison('', 'A')).toEqual({
-			states: [],
-			confirmedLength: 1,
-			extraLength: 1,
-			firstMismatchIndex: -1,
-		})
-	})
-
-	it('keeps character positions aligned even when invalid Unicode is entered', () => {
-		expect(getLauncherPasswordComparison('A😀b1!', 'A😀x').states).toEqual([
-			'match',
-			'match',
-			'mismatch',
-			'pending',
-			'pending',
-		])
-	})
-
-	it('clears the CloudBase SDK login timeout after a successful sign in', async () => {
-		vi.useFakeTimers()
-		cloudbaseMock.signInWithPassword.mockResolvedValue({
-			data: {
-				session: {
-					access_token: 'access-token',
-					refresh_token: 'refresh-token',
-					expires_in: 3600,
-					user: { id: 'user_123', username: 'Alice1' },
-				},
-			},
-			error: null,
-		})
-
-		await expect(signInLauncher('Alice1', VALID_PASSWORD)).resolves.toEqual(
-			expect.objectContaining({ userId: 'user_123', username: 'Alice1' }),
-		)
-		expect(vi.getTimerCount()).toBe(0)
-	})
-
-	it('times out stalled login and clears a late session before allowing another login', async () => {
-		vi.useFakeTimers()
-		let finishLogin!: (value: unknown) => void
-		cloudbaseMock.signInWithPassword.mockReturnValue(
-			new Promise((resolve) => {
-				finishLogin = resolve
-			}),
-		)
-
-		const login = signInLauncher('Alice1', VALID_PASSWORD)
-		const expectation = expect(login).rejects.toThrow(strings.auth.error.timeout)
-		await vi.advanceTimersByTimeAsync(12_000)
-		await expectation
-
-		await expect(signInLauncher('Alice1', VALID_PASSWORD)).rejects.toThrow(
-			strings.auth.phone.pending,
-		)
-		finishLogin({ data: null, error: null })
-		await vi.advanceTimersByTimeAsync(0)
-		expect(cloudbaseMock.signOut).toHaveBeenCalledOnce()
-		expect(vi.getTimerCount()).toBe(0)
-	})
-
-	it('refreshes an expired launcher session through the CloudBase SDK', async () => {
-		cloudbaseMock.refreshSession.mockResolvedValue({
-			data: {
-				session: {
-					access_token: 'fresh-access-token',
-					refresh_token: 'fresh-refresh-token',
-					expires_in: 3600,
-					user: { id: 'user_123', username: 'Alice1' },
-				},
-			},
-			error: null,
-		})
-
-		await expect(refreshLauncherSession('old-refresh-token')).resolves.toMatchObject({
-			userId: 'user_123',
-			accessToken: 'fresh-access-token',
-			refreshToken: 'fresh-refresh-token',
-		})
-		expect(cloudbaseMock.refreshSession).toHaveBeenCalledWith('old-refresh-token')
-	})
-
-	it('rejects invalid credentials before calling the SDK or registration gateway', async () => {
-		await expect(signInLauncher('1Alice', VALID_PASSWORD)).rejects.toThrow(
-			strings.auth.validation.usernameFormat,
-		)
-		await expect(registerLauncher('Alice1', 'AuthTe1')).rejects.toThrow(
-			strings.auth.validation.passwordLength,
-		)
-
-		expect(cloudbaseMock.signInWithPassword).not.toHaveBeenCalled()
-		expect(cloudbaseMock.fetch).not.toHaveBeenCalled()
-	})
-
-	it('registers, signs in, then activates with the access token without logging it', async () => {
-		vi.useFakeTimers()
-		const callSequence: string[] = []
-		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-		cloudbaseMock.fetch
-			.mockImplementationOnce(async () => {
-				callSequence.push('register')
-				return Response.json({ ok: true }, { status: 201 })
-			})
-			.mockImplementationOnce(async () => {
-				callSequence.push('activate')
-				return new Response(null, { status: 204 })
-			})
-		cloudbaseMock.signInWithPassword.mockImplementation(async () => {
-			callSequence.push('signIn')
-			return {
-				data: {
-					session: {
-						access_token: ACCESS_TOKEN,
-						refresh_token: 'refresh-token',
-						expires_in: 3600,
-						user: {
-							id: 'user_123',
-							user_metadata: { username: 'alice' },
-						},
-					},
-				},
-				error: null,
-			}
-		})
-
-		await expect(registerLauncher('Alice1', VALID_PASSWORD)).resolves.toEqual(
-			expect.objectContaining({
-				userId: 'user_123',
-				username: 'alice',
-				accessToken: ACCESS_TOKEN,
-			}),
-		)
-
-		expect(callSequence).toEqual(['register', 'signIn', 'activate'])
-		expect(cloudbaseMock.fetch).toHaveBeenNthCalledWith(
-			1,
-			'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com/v1/auth/register',
-			expect.objectContaining({
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-				},
-				body: JSON.stringify({
-					username: 'Alice1',
-					password: VALID_PASSWORD,
-				}),
-				signal: expect.any(AbortSignal),
-			}),
-		)
-		expect(cloudbaseMock.signInWithPassword).toHaveBeenCalledWith({
-			username: 'Alice1',
-			password: VALID_PASSWORD,
-		})
-		expect(cloudbaseMock.fetch).toHaveBeenNthCalledWith(
-			2,
-			'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com/v1/auth/activate',
-			expect.objectContaining({
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					authorization: `Bearer ${ACCESS_TOKEN}`,
-				},
-				body: JSON.stringify({}),
-				signal: expect.any(AbortSignal),
-			}),
-		)
-		const activationBody = cloudbaseMock.fetch.mock.calls[1]?.[1]?.body
-		expect(activationBody).not.toContain(ACCESS_TOKEN)
-		expect(consoleError).not.toHaveBeenCalled()
-		expect(vi.getTimerCount()).toBe(0)
-	})
-
-	it('normalizes a username/password session into the main-process handoff shape', () => {
-		const session = readLauncherAuthSession(
-			{
-				session: {
-					access_token: 'access-token',
-					refresh_token: 'refresh-token',
-					expires_in: 3600,
-					user: {
-						id: 'user_123',
-						user_metadata: {
-							username: 'alice',
-						},
-					},
-				},
-			},
-			{
-				now: () => 1000,
-				gatewayBaseUrl: 'https://gateway.example',
-			},
-		)
-
-		expect(session).toEqual({
-			userId: 'user_123',
-			username: 'alice',
-			accessToken: 'access-token',
-			refreshToken: 'refresh-token',
+	it('normalizes expiry and strips credentials from the public user', () => {
+		const session = service.readLauncherAuthSession(sessionData(), {
+			now: () => 1000,
+			gatewayBaseUrl: 'https://gateway.example/v1/',
+		})!
+		expect(session).toMatchObject({
+			userId: 'user-1',
+			email: EMAIL,
+			nickname: '阿丽',
 			expiresAt: 3601000,
 			gatewayBaseUrl: 'https://gateway.example',
 		})
-	})
-
-	it('returns null when CloudBase does not provide a real session', () => {
-		expect(readLauncherAuthSession({ session: undefined })).toBeNull()
-		expect(readLauncherAuthSession({ session: { access_token: 'token' } })).toBeNull()
-	})
-
-	it('recovers an existing username with the correct password and activates it', async () => {
-		cloudbaseMock.fetch
-			.mockResolvedValueOnce(Response.json({ error: { code: 'USERNAME_EXISTS' } }, { status: 409 }))
-			.mockResolvedValueOnce(new Response(null, { status: 204 }))
-		mockSuccessfulSignIn()
-
-		await expect(registerLauncher('Alice1', VALID_PASSWORD)).resolves.toEqual(
-			expect.objectContaining({ userId: 'user_123', accessToken: ACCESS_TOKEN }),
-		)
-		expect(cloudbaseMock.signInWithPassword).toHaveBeenCalledOnce()
-		expect(cloudbaseMock.fetch).toHaveBeenCalledTimes(2)
-	})
-
-	it('returns a safe message when an existing username cannot sign in', async () => {
-		cloudbaseMock.fetch.mockResolvedValue(
-			Response.json({ error: { code: 'USERNAME_EXISTS' } }, { status: 409 }),
-		)
-		cloudbaseMock.signInWithPassword.mockResolvedValue({
-			data: null,
-			error: { message: 'Invalid username or password' },
+		const user = service.toPublicUser(session)
+		expect(user).toEqual({
+			userId: 'user-1',
+			email: EMAIL,
+			nickname: '阿丽',
+			avatarUrl: undefined,
+			expiresAt: 3601000,
 		})
-
-		await expect(registerLauncher('Alice1', VALID_PASSWORD)).rejects.toThrow(
-			strings.auth.error.usernameExists,
-		)
-		expect(cloudbaseMock.fetch).toHaveBeenCalledOnce()
+		expect(JSON.stringify(user)).not.toContain('secret')
 	})
+	it('rejects malformed or anonymous sessions and never exposes data URLs as avatars', () => {
+		expect(service.readLauncherAuthSession({ session: { access_token: 'secret' } })).toBeNull()
+		expect(
+			service.readLauncherAuthSession(
+				sessionData({ user: { id: 'anonymous', is_anonymous: true } }),
+			),
+		).toBeNull()
+		expect(
+			service.readLauncherAuthSession(
+				sessionData({
+					user: { id: 'user-1', user_metadata: { picture: 'data:image/svg+xml,unsafe' } },
+				}),
+			)?.avatarUrl,
+		).toBeUndefined()
+	})
+	it('resolves a permanent avatar fileID for display without modifying the saved profile', async () => {
+		const fileID = 'cloud://environment.bucket/avatars/user-1/avatar.png'
+		mocks.getSession.mockResolvedValue({
+			data: sessionData({
+				user: { id: 'user-1', email: EMAIL, user_metadata: { picture: fileID } },
+			}),
+		})
+		mocks.getTempFileURL.mockResolvedValue({
+			fileList: [{ fileID, tempFileURL: 'https://storage.example/avatar.png?signature=temporary' }],
+		})
+		await expect(service.getLauncherSession()).resolves.toMatchObject({
+			avatarUrl: 'https://storage.example/avatar.png?signature=temporary',
+		})
+		expect(mocks.getTempFileURL).toHaveBeenCalledWith({ fileList: [{ fileID, maxAge: 3600 }] })
+	})
+})
 
-	it('preserves an actionable network error while recovering an existing username', async () => {
-		cloudbaseMock.fetch.mockResolvedValue(
-			Response.json({ error: { code: 'USERNAME_EXISTS' } }, { status: 409 }),
-		)
-		cloudbaseMock.signInWithPassword.mockRejectedValue(new TypeError('Failed to fetch'))
-
-		await expect(registerLauncher('Alice1', VALID_PASSWORD)).rejects.toThrow(
+describe('timeouts, session recovery and safe errors', () => {
+	it('fails closed on session lookup errors and malformed sessions without exposing SDK details', async () => {
+		mocks.getSession.mockResolvedValueOnce({ error: { message: 'access-secret refresh-secret' } })
+		await expect(service.getLauncherSession()).rejects.toThrow(strings.auth.error.loginSession)
+		mocks.getSession.mockResolvedValueOnce({ data: { session: { access_token: 'partial' } } })
+		await expect(service.getLauncherSession()).rejects.toThrow(strings.auth.error.loginSession)
+	})
+	it('refreshes through the SDK while retaining email profile fields', async () => {
+		mocks.refreshSession.mockResolvedValue({ data: sessionData({ access_token: 'fresh-access' }) })
+		await expect(service.refreshLauncherSession('old-refresh')).resolves.toMatchObject({
+			accessToken: 'fresh-access',
+			email: EMAIL,
+		})
+		expect(mocks.refreshSession).toHaveBeenCalledWith('old-refresh')
+	})
+	it('retains actionable network errors but never renders arbitrary login diagnostics', async () => {
+		mocks.signInWithPassword.mockRejectedValueOnce(new Error('Failed to fetch'))
+		await expect(service.signInLauncher(EMAIL, PASSWORD)).rejects.toThrow(
 			strings.auth.error.network,
 		)
-		expect(cloudbaseMock.signOut).not.toHaveBeenCalled()
+		mocks.signInWithPassword.mockRejectedValueOnce(new Error('password=AuthTest9! access-secret'))
+		await expect(service.signInLauncher(EMAIL, PASSWORD)).rejects.toThrow(strings.auth.error.login)
 	})
-
-	it('preserves an actionable timeout while recovering an existing username', async () => {
-		vi.useFakeTimers()
-		cloudbaseMock.fetch.mockResolvedValue(
-			Response.json({ error: { code: 'USERNAME_EXISTS' } }, { status: 409 }),
+	it('clears a successful password login if the SDK returns a different email', async () => {
+		mocks.signInWithPassword.mockResolvedValueOnce({
+			data: sessionData({ user: { id: 'other-id', email: 'other@example.com' } }),
+		})
+		await expect(service.signInLauncher(EMAIL, PASSWORD)).rejects.toThrow(
+			strings.auth.error.loginSession,
 		)
-		let finishLogin!: (value: unknown) => void
-		cloudbaseMock.signInWithPassword.mockReturnValue(
-			new Promise((resolve) => {
-				finishLogin = resolve
+		expect(mocks.signOut).toHaveBeenCalledOnce()
+	})
+	it('blocks further mutations when cleanup of an unexpected login fails', async () => {
+		mocks.signInWithPassword.mockResolvedValueOnce({ data: { session: null } })
+		mocks.signOut.mockRejectedValueOnce(new Error('cleanup failed'))
+		await expect(service.signInLauncher(EMAIL, PASSWORD)).rejects.toThrow(
+			strings.auth.error.loginSession,
+		)
+		await expect(service.signInLauncher(EMAIL, PASSWORD)).rejects.toThrow(
+			strings.auth.emailErrors.sessionChanged,
+		)
+		expect(mocks.signInWithPassword).toHaveBeenCalledOnce()
+	})
+	it('keeps login single-flight after timeout and signs out a late failed completion', async () => {
+		vi.useFakeTimers()
+		let reject!: (error: unknown) => void
+		mocks.signInWithPassword.mockReturnValueOnce(
+			new Promise((_, fail) => {
+				reject = fail
 			}),
 		)
-
-		const registration = registerLauncher('Alice1', VALID_PASSWORD)
-		const expectation = expect(registration).rejects.toThrow(strings.auth.error.timeout)
-		await vi.advanceTimersByTimeAsync(12_000)
-		await expectation
-
-		expect(cloudbaseMock.signOut).not.toHaveBeenCalled()
-		expect(vi.getTimerCount()).toBe(0)
-		finishLogin({ data: null, error: null })
+		const pending = expect(service.signInLauncher(EMAIL, PASSWORD)).rejects.toThrow(
+			strings.auth.error.timeout,
+		)
+		await vi.advanceTimersByTimeAsync(12000)
+		await pending
+		await expect(service.signInLauncher(EMAIL, PASSWORD)).rejects.toThrow(
+			strings.auth.emailErrors.pending,
+		)
+		reject(new Error('late SDK failure after credentials were written'))
 		await vi.advanceTimersByTimeAsync(0)
+		expect(mocks.signOut).toHaveBeenCalledOnce()
+		await expect(service.signInLauncher(EMAIL, PASSWORD)).resolves.toMatchObject({ email: EMAIL })
+		expect(vi.getTimerCount()).toBe(0)
 	})
-
-	it('preserves the SDK login error after a newly created registration', async () => {
-		cloudbaseMock.fetch.mockResolvedValue(Response.json({ ok: true }, { status: 201 }))
-		cloudbaseMock.signInWithPassword.mockResolvedValue({
-			data: null,
-			error: { message: 'CloudBase login unavailable' },
+	it('marks stalled sign-out outcomes as unknown', async () => {
+		vi.useFakeTimers()
+		mocks.signOut.mockReturnValueOnce(new Promise(() => undefined))
+		const pending = expect(service.signOutLauncher()).rejects.toMatchObject({
+			message: strings.auth.error.timeout,
+			cloudSignOutOutcome: 'unknown',
 		})
-
-		await expect(registerLauncher('Alice1', VALID_PASSWORD)).rejects.toThrow(
-			'CloudBase login unavailable',
-		)
-		expect(cloudbaseMock.fetch).toHaveBeenCalledOnce()
+		await vi.advanceTimersByTimeAsync(12000)
+		await pending
 	})
-
-	it('aborts a registration request after twelve seconds with a specific message', async () => {
+	it('bounds session lookup duration', async () => {
 		vi.useFakeTimers()
-		cloudbaseMock.fetch.mockImplementation(
-			(_input: RequestInfo | URL, init?: RequestInit) =>
-				new Promise<Response>((_resolve, reject) => {
-					init?.signal?.addEventListener(
-						'abort',
-						() => reject(new DOMException('The operation was aborted', 'AbortError')),
-						{ once: true },
-					)
-				}),
-		)
-
-		const registration = registerLauncher('Alice1', VALID_PASSWORD)
-		const expectation = expect(registration).rejects.toThrow(strings.auth.error.timeout)
-		await vi.advanceTimersByTimeAsync(12_000)
-		await expectation
-
-		expect(cloudbaseMock.signInWithPassword).not.toHaveBeenCalled()
-		expect(vi.getTimerCount()).toBe(0)
+		mocks.getSession.mockReturnValueOnce(new Promise(() => undefined))
+		const pending = expect(service.getLauncherSession()).rejects.toThrow(strings.auth.error.timeout)
+		await vi.advanceTimersByTimeAsync(12000)
+		await pending
 	})
-
-	it('normalizes raw registration network failures into actionable Chinese', async () => {
-		cloudbaseMock.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
-
-		await expect(registerLauncher('Alice1', VALID_PASSWORD)).rejects.toThrow(
-			strings.auth.error.network,
-		)
-		expect(cloudbaseMock.signInWithPassword).not.toHaveBeenCalled()
-	})
-
-	it('normalizes activation network failures after a successful SDK login', async () => {
-		cloudbaseMock.fetch
-			.mockResolvedValueOnce(Response.json({ ok: true }, { status: 201 }))
-			.mockRejectedValueOnce(new TypeError('Failed to fetch'))
-		mockSuccessfulSignIn()
-
-		await expect(registerLauncher('Alice1', VALID_PASSWORD)).rejects.toThrow(
-			strings.auth.error.network,
-		)
-		expect(cloudbaseMock.fetch).toHaveBeenCalledTimes(2)
-		expect(cloudbaseMock.signOut).toHaveBeenCalledOnce()
-	})
-
-	it('aborts activation after twelve seconds', async () => {
-		vi.useFakeTimers()
-		cloudbaseMock.fetch
-			.mockResolvedValueOnce(Response.json({ ok: true }, { status: 201 }))
-			.mockImplementationOnce(
-				(_input: RequestInfo | URL, init?: RequestInit) =>
-					new Promise<Response>((_resolve, reject) => {
-						init?.signal?.addEventListener(
-							'abort',
-							() => reject(new DOMException('The operation was aborted', 'AbortError')),
-							{ once: true },
-						)
-					}),
-			)
-		mockSuccessfulSignIn()
-
-		const registration = registerLauncher('Alice1', VALID_PASSWORD)
-		const expectation = expect(registration).rejects.toThrow(strings.auth.error.timeout)
-		await vi.advanceTimersByTimeAsync(12_000)
-		await expectation
-
-		expect(cloudbaseMock.fetch).toHaveBeenCalledTimes(2)
-		expect(cloudbaseMock.signOut).toHaveBeenCalledOnce()
-		expect(vi.getTimerCount()).toBe(0)
-	})
-
-	it('parses activation errors while redacting the bearer token', async () => {
-		cloudbaseMock.fetch
-			.mockResolvedValueOnce(Response.json({ ok: true }, { status: 201 }))
-			.mockResolvedValueOnce(
-				Response.json({ error: { message: `账号激活失败：${ACCESS_TOKEN}` } }, { status: 503 }),
-			)
-		mockSuccessfulSignIn()
-
-		let message = ''
-		try {
-			await registerLauncher('Alice1', VALID_PASSWORD)
-		} catch (error) {
-			message = error instanceof Error ? error.message : String(error)
-		}
-
-		expect(message).toContain('账号激活失败')
-		expect(message).toContain('[REDACTED]')
-		expect(message).not.toContain(ACCESS_TOKEN)
-		expect(cloudbaseMock.signOut).toHaveBeenCalledOnce()
-	})
-
-	it('preserves the activation error when best-effort sign out also fails', async () => {
-		cloudbaseMock.fetch
-			.mockResolvedValueOnce(Response.json({ ok: true }, { status: 201 }))
-			.mockResolvedValueOnce(
-				Response.json({ error: { message: '账号激活暂时不可用' } }, { status: 503 }),
-			)
-		mockSuccessfulSignIn()
-		cloudbaseMock.signOut.mockRejectedValue(new Error('sign out failed'))
-
-		await expect(registerLauncher('Alice1', VALID_PASSWORD)).rejects.toThrow('账号激活暂时不可用')
-		expect(cloudbaseMock.signOut).toHaveBeenCalledOnce()
-	})
-
-	it('reads CloudBase JSON error messages', () => {
-		expect(
-			readCloudBaseErrorMessage(
-				new Error('{"code":"INVALID_PARAMS","msg":"用户名格式不正确"}'),
-				'账号操作失败',
-			),
-		).toBe('用户名格式不正确')
-	})
-
-	it('reads nested backend error messages', () => {
-		expect(
-			readCloudBaseErrorMessage(
-				{
-					error: {
-						message: '注册服务未配置',
-					},
-				},
-				'账号操作失败',
-			),
-		).toBe('注册服务未配置')
+	it('watches scoped account signals and the public release/global signals', () => {
+		const callbacks = { onChange: vi.fn(), onError: vi.fn() }
+		service.watchDesktopSignal('desktop_release_signal', 'electron:stable', callbacks)
+		expect(mocks.where).toHaveBeenLastCalledWith({ _id: 'electron:stable' })
+		service.watchDesktopSignal('desktop_announcement_signal', 'global', callbacks)
+		expect(mocks.where).toHaveBeenLastCalledWith({ _id: 'global' })
+		service.watchDesktopSignal('desktop_announcement_signal', 'user:hashed-id', callbacks)
+		expect(mocks.where).toHaveBeenLastCalledWith({ _id: 'user:hashed-id', uid: '{openid}' })
+		expect(mocks.watch).toHaveBeenLastCalledWith(callbacks)
 	})
 })

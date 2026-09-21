@@ -12,7 +12,6 @@ import { resetAdminConsoleFileCache, serveAdminConsole } from './adminConsole.mj
 import {
 	assertUsageRecordSafe,
 	buildDashScopeRequest,
-	buildTencentCloudSignedRequest,
 	buildUsageRecord,
 	buildUsageSummary,
 	clearAuthorizationCache,
@@ -21,7 +20,6 @@ import {
 	extractUsageFromSseFrame,
 	handleChatCompletions,
 	handleLauncherActivation,
-	handleLauncherRegistration,
 	handleUsageSummary,
 	readUsageRecords,
 	resolveCloudBaseUser,
@@ -37,7 +35,6 @@ import {
 	launcherActivate,
 	launcherRegister,
 	main,
-	resetLauncherRegistrationRateLimits,
 	usageSummary,
 } from './index.mjs'
 
@@ -56,9 +53,7 @@ const DEFAULT_ENV = {
 }
 
 describe('CloudBase LLM gateway behavior', () => {
-	beforeEach(() => {
-		resetLauncherRegistrationRateLimits()
-	})
+	beforeEach(() => {})
 
 	it('injects stream_options.include_usage for streamed DashScope requests without mutating input', () => {
 		const input = {
@@ -253,179 +248,6 @@ describe('CloudBase LLM gateway behavior', () => {
 		expect(() => assertUsageRecordSafe({ ...record, browserId: 'bad browser' })).toThrow()
 	})
 
-	it('registers a validated launcher account without writing an authorization row', async () => {
-		const calls: Array<{
-			url: string
-			headers: Headers
-			body: Record<string, unknown>
-		}> = []
-
-		const result = await handleLauncherRegistration({
-			rawBody: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
-			env: DEFAULT_ENV,
-			now: () => 1782660000000,
-			fetchImpl: async (url, init) => {
-				calls.push({
-					url: String(url),
-					headers: new Headers(init?.headers),
-					body: JSON.parse(String(init?.body)),
-				})
-				return Response.json({ Response: { RequestId: 'request-1' } })
-			},
-		})
-
-		expect(result).toEqual({ ok: true, username: 'alice' })
-		expect(calls).toHaveLength(1)
-		expect(calls[0].url).toBe('https://tcb.tencentcloudapi.com')
-		expect(calls[0].body).toMatchObject({
-			EnvId: 'wenxue-d8gz76tacc3659f05',
-			Name: 'alice',
-			NickName: 'alice',
-			Password: 'AuthTest9!',
-			Type: 'externalUser',
-			UserStatus: 'ACTIVE',
-		})
-		expect(calls[0].body).not.toHaveProperty('Uid')
-		expect(calls[0].headers.get('x-tc-action')).toBe('CreateUser')
-		expect(calls[0].headers.get('x-tc-version')).toBe('2018-06-08')
-		expect(calls[0].headers.get('authorization')).toContain('TC3-HMAC-SHA256 Credential=secret-id/')
-	})
-
-	it('rejects invalid launcher usernames before calling CloudBase', async () => {
-		const cases = [
-			{ username: 'abcd', message: '用户名长度必须为 5–24 位' },
-			{ username: 'a'.repeat(25), message: '用户名长度必须为 5–24 位' },
-			{ username: '1alice', message: '用户名只能包含英文字母和数字，且必须以英文字母开头' },
-			{ username: 'ali_ce', message: '用户名只能包含英文字母和数字，且必须以英文字母开头' },
-			{ username: '问学user', message: '用户名只能包含英文字母和数字，且必须以英文字母开头' },
-		]
-		for (const item of cases) {
-			let called = false
-			await expect(
-				handleLauncherRegistration({
-					rawBody: JSON.stringify({ username: item.username, password: 'AuthTest9!' }),
-					env: DEFAULT_ENV,
-					fetchImpl: async () => {
-						called = true
-						return Response.json({})
-					},
-				}),
-			).rejects.toMatchObject({ message: item.message, status: 400 })
-			expect(called).toBe(false)
-		}
-	})
-
-	it('accepts a five-character alphabetic username', async () => {
-		await expect(
-			handleLauncherRegistration({
-				rawBody: JSON.stringify({ username: 'abcde', password: 'AuthTest9!' }),
-				env: DEFAULT_ENV,
-				fetchImpl: async () => Response.json({ Response: { RequestId: 'request-short' } }),
-			}),
-		).resolves.toEqual({ ok: true, username: 'abcde' })
-	})
-
-	it('rejects weak launcher passwords before calling CloudBase', async () => {
-		const cases = [
-			{ password: 'AuthTe1', message: '密码长度必须为 8–32 位' },
-			{ password: `Aa1!${'x'.repeat(29)}`, message: '密码长度必须为 8–32 位' },
-			{ password: '!AuthTest9', message: '密码必须以英文字母开头' },
-			{ password: '1AuthTest!', message: '密码必须以英文字母开头' },
-			{
-				password: 'authtest9',
-				message: '密码必须包含大写字母、小写字母、数字和特殊符号中的至少 3 类',
-			},
-			{ password: 'Auth Test9!', message: '密码包含不支持的字符' },
-			{ password: 'Auth测试99!', message: '密码包含不支持的字符' },
-			{ password: 'AuthTest9~', message: '密码包含不支持的字符' },
-		]
-		for (const item of cases) {
-			let called = false
-			await expect(
-				handleLauncherRegistration({
-					rawBody: JSON.stringify({ username: 'alice', password: item.password }),
-					env: DEFAULT_ENV,
-					fetchImpl: async () => {
-						called = true
-						return Response.json({})
-					},
-				}),
-			).rejects.toMatchObject({ message: item.message, status: 400 })
-			expect(called).toBe(false)
-		}
-	})
-
-	it('accepts eight-character passwords with a letter first and three character categories', async () => {
-		for (const password of ['AuthTes1', 'aUTHtes1', `Aa1${'x'.repeat(29)}`]) {
-			const fetchImpl = vi.fn(async () =>
-				Response.json({ Response: { RequestId: 'request-password-boundary' } }),
-			)
-			await expect(
-				handleLauncherRegistration({
-					rawBody: JSON.stringify({ username: 'alice', password }),
-					env: DEFAULT_ENV,
-					fetchImpl,
-				}),
-			).resolves.toEqual({ ok: true, username: 'alice' })
-			expect(fetchImpl).toHaveBeenCalledTimes(1)
-		}
-	})
-
-	it('bounds CreateUser request and response body reads to ten seconds', async () => {
-		vi.useFakeTimers()
-		try {
-			for (const stallBody of [false, true]) {
-				const registration = handleLauncherRegistration({
-					rawBody: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
-					env: { ...DEFAULT_ENV, requestTimeoutMs: 60_000 },
-					fetchImpl: ((_, init) => {
-						if (!stallBody) {
-							return new Promise<Response>((_, reject) => {
-								init?.signal?.addEventListener('abort', () => reject(abortError()))
-							})
-						}
-						return Promise.resolve({
-							ok: true,
-							status: 200,
-							text: () =>
-								new Promise<string>((_, reject) => {
-									init?.signal?.addEventListener('abort', () => reject(abortError()))
-								}),
-						} as Response)
-					}) as typeof fetch,
-				})
-				const rejection = expect(registration).rejects.toMatchObject({
-					message: 'Upstream request timed out',
-					status: 504,
-				})
-
-				await vi.advanceTimersByTimeAsync(10_000)
-				await rejection
-			}
-		} finally {
-			vi.useRealTimers()
-		}
-	})
-
-	it('keeps duplicate registration as 409 without a database write', async () => {
-		const calls: string[] = []
-		await expect(
-			handleLauncherRegistration({
-				rawBody: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
-				env: DEFAULT_ENV,
-				fetchImpl: async (url) => {
-					calls.push(String(url))
-					return Response.json({
-						Response: {
-							Error: { Code: 'ResourceInUse.UserName', Message: 'user already exists' },
-						},
-					})
-				},
-			}),
-		).rejects.toMatchObject({ message: '用户名已存在', status: 409 })
-		expect(calls).toEqual(['https://tcb.tencentcloudapi.com'])
-	})
-
 	it('activates an authenticated CloudBase user without a database write', async () => {
 		const calls: string[] = []
 		const result = await handleLauncherActivation({
@@ -466,26 +288,6 @@ describe('CloudBase LLM gateway behavior', () => {
 			}),
 		).rejects.toMatchObject({ status: 401 })
 		expect(called).toBe(false)
-	})
-
-	it('builds deterministic Tencent Cloud TC3 signed requests', () => {
-		const request = buildTencentCloudSignedRequest({
-			secretId: 'secret-id',
-			secretKey: 'secret-key',
-			token: 'session-token',
-			region: 'ap-shanghai',
-			action: 'CreateUser',
-			now: () => 1782660000000,
-			payload: { EnvId: 'wenxue-d8gz76tacc3659f05', Name: 'alice' },
-		})
-		const headers = new Headers(request.headers)
-
-		expect(request.method).toBe('POST')
-		expect(request.body).toBe(JSON.stringify({ EnvId: 'wenxue-d8gz76tacc3659f05', Name: 'alice' }))
-		expect(headers.get('x-tc-token')).toBe('session-token')
-		expect(headers.get('x-tc-timestamp')).toBe('1782660000')
-		expect(headers.get('authorization')).toContain('SignedHeaders=content-type;host')
-		expect(headers.get('authorization')).toContain('Signature=')
 	})
 
 	it('rejects missing or invalid CloudBase bearer tokens', async () => {
@@ -536,6 +338,94 @@ describe('CloudBase LLM gateway behavior', () => {
 			message: 'Upstream returned invalid JSON',
 			status: 502,
 		})
+	})
+
+	it('resolves omitted profile status from the exact Auth account on every request', async () => {
+		const getAuthUser = vi
+			.fn()
+			.mockResolvedValueOnce({ uid: USER_ID, active: true })
+			.mockResolvedValueOnce({ uid: USER_ID, active: false })
+		const input = {
+			headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+			env: DEFAULT_ENV,
+			fetchImpl: async () => Response.json({ sub: USER_ID, type: 'external' }),
+			getAuthUser,
+		}
+		await expect(resolveCloudBaseUser(input)).resolves.toEqual({ uid: USER_ID })
+		await expect(resolveCloudBaseUser(input)).rejects.toMatchObject({ status: 403 })
+		expect(getAuthUser).toHaveBeenCalledTimes(2)
+		expect(getAuthUser).toHaveBeenCalledWith(USER_ID, expect.any(Number))
+	})
+
+	it.each(['BLOCKED', 'UNKNOWN', '', null, 1])(
+		'does not replace explicit invalid profile status %s with a management lookup',
+		async (status) => {
+			const getAuthUser = vi.fn().mockResolvedValue({ uid: USER_ID, active: true })
+			await expect(
+				resolveCloudBaseUser({
+					headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+					env: DEFAULT_ENV,
+					fetchImpl: async () => Response.json({ sub: USER_ID, status }),
+					getAuthUser,
+				}),
+			).rejects.toMatchObject({ status: 403 })
+			expect(getAuthUser).not.toHaveBeenCalled()
+		},
+	)
+
+	it.each([
+		{ user: null, status: 403 },
+		{ user: { uid: 'wrong-user', active: true }, status: 503 },
+	])('rejects unavailable or mismatched authoritative accounts', async ({ user, status }) => {
+		await expect(
+			resolveCloudBaseUser({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				env: DEFAULT_ENV,
+				fetchImpl: async () => Response.json({ sub: USER_ID }),
+				getAuthUser: async () => user,
+			}),
+		).rejects.toMatchObject({ status })
+	})
+
+	it('fails closed without a status resolver or when management lookup fails', async () => {
+		const input = {
+			headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+			env: DEFAULT_ENV,
+			fetchImpl: async () => Response.json({ sub: USER_ID }),
+		}
+		await expect(resolveCloudBaseUser(input)).rejects.toMatchObject({ status: 503 })
+		await expect(
+			resolveCloudBaseUser({
+				...input,
+				getAuthUser: async () => {
+					throw new Error('secret-provider-detail')
+				},
+			}),
+		).rejects.toMatchObject({
+			status: 503,
+			message: '暂时无法确认账号状态，请稍后重试。',
+		})
+	})
+
+	it('passes only the remaining activation budget to the status lookup', async () => {
+		vi.useFakeTimers()
+		const getAuthUser = vi.fn().mockResolvedValue({ uid: USER_ID, active: true })
+		try {
+			const activation = handleLauncherActivation({
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				env: DEFAULT_ENV,
+				fetchImpl: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 2_000))
+					return Response.json({ sub: USER_ID })
+				},
+				getAuthUser,
+			})
+			await vi.advanceTimersByTimeAsync(2_000)
+			await expect(activation).resolves.toEqual({ ok: true, userId: USER_ID })
+			expect(getAuthUser).toHaveBeenCalledWith(USER_ID, 8_000)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it('times out a stalled user-profile response body without leaking the token', async () => {
@@ -1007,35 +897,22 @@ describe('CloudBase LLM gateway behavior', () => {
 		}
 	})
 
-	it('exposes launcher registration through its own Function mode target', async () => {
-		const previousFetch = globalThis.fetch
-		const previousSecretId = process.env.TENCENTCLOUD_SECRETID
-		const previousSecretKey = process.env.TENCENTCLOUD_SECRETKEY
-		process.env.TENCENTCLOUD_SECRETID = 'secret-id'
-		process.env.TENCENTCLOUD_SECRETKEY = 'secret-key'
-		globalThis.fetch = (async () =>
-			Response.json({ Response: { RequestId: 'request-4' } })) as typeof fetch
-
+	it('permanently rejects legacy registration without sending credentials or creating users', async () => {
+		const fetchImpl = vi.fn()
+		vi.stubGlobal('fetch', fetchImpl)
 		try {
-			const response = await launcherRegister(
-				{ body: JSON.stringify({ username: 'charlie', password: 'AuthTest9!' }) },
-				{
-					sse() {
-						throw new Error('SSE should not be used for launcher registration')
-					},
-				},
-			)
-
-			expect(response.statusCode).toBe(201)
-			expect(response.headers).toMatchObject({ 'access-control-allow-origin': '*' })
-			expect(JSON.parse(response.body)).toMatchObject({
-				ok: true,
-				username: 'charlie',
-			})
+			for (const body of [
+				'invalid json',
+				JSON.stringify({ username: 'charlie', password: 'AuthTest9!' }),
+				JSON.stringify({ email: 'user@example.com', password: 'AuthTest9!' }),
+			]) {
+				const response = await launcherRegister({ body }, { sse: vi.fn() })
+				expect(response.statusCode).toBe(410)
+				expect(response.body).not.toContain('AuthTest9!')
+			}
+			expect(fetchImpl).not.toHaveBeenCalled()
 		} finally {
-			globalThis.fetch = previousFetch
-			restoreEnv('TENCENTCLOUD_SECRETID', previousSecretId)
-			restoreEnv('TENCENTCLOUD_SECRETKEY', previousSecretKey)
+			vi.unstubAllGlobals()
 		}
 	})
 
@@ -1061,6 +938,57 @@ describe('CloudBase LLM gateway behavior', () => {
 			globalThis.fetch = previousFetch
 		}
 	})
+
+	it.each(['activate', 'chat', 'usage'])(
+		'injects an exact UID management lookup into the %s runtime target',
+		async (target) => {
+			vi.stubEnv('TENCENTCLOUD_SECRETID', 'test-secret-id')
+			vi.stubEnv('TENCENTCLOUD_SECRETKEY', 'test-secret-key')
+			vi.stubEnv('DASHSCOPE_API_KEY', 'test-dashscope-key')
+			vi.stubEnv('CLOUDBASE_USAGE_API_KEY', 'test-usage-key')
+			const managementCalls: unknown[] = []
+			const businessFetch = createGatewayFetch({ userProfile: { sub: USER_ID } })
+			vi.stubGlobal('fetch', async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+				if (String(url) !== 'https://tcb.tencentcloudapi.com') return businessFetch(url, init)
+				const headers = new Headers(init?.headers)
+				expect(headers.get('x-tc-action')).toBe('DescribeUserList')
+				expect(headers.get('authorization')).toContain('TC3-HMAC-SHA256')
+				expect(headers.get('authorization')).not.toContain(ACCESS_TOKEN)
+				managementCalls.push(JSON.parse(String(init?.body)))
+				return Response.json({
+					Response: { Data: { Total: 1, UserList: [{ Uid: USER_ID, UserStatus: 'ACTIVE' }] } },
+				})
+			})
+			const event = {
+				headers: { authorization: `Bearer ${ACCESS_TOKEN}` },
+				body: JSON.stringify({
+					model: 'qwen3.7-max',
+					messages: [{ role: 'user', content: 'hello' }],
+				}),
+			}
+			const context = { sse: vi.fn() }
+			try {
+				if (target === 'activate') {
+					await expect(launcherActivate(event, context)).resolves.toMatchObject({ statusCode: 200 })
+				} else if (target === 'chat') {
+					await expect(main(event, context)).resolves.toHaveProperty('choices')
+				} else {
+					await expect(usageSummary(event, context)).resolves.toHaveProperty('totalTokens')
+				}
+				expect(managementCalls).toEqual([
+					{
+						EnvId: DEFAULT_ENV.cloudbaseEnvId,
+						UidList: [USER_ID],
+						PageNo: 1,
+						PageSize: 100,
+					},
+				])
+			} finally {
+				vi.unstubAllGlobals()
+				vi.unstubAllEnvs()
+			}
+		},
+	)
 
 	it('answers launcher registration CORS preflight without running registration', async () => {
 		const previousFetch = globalThis.fetch
@@ -1144,116 +1072,6 @@ describe('CloudBase LLM gateway behavior', () => {
 				'access-control-allow-headers': 'content-type, authorization',
 			},
 		})
-	})
-
-	it('rate limits a warm instance by trusted IP and username with Retry-After', async () => {
-		const previousFetch = globalThis.fetch
-		const previousSecretId = process.env.TENCENTCLOUD_SECRETID
-		const previousSecretKey = process.env.TENCENTCLOUD_SECRETKEY
-		const previousUsageApiKey = process.env.CLOUDBASE_USAGE_API_KEY
-		process.env.TENCENTCLOUD_SECRETID = 'secret-id'
-		process.env.TENCENTCLOUD_SECRETKEY = 'secret-key'
-		process.env.CLOUDBASE_USAGE_API_KEY = 'cloudbase-usage-api-key'
-		globalThis.fetch = (async () =>
-			Response.json({ Response: { Data: { Uid: 'cloudbase-rate-user' } } })) as typeof fetch
-
-		try {
-			for (let attempt = 0; attempt < 5; attempt += 1) {
-				const response = await launcherRegister(
-					{
-						body: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
-						headers: {
-							'x-forwarded-for': `spoofed-${attempt}, 203.0.113.9`,
-						},
-					},
-					{
-						sse() {
-							throw new Error('SSE should not be used for launcher registration')
-						},
-					},
-				)
-				expect(response.statusCode).toBe(201)
-			}
-
-			const limited = await launcherRegister(
-				{
-					body: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
-					headers: { 'x-forwarded-for': 'another-spoof, 203.0.113.9' },
-				},
-				{
-					sse() {
-						throw new Error('SSE should not be used for launcher registration')
-					},
-				},
-			)
-
-			expect(limited.statusCode).toBe(429)
-			expect(limited.headers).toMatchObject({ 'retry-after': '60' })
-			expect(limited.body).not.toContain('AuthTest9!')
-			resetLauncherRegistrationRateLimits()
-			await expect(
-				launcherRegister(
-					{
-						body: JSON.stringify({ username: 'alice', password: 'AuthTest9!' }),
-						headers: { 'x-forwarded-for': 'another-spoof, 203.0.113.9' },
-					},
-					{
-						sse() {
-							throw new Error('SSE should not be used for launcher registration')
-						},
-					},
-				),
-			).resolves.toMatchObject({ statusCode: 201 })
-		} finally {
-			globalThis.fetch = previousFetch
-			restoreEnv('TENCENTCLOUD_SECRETID', previousSecretId)
-			restoreEnv('TENCENTCLOUD_SECRETKEY', previousSecretKey)
-			restoreEnv('CLOUDBASE_USAGE_API_KEY', previousUsageApiKey)
-		}
-	})
-
-	it('applies a global registration limit across distinct IP and username keys', async () => {
-		const previousFetch = globalThis.fetch
-		globalThis.fetch = (async () => {
-			throw new Error('invalid passwords must not reach CloudBase')
-		}) as typeof fetch
-
-		try {
-			for (let attempt = 0; attempt < 200; attempt += 1) {
-				const response = await launcherRegister(
-					{
-						body: JSON.stringify({
-							username: `user${String(attempt).padStart(5, '0')}`,
-							password: 'bad',
-						}),
-						headers: { 'x-real-ip': `198.51.100.${attempt}` },
-					},
-					{
-						sse() {
-							throw new Error('SSE should not be used for launcher registration')
-						},
-					},
-				)
-				expect(response.statusCode).toBe(400)
-			}
-			const limited = await launcherRegister(
-				{
-					body: JSON.stringify({ username: 'user99999', password: 'bad' }),
-					headers: { 'x-real-ip': '198.51.100.250' },
-				},
-				{
-					sse() {
-						throw new Error('SSE should not be used for launcher registration')
-					},
-				},
-			)
-			expect(limited).toMatchObject({
-				statusCode: 429,
-				headers: { 'retry-after': '60' },
-			})
-		} finally {
-			globalThis.fetch = previousFetch
-		}
 	})
 
 	it('exposes a credential-free health check target', () => {

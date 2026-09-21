@@ -10,13 +10,13 @@ declare const __WENXUE_GATEWAY_BASE_URL__: string
 
 const DEFAULT_WENXUE_GATEWAY_BASE_URL =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
-const USERNAME_MIN_LENGTH = 5
-const USERNAME_MAX_LENGTH = 24
+const NICKNAME_MAX_LENGTH = 32
+const VERIFICATION_TTL_MS = 600_000
+const EMAIL_RESEND_DELAY_MS = 60_000
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
 const PASSWORD_MIN_LENGTH = 8
 const PASSWORD_MAX_LENGTH = 32
 const AUTH_REQUEST_TIMEOUT_MS = 12_000
-const USERNAME_FIRST_CHARACTER_PATTERN = /^[A-Za-z]/
-const USERNAME_DISALLOWED_CHARACTER_PATTERN = /[^A-Za-z0-9]/
 const PASSWORD_FIRST_CHARACTER_PATTERN = /^[A-Za-z]/
 const PASSWORD_DISALLOWED_CHARACTER_PATTERN = /[^A-Za-z0-9()!@#$%^&*|?><_-]/
 const NETWORK_FAILURE_PATTERNS = [
@@ -42,9 +42,6 @@ const gatewayBaseUrl =
 	typeof __WENXUE_GATEWAY_BASE_URL__ === 'string'
 		? __WENXUE_GATEWAY_BASE_URL__
 		: (import.meta.env.VITE_WENXUE_GATEWAY_BASE_URL ?? DEFAULT_WENXUE_GATEWAY_BASE_URL)
-const registerUrl =
-	import.meta.env.VITE_WENXUE_REGISTER_URL ??
-	`${normalizeGatewayBaseUrl(gatewayBaseUrl)}/v1/auth/register`
 const activateUrl = `${normalizeGatewayBaseUrl(gatewayBaseUrl)}/v1/auth/activate`
 
 interface CloudBaseAuthError {
@@ -57,20 +54,34 @@ interface CloudBaseAuthError {
 	error_code?: string | number
 }
 
+interface CloudBaseAuthResult {
+	data?: unknown
+	error?: CloudBaseAuthError | null
+}
+
 interface CloudBaseAuthClient {
-	signInWithPassword(input: {
-		username: string
+	signInWithPassword(input: { email: string; password: string }): Promise<CloudBaseAuthResult>
+	getVerification(
+		input: { email: string; target: 'ANY' | 'USER' },
+		options: { withCaptcha: true },
+	): Promise<{ verification_id: string; expires_in?: number; is_user?: boolean | null }>
+	verify(input: {
+		verification_id: string
+		verification_code: string
+	}): Promise<{ verification_token: string; expires_in?: number }>
+	signIn(input: { username: string; verification_token: string }): Promise<unknown>
+	signUp(input: {
+		email: string
+		verification_token: string
 		password: string
-	}): Promise<{ data?: unknown; error?: CloudBaseAuthError | null }>
-	signInWithOtp(input: {
-		phone: string
-		options: { shouldCreateUser: boolean }
-	}): Promise<CloudBaseOtpResult>
-	signUp(input: { phone: string; username: string; password: string }): Promise<CloudBaseOtpResult>
-	updateUser(input: { phone: string } | { username: string }): Promise<CloudBaseOtpResult>
-	reauthenticate(): Promise<CloudBaseOtpResult>
-	getUser(): Promise<CloudBaseAuthResult>
-	refreshUser(): Promise<CloudBaseAuthResult>
+		name: string
+	}): Promise<unknown>
+	resetPassword(input: {
+		email: string
+		verification_token: string
+		new_password: string
+	}): Promise<unknown>
+	updateUserBasicInfo(input: { picture: string }): Promise<void>
 	createCaptchaData(input: {
 		state: string
 	}): Promise<{ data: string; token: string; expires_in: number }>
@@ -78,24 +89,9 @@ interface CloudBaseAuthClient {
 		token: string
 		key: string
 	}): Promise<{ captcha_token: string; expires_in: number }>
-	getSession(): Promise<{ data?: unknown; error?: CloudBaseAuthError | null }>
-	refreshSession(
-		refreshToken?: string,
-	): Promise<{ data?: unknown; error?: CloudBaseAuthError | null }>
+	getSession(): Promise<CloudBaseAuthResult>
+	refreshSession(refreshToken?: string): Promise<CloudBaseAuthResult>
 	signOut(): Promise<{ error?: CloudBaseAuthError | null }>
-}
-
-interface CloudBaseAuthResult {
-	data?: unknown
-	error?: CloudBaseAuthError | null
-}
-
-interface CloudBaseOtpResult {
-	data?: {
-		verifyOtp?: (input: { token: string; phone?: string }) => Promise<CloudBaseAuthResult>
-		updateUser?: (input: { nonce: string; password: string }) => Promise<CloudBaseAuthResult>
-	}
-	error?: CloudBaseAuthError | null
 }
 
 interface CloudBaseApp {
@@ -104,6 +100,10 @@ interface CloudBaseApp {
 		captchaOptions: { openURIWithCallback: typeof requestLauncherCaptcha }
 	}): CloudBaseAuthClient
 	database(): CloudBaseDatabase
+	uploadFile(input: { cloudPath: string; filePath: File }): Promise<{ fileID: string }>
+	getTempFileURL(input: {
+		fileList: { fileID: string; maxAge: number }[]
+	}): Promise<{ fileList: { fileID: string; tempFileURL?: string; download_url?: string }[] }>
 }
 
 interface CloudBaseDatabase {
@@ -123,7 +123,9 @@ export interface DesktopSignalWatcher {
 
 export interface LauncherAuthSession {
 	userId: string
-	username?: string
+	email?: string
+	nickname?: string
+	avatarUrl?: string
 	accessToken: string
 	refreshToken: string
 	expiresAt: number
@@ -132,28 +134,62 @@ export interface LauncherAuthSession {
 
 export interface LauncherPublicUser {
 	userId: string
-	username?: string
+	email?: string
+	nickname?: string
+	avatarUrl?: string
 	expiresAt: number
+}
+
+export interface LauncherEmailRegistration {
+	email: string
+	expiresAt: number
+	readonly state: LauncherEmailRegistrationState
+	complete(input: {
+		nickname: string
+		password: string
+		avatar?: File
+	}): Promise<LauncherAuthSession>
+	cancel(): void
+}
+
+export type LauncherEmailRegistrationState =
+	| 'pending'
+	| 'confirming-account'
+	| 'avatar-pending'
+	| 'needs-verification'
+	| 'needs-login'
+	| 'complete'
+
+export interface LauncherEmailChallenge {
+	email: string
+	expiresAt: number
+	resendAt: number
+	verify(
+		code: string,
+	): Promise<
+		| { kind: 'authenticated'; session: LauncherAuthSession }
+		| { kind: 'registration'; registration: LauncherEmailRegistration }
+	>
+	cancel(): void
+}
+
+export interface LauncherPasswordReset {
+	email: string
+	expiresAt: number
+	complete(password: string): Promise<void>
+	cancel(): void
+}
+
+export interface LauncherPasswordResetChallenge {
+	email: string
+	expiresAt: number
+	resendAt: number
+	verify(code: string): Promise<LauncherPasswordReset>
+	cancel(): void
 }
 
 export class CloudSignOutOutcomeUnknownError extends Error {
 	readonly cloudSignOutOutcome = 'unknown' as const
-}
-
-export class LauncherRegistrationRequiredError extends Error {
-	constructor(
-		readonly phone: string,
-		readonly existingAccount: boolean,
-		readonly userId?: string,
-	) {
-		super(strings.auth.phone.registrationRequired)
-	}
-}
-
-export class LauncherPhoneAlreadyRegisteredError extends Error {
-	constructor(readonly phone: string) {
-		super(strings.auth.phone.registrationConflict)
-	}
 }
 
 class AuthRequestTimeoutError extends Error {
@@ -163,362 +199,521 @@ class AuthRequestTimeoutError extends Error {
 	}
 }
 
-export type LauncherCredentialValidationCode =
-	| 'usernameRequired'
-	| 'usernameLength'
-	| 'usernameFormat'
-	| 'passwordRequired'
-	| 'passwordLength'
-	| 'passwordFirstCharacter'
-	| 'passwordCharacterSet'
-	| 'passwordComplexity'
-
-export const cloudbaseConfig = {
-	envId,
-	region,
-	hasAccessKey: Boolean(accessKey),
+export class LauncherAccountConfirmationError extends Error {
+	constructor(
+		readonly retryable: boolean,
+		readonly status?: number,
+	) {
+		super(
+			retryable
+				? strings.auth.emailErrors.activationRetry
+				: strings.auth.emailErrors.activationReauthenticate,
+		)
+		this.name = 'LauncherAccountConfirmationError'
+	}
 }
 
-let app: CloudBaseApp | null | undefined
-let auth: CloudBaseAuthClient | null | undefined
-let phoneResendAt = 0
-let phoneRequestPending = false
-let authMutationPending = false
-let authMutationTimedOut = false
-let authOutcomeUnknown = false
-let activePhoneChallenge: LauncherPhoneChallenge | null = null
+export class LauncherEmailRateLimitError extends Error {
+	constructor(
+		readonly retryAt: number,
+		readonly source: 'local' | 'provider',
+	) {
+		super(strings.auth.emailErrors.rateLimit)
+		this.name = 'LauncherEmailRateLimitError'
+	}
+}
 
-export interface LauncherPhoneChallenge {
-	phone: string
-	expiresAt: number
-	resendAt: number
-	verify(code: string): Promise<LauncherAuthSession>
+interface EmailResendCooldown {
+	retryAt: number
+	source: 'local' | 'provider'
+}
+
+interface EmailFlow {
+	cancelled: boolean
+	finished: boolean
+	verified: boolean
+	token: string
+	tokenExpiresAt: number
+	sessionUserId?: string
+	signUpAttempted: boolean
+	signUpSucceeded: boolean
+	registrationState: LauncherEmailRegistrationState
 	cancel(): void
 }
 
-export type LauncherPhonePurpose =
-	| { kind: 'login' }
-	| { kind: 'bind'; userId: string }
-	| { kind: 'register'; username: string; password: string }
-	| { kind: 'complete'; userId: string; username: string; password: string }
+export const cloudbaseConfig = { envId, region, hasAccessKey: Boolean(accessKey) }
+let app: CloudBaseApp | null | undefined
+let auth: CloudBaseAuthClient | null | undefined
+const emailResendCooldowns = new Map<string, EmailResendCooldown>()
+let authMutationPending = false
+let authMutationTimedOut = false
+let authOutcomeUnknown = false
+let activeEmailFlow: EmailFlow | null = null
 
-export function getLauncherPhoneResendAt(): number {
-	return phoneResendAt
-}
-
-export function normalizeLauncherPhone(value: string): string {
-	const phone = value.trim().replace(/^\+86\s*/, '')
-	if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error(strings.auth.phone.invalidNumber)
-	return phone
-}
-
-export async function sendLauncherPhoneCode(
-	value: string,
-	purpose: LauncherPhonePurpose,
-): Promise<LauncherPhoneChallenge> {
-	const phone = normalizeLauncherPhone(value)
-	if (purpose.kind === 'register' || purpose.kind === 'complete') {
-		assertLauncherCredentials(purpose.username, purpose.password, 'register')
+export function normalizeLauncherEmail(value: string): string {
+	const email = value.trim().toLowerCase()
+	const parts = email.split('@')
+	if (
+		email.length > 254 ||
+		parts.length !== 2 ||
+		!parts[0] ||
+		parts[0].length > 64 ||
+		!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(parts[0]) ||
+		parts[0].startsWith('.') ||
+		parts[0].endsWith('.') ||
+		parts[0].includes('..') ||
+		!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(parts[1] ?? '')
+	) {
+		throw new Error(strings.auth.emailErrors.invalidEmail)
 	}
+	return email
+}
+
+export function getLauncherEmailResendAt(value: string): number {
+	try {
+		return readEmailResendCooldown(normalizeLauncherEmail(value))?.retryAt ?? 0
+	} catch {
+		return 0
+	}
+}
+
+function readEmailResendCooldown(email: string): EmailResendCooldown | undefined {
+	const cooldown = emailResendCooldowns.get(email)
+	if (cooldown && Date.now() >= cooldown.retryAt) {
+		emailResendCooldowns.delete(email)
+		return undefined
+	}
+	return cooldown
+}
+
+function recordEmailResendCooldown(email: string, cooldown: EmailResendCooldown): void {
+	emailResendCooldowns.forEach((previous, key) => {
+		if (Date.now() >= previous.retryAt) emailResendCooldowns.delete(key)
+	})
+	emailResendCooldowns.set(email, cooldown)
+}
+
+export function validateLauncherRegistration(nickname: string, password: string): string | null {
+	const name = nickname.trim()
+	if (!name) return strings.auth.emailErrors.nicknameRequired
+	if (
+		Array.from(name).length > NICKNAME_MAX_LENGTH ||
+		Array.from(name).some(
+			(character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+		)
+	)
+		return strings.auth.emailErrors.nicknameLength
+	return validatePassword(password)
+}
+
+function validatePassword(password: string): string | null {
+	if (!password) return strings.auth.validation.passwordRequired
+	const requirements = getLauncherPasswordRequirements(password)
+	if (!requirements.length) return strings.auth.validation.passwordLength
+	if (!requirements.firstCharacter) return strings.auth.validation.passwordFirstCharacter
+	if (!requirements.characterSet) return strings.auth.validation.passwordCharacterSet
+	if (!requirements.complexity) return strings.auth.validation.passwordComplexity
+	return null
+}
+
+export async function sendLauncherEmailCode(value: string): Promise<LauncherEmailChallenge> {
+	const { email, flow, challenge, authClient, expiresAt } = await sendEmailVerification(
+		value,
+		'ANY',
+	)
+	return {
+		email,
+		expiresAt,
+		resendAt: getLauncherEmailResendAt(email),
+		cancel: flow.cancel,
+		async verify(code) {
+			return runEmailOperation(
+				flow,
+				strings.auth.emailErrors.verify,
+				async () => {
+					await verifyEmailCode(flow, authClient, challenge.verification_id, expiresAt, code)
+					if (challenge.is_user === true) {
+						try {
+							await authClient.signIn({ username: email, verification_token: flow.token })
+							flow.token = ''
+							const session = await readCurrentSession(authClient, email)
+							flow.sessionUserId = session.userId
+							assertFlowActive(flow)
+							flow.finished = true
+							return { kind: 'authenticated' as const, session }
+						} catch (error) {
+							flow.cancelled = true
+							flow.token = ''
+							throw error
+						}
+					}
+					return {
+						kind: 'registration' as const,
+						registration: createEmailRegistration(flow, authClient, email),
+					}
+				},
+				authClient,
+			)
+		},
+	}
+}
+
+export async function sendLauncherPasswordResetCode(
+	value: string,
+): Promise<LauncherPasswordResetChallenge> {
+	const { email, flow, challenge, authClient, expiresAt } = await sendEmailVerification(
+		value,
+		'USER',
+	)
+	return {
+		email,
+		expiresAt,
+		resendAt: getLauncherEmailResendAt(email),
+		cancel: flow.cancel,
+		async verify(code) {
+			return runEmailOperation(flow, strings.auth.emailErrors.verify, async () => {
+				await verifyEmailCode(flow, authClient, challenge.verification_id, expiresAt, code)
+				return {
+					email,
+					expiresAt: flow.tokenExpiresAt,
+					cancel: flow.cancel,
+					async complete(password: string) {
+						const error = validatePassword(password)
+						if (error) throw new Error(error)
+						return runEmailOperation(flow, strings.auth.emailErrors.reset, async () => {
+							assertVerificationToken(flow)
+							// A reset token is single-use: an indeterminate response requires a new verification.
+							const verificationToken = flow.token
+							flow.token = ''
+							await authClient.resetPassword({
+								email,
+								verification_token: verificationToken,
+								new_password: password,
+							})
+							assertFlowActive(flow)
+							flow.finished = true
+						})
+					},
+				}
+			})
+		},
+	}
+}
+
+async function sendEmailVerification(value: string, target: 'ANY' | 'USER') {
+	const email = normalizeLauncherEmail(value)
 	assertAuthMutationIdle()
-	if (Date.now() < phoneResendAt) throw new Error(strings.auth.phone.rateLimit)
+	const cooldown = readEmailResendCooldown(email)
+	if (cooldown) throw new LauncherEmailRateLimitError(cooldown.retryAt, cooldown.source)
 	const authClient = getAuth()
 	if (!authClient) throw new Error(strings.auth.error.publishableKey)
-	phoneRequestPending = true
-	activePhoneChallenge?.cancel()
+	activeEmailFlow?.cancel()
+	assertAuthMutationIdle()
+	const flow = createEmailFlow(authClient)
+	activeEmailFlow = flow
 	try {
-		if (purpose.kind === 'bind' || purpose.kind === 'complete') {
-			const result = await runAuthMutation(() => authClient.getUser())
-			if (result.error) throw new Error(strings.auth.phone.sessionChanged)
-			const user = readAuthUser(result.data)
-			if (readString(user?.id) !== purpose.userId) {
-				throw new Error(strings.auth.phone.sessionChanged)
+		const challenge = await runEmailOperation(flow, strings.auth.emailErrors.send, async () => {
+			let result: Awaited<ReturnType<CloudBaseAuthClient['getVerification']>>
+			try {
+				result = await authClient.getVerification({ email, target }, { withCaptcha: true })
+			} catch (error) {
+				if (!isEmailRateLimitError(error)) throw error
+				const retryAt = readEmailRateLimitRetryAt(error)
+				recordEmailResendCooldown(email, { retryAt, source: 'provider' })
+				throw new LauncherEmailRateLimitError(retryAt, 'provider')
 			}
-			if (purpose.kind === 'bind' && readString(user?.phone)) {
-				throw new Error(strings.auth.phone.alreadyBound)
-			}
-			if (purpose.kind === 'complete') {
-				if (readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone) {
-					throw new Error(strings.auth.phone.sessionChanged)
-				}
-				if (isCompleteLauncherUser(user)) {
-					throw new Error(strings.auth.phone.registrationCompleted)
-				}
-			}
-		}
-		const startedAt = Date.now()
-		const result = await runAuthMutation(() => {
-			switch (purpose.kind) {
-				case 'login':
-					return authClient.signInWithOtp({ phone, options: { shouldCreateUser: false } })
-				case 'register':
-					return authClient.signUp({
-						phone,
-						username: purpose.username,
-						password: purpose.password,
-					})
-				case 'complete':
-					return authClient.reauthenticate()
-				case 'bind':
-					return authClient.updateUser({ phone })
-			}
+			// Delivery can succeed after cancellation or timeout, or with an unusable challenge.
+			// Preserve its cooldown before discarding the result in any of those cases.
+			recordEmailResendCooldown(email, {
+				retryAt: Date.now() + EMAIL_RESEND_DELAY_MS,
+				source: 'local',
+			})
+			assertFlowActive(flow)
+			if (
+				!readString(result.verification_id) ||
+				(target === 'ANY' && result.is_user != null && typeof result.is_user !== 'boolean')
+			)
+				throw new Error(strings.auth.emailErrors.send)
+			return result
 		})
-		if (result.error && isPhoneUserNotFound(result.error) && purpose.kind === 'login') {
-			throw new LauncherRegistrationRequiredError(phone, false)
+		return {
+			email,
+			flow,
+			challenge,
+			authClient,
+			expiresAt: verificationExpiresAt(challenge.expires_in),
 		}
-		if (result.error && isPhoneAlreadyRegistered(result.error) && purpose.kind === 'register') {
-			throw new LauncherPhoneAlreadyRegisteredError(phone)
-		}
-		if (result.error && isPhoneAlreadyRegistered(result.error) && purpose.kind === 'bind') {
-			throw new Error(strings.auth.phone.alreadyOwned)
-		}
-		if (result.error)
-			throw new Error(readPhoneAuthError(result.error, strings.auth.phone.sendError))
-		const updatePassword = result.data?.updateUser
-		const verifyOtp =
-			purpose.kind === 'complete'
-				? updatePassword &&
-					((input: { token: string }) =>
-						updatePassword({ nonce: input.token, password: purpose.password }))
-				: result.data?.verifyOtp
-		if (!verifyOtp) throw new Error(strings.auth.phone.sendError)
-		phoneResendAt = Date.now() + 60_000
-		let cancelled = false
-		const challenge: LauncherPhoneChallenge = {
-			phone,
-			resendAt: phoneResendAt,
-			expiresAt: Date.now() + 600_000,
-			cancel() {
-				cancelled = true
-				if (activePhoneChallenge === challenge) activePhoneChallenge = null
-			},
-			async verify(code) {
-				if (cancelled || activePhoneChallenge !== challenge) {
-					throw new Error(strings.auth.phone.needCode)
-				}
-				if (Date.now() >= challenge.expiresAt) throw new Error(strings.auth.phone.expired)
-				if (!/^\d{6}$/.test(code)) throw new Error(strings.auth.phone.invalidCode)
-				assertAuthMutationIdle()
-				phoneRequestPending = true
-				try {
-					if (purpose.kind === 'bind' || purpose.kind === 'complete') {
-						const before = await getLauncherSession()
-						if (before?.userId !== purpose.userId) {
-							throw new Error(strings.auth.phone.sessionChanged)
+	} catch (error) {
+		flow.cancel()
+		throw error
+	}
+}
+
+function createEmailFlow(authClient: CloudBaseAuthClient): EmailFlow {
+	const flow: EmailFlow = {
+		cancelled: false,
+		finished: false,
+		verified: false,
+		token: '',
+		tokenExpiresAt: 0,
+		signUpAttempted: false,
+		signUpSucceeded: false,
+		registrationState: 'pending',
+		cancel() {
+			if (flow.finished || flow.cancelled) return
+			flow.cancelled = true
+			flow.token = ''
+			if (flow.sessionUserId && !authMutationPending) {
+				void runAuthMutation(() => clearLateLogin(authClient)).catch(() => {
+					authOutcomeUnknown = true
+				})
+			}
+		},
+	}
+	return flow
+}
+
+async function verifyEmailCode(
+	flow: EmailFlow,
+	authClient: CloudBaseAuthClient,
+	verificationId: string,
+	expiresAt: number,
+	code: string,
+): Promise<void> {
+	assertFlowActive(flow)
+	if (flow.verified || Date.now() >= expiresAt) throw new Error(strings.auth.emailErrors.expired)
+	if (!/^\d{6}$/.test(code)) throw new Error(strings.auth.emailErrors.invalidCode)
+	// Keep the default v1 verification endpoint: v2 may write login credentials.
+	const result = await authClient.verify({
+		verification_id: verificationId,
+		verification_code: code,
+	})
+	assertFlowActive(flow)
+	if (!readString(result.verification_token)) throw new Error(strings.auth.emailErrors.verify)
+	flow.verified = true
+	flow.token = result.verification_token
+	flow.tokenExpiresAt = verificationExpiresAt(result.expires_in)
+}
+
+function createEmailRegistration(
+	flow: EmailFlow,
+	authClient: CloudBaseAuthClient,
+	email: string,
+): LauncherEmailRegistration {
+	let uploadedAvatar: File | undefined
+	let avatarFileID: string | undefined
+	return {
+		email,
+		get expiresAt() {
+			return flow.sessionUserId ? Infinity : flow.tokenExpiresAt
+		},
+		get state() {
+			return flow.registrationState
+		},
+		cancel: flow.cancel,
+		async complete({ nickname, password, avatar }) {
+			const validation = validateLauncherRegistration(nickname, password)
+			if (validation) throw new Error(validation)
+			validateAvatar(avatar)
+			return runEmailOperation(
+				flow,
+				strings.auth.emailErrors.register,
+				async () => {
+					let session: LauncherAuthSession
+					if (!flow.sessionUserId) {
+						assertVerificationToken(flow)
+						if (flow.signUpAttempted) throw new Error(strings.auth.emailErrors.expired)
+						flow.signUpAttempted = true
+						const verificationToken = flow.token
+						flow.token = ''
+						// This is the only account-creation call; verification never calls signUp/signInWithOtp.
+						try {
+							await authClient.signUp({
+								email,
+								verification_token: verificationToken,
+								password,
+								name: nickname.trim(),
+							})
+							flow.signUpSucceeded = true
+							assertFlowActive(flow)
+							session = await readCurrentSession(authClient, email)
+							flow.sessionUserId = session.userId
+							flow.registrationState = 'confirming-account'
+						} catch (error) {
+							flow.cancelled = true
+							flow.registrationState = flow.signUpSucceeded ? 'needs-login' : 'needs-verification'
+							throw error
+						}
+					} else {
+						// Completion retries stay attached to the exact account created by this flow.
+						try {
+							session = await readCurrentSession(authClient, email, flow.sessionUserId)
+						} catch (error) {
+							flow.cancelled = true
+							flow.registrationState = 'needs-login'
+							throw error
 						}
 					}
-					if (cancelled || activePhoneChallenge !== challenge) {
-						throw new Error(strings.auth.phone.needCode)
-					}
-					const verified = await runAuthMutation(
-						() => verifyOtp(purpose.kind === 'bind' ? { phone, token: code } : { token: code }),
-						purpose.kind === 'bind' ? undefined : () => clearLateLogin(authClient),
-					)
-					if (verified.error && isPhoneUserNotFound(verified.error) && purpose.kind === 'login') {
-						challenge.cancel()
-						throw new LauncherRegistrationRequiredError(phone, false)
-					}
-					if (
-						verified.error &&
-						isPhoneAlreadyRegistered(verified.error) &&
-						purpose.kind === 'register'
-					) {
-						challenge.cancel()
-						throw new LauncherPhoneAlreadyRegisteredError(phone)
-					}
-					if (
-						verified.error &&
-						isPhoneAlreadyRegistered(verified.error) &&
-						purpose.kind === 'bind'
-					) {
-						challenge.cancel()
-						throw new Error(strings.auth.phone.alreadyOwned)
-					}
-					if (verified.error) {
-						throw new Error(readPhoneAuthError(verified.error, strings.auth.phone.verifyError))
-					}
-					if (cancelled) throw new Error(strings.auth.phone.needCode)
-					challenge.cancel()
-					if (purpose.kind === 'login') {
-						const session = readLauncherAuthSession(verified.data)
-						if (!session) throw new Error(strings.auth.error.loginSession)
-						const result = await runAuthMutation(() => authClient.getUser())
-						if (result.error) throw new Error(strings.auth.phone.profileError)
-						const user = readAuthUser(result.data) ?? readSessionUser(verified.data)
-						if (
-							readString(user?.id) !== session.userId ||
-							readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone
-						) {
-							throw new Error(strings.auth.phone.sessionChanged)
-						}
-						if (!isCompleteLauncherUser(user)) {
-							throw new LauncherRegistrationRequiredError(phone, true, session.userId)
-						}
-						return {
-							...session,
-							username: readLauncherUsername(user) ?? session.username,
+					assertFlowActive(flow)
+					if (flow.registrationState === 'confirming-account') {
+						try {
+							await activateLauncherAccount(session.accessToken)
+							assertFlowActive(flow)
+							flow.registrationState = 'avatar-pending'
+						} catch (error) {
+							if (error instanceof LauncherAccountConfirmationError && !error.retryable) {
+								flow.cancelled = true
+								flow.registrationState = 'needs-login'
+							}
+							throw error
 						}
 					}
-					if (purpose.kind === 'register') {
-						const session = readLauncherAuthSession(verified.data)
-						const user = readAuthUser(verified.data)
-						const createdAt = Date.parse(readString(user?.created_at) ?? '')
-						if (
-							!session ||
-							readString(user?.id) !== session.userId ||
-							readString(user?.phone)?.replace(/^\+86\s*/, '') !== phone ||
-							readLauncherUsername(user) !== purpose.username ||
-							!Number.isFinite(createdAt) ||
-							createdAt < startedAt - 5000
-						) {
-							await discardRegistrationConflictSession(authClient)
-							throw new LauncherPhoneAlreadyRegisteredError(phone)
+					if (avatar) {
+						try {
+							const cloudbaseApp = getApp()
+							if (!cloudbaseApp) throw new Error(strings.auth.emailErrors.avatarUpload)
+							if (!avatarFileID || uploadedAvatar !== avatar) {
+								const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[
+									avatar.type
+								]
+								const uploaded = await cloudbaseApp.uploadFile({
+									cloudPath: `avatars/${session.userId}/${crypto.randomUUID()}.${extension}`,
+									filePath: avatar,
+								})
+								if (!readString(uploaded.fileID)?.startsWith('cloud://'))
+									throw new Error(strings.auth.emailErrors.avatarUpload)
+								uploadedAvatar = avatar
+								avatarFileID = uploaded.fileID
+							}
+							assertFlowActive(flow)
+							await authClient.updateUserBasicInfo({ picture: avatarFileID })
+							session = await readCurrentSession(authClient, email, flow.sessionUserId)
+						} catch (error) {
+							if (flow.cancelled) throw error
+							throw new Error(strings.auth.emailErrors.avatarUpload)
 						}
-						await activatePhoneRegistration(session.accessToken)
-						return { ...session, username: purpose.username }
 					}
-					if (purpose.kind === 'complete') {
-						const completedSession = readLauncherAuthSession(verified.data)
-						if (completedSession?.userId !== purpose.userId) {
-							throw new Error(strings.auth.phone.sessionChanged)
-						}
-						const updated = await runAuthMutation(() =>
-							authClient.updateUser({ username: purpose.username }),
-						)
-						if (updated.error)
-							throw new Error(
-								isUsernameAlreadyRegistered(updated.error)
-									? strings.auth.error.usernameExists
-									: strings.auth.phone.profileError,
-							)
-						const updatedUser = readAuthUser(updated.data)
-						if (
-							readString(updatedUser?.id) !== purpose.userId ||
-							readString(updatedUser?.phone)?.replace(/^\+86\s*/, '') !== phone
-						) {
-							throw new Error(strings.auth.phone.sessionChanged)
-						}
-						if (readLauncherUsername(updatedUser) !== purpose.username) {
-							throw new Error(strings.auth.phone.profileError)
-						}
-						await activatePhoneRegistration(completedSession.accessToken)
-						return { ...completedSession, username: purpose.username }
-					}
-					const refreshed = await runAuthMutation(() => authClient.refreshUser())
-					if (refreshed.error) throw new Error(strings.auth.phone.refreshError)
-					const refreshedUser = readAuthUser(refreshed.data)
-					if (
-						readString(refreshedUser?.id) !== purpose.userId ||
-						readString(refreshedUser?.phone)?.replace(/^\+86\s*/, '') !== phone
-					)
-						throw new Error(strings.auth.phone.refreshError)
-					const session = await getLauncherSession()
-					if (session?.userId !== purpose.userId) throw new Error(strings.auth.phone.sessionChanged)
+					assertFlowActive(flow)
+					flow.finished = true
+					flow.registrationState = 'complete'
 					return session
+				},
+				authClient,
+			)
+		},
+	}
+}
+
+function validateAvatar(avatar?: File): void {
+	if (!avatar) return
+	if (!['image/png', 'image/jpeg', 'image/webp'].includes(avatar.type))
+		throw new Error(strings.auth.emailErrors.avatarType)
+	if (avatar.size <= 0 || avatar.size > AVATAR_MAX_BYTES)
+		throw new Error(strings.auth.emailErrors.avatarSize)
+}
+
+function verificationExpiresAt(seconds?: number): number {
+	return (
+		Date.now() +
+		(typeof seconds === 'number' && Number.isFinite(seconds)
+			? Math.max(0, seconds) * 1000
+			: VERIFICATION_TTL_MS)
+	)
+}
+
+function assertFlowActive(flow: EmailFlow): void {
+	if (authMutationTimedOut) {
+		// Confirmation only checks an already-created account. A late response can be
+		// discarded without destroying that account's verified, retryable session.
+		if (flow.registrationState !== 'confirming-account') {
+			flow.cancelled = true
+			if (flow.signUpAttempted) {
+				flow.registrationState = flow.signUpSucceeded ? 'needs-login' : 'needs-verification'
+			}
+		}
+		flow.token = ''
+		throw new AuthRequestTimeoutError(strings.auth.error.timeout)
+	}
+	if (flow.cancelled || flow.finished) throw new Error(strings.auth.emailErrors.cancelled)
+}
+
+function assertVerificationToken(flow: EmailFlow): void {
+	assertFlowActive(flow)
+	if (!flow.token || Date.now() >= flow.tokenExpiresAt) {
+		flow.token = ''
+		throw new Error(strings.auth.emailErrors.expired)
+	}
+}
+
+async function runEmailOperation<T>(
+	flow: EmailFlow,
+	fallback: string,
+	operation: () => Promise<T>,
+	sessionClient?: CloudBaseAuthClient,
+): Promise<T> {
+	assertAuthMutationIdle()
+	assertFlowActive(flow)
+	let cleanupStarted = false
+	const cleanup = async () => {
+		if (!sessionClient || cleanupStarted) return
+		cleanupStarted = true
+		await clearLateLogin(sessionClient)
+	}
+	try {
+		return await runAuthMutation(
+			async () => {
+				try {
+					return await operation()
 				} catch (error) {
-					if (
-						error instanceof LauncherRegistrationRequiredError ||
-						error instanceof LauncherPhoneAlreadyRegisteredError
-					) {
-						throw error
-					}
-					if (error instanceof AuthRequestTimeoutError) {
-						challenge.cancel()
-						throw new Error(
-							purpose.kind === 'bind'
-								? strings.auth.phone.bindingUnknown
-								: strings.auth.error.timeout,
-						)
-					}
-					throw new Error(readPhoneAuthError(error, strings.auth.phone.verifyError))
-				} finally {
-					phoneRequestPending = false
+					if (flow.cancelled) await cleanup()
+					throw error
 				}
 			},
-		}
-		activePhoneChallenge = challenge
-		return challenge
+			async () => {
+				flow.token = ''
+				if (!flow.cancelled && flow.registrationState === 'confirming-account') return
+				flow.cancelled = true
+				if (flow.signUpAttempted) {
+					flow.registrationState = flow.signUpSucceeded ? 'needs-login' : 'needs-verification'
+				}
+				await cleanup()
+			},
+		)
 	} catch (error) {
 		if (
-			error instanceof LauncherRegistrationRequiredError ||
-			error instanceof LauncherPhoneAlreadyRegisteredError
-		) {
+			error instanceof LauncherAccountConfirmationError ||
+			error instanceof LauncherEmailRateLimitError
+		)
 			throw error
-		}
-		if (error instanceof AuthRequestTimeoutError) phoneResendAt = Date.now() + 60_000
-		throw new Error(readPhoneAuthError(error, strings.auth.phone.sendError))
-	} finally {
-		phoneRequestPending = false
+		throw new Error(readEmailAuthError(error, fallback))
 	}
-}
-
-function isPhoneUserNotFound(value: CloudBaseAuthError): boolean {
-	return ['not_found', 'user_not_found'].includes(
-		String(value.code ?? value.errorCode ?? value.error_code),
-	)
-}
-
-function isPhoneAlreadyRegistered(value: CloudBaseAuthError): boolean {
-	return ['phone_already_exists', 'already_exists'].includes(
-		String(value.code ?? value.errorCode ?? value.error_code),
-	)
-}
-
-function isUsernameAlreadyRegistered(value: CloudBaseAuthError): boolean {
-	return String(value.code ?? value.errorCode ?? value.error_code) === 'username_already_exists'
-}
-
-function isCompleteLauncherUser(user: Record<string, unknown> | null): boolean {
-	const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
-	return Boolean(
-		readLauncherUsername(user) && metadata?.hasPassword !== false && user?.hasPassword !== false,
-	)
-}
-
-function readLauncherUsername(user: Record<string, unknown> | null): string | null {
-	const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
-	return readString(user?.username) ?? readString(metadata?.username)
-}
-
-export async function getLauncherIncompleteRegistration(): Promise<{
-	phone: string
-	userId: string
-} | null> {
-	const session = await getLauncherSession()
-	if (!session) return null
-	const authClient = getAuth()
-	if (!authClient) return null
-	const result = await runAuthMutation(() => authClient.getUser())
-	if (result.error) throw new Error(strings.auth.phone.profileError)
-	const user = readAuthUser(result.data)
-	if (readString(user?.id) !== session.userId) {
-		throw new Error(strings.auth.phone.sessionChanged)
-	}
-	const phone = readString(user?.phone)?.replace(/^\+86\s*/, '')
-	return phone && /^1[3-9]\d{9}$/.test(phone) && !isCompleteLauncherUser(user)
-		? { phone, userId: session.userId }
-		: null
 }
 
 function assertAuthMutationIdle(): void {
-	if (authMutationPending || phoneRequestPending) throw new Error(strings.auth.phone.pending)
-	if (authOutcomeUnknown) throw new Error(strings.auth.phone.outcomeUnknown)
+	if (authMutationPending) throw new Error(strings.auth.emailErrors.pending)
+	if (authOutcomeUnknown) throw new Error(strings.auth.emailErrors.sessionChanged)
 }
 
 async function runAuthMutation<T>(
 	operation: () => Promise<T>,
 	onLateCompletion?: () => Promise<void>,
 ): Promise<T> {
-	if (authMutationPending) throw new Error(strings.auth.phone.pending)
+	if (authMutationPending) throw new Error(strings.auth.emailErrors.pending)
 	authMutationPending = true
 	authMutationTimedOut = false
 	let timedOut = false
 	const actualRequest = Promise.resolve()
 		.then(operation)
-		.then(async (result) => {
-			if (timedOut && onLateCompletion) await onLateCompletion()
-			return result
-		})
+		.then(
+			async (result) => {
+				if (timedOut && onLateCompletion) await onLateCompletion()
+				return result
+			},
+			async (error: unknown) => {
+				if (timedOut && onLateCompletion) await onLateCompletion()
+				throw error
+			},
+		)
 		.finally(() => {
 			authMutationPending = false
 			authMutationTimedOut = false
@@ -543,41 +738,50 @@ async function clearLateLogin(authClient: CloudBaseAuthClient): Promise<void> {
 	}
 }
 
-async function discardRegistrationConflictSession(authClient: CloudBaseAuthClient): Promise<void> {
-	try {
-		const result = await withAuthRequestTimeout(() => authClient.signOut())
-		if (result.error) throw result.error
-	} catch {
-		authOutcomeUnknown = true
-		throw new Error(strings.auth.phone.outcomeUnknown)
-	}
-}
-
-function readAuthUser(value: unknown): Record<string, unknown> | null {
-	return isRecord(value) && isRecord(value.user) ? value.user : null
-}
-
-function readSessionUser(value: unknown): Record<string, unknown> | null {
-	if (!isRecord(value) || !isRecord(value.session)) return null
-	return isRecord(value.session.user) ? value.session.user : null
-}
-
-function readPhoneAuthError(value: unknown, fallback: string): string {
+function readEmailAuthError(value: unknown, fallback: string): string {
 	if (isAbortError(value)) return strings.auth.error.timeout
 	if (value instanceof Error) {
-		const safeMessages = [
-			...Object.values(strings.auth.phone).filter((message) => typeof message === 'string'),
+		const safeMessages: string[] = [
+			...Object.values(strings.auth.emailErrors),
 			...Object.values(strings.auth.captcha),
 			...Object.values(strings.auth.error),
+			...Object.values(strings.auth.validation),
 		]
 		if (safeMessages.includes(value.message)) return value.message
 	}
-	if (isRecord(value) && value.code === 'resource_exhausted') return strings.auth.phone.rateLimit
-	if (isRecord(value) && isUsernameAlreadyRegistered(value))
-		return strings.auth.error.usernameExists
-	if (isRecord(value) && value.code === 'invalid_argument') return strings.auth.phone.verifyError
+	if (isEmailRateLimitError(value)) return strings.auth.emailErrors.rateLimit
+	if (isRecord(value)) {
+		const code = String(value.code ?? value.error ?? value.error_code ?? '').toLowerCase()
+		if (code === 'already_exists') return strings.auth.emailErrors.accountExists
+	}
 	const message = readCloudBaseErrorMessage(value, fallback)
 	return message === strings.auth.error.network ? message : fallback
+}
+
+function isEmailRateLimitError(value: unknown): boolean {
+	if (!isRecord(value)) return false
+	if (value.category === 'RATE_LIMITED') return true
+	return [value.code, value.error, value.error_code, value.errorCode].some((code) =>
+		['resource_exhausted', 'rate_limit_exceeded', '8', '4029'].includes(
+			String(code ?? '').toLowerCase(),
+		),
+	)
+}
+
+function readEmailRateLimitRetryAt(value: unknown): number {
+	const now = Date.now()
+	// SDK AuthError.retryAfter and HTTP retry_after are seconds, not milliseconds.
+	const seconds = isRecord(value)
+		? [value.retryAfter, value.retry_after].find(
+				(delay): delay is number =>
+					typeof delay === 'number' &&
+					Number.isFinite(delay) &&
+					delay > 0 &&
+					Number.isFinite(now + delay * 1000),
+			)
+		: undefined
+	// Without a server hint this is client backoff, not a promise of provider recovery.
+	return now + (seconds === undefined ? EMAIL_RESEND_DELAY_MS : seconds * 1000)
 }
 
 export function watchDesktopSignal(
@@ -595,18 +799,6 @@ export function watchDesktopSignal(
 			? { _id: documentId, uid: '{openid}' }
 			: { _id: documentId }
 	return cloudbaseApp.database().collection(collectionName).where(query).watch(callbacks)
-}
-
-export function getLauncherUsernameRequirements(username: string): {
-	length: boolean
-	firstCharacter: boolean
-	characterSet: boolean
-} {
-	return {
-		length: username.length >= USERNAME_MIN_LENGTH && username.length <= USERNAME_MAX_LENGTH,
-		firstCharacter: USERNAME_FIRST_CHARACTER_PATTERN.test(username),
-		characterSet: username.length > 0 && !USERNAME_DISALLOWED_CHARACTER_PATTERN.test(username),
-	}
 }
 
 export function getLauncherPasswordRequirements(password: string): {
@@ -643,74 +835,52 @@ export function getLauncherPasswordComparison(password: string, confirmation: st
 	}
 }
 
-export function validateLauncherCredentials(
-	username: string,
-	password: string,
-	mode: 'login' | 'register' = 'register',
-): LauncherCredentialValidationCode | null {
-	if (username.length === 0) return 'usernameRequired'
-	const usernameRequirements = getLauncherUsernameRequirements(username)
-	if (!usernameRequirements.length) return 'usernameLength'
-	if (!usernameRequirements.firstCharacter || !usernameRequirements.characterSet)
-		return 'usernameFormat'
-	if (password.length === 0) return 'passwordRequired'
-	if (mode === 'login') return null
-	const passwordRequirements = getLauncherPasswordRequirements(password)
-	if (!passwordRequirements.length) return 'passwordLength'
-	if (!passwordRequirements.firstCharacter) return 'passwordFirstCharacter'
-	if (!passwordRequirements.characterSet) return 'passwordCharacterSet'
-	if (!passwordRequirements.complexity) return 'passwordComplexity'
-	return null
-}
-
 export async function signInLauncher(
-	username: string,
+	value: string,
 	password: string,
 ): Promise<LauncherAuthSession> {
-	assertLauncherCredentials(username, password, 'login')
+	const email = normalizeLauncherEmail(value)
+	if (!password) throw new Error(strings.auth.validation.passwordRequired)
 	assertAuthMutationIdle()
 	const authClient = getAuth()
 	if (!authClient) throw new Error(strings.auth.error.publishableKey)
-	let data: unknown
-	try {
-		const result = await runAuthMutation(
-			() => authClient.signInWithPassword({ username, password }),
-			() => clearLateLogin(authClient),
-		)
-		if (result.error) throw result.error
-		data = result.data
-	} catch (error) {
-		throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.login))
+	activeEmailFlow?.cancel()
+	assertAuthMutationIdle()
+	let cleanupStarted = false
+	const cleanup = async () => {
+		if (cleanupStarted) return
+		cleanupStarted = true
+		await clearLateLogin(authClient)
 	}
-	const session = readLauncherAuthSession(data)
-	if (!session) throw new Error(strings.auth.error.loginSession)
-	return session
+	try {
+		return await runAuthMutation(async () => {
+			const result = await authClient.signInWithPassword({ email, password })
+			if (result.error) throw result.error
+			try {
+				const session = await readSessionWithAvatar(result.data)
+				if (!session || session.email?.toLowerCase() !== email)
+					throw new Error(strings.auth.error.loginSession)
+				return session
+			} catch (error) {
+				await cleanup()
+				throw error
+			}
+		}, cleanup)
+	} catch (error) {
+		throw new Error(readEmailAuthError(error, strings.auth.error.login))
+	}
 }
 
-export async function registerLauncher(
-	username: string,
-	password: string,
+async function readCurrentSession(
+	authClient: CloudBaseAuthClient,
+	email: string,
+	userId?: string,
 ): Promise<LauncherAuthSession> {
-	assertLauncherCredentials(username, password, 'register')
-	assertAuthMutationIdle()
-	const authClient = getAuth()
-	if (!authClient) throw new Error(strings.auth.error.publishableKey)
-	const accountCreation = await createLauncherAccount(username, password)
-	let session: LauncherAuthSession
-	try {
-		session = await signInLauncher(username, password)
-	} catch (error) {
-		if (accountCreation === 'existing' && !isConnectivityError(error)) {
-			throw new Error(strings.auth.error.usernameExists)
-		}
-		throw error
-	}
-	try {
-		await activateLauncherAccount(session.accessToken)
-	} catch (error) {
-		await discardUnactivatedSession(authClient)
-		throw error
-	}
+	const result = await authClient.getSession()
+	if (result.error) throw result.error
+	const session = await readSessionWithAvatar(result.data)
+	if (!session || session.email?.toLowerCase() !== email || (userId && session.userId !== userId))
+		throw new Error(strings.auth.emailErrors.sessionChanged)
 	return session
 }
 
@@ -720,12 +890,12 @@ export async function getLauncherSession(): Promise<LauncherAuthSession | null> 
 	try {
 		const { data, error } = await withAuthRequestTimeout(() => authClient.getSession())
 		if (error) throw error
-		const session = readLauncherAuthSession(data)
+		const session = await readSessionWithAvatar(data)
 		if (session) return session
 		if (data == null || (isRecord(data) && data.session == null)) return null
 		throw new Error(strings.auth.error.loginSession)
 	} catch (error) {
-		throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.loginSession))
+		throw new Error(readEmailAuthError(error, strings.auth.error.loginSession))
 	}
 }
 
@@ -734,32 +904,36 @@ export async function refreshLauncherSession(refreshToken?: string): Promise<Lau
 	const authClient = getAuth()
 	if (!authClient) throw new Error(strings.auth.error.publishableKey)
 	try {
-		const { data, error } = await withAuthRequestTimeout(() =>
-			authClient.refreshSession(refreshToken),
-		)
-		if (error) throw error
-		const session = readLauncherAuthSession(data)
-		if (!session) throw new Error(strings.auth.error.loginSession)
-		return session
+		return await runAuthMutation(async () => {
+			const { data, error } = await authClient.refreshSession(refreshToken)
+			if (error) throw error
+			const session = await readSessionWithAvatar(data)
+			if (!session) throw new Error(strings.auth.error.loginSession)
+			return session
+		})
 	} catch (error) {
-		throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.loginSession))
+		throw new Error(readEmailAuthError(error, strings.auth.error.loginSession))
 	}
 }
 
 export async function signOutLauncher(): Promise<void> {
-	if (authMutationPending || phoneRequestPending) throw new Error(strings.auth.phone.pending)
-	activePhoneChallenge?.cancel()
+	if (authMutationPending) throw new Error(strings.auth.emailErrors.pending)
+	// Explicit sign-out owns cleanup; avoid scheduling a second sign-out from cancel().
+	if (activeEmailFlow && !activeEmailFlow.finished) {
+		activeEmailFlow.cancelled = true
+		activeEmailFlow.token = ''
+	}
 	const authClient = getAuth()
 	if (!authClient) return
 	try {
-		const { error } = await withAuthRequestTimeout(() => authClient.signOut())
-		if (error) throw error
-		authOutcomeUnknown = false
+		await runAuthMutation(async () => {
+			const { error } = await authClient.signOut()
+			if (error) throw error
+			authOutcomeUnknown = false
+		})
 	} catch (error) {
-		const message = readCloudBaseErrorMessage(error, strings.auth.error.logout)
-		if (error instanceof AuthRequestTimeoutError) {
-			throw new CloudSignOutOutcomeUnknownError(message)
-		}
+		const message = readEmailAuthError(error, strings.auth.error.logout)
+		if (error instanceof AuthRequestTimeoutError) throw new CloudSignOutOutcomeUnknownError(message)
 		throw new Error(message)
 	}
 }
@@ -767,7 +941,9 @@ export async function signOutLauncher(): Promise<void> {
 export function toPublicUser(session: LauncherAuthSession): LauncherPublicUser {
 	return {
 		userId: session.userId,
-		username: session.username,
+		email: session.email,
+		nickname: session.nickname,
+		avatarUrl: session.avatarUrl,
 		expiresAt: session.expiresAt,
 	}
 }
@@ -779,26 +955,66 @@ export function readLauncherAuthSession(
 	const root = isRecord(value) ? value : null
 	const session = isRecord(root?.session) ? root.session : null
 	if (!session) return null
-
 	const accessToken = readString(session.access_token) ?? readString(session.accessToken)
 	const refreshToken = readString(session.refresh_token) ?? readString(session.refreshToken)
 	const user = isRecord(session.user) ? session.user : isRecord(root?.user) ? root.user : null
-	const userMetadata = isRecord(user?.user_metadata) ? user.user_metadata : null
+	const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
 	const userId = readString(user?.id) ?? readString(user?.uid) ?? readString(root?.uid)
 	const expiresAt = readExpiresAt(session, options.now ?? Date.now)
-	if (!accessToken || !refreshToken || !userId || !expiresAt) return null
-
+	if (!accessToken || !refreshToken || !userId || !expiresAt || user?.is_anonymous === true)
+		return null
+	const avatar = readAvatarReference(value)
 	return {
 		userId,
-		username:
-			readString(user?.username) ??
-			readString(userMetadata?.username) ??
-			readString(userMetadata?.name) ??
-			maskLauncherPhone(readString(user?.phone)),
+		email: readString(user?.email) ?? undefined,
+		nickname:
+			readString(metadata?.name) ??
+			readString(metadata?.nickName) ??
+			readString(user?.name) ??
+			undefined,
+		avatarUrl: readHttpsUrl(avatar),
 		accessToken,
 		refreshToken,
 		expiresAt,
 		gatewayBaseUrl: normalizeGatewayBaseUrl(options.gatewayBaseUrl ?? gatewayBaseUrl),
+	}
+}
+
+async function readSessionWithAvatar(value: unknown): Promise<LauncherAuthSession | null> {
+	const session = readLauncherAuthSession(value)
+	const fileID = readAvatarReference(value)
+	if (!session || !fileID?.startsWith('cloud://')) return session
+	try {
+		const cloudbaseApp = getApp()
+		if (!cloudbaseApp) return session
+		const result = await withAuthRequestTimeout(() =>
+			cloudbaseApp.getTempFileURL({ fileList: [{ fileID, maxAge: 3600 }] }),
+		)
+		const file = result.fileList.find((entry) => entry.fileID === fileID)
+		session.avatarUrl = readHttpsUrl(file?.tempFileURL ?? file?.download_url)
+	} catch {
+		/* A missing avatar must not prevent an otherwise valid login. */
+	}
+	return session
+}
+
+function readAvatarReference(value: unknown): string | null {
+	if (!isRecord(value)) return null
+	const session = isRecord(value.session) ? value.session : null
+	const user = isRecord(session?.user) ? session.user : isRecord(value.user) ? value.user : null
+	const metadata = isRecord(user?.user_metadata) ? user.user_metadata : null
+	return (
+		readString(metadata?.picture) ?? readString(metadata?.avatarUrl) ?? readString(user?.picture)
+	)
+}
+
+function readHttpsUrl(value: unknown): string | undefined {
+	if (typeof value !== 'string') return undefined
+	try {
+		const url = new URL(value)
+		return url.protocol === 'https:' && !url.username && !url.password ? url.href : undefined
+	} catch {
+		return undefined
 	}
 }
 
@@ -811,25 +1027,9 @@ export function readCloudBaseErrorMessage(value: unknown, fallback: string): str
 		: message
 }
 
-function assertLauncherCredentials(
-	username: string,
-	password: string,
-	mode: 'login' | 'register',
-): void {
-	const validationCode = validateLauncherCredentials(username, password, mode)
-	if (validationCode) throw new Error(strings.auth.validation[validationCode])
-}
-
 function countPasswordCharacterCategories(password: string): number {
 	return [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((pattern) => pattern.test(password))
 		.length
-}
-
-function isConnectivityError(value: unknown): boolean {
-	if (!(value instanceof Error)) return false
-	return (
-		value.message === strings.auth.error.network || value.message === strings.auth.error.timeout
-	)
 }
 
 function getAuth(): CloudBaseAuthClient | null {
@@ -855,12 +1055,6 @@ function getAuth(): CloudBaseAuthClient | null {
 	return auth
 }
 
-function maskLauncherPhone(phone: string | null): string | undefined {
-	if (!phone) return undefined
-	const digits = phone.replace(/\D/g, '').slice(-11)
-	return /^1\d{10}$/.test(digits) ? `${digits.slice(0, 3)}****${digits.slice(-4)}` : undefined
-}
-
 function getApp(): CloudBaseApp | null {
 	if (app !== undefined) return app
 	if (!accessKey) {
@@ -882,75 +1076,27 @@ function getApp(): CloudBaseApp | null {
 	}
 }
 
-async function createLauncherAccount(
-	username: string,
-	password: string,
-): Promise<'created' | 'existing'> {
-	const controller = new AbortController()
-	const timeoutId = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS)
-	let response: Response
-	let payload: unknown
-	try {
-		response = await fetch(registerUrl, {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-			},
-			body: JSON.stringify({ username, password }),
-			signal: controller.signal,
-		})
-		payload = await readResponsePayload(response)
-	} catch (error) {
-		throw new Error(readCloudBaseErrorMessage(error, strings.auth.error.register))
-	} finally {
-		clearTimeout(timeoutId)
-	}
-	if (response.status === 201) return 'created'
-	if (response.status === 409) return 'existing'
-	throw new Error(readCloudBaseErrorMessage(payload, `注册失败 (${response.status})`))
-}
-
 async function activateLauncherAccount(accessToken: string): Promise<void> {
 	const controller = new AbortController()
 	const timeoutId = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS)
-	let response: Response
-	let payload: unknown
 	try {
-		response = await fetch(activateUrl, {
+		const response = await fetch(activateUrl, {
 			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${accessToken}`,
-			},
+			headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
 			body: JSON.stringify({}),
 			signal: controller.signal,
 		})
-		payload = await readResponsePayload(response)
+		if (!response.ok) {
+			throw new LauncherAccountConfirmationError(
+				response.status >= 500 || response.status === 408 || response.status === 429,
+				response.status,
+			)
+		}
 	} catch (error) {
-		throw new Error(readAuthorizedErrorMessage(error, strings.auth.error.register, accessToken))
+		if (error instanceof LauncherAccountConfirmationError) throw error
+		throw new LauncherAccountConfirmationError(true)
 	} finally {
 		clearTimeout(timeoutId)
-	}
-	if (!response.ok) {
-		throw new Error(
-			readAuthorizedErrorMessage(payload, `账号激活失败 (${response.status})`, accessToken),
-		)
-	}
-}
-
-async function activatePhoneRegistration(accessToken: string): Promise<void> {
-	try {
-		await activateLauncherAccount(accessToken)
-	} catch {
-		throw new Error(strings.auth.phone.activationError)
-	}
-}
-
-async function discardUnactivatedSession(authClient: CloudBaseAuthClient): Promise<void> {
-	try {
-		await withAuthRequestTimeout(() => authClient.signOut())
-	} catch {
-		// Activation failed, so cleanup is best-effort and must not replace that original error.
 	}
 }
 
@@ -960,21 +1106,6 @@ async function withAuthRequestTimeout<T>(request: () => Promise<T>): Promise<T> 
 		AUTH_REQUEST_TIMEOUT_MS,
 		() => new AuthRequestTimeoutError(strings.auth.error.timeout),
 	)
-}
-
-async function readResponsePayload(response: Response): Promise<unknown> {
-	const text = await response.text()
-	if (!text) return null
-	try {
-		return JSON.parse(text) as unknown
-	} catch {
-		return text
-	}
-}
-
-function readAuthorizedErrorMessage(value: unknown, fallback: string, accessToken: string): string {
-	const message = readCloudBaseErrorMessage(value, fallback)
-	return accessToken.length > 0 ? message.split(accessToken).join('[REDACTED]') : message
 }
 
 function readExpiresAt(session: Record<string, unknown>, now: () => number): number | null {

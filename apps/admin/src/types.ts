@@ -49,6 +49,9 @@ export interface AdminUsageSummary {
 
 export interface UserAccountView {
 	userId: string
+	email: string
+	nickname: string
+	userType: string
 	status: UserStatus
 	firstSeenAt: string
 	lastSeenAt: string

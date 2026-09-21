@@ -94,7 +94,7 @@
 - [ ] M3 内置模型切网关：默认文本 `qwen3.7-max`、视觉 `qwen3.7-plus` 经 CloudBase Gateway 使用用户 session
 - [ ] M4 tokens 页读网关计量：CloudBase Run 暴露 `GET /v1/usage/summary`，启动器 `UsageCloudClient` 云优先读取并按 userId 缓存，本地用量作为失败兜底
 - [x] M5 内置模型删除本地 Key：移除本地直连兜底开关与内置百炼 Key，网关成为内置模型唯一路径；自定义 BYO-Key 不受影响
-- **验收**：干净启动进入账号登录页；用户 id + 密码登录/注册后才能进入工作台；CfT + 构建后插件 user-session handoff smoke 返回 `{ ok: true }`；`pnpm -F desktop test`、`pnpm -F desktop build`、`pnpm -F extension test`、`pnpm -F extension build` 通过。
+- **验收**：干净启动进入账号登录页；邮箱密码或邮箱验证码登录后才能进入工作台；新邮箱必须验证后提交昵称和密码，完成前不创建云端账号；CfT + 构建后插件 user-session handoff smoke 返回 `{ ok: true }`；`pnpm -F desktop test`、`pnpm -F desktop build`、`pnpm -F extension test`、`pnpm -F extension build` 通过。
 
 ### M4.6 — 后台管理系统（依赖 M4.5）
 

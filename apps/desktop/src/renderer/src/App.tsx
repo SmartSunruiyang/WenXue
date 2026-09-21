@@ -10,14 +10,11 @@ import {
 	CircleDollarSign,
 	Copy,
 	Download,
-	Eye,
-	EyeOff,
 	Focus,
 	FolderOpen,
 	Globe2,
 	Info,
 	LoaderCircle,
-	LogIn,
 	LogOut,
 	Maximize2,
 	Minus,
@@ -29,38 +26,28 @@ import {
 	ScrollText,
 	Search,
 	Settings,
-	Smartphone,
 	Square,
 	Trash2,
-	UserPlus,
 	X,
 } from 'lucide-react'
-import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from 'react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-	getLauncherIncompleteRegistration,
-	getLauncherPasswordComparison,
-	getLauncherPasswordRequirements,
 	getLauncherSession,
-	getLauncherUsernameRequirements,
 	readCloudBaseErrorMessage,
 	refreshLauncherSession,
-	signInLauncher,
 	signOutLauncher,
 	toPublicUser,
-	validateLauncherCredentials,
 	type LauncherAuthSession,
 	type LauncherPublicUser,
-	type LauncherRegistrationRequiredError,
-	type PasswordCharacterMatch,
 } from './cloudbase'
 import {
 	DesktopAnnouncementService,
 	type DesktopAnnouncementSnapshot,
 } from './DesktopAnnouncementService'
 import { DesktopReleaseSignalService } from './DesktopReleaseSignalService'
-import { PhoneAuthForm } from './PhoneAuthForm'
+import { EmailAuthScreen } from './EmailAuthScreen'
 import { executeSafeSignOut } from './safeSignOut'
 import { strings } from './strings'
 import type {
@@ -184,11 +171,6 @@ export default function App() {
 	const [activeLogSources, setActiveLogSources] = useState<LogSource[]>(logSources)
 	const [followLogs, setFollowLogs] = useState(true)
 	const [avatarOpen, setAvatarOpen] = useState(false)
-	const [incompleteRegistration, setIncompleteRegistration] = useState<{
-		phone: string
-		userId: string
-	} | null>(null)
-	const [phoneBindingUserId, setPhoneBindingUserId] = useState<string | null>(null)
 	const [addingProfile, setAddingProfile] = useState(false)
 	const [batchLaunching, setBatchLaunching] = useState(false)
 	const [logsMutating, setLogsMutating] = useState(false)
@@ -203,7 +185,6 @@ export default function App() {
 	const [updateCheckNotice, setUpdateCheckNotice] = useState<string | null>(null)
 	const [dismissedUpdate, setDismissedUpdate] = useState<string | null>(null)
 	const avatarButtonRef = useRef<HTMLButtonElement>(null)
-	const phoneBindingUserIdRef = useRef<string | null>(null)
 	const addingProfileRef = useRef(false)
 	const batchLaunchingRef = useRef(false)
 	const logoutBusyRef = useRef(false)
@@ -373,12 +354,6 @@ export default function App() {
 			if (!mounted) return
 			setShellInfo(nextShellInfo)
 			if (!session) {
-				setAuthReady(true)
-				return
-			}
-			const incomplete = await getLauncherIncompleteRegistration()
-			if (incomplete) {
-				setIncompleteRegistration(incomplete)
 				setAuthReady(true)
 				return
 			}
@@ -733,7 +708,6 @@ export default function App() {
 				throw new Error(result.error ?? '账号 session 同步失败')
 			}
 			const nextVersions = await loadWorkspaceData()
-			setIncompleteRegistration(null)
 			setAuthUser(toPublicUser(session))
 			void announcementServiceRef.current
 				?.start(session, desktopPlatform(shellInfo.platform), nextVersions.app)
@@ -744,16 +718,7 @@ export default function App() {
 		[loadWorkspaceData, shellInfo.platform],
 	)
 
-	const handleLogin = useCallback(
-		async (username: string, password: string) => {
-			const session = await signInLauncher(username, password)
-			await syncSignedInSession(session)
-			setMessage(null)
-		},
-		[syncSignedInSession],
-	)
-
-	const handlePhoneLogin = useCallback(
+	const handleAuthenticated = useCallback(
 		async (session: LauncherAuthSession) => {
 			await syncSignedInSession(session)
 			setMessage(null)
@@ -761,15 +726,9 @@ export default function App() {
 		[syncSignedInSession],
 	)
 
-	const closePhoneBinding = useCallback(() => {
-		phoneBindingUserIdRef.current = null
-		setPhoneBindingUserId(null)
-	}, [])
-
 	const handleLogout = useCallback(async () => {
 		if (
 			logoutBusyRef.current ||
-			phoneBindingUserIdRef.current !== null ||
 			addingProfileRef.current ||
 			batchLaunchingRef.current ||
 			pendingProfileActionsRef.current.size > 0 ||
@@ -929,14 +888,18 @@ export default function App() {
 	if (!authUser) {
 		return (
 			<>
-				<AuthScreen
+				<EmailAuthScreen
 					error={message}
-					incompleteRegistration={incompleteRegistration}
-					onLogin={handleLogin}
-					onPhoneLogin={handlePhoneLogin}
-					shellInfo={shellInfo}
-					setMessage={setMessage}
-					setShellInfo={setShellInfo}
+					onAuthenticated={handleAuthenticated}
+					onClearError={() => setMessage(null)}
+					frameless={shellInfo.frameless}
+					windowControls={
+						<WindowControls
+							onError={setMessage}
+							shellInfo={shellInfo}
+							setShellInfo={setShellInfo}
+						/>
+					}
 				/>
 				{interruptionLayer}
 			</>
@@ -960,7 +923,11 @@ export default function App() {
 					ref={avatarButtonRef}
 					type="button"
 				>
-					<img src="logo.png" alt="" />
+					<img
+						className={authUser.avatarUrl ? 'user-avatar' : undefined}
+						src={authUser.avatarUrl || 'logo.png'}
+						alt=""
+					/>
 				</button>
 				<nav className="sidebar-nav no-drag">
 					<RailButton
@@ -999,16 +966,9 @@ export default function App() {
 				{avatarOpen ? (
 					<AvatarMenu
 						logoutBusy={logoutBusy}
-						onBindPhone={() => {
-							if (logoutBusyRef.current) return
-							phoneBindingUserIdRef.current = authUser.userId
-							setPhoneBindingUserId(authUser.userId)
-							setAvatarOpen(false)
-						}}
 						setAvatarOpen={setAvatarOpen}
 						setRoute={setRoute}
 						setSettingsSection={setSettingsSection}
-						settings={settings}
 						user={authUser}
 						versions={versions}
 						workspaceBusy={
@@ -1016,8 +976,7 @@ export default function App() {
 							batchLaunching ||
 							pendingProfileIds.length > 0 ||
 							savingSettings ||
-							logsMutating ||
-							phoneBindingUserId !== null
+							logsMutating
 						}
 						onLogout={handleLogout}
 					/>
@@ -1114,15 +1073,6 @@ export default function App() {
 				) : null}
 			</section>
 			{interruptionLayer}
-			{phoneBindingUserId ? (
-				<PhoneBindingDialog
-					key={phoneBindingUserId}
-					onAuthenticated={syncSignedInSession}
-					onClose={closePhoneBinding}
-					returnFocusRef={avatarButtonRef}
-					userId={phoneBindingUserId}
-				/>
-			) : null}
 		</main>
 	)
 }
@@ -1306,693 +1256,21 @@ function RailButton({ active, children, icon: Icon, label, onClick }: RailButton
 	)
 }
 
-function AuthScreen({
-	error,
-	incompleteRegistration,
-	onLogin,
-	onPhoneLogin,
-	shellInfo,
-	setMessage,
-	setShellInfo,
-}: {
-	error: string | null
-	incompleteRegistration: { phone: string; userId: string } | null
-	onLogin: (username: string, password: string) => Promise<void>
-	onPhoneLogin: (session: LauncherAuthSession) => Promise<void>
-	shellInfo: AppShellInfo
-	setMessage: (message: string | null) => void
-	setShellInfo: (info: AppShellInfo) => void
-}) {
-	const [introVisible, setIntroVisible] = useState(
-		() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-	)
-	const [mode, setMode] = useState<'login' | 'register'>(
-		incompleteRegistration ? 'register' : 'login',
-	)
-	const [loginMethod, setLoginMethod] = useState<'password' | 'phone'>('password')
-	const [registrationPhone, setRegistrationPhone] = useState(incompleteRegistration?.phone ?? '')
-	const [registrationUserId, setRegistrationUserId] = useState(
-		incompleteRegistration?.userId ?? null,
-	)
-	const [registerVerifying, setRegisterVerifying] = useState(false)
-	const [registrationConflict, setRegistrationConflict] = useState(false)
-	const [phoneLoginSeed, setPhoneLoginSeed] = useState('')
-	const [phoneBusy, setPhoneBusy] = useState(false)
-	const [username, setUsername] = useState('')
-	const [password, setPassword] = useState('')
-	const [confirmPassword, setConfirmPassword] = useState('')
-	const [passwordVisible, setPasswordVisible] = useState(false)
-	const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false)
-	const [activeConfirmationIndex, setActiveConfirmationIndex] = useState(-1)
-	const [busy, setBusy] = useState(false)
-	const [localError, setLocalError] = useState<string | null>(null)
-	const isRegister = mode === 'register'
-	const anyBusy = busy || phoneBusy
-	const usernameRequirements = getLauncherUsernameRequirements(username)
-	const usernameRules = [
-		{ key: 'length', label: strings.auth.hint.username.length, valid: usernameRequirements.length },
-		{
-			key: 'firstCharacter',
-			label: strings.auth.hint.username.firstCharacter,
-			valid: usernameRequirements.firstCharacter,
-		},
-		{
-			key: 'characterSet',
-			label: strings.auth.hint.username.characterSet,
-			valid: usernameRequirements.characterSet,
-		},
-	]
-	const passwordRequirements = getLauncherPasswordRequirements(password)
-	const passwordRules = [
-		{ key: 'length', label: strings.auth.hint.password.length, valid: passwordRequirements.length },
-		{
-			key: 'firstCharacter',
-			label: strings.auth.hint.password.firstCharacter,
-			valid: passwordRequirements.firstCharacter,
-		},
-		{
-			key: 'characterSet',
-			label: strings.auth.hint.password.characterSet,
-			valid: passwordRequirements.characterSet,
-		},
-		{
-			key: 'complexity',
-			label: strings.auth.hint.password.complexity,
-			valid: passwordRequirements.complexity,
-		},
-	]
-	const comparison = getLauncherPasswordComparison(password, confirmPassword)
-	const confirmationHasError =
-		confirmPassword.length > 0 &&
-		(!password || comparison.firstMismatchIndex >= 0 || comparison.extraLength > 0)
-	const confirmationState = !confirmPassword ? 'idle' : confirmationHasError ? 'invalid' : 'valid'
-	const confirmationHint = !confirmPassword
-		? strings.auth.hint.confirmation.idle
-		: !password
-			? strings.auth.hint.confirmation.missingPassword
-			: comparison.firstMismatchIndex >= 0
-				? strings.auth.hint.confirmation.mismatch(comparison.firstMismatchIndex + 1)
-				: comparison.extraLength > 0
-					? strings.auth.hint.confirmation.extra(comparison.extraLength)
-					: comparison.confirmedLength === comparison.states.length
-						? strings.auth.hint.confirmation.matched
-						: strings.auth.hint.confirmation.progress(
-								comparison.confirmedLength,
-								comparison.states.length,
-							)
-	const showPasswordComparison = isRegister && password.length > 0 && confirmPassword.length > 0
-
-	useEffect(() => {
-		if (!introVisible) return
-		const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
-		const finishIntro = () => setIntroVisible(false)
-		const handleMotionPreference = () => {
-			if (motionPreference.matches) finishIntro()
-		}
-		const timeoutId = window.setTimeout(finishIntro, 2100)
-		motionPreference.addEventListener('change', handleMotionPreference)
-		return () => {
-			window.clearTimeout(timeoutId)
-			motionPreference.removeEventListener('change', handleMotionPreference)
-		}
-	}, [introVisible])
-
-	const submit = async (event?: FormEvent<HTMLFormElement>) => {
-		event?.preventDefault()
-		if (busy) return
-		setLocalError(null)
-		setMessage(null)
-		const validationCode = validateLauncherCredentials(username, password, mode)
-		if (validationCode) {
-			setLocalError(strings.auth.validation[validationCode])
-			return
-		}
-		if (isRegister && !confirmPassword) {
-			setLocalError(strings.auth.validation.confirmPasswordRequired)
-			return
-		}
-		if (isRegister && password !== confirmPassword) {
-			setLocalError(strings.auth.validation.passwordMismatch)
-			return
-		}
-		if (isRegister) {
-			setRegisterVerifying(true)
-			return
-		}
-		setBusy(true)
-		try {
-			await onLogin(username, password)
-		} catch (nextError) {
-			setLocalError(readCloudBaseErrorMessage(nextError, strings.auth.error.operation))
-		} finally {
-			setBusy(false)
-		}
-	}
-
-	return (
-		<main className={`auth-shell ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}>
-			<div className="top-drag-zone drag-region" />
-			<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
-			{introVisible ? (
-				<div className="auth-intro" aria-hidden="true">
-					<div className="auth-intro__brand">
-						<img className="auth-intro__logo" src="logo.png" alt="" />
-						<div className="auth-intro__slogan">
-							<img src="slogan.png" alt="" />
-						</div>
-					</div>
-				</div>
-			) : (
-				<div aria-busy={anyBusy} className="auth-card no-drag">
-					<div className="auth-card__head">
-						<h1>{isRegister ? strings.auth.title.register : strings.auth.title.login}</h1>
-						<p>{isRegister ? strings.auth.description.register : strings.auth.description.login}</p>
-					</div>
-					<div className="segmented-control auth-card__modes" aria-label={strings.auth.modeLabel}>
-						<button
-							aria-pressed={!isRegister}
-							className={!isRegister ? 'segmented-control__active' : ''}
-							disabled={anyBusy}
-							onClick={() => {
-								setMode('login')
-								setRegisterVerifying(false)
-								setPassword('')
-								setConfirmPassword('')
-								setPasswordVisible(false)
-								setConfirmPasswordVisible(false)
-								setLocalError(null)
-								setMessage(null)
-							}}
-							type="button"
-						>
-							<LogIn size={15} />
-							{strings.auth.mode.login}
-						</button>
-						<button
-							aria-pressed={isRegister}
-							className={isRegister ? 'segmented-control__active' : ''}
-							disabled={anyBusy}
-							onClick={() => {
-								setMode('register')
-								setRegisterVerifying(false)
-								setPassword('')
-								setConfirmPassword('')
-								setPasswordVisible(false)
-								setConfirmPasswordVisible(false)
-								setLocalError(null)
-								setMessage(null)
-							}}
-							type="button"
-						>
-							<UserPlus size={15} />
-							{strings.auth.mode.register}
-						</button>
-					</div>
-					{!isRegister ? (
-						<div
-							aria-label={strings.auth.phone.methodLabel}
-							className="auth-login-methods"
-							role="group"
-						>
-							{(['password', 'phone'] as const).map((method) => (
-								<button
-									aria-pressed={loginMethod === method}
-									disabled={anyBusy}
-									key={method}
-									onClick={() => {
-										setLoginMethod(method)
-										setLocalError(null)
-										setMessage(null)
-										setPasswordVisible(false)
-										setConfirmPasswordVisible(false)
-									}}
-									type="button"
-								>
-									{method === 'password'
-										? strings.auth.phone.passwordLogin
-										: strings.auth.phone.smsLogin}
-								</button>
-							))}
-						</div>
-					) : null}
-					{isRegister && registerVerifying ? (
-						<div className="auth-registration-verification">
-							<p className="phone-auth-form__hint">
-								{registrationUserId
-									? strings.auth.phone.completeStep
-									: strings.auth.phone.registerStep}
-							</p>
-							<PhoneAuthForm
-								key={`${registrationPhone}:${registrationUserId ?? 'new'}`}
-								initialPhone={registrationPhone}
-								onAuthenticated={onPhoneLogin}
-								onBusyChange={setPhoneBusy}
-								onRegistrationConflict={(phone) => {
-									setRegistrationPhone(phone)
-									setRegistrationConflict(true)
-								}}
-								registration={{
-									username,
-									password,
-									userId: registrationUserId ?? undefined,
-								}}
-							/>
-							<button
-								className="auth-registration-verification__back"
-								disabled={anyBusy}
-								onClick={() => setRegisterVerifying(false)}
-								type="button"
-							>
-								{strings.auth.phone.backToCredentials}
-							</button>
-						</div>
-					) : !isRegister && loginMethod === 'phone' ? (
-						<>
-							<PhoneAuthForm
-								key={phoneLoginSeed}
-								initialPhone={phoneLoginSeed}
-								onAuthenticated={onPhoneLogin}
-								onBusyChange={setPhoneBusy}
-								onRegistrationRequired={(nextError: LauncherRegistrationRequiredError) => {
-									setRegistrationPhone(nextError.phone)
-									setRegistrationUserId(nextError.userId ?? null)
-									setUsername('')
-									setPassword('')
-									setConfirmPassword('')
-									setMode('register')
-									setRegisterVerifying(false)
-									setLocalError(strings.auth.phone.registrationRequired)
-								}}
-							/>
-							{error ? (
-								<div className="auth-alert" role="alert">
-									{error}
-								</div>
-							) : null}
-						</>
-					) : (
-						<form className="auth-credentials" onSubmit={(event) => void submit(event)}>
-							<div className="auth-field">
-								<label htmlFor="auth-username">{strings.auth.field.username}</label>
-								<input
-									aria-describedby={isRegister ? 'auth-username-hint' : undefined}
-									aria-invalid={
-										isRegister && username.length > 0 && usernameRules.some((rule) => !rule.valid)
-									}
-									autoComplete="username"
-									autoFocus
-									disabled={busy}
-									id="auth-username"
-									onChange={(event) => setUsername(event.target.value)}
-									type="text"
-									value={username}
-								/>
-								{isRegister ? (
-									<AuthRequirements
-										id="auth-username-hint"
-										hasInput={username.length > 0}
-										rules={usernameRules}
-									/>
-								) : null}
-							</div>
-							<div className="auth-field">
-								<label htmlFor="auth-password">{strings.auth.field.password}</label>
-								<div
-									className={`auth-password ${showPasswordComparison ? 'auth-password--comparing' : ''}`}
-								>
-									<input
-										aria-describedby={isRegister ? 'auth-password-hint' : undefined}
-										aria-invalid={
-											isRegister && password.length > 0 && passwordRules.some((rule) => !rule.valid)
-										}
-										autoCapitalize="none"
-										autoComplete={isRegister ? 'new-password' : 'current-password'}
-										disabled={busy}
-										id="auth-password"
-										onChange={(event) => setPassword(event.target.value)}
-										spellCheck={false}
-										type={passwordVisible ? 'text' : 'password'}
-										value={password}
-									/>
-									{showPasswordComparison ? (
-										<PasswordComparison
-											password={password}
-											visible={passwordVisible}
-											states={comparison.states}
-											activeIndex={activeConfirmationIndex}
-										/>
-									) : null}
-									<button
-										aria-controls="auth-password"
-										aria-label={
-											passwordVisible
-												? strings.auth.action.hidePassword
-												: strings.auth.action.showPassword
-										}
-										className="auth-password__toggle"
-										disabled={busy}
-										onClick={() => setPasswordVisible((visible) => !visible)}
-										title={
-											passwordVisible
-												? strings.auth.action.hidePassword
-												: strings.auth.action.showPassword
-										}
-										type="button"
-									>
-										{passwordVisible ? (
-											<EyeOff size={16} aria-hidden="true" />
-										) : (
-											<Eye size={16} aria-hidden="true" />
-										)}
-									</button>
-								</div>
-								{isRegister ? (
-									<AuthRequirements
-										id="auth-password-hint"
-										hasInput={password.length > 0}
-										rules={passwordRules}
-									/>
-								) : null}
-							</div>
-							{isRegister ? (
-								<div className="auth-field">
-									<label htmlFor="auth-confirm-password">
-										{strings.auth.field.confirmPassword}
-									</label>
-									<div className="auth-password">
-										<input
-											aria-describedby="auth-confirm-password-hint"
-											aria-invalid={confirmationHasError}
-											autoCapitalize="none"
-											autoComplete="new-password"
-											disabled={busy}
-											id="auth-confirm-password"
-											onChange={(event) => {
-												const value = event.target.value
-												setConfirmPassword(value)
-												setActiveConfirmationIndex(
-													Array.from(value.slice(0, event.target.selectionStart ?? value.length))
-														.length - 1,
-												)
-											}}
-											spellCheck={false}
-											type={confirmPasswordVisible ? 'text' : 'password'}
-											value={confirmPassword}
-										/>
-										<button
-											aria-controls="auth-confirm-password"
-											aria-label={
-												confirmPasswordVisible
-													? strings.auth.action.hideConfirmPassword
-													: strings.auth.action.showConfirmPassword
-											}
-											className="auth-password__toggle"
-											disabled={busy}
-											onClick={() => setConfirmPasswordVisible((visible) => !visible)}
-											title={
-												confirmPasswordVisible
-													? strings.auth.action.hideConfirmPassword
-													: strings.auth.action.showConfirmPassword
-											}
-											type="button"
-										>
-											{confirmPasswordVisible ? (
-												<EyeOff size={16} aria-hidden="true" />
-											) : (
-												<Eye size={16} aria-hidden="true" />
-											)}
-										</button>
-									</div>
-									<span
-										className="auth-field__hint auth-confirmation-hint"
-										id="auth-confirm-password-hint"
-										data-state={confirmationState}
-										role="status"
-									>
-										{confirmationHint}
-									</span>
-								</div>
-							) : null}
-							{localError || error ? (
-								<div className="auth-alert" role="alert">
-									{localError ?? error}
-								</div>
-							) : null}
-							<button className="primary-button auth-submit" disabled={busy} type="submit">
-								{busy ? (
-									<LoaderCircle className="spin" size={16} />
-								) : isRegister ? (
-									<UserPlus size={16} />
-								) : (
-									<LogIn size={16} />
-								)}
-								{busy
-									? strings.auth.action.busy
-									: isRegister
-										? strings.auth.action.register
-										: strings.auth.action.login}
-							</button>
-						</form>
-					)}
-				</div>
-			)}
-			{registrationConflict ? (
-				<PhoneRegistrationConflictDialog
-					onBack={() => setRegistrationConflict(false)}
-					onLogin={() => {
-						setRegistrationConflict(false)
-						setPhoneLoginSeed(registrationPhone)
-						setRegistrationUserId(null)
-						setUsername('')
-						setPassword('')
-						setConfirmPassword('')
-						setRegisterVerifying(false)
-						setMode('login')
-						setLoginMethod('phone')
-						setLocalError(null)
-					}}
-				/>
-			) : null}
-		</main>
-	)
-}
-
-function PhoneRegistrationConflictDialog({
-	onBack,
-	onLogin,
-}: {
-	onBack: () => void
-	onLogin: () => void
-}) {
-	const dialogRef = useRef<HTMLDialogElement>(null)
-	useEffect(() => {
-		const dialog = dialogRef.current
-		dialog?.showModal()
-		return () => dialog?.close()
-	}, [])
-	return (
-		<dialog
-			aria-describedby="phone-registration-conflict-description"
-			aria-labelledby="phone-registration-conflict-title"
-			className="phone-binding-dialog no-drag"
-			onCancel={(event) => {
-				event.preventDefault()
-				onBack()
-			}}
-			ref={dialogRef}
-		>
-			<h2 id="phone-registration-conflict-title">{strings.auth.phone.conflictTitle}</h2>
-			<p id="phone-registration-conflict-description">{strings.auth.phone.conflictDescription}</p>
-			<div className="phone-registration-conflict__actions">
-				<button className="soft-button" onClick={onBack} type="button">
-					{strings.auth.phone.conflictBack}
-				</button>
-				<button autoFocus className="primary-button" onClick={onLogin} type="button">
-					{strings.auth.phone.conflictAction}
-				</button>
-			</div>
-		</dialog>
-	)
-}
-
-function AuthRequirements({
-	id,
-	hasInput,
-	rules,
-}: {
-	id: string
-	hasInput: boolean
-	rules: Array<{ key: string; label: string; valid: boolean }>
-}) {
-	return (
-		<ul className="auth-field__hint auth-requirements" id={id} aria-live="polite">
-			{rules.map((rule) => {
-				const state = !hasInput ? 'idle' : rule.valid ? 'valid' : 'invalid'
-				const Icon = state === 'idle' ? Minus : rule.valid ? Check : X
-				return (
-					<li className="auth-requirement" data-state={state} key={rule.key}>
-						<Icon size={12} aria-hidden="true" />
-						<span>
-							{rule.label}
-							<span className="sr-only">，{strings.auth.hint.requirementState[state]}</span>
-						</span>
-					</li>
-				)
-			})}
-		</ul>
-	)
-}
-
-function PasswordComparison({
-	password,
-	visible,
-	states,
-	activeIndex,
-}: {
-	password: string
-	visible: boolean
-	states: PasswordCharacterMatch[]
-	activeIndex: number
-}) {
-	const viewportRef = useRef<HTMLDivElement>(null)
-	useLayoutEffect(() => {
-		const viewport = viewportRef.current
-		if (!viewport) return
-		const alignActiveCharacter = () => {
-			const index = Math.max(0, Math.min(activeIndex, viewport.children.length - 1))
-			const character = viewport.children[index] as HTMLElement | undefined
-			if (!character) return
-			const bounds = viewport.getBoundingClientRect()
-			const { left, right } = character.getBoundingClientRect()
-			if (left < bounds.left) viewport.scrollLeft -= Math.ceil(bounds.left - left)
-			else if (right > bounds.right) {
-				viewport.scrollLeft += Math.ceil(right - bounds.right)
-			}
-		}
-		alignActiveCharacter()
-		const observer = new ResizeObserver(alignActiveCharacter)
-		observer.observe(viewport)
-		return () => observer.disconnect()
-	}, [password, visible, activeIndex])
-	return (
-		<div className="auth-password__comparison" aria-hidden="true" ref={viewportRef}>
-			{Array.from(password).map((character, index) => (
-				<span
-					className="auth-password__character"
-					data-state={states[index]}
-					// eslint-disable-next-line @eslint-react/no-array-index-key -- Fixed positions retain cells; state changes replay only that cell's animation.
-					key={`${index}:${states[index]}`}
-				>
-					{visible ? character : '•'}
-				</span>
-			))}
-		</div>
-	)
-}
-
-function PhoneBindingDialog({
-	onAuthenticated,
-	onClose,
-	returnFocusRef,
-	userId,
-}: {
-	onAuthenticated: (session: LauncherAuthSession) => Promise<void>
-	onClose: () => void
-	returnFocusRef: RefObject<HTMLButtonElement | null>
-	userId: string
-}) {
-	const dialogRef = useRef<HTMLDialogElement>(null)
-	const busyRef = useRef(false)
-	const [busy, setBusy] = useState(false)
-	const [complete, setComplete] = useState(false)
-
-	useEffect(() => {
-		const dialog = dialogRef.current
-		dialog?.showModal()
-		return () => {
-			dialog?.close()
-			returnFocusRef.current?.focus()
-		}
-	}, [returnFocusRef])
-
-	const handleBusyChange = useCallback((nextBusy: boolean) => {
-		busyRef.current = nextBusy
-		setBusy(nextBusy)
-	}, [])
-
-	return (
-		<dialog
-			aria-describedby="phone-binding-description"
-			aria-labelledby="phone-binding-title"
-			className="phone-binding-dialog no-drag"
-			onCancel={(event) => {
-				event.preventDefault()
-				if (!busyRef.current) onClose()
-			}}
-			ref={dialogRef}
-		>
-			<div className="phone-binding-dialog__head">
-				<h2 id="phone-binding-title">{strings.auth.phone.bindTitle}</h2>
-				<button
-					aria-label={strings.auth.phone.close}
-					className="phone-binding-dialog__close"
-					disabled={busy}
-					onClick={() => {
-						if (!busyRef.current) onClose()
-					}}
-					title={strings.auth.phone.close}
-					type="button"
-				>
-					<X size={18} />
-				</button>
-			</div>
-			<p className="phone-binding-dialog__description" id="phone-binding-description">
-				{strings.auth.phone.bindDescription}
-			</p>
-			{complete ? (
-				<div className="phone-binding-dialog__complete">
-					<p className="phone-auth-form__sent" role="status">
-						<Check size={18} aria-hidden="true" />
-						{strings.auth.phone.bindSuccess}
-					</p>
-					<button autoFocus className="primary-button" onClick={onClose} type="button">
-						{strings.auth.phone.close}
-					</button>
-				</div>
-			) : (
-				<PhoneAuthForm
-					onAuthenticated={async (session) => {
-						await onAuthenticated(session)
-						handleBusyChange(false)
-						setComplete(true)
-					}}
-					onBusyChange={handleBusyChange}
-					userId={userId}
-				/>
-			)}
-		</dialog>
-	)
-}
-
 function AvatarMenu({
 	logoutBusy,
-	onBindPhone,
 	onLogout,
 	setAvatarOpen,
 	setRoute,
 	setSettingsSection,
-	settings,
 	user,
 	versions,
 	workspaceBusy,
 }: {
 	logoutBusy: boolean
-	onBindPhone: () => void
 	onLogout: () => Promise<void>
 	setAvatarOpen: (open: boolean) => void
 	setRoute: (route: RouteId) => void
 	setSettingsSection: (section: SettingsSectionId) => void
-	settings: LauncherSettings
 	user: LauncherPublicUser
 	versions: AppVersions
 	workspaceBusy: boolean
@@ -2024,11 +1302,15 @@ function AvatarMenu({
 		>
 			<div className="avatar-menu__head">
 				<div className="avatar-menu__mark">
-					<img src="logo.png" alt="" />
+					<img
+						className={user.avatarUrl ? 'user-avatar' : undefined}
+						src={user.avatarUrl || 'logo.png'}
+						alt=""
+					/>
 				</div>
 				<div>
-					<strong>{user.username ?? settings.localUser.displayName ?? user.userId}</strong>
-					<span>{user.userId}</span>
+					<strong title={user.nickname}>{user.nickname || user.email || user.userId}</strong>
+					<span title={user.email}>{user.email}</span>
 				</div>
 			</div>
 			<button
@@ -2044,10 +1326,7 @@ function AvatarMenu({
 				<Settings size={15} />
 				设置
 			</button>
-			<button disabled={logoutBusy} onClick={onBindPhone} role="menuitem" type="button">
-				<Smartphone size={15} />
-				{strings.auth.phone.bindTitle}
-			</button>
+
 			<button
 				onClick={() => {
 					setSettingsSection('about')

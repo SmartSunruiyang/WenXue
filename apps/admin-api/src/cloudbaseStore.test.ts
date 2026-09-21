@@ -216,47 +216,27 @@ describe('createCloudBaseAdminStore', () => {
 		await expect(store.getAdminUser('admin-uid')).rejects.toThrow(/timed out/i)
 	})
 
-	it('patches user status with $set and asks CloudBase to return the updated document', async () => {
-		const updatedAt = '2026-07-01T00:00:00.000Z'
-		const { calls, fetchImpl } = createFetch([
-			Response.json({
-				doc: {
-					_id: USER_ID,
-					uid: USER_ID,
-					active: false,
-					note: 'manual review',
-					updatedAt,
-				},
-			}),
-		])
-		const store = createCloudBaseAdminStore({ envId: ENV_ID, apiKey: API_KEY, fetchImpl })
-
+	it('upserts business notes without creating an authorization status for new Auth users', async () => {
+		const transaction = createTransactionDatabase()
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			transactionDatabase: transaction.transactionDatabase,
+		})
 		await expect(
 			store.updateUserAccount(USER_ID, {
-				active: false,
 				note: 'manual review',
-				updatedAt,
+				updatedAt: '2026-07-01T00:00:00.000Z',
 			}),
-		).resolves.toMatchObject({
-			uid: USER_ID,
-			active: false,
-			note: 'manual review',
+		).resolves.toMatchObject({ uid: USER_ID, note: 'manual review' })
+		expect(transaction.writes).toHaveLength(1)
+		expect(transaction.writes[0]).toMatchObject({
+			collection: 'user_accounts',
+			id: USER_ID,
+			data: { uid: USER_ID, note: 'manual review' },
 		})
-
-		expect(calls).toHaveLength(1)
-		expect(calls[0].url).toContain(`/collections/user_accounts/documents/${USER_ID}`)
-		expect(calls[0].init?.method).toBe('PATCH')
-		expect(readJsonBody(calls[0].init)).toMatchObject({
-			data: {
-				$set: {
-					active: false,
-					note: 'manual review',
-					updatedAt,
-				},
-			},
-			replaceMode: false,
-			returnDoc: true,
-		})
+		expect(transaction.writes[0].data).not.toHaveProperty('active')
+		expect(transaction.writes[0].data).not.toHaveProperty('status')
 	})
 
 	it('inserts user permission audit records through the REST collection endpoint', async () => {

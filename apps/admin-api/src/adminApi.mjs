@@ -82,17 +82,20 @@ let nextAnnouncementReceiptCleanupAt = 0
 /** @typedef {{ uid: string }} AdminIdentity */
 /** @typedef {{ _id: string, role: AdminRole, status: AdminUserStatus, displayName?: string }} AdminUser */
 /** @typedef {{ _id: string, uid: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs?: number, ts: number, createdAt?: string }} UsageRecord */
-/** @typedef {{ _id: string, uid: string, active: boolean, status: UserAccountStatus, firstSeenAt?: string, lastSeenAt?: string, createdAt?: string, updatedAt?: string, note?: string }} UserAccount */
-/** @typedef {{ userId: string, status: UserAccountStatus, firstSeenAt: string, lastSeenAt: string, createdAt: string, updatedAt: string, note?: string, inputTokens: number, outputTokens: number, totalTokens: number }} UserAccountView */
+/** @typedef {{ _id: string, uid: string, active: boolean, status: UserAccountStatus, email?: string, nickname?: string, userType?: string, firstSeenAt?: string, lastSeenAt?: string, createdAt?: string, updatedAt?: string, note?: string }} UserAccount */
+/** @typedef {{ userId: string, status: UserAccountStatus, email: string, nickname: string, userType: string, firstSeenAt: string, lastSeenAt: string, createdAt: string, updatedAt: string, note?: string, inputTokens: number, outputTokens: number, totalTokens: number }} UserAccountView */
 /** @typedef {{ totalInputTokens: number, totalOutputTokens: number, totalTokens: number, byDay: UsageBucket[], byModel: UsageBucket[], byUser: UsageBucket[], recent: UsageRecordView[], userStatus: { active: number, disabled: number, total: number } }} AdminUsageSummary */
 /** @typedef {{ key: string, label: string, inputTokens: number, outputTokens: number, totalTokens: number }} UsageBucket */
 /** @typedef {{ id: string, ts: number, userId: string, model: string, inputTokens: number, outputTokens: number, totalTokens: number, latencyMs: number }} UsageRecordView */
 /** @typedef {{
  * getAdminUser(uid: string): Promise<unknown | null>,
  * listUsageRecords(filter: { status?: UserAccountStatus, from?: number, to?: number, limit?: number, userId?: string, model?: string }): Promise<unknown[]>,
+ * listAuthUsers(): Promise<UserAccount[]>,
+ * getAuthUser(userId: string, timeoutMs?: number): Promise<UserAccount | null>,
+ * updateAuthUserStatus(userId: string, active: boolean): Promise<void>,
  * listUserAccounts(filter: { status?: UserAccountStatus, q?: string, limit?: number }): Promise<unknown[]>,
  * getUserAccount(userId: string): Promise<unknown | null>,
- * updateUserAccount(userId: string, patch: Partial<Pick<UserAccount, 'active' | 'updatedAt' | 'note'>>): Promise<unknown | null>,
+ * updateUserAccount(userId: string, patch: Partial<Pick<UserAccount, 'updatedAt' | 'note'>>): Promise<unknown | null>,
  * createUserPermissionAudit(record: Record<string, unknown>): Promise<void>,
  * listAnnouncements(filter: { status?: string, expiresAfter?: string, direction?: 'asc' | 'desc', limit?: number, skip?: number }): Promise<unknown[]>,
  * getAnnouncement(id: string): Promise<unknown | null>,
@@ -176,6 +179,7 @@ export async function handleAdminRequest(input) {
 				headers: input.headers,
 				env: input.env,
 				fetchImpl: input.fetchImpl,
+				store: input.store,
 			})
 			const announcements = await pendingAnnouncements({
 				identity,
@@ -191,6 +195,7 @@ export async function handleAdminRequest(input) {
 				headers: input.headers,
 				env: input.env,
 				fetchImpl: input.fetchImpl,
+				store: input.store,
 			})
 			const receipt = await acknowledgeAnnouncement({
 				identity,
@@ -246,17 +251,33 @@ export async function handleAdminRequest(input) {
 		if (path === '/admin/v1/usage/summary' && method === 'GET') {
 			const filter = readUsageFilter(input.query ?? {})
 			const records = await input.store.listUsageRecords(filter)
-			const users = await input.store.listUserAccounts({})
+			const users = await input.store.listAuthUsers()
 			return jsonResponse(buildAdminUsageSummary(records, users, filter), 200, corsHeaders)
 		}
 
 		if (path === '/admin/v1/users' && method === 'GET') {
 			const status = readUserStatus(input.query?.status)
-			const users = await input.store.listUserAccounts({
-				status: status ?? undefined,
-				q: readQueryText(input.query?.q),
-				limit: readPositiveInteger(input.query?.limit, DEFAULT_USER_LIMIT),
-			})
+			const [authUsers, notes] = await Promise.all([
+				input.store.listAuthUsers(),
+				input.store.listUserAccounts({}),
+			])
+			const q = readQueryText(input.query?.q)?.toLocaleLowerCase()
+			const noteByUid = new Map(
+				notes
+					.filter(isRecord)
+					.map((note) => [readString(note.uid) ?? readString(note._id), note.note]),
+			)
+			const users = authUsers
+				.filter(
+					(user) =>
+						(!status || user.status === status) &&
+						(!q ||
+							[user.uid, user.email, user.nickname].some((text) =>
+								text?.toLocaleLowerCase().includes(q),
+							)),
+				)
+				.slice(0, readPositiveInteger(input.query?.limit, DEFAULT_USER_LIMIT))
+				.map((user) => ({ ...user, note: readString(noteByUid.get(user.uid)) ?? undefined }))
 			const records = await input.store.listUsageRecords({})
 			const usageByUser = aggregateUsageByUser(records)
 			return jsonResponse(
@@ -276,37 +297,55 @@ export async function handleAdminRequest(input) {
 		if (path === '/admin/v1/users/status' && method === 'PATCH') {
 			requireAdminRole(admin)
 			const payload = parseUserStatusPatch(input.rawBody ?? '{}')
-			const current = normalizeUserAccount(await input.store.getUserAccount(payload.userId))
-			if (!current) {
-				throw new AdminApiError('User account not found', 404)
+			const authUser = await input.store.getAuthUser(payload.userId)
+			if (!authUser) throw new AdminApiError('User account not found', 404)
+			const noteRecord = await input.store.getUserAccount(payload.userId)
+			const current = {
+				...authUser,
+				note: isRecord(noteRecord) ? (readString(noteRecord.note) ?? undefined) : undefined,
 			}
-			if (payload.patch.active !== undefined && payload.patch.active !== current.active) {
+			const active = payload.patch.active ?? current.active
+			if (
+				payload.patch.active === false &&
+				(current.uid === admin._id || current.userType === 'internalUser')
+			) {
 				throw new AdminApiError(
-					'User access must be changed in CloudBase Auth until authoritative status updates are configured',
-					409,
+					'Internal administrators and your own account cannot be disabled here',
+					403,
 				)
 			}
-			const updatedAt = new Date(input.now ? input.now() : Date.now()).toISOString()
-			const patch = {
-				...payload.patch,
-				updatedAt,
+			const user = {
+				...current,
+				active,
+				status: /** @type {UserAccountStatus} */ (active ? 'active' : 'disabled'),
+				note: payload.patch.note ?? current.note,
 			}
-			const merged = normalizeUserAccount({ ...current, ...patch })
-			if (!merged) {
-				throw new AdminApiError('Invalid user account update', 400)
-			}
-			const persisted = normalizeUserAccount(
-				await input.store.updateUserAccount(payload.userId, patch),
-			)
-			const user = persisted ?? merged
-			await input.store.createUserPermissionAudit({
-				_id: randomUUID(),
+			const updatedAt = new Date(now()).toISOString()
+			const operationId = randomUUID()
+			const audit = {
+				operationId,
 				userId: payload.userId,
 				adminUid: admin._id,
 				before: toUserPermissionSnapshot(current),
 				after: toUserPermissionSnapshot(user),
 				reason: payload.reason,
 				createdAt: updatedAt,
+			}
+			if (payload.patch.active !== undefined) {
+				await input.store.createUserPermissionAudit({
+					...audit,
+					_id: randomUUID(),
+					outcome: 'requested',
+				})
+				await input.store.updateAuthUserStatus(payload.userId, active)
+			}
+			if (payload.patch.note !== undefined) {
+				await input.store.updateUserAccount(payload.userId, { note: payload.patch.note, updatedAt })
+			}
+			await input.store.createUserPermissionAudit({
+				...audit,
+				_id: randomUUID(),
+				outcome: 'applied',
 			})
 			return jsonResponse(
 				{
@@ -578,10 +617,12 @@ function authorizeCiRequest(headers, expectedToken) {
 }
 
 /**
- * @param {{ headers: Headers | Record<string, string | string[] | undefined>, env: AdminApiEnv, fetchImpl?: typeof fetch }} input
+ * @param {{ headers: Headers | Record<string, string | string[] | undefined>, env: AdminApiEnv, store: Pick<AdminStore, 'getAuthUser'>, fetchImpl?: typeof fetch }} input
  * @returns {Promise<AdminIdentity>}
  */
 export async function resolveCloudBaseClientIdentity(input) {
+	const startedAt = Date.now()
+	const timeoutMs = input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
 	const token = extractBearerToken(input.headers)
 	if (!token) throw new AdminApiError('Missing user token', 401)
 	const url = new URL(
@@ -599,13 +640,28 @@ export async function resolveCloudBaseClientIdentity(input) {
 				'x-request-id': randomUUID(),
 			},
 		},
-		input.env.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+		timeoutMs,
 	)
 	if (!response.ok) throw new AdminApiError('CloudBase user token is invalid', 401)
 	if (!isRecord(payload)) throw new AdminApiError('CloudBase user token is invalid', 401)
 	const uid = readString(payload.sub) ?? readString(payload.uid)
 	if (!uid) throw new AdminApiError('CloudBase user token has no uid', 401)
-	if (readString(payload.status) !== 'ACTIVE') {
+	if (!Object.hasOwn(payload, 'status')) {
+		const remainingMs = timeoutMs - (Date.now() - startedAt)
+		if (remainingMs <= 0) throw new AdminApiError('Upstream request timed out', 504)
+		let authUser
+		try {
+			authUser = await input.store.getAuthUser(uid, remainingMs)
+		} catch {
+			throw new AdminApiError('CloudBase user status is unavailable', 503)
+		}
+		if (authUser && authUser.uid !== uid) {
+			throw new AdminApiError('CloudBase user status is unavailable', 503)
+		}
+		if (!authUser || authUser.active !== true) {
+			throw new AdminApiError('CloudBase user is not active', 403)
+		}
+	} else if (readString(payload.status) !== 'ACTIVE') {
 		throw new AdminApiError('CloudBase user is not active', 403)
 	}
 	return { uid }
@@ -2506,6 +2562,9 @@ export function normalizeUserAccount(value) {
 	return {
 		_id: id,
 		uid,
+		email: readString(value.email) ?? undefined,
+		nickname: readString(value.nickname) ?? undefined,
+		userType: readString(value.userType) ?? undefined,
 		active: status === 'active',
 		status,
 		firstSeenAt: readString(value.firstSeenAt) ?? undefined,
@@ -2608,6 +2667,9 @@ function toUserAccountView(user, usage) {
 	}
 	return {
 		userId: normalized.uid,
+		email: normalized.email ?? '',
+		nickname: normalized.nickname ?? '',
+		userType: normalized.userType ?? '',
 		status: normalized.status,
 		firstSeenAt: normalized.firstSeenAt ?? normalized.createdAt ?? '',
 		lastSeenAt: normalized.lastSeenAt ?? normalized.updatedAt ?? '',

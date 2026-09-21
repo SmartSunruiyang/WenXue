@@ -1,10 +1,8 @@
-import { createHash } from 'node:crypto'
-
+import { createCloudBaseAuthDirectory } from '../../admin-api/src/cloudbaseAuth.mjs'
 import {
 	GatewayError,
 	handleChatCompletions,
 	handleLauncherActivation,
-	handleLauncherRegistration,
 	handleUsageSummary,
 } from './gateway.mjs'
 
@@ -34,30 +32,6 @@ const CORS_HEADERS = {
 	'access-control-allow-methods': 'POST, OPTIONS',
 	'access-control-allow-headers': 'content-type, authorization',
 }
-const REGISTRATION_RATE_WINDOW_MS = 60_000
-const REGISTRATION_RATE_MAX_KEYS = 2_048
-const REGISTRATION_RATE_LIMITS = {
-	ipUsername: 5,
-	ip: 20,
-	username: 10,
-	global: 200,
-}
-/** @typedef {{ count: number, resetAt: number }} RateLimitEntry */
-/** @type {{ ipUsername: Map<string, RateLimitEntry>, ip: Map<string, RateLimitEntry>, username: Map<string, RateLimitEntry>, global: Map<string, RateLimitEntry> }} */
-const registrationRateState = {
-	ipUsername: new Map(),
-	ip: new Map(),
-	username: new Map(),
-	global: new Map(),
-}
-
-export function resetLauncherRegistrationRateLimits() {
-	registrationRateState.ipUsername.clear()
-	registrationRateState.ip.clear()
-	registrationRateState.username.clear()
-	registrationRateState.global.clear()
-}
-
 /**
  * @param {unknown} event
  * @param {CloudBaseContext} context
@@ -68,11 +42,13 @@ export async function main(event, context) {
 	const sse = stream ? context.sse() : undefined
 
 	try {
+		const env = readRuntimeEnv()
 		const result = await handleChatCompletions({
 			headers: readEventHeaders(event, context),
 			rawBody,
 			sse,
-			env: readRuntimeEnv(),
+			env,
+			getAuthUser: createAuthUserLookup(env),
 		})
 
 		if (stream) {
@@ -103,9 +79,11 @@ export async function main(event, context) {
  */
 export async function usageSummary(event, context) {
 	try {
+		const env = readRuntimeEnv()
 		return await handleUsageSummary({
 			headers: readEventHeaders(event, context),
-			env: readRuntimeEnv(),
+			env,
+			getAuthUser: createAuthUserLookup(env),
 		})
 	} catch (error) {
 		return errorResponse(error)
@@ -138,37 +116,7 @@ export async function launcherRegister(event, context) {
 			body: '',
 		}
 	}
-	const rawBody = readEventBody(event)
-	const rateLimit = consumeLauncherRegistrationRateLimit({
-		ip: readRegistrationClientIp(event, context),
-		username: readRegistrationUsername(rawBody),
-	})
-	if (rateLimit) {
-		return {
-			statusCode: 429,
-			headers: {
-				...CORS_HEADERS,
-				'retry-after': String(rateLimit.retryAfterSeconds),
-			},
-			body: JSON.stringify({
-				error: { message: '注册请求过于频繁，请稍后再试', status: 429 },
-			}),
-		}
-	}
-
-	try {
-		const result = await handleLauncherRegistration({
-			rawBody,
-			env: readRuntimeEnv(),
-		})
-		return {
-			statusCode: 201,
-			headers: CORS_HEADERS,
-			body: JSON.stringify(result),
-		}
-	} catch (error) {
-		return errorResponse(error)
-	}
+	return errorResponse(new GatewayError('请更新问学并使用邮箱验证完成注册', 410))
 }
 
 /**
@@ -185,9 +133,11 @@ export async function launcherActivate(event, context) {
 	}
 
 	try {
+		const env = readRuntimeEnv()
 		const result = await handleLauncherActivation({
 			headers: readEventHeaders(event, context),
-			env: readRuntimeEnv(),
+			env,
+			getAuthUser: createAuthUserLookup(env),
 		})
 		return {
 			statusCode: 200,
@@ -197,124 +147,6 @@ export async function launcherActivate(event, context) {
 	} catch (error) {
 		return errorResponse(error)
 	}
-}
-
-/**
- * @param {{ ip: string, username: string }} input
- */
-function consumeLauncherRegistrationRateLimit(input) {
-	const now = Date.now()
-	const ipKey = hashRateLimitKey(input.ip)
-	const usernameKey = hashRateLimitKey(input.username)
-	const checks = [
-		{
-			bucket: registrationRateState.ipUsername,
-			key: hashRateLimitKey(`${input.ip}\0${input.username}`),
-			limit: REGISTRATION_RATE_LIMITS.ipUsername,
-		},
-		{ bucket: registrationRateState.ip, key: ipKey, limit: REGISTRATION_RATE_LIMITS.ip },
-		{
-			bucket: registrationRateState.username,
-			key: usernameKey,
-			limit: REGISTRATION_RATE_LIMITS.username,
-		},
-		{ bucket: registrationRateState.global, key: '*', limit: REGISTRATION_RATE_LIMITS.global },
-	]
-	for (const check of checks) {
-		const retryAfterSeconds = consumeFixedWindow(check.bucket, check.key, check.limit, now)
-		if (retryAfterSeconds !== null) return { retryAfterSeconds }
-	}
-	return null
-}
-
-/**
- * @param {Map<string, RateLimitEntry>} bucket
- * @param {string} key
- * @param {number} limit
- * @param {number} now
- */
-function consumeFixedWindow(bucket, key, limit, now) {
-	pruneRateLimitBucket(bucket, now)
-	const current = bucket.get(key)
-	if (current) {
-		if (current.count >= limit) {
-			return Math.max(1, Math.ceil((current.resetAt - now) / 1000))
-		}
-		current.count += 1
-		return null
-	}
-	while (bucket.size >= REGISTRATION_RATE_MAX_KEYS) {
-		const oldestKey = bucket.keys().next().value
-		if (typeof oldestKey !== 'string') break
-		bucket.delete(oldestKey)
-	}
-	bucket.set(key, { count: 1, resetAt: now + REGISTRATION_RATE_WINDOW_MS })
-	return null
-}
-
-/**
- * @param {Map<string, RateLimitEntry>} bucket
- * @param {number} now
- */
-function pruneRateLimitBucket(bucket, now) {
-	for (const [key, entry] of bucket) {
-		if (entry.resetAt <= now) bucket.delete(key)
-	}
-}
-
-/**
- * Only trust the right-most X-Forwarded-For hop added by the ingress. A client can spoof values
- * on the left side of the chain, so using the first segment would make the IP limit bypassable.
- *
- * @param {unknown} event
- * @param {CloudBaseContext} context
- */
-function readRegistrationClientIp(event, context) {
-	const headers = readEventHeaders(event, context)
-	const forwarded = readHeader(headers, 'x-forwarded-for')
-	if (forwarded) {
-		const trustedHop = forwarded
-			.split(',')
-			.map((part) => part.trim())
-			.filter(Boolean)
-			.at(-1)
-		if (trustedHop) return trustedHop
-	}
-	const realIp = readHeader(headers, 'x-real-ip')
-	if (realIp) return realIp
-	if (isRecord(event) && isRecord(event.requestContext)) {
-		const requestContext = event.requestContext
-		if (isRecord(requestContext.http)) {
-			const sourceIp = readString(requestContext.http.sourceIp)
-			if (sourceIp) return sourceIp
-		}
-		const identity = isRecord(requestContext.identity) ? requestContext.identity : null
-		const sourceIp = identity ? readString(identity.sourceIp) : null
-		if (sourceIp) return sourceIp
-	}
-	return 'unknown'
-}
-
-/**
- * Parse only the username needed for the limiter. The password is never retained or logged.
- *
- * @param {string} rawBody
- */
-function readRegistrationUsername(rawBody) {
-	try {
-		const body = JSON.parse(rawBody)
-		if (isRecord(body) && typeof body.username === 'string') return body.username
-	} catch {
-		// Invalid JSON still consumes a bounded anonymous registration bucket.
-	}
-	return '<invalid>'
-}
-
-/**
- * @param {string} value
- */
-function hashRateLimitKey(value) {
-	return createHash('sha256').update(value, 'utf8').digest('hex')
 }
 
 /**
@@ -337,7 +169,6 @@ function readRuntimeEnv() {
 		cloudbaseClientSecret: process.env.CLOUDBASE_AUTH_CLIENT_SECRET ?? '',
 		cloudbaseUsageApiKey: process.env.CLOUDBASE_USAGE_API_KEY ?? '',
 		cloudbaseRegion: process.env.CLOUDBASE_REGION ?? 'ap-shanghai',
-		dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? '',
 		tencentCloudSecretId:
 			process.env.TENCENTCLOUD_SECRETID ??
 			process.env.TENCENTCLOUD_SECRET_ID ??
@@ -355,8 +186,22 @@ function readRuntimeEnv() {
 			process.env.TENCENTCLOUD_SESSION_TOKEN ??
 			process.env.TENCENTCLOUD_TOKEN ??
 			'',
+		dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? '',
 		requestTimeoutMs: Number(process.env.WENXUE_GATEWAY_TIMEOUT_MS ?? 60_000),
 	}
+}
+
+/** @param {ReturnType<typeof readRuntimeEnv>} env @returns {import('./gateway.mjs').AuthUserLookup} */
+function createAuthUserLookup(env) {
+	return (uid, timeoutMs) =>
+		createCloudBaseAuthDirectory({
+			envId: env.cloudbaseEnvId,
+			region: env.cloudbaseRegion,
+			secretId: env.tencentCloudSecretId,
+			secretKey: env.tencentCloudSecretKey,
+			token: env.tencentCloudToken,
+			timeoutMs,
+		}).getUser(uid)
 }
 
 /**

@@ -15,7 +15,8 @@ const accessKey = import.meta.env.VITE_CLOUDBASE_ACCESS_KEY || DEFAULT_CLOUDBASE
 
 interface CloudBaseAuthClient {
 	signInWithPassword(input: {
-		username: string
+		username?: string
+		email?: string
 		password: string
 	}): Promise<{ data?: unknown; error?: { message?: string } | null }>
 	getSession(): Promise<{ data?: unknown; error?: { message?: string } | null }>
@@ -37,7 +38,9 @@ export const cloudbaseConfig = {
 export async function signInAdmin(username: string, password: string): Promise<AdminSession> {
 	const authClient = getAuth()
 	if (!authClient) throw new Error('CloudBase Publishable Key 未配置')
-	const { data, error } = await authClient.signInWithPassword({ username, password })
+	const { data, error } = await authClient.signInWithPassword(
+		username.includes('@') ? { email: username, password } : { username, password },
+	)
 	if (error) throw new Error(error.message ?? '登录失败')
 	const session = readSession(data)
 	if (!session) throw new Error('登录成功但未返回有效 session')

@@ -20,6 +20,7 @@ const sources = [
 	['apps/llm-gateway/src/gateway.mjs', 'apps/llm-gateway/src/gateway.mjs'],
 	['apps/llm-gateway/src/index.mjs', 'apps/llm-gateway/src/index.mjs'],
 	['apps/admin-api/src/adminApi.mjs', 'apps/admin-api/src/adminApi.mjs'],
+	['apps/admin-api/src/cloudbaseAuth.mjs', 'apps/admin-api/src/cloudbaseAuth.mjs'],
 	['apps/admin-api/src/cloudbaseStore.mjs', 'apps/admin-api/src/cloudbaseStore.mjs'],
 	['apps/admin-api/src/index.mjs', 'apps/admin-api/src/index.mjs'],
 	['apps/admin/dist', 'apps/admin/dist'],

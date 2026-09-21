@@ -28,6 +28,10 @@ afterEach(() => {
 })
 
 interface StoreState {
+	authUsers?: import('./adminApi.mjs').UserAccount[]
+	authStatus?: 'active' | 'disabled'
+	authError?: Error
+	authUpdates?: Array<{ userId: string; active: boolean }>
 	adminRole?: 'admin' | 'viewer'
 	adminStatus?: 'active' | 'disabled'
 	audits: Record<string, unknown>[]
@@ -85,6 +89,29 @@ function createStore(state: StoreState) {
 		},
 	]
 	return {
+		async listAuthUsers() {
+			if (state.authError) throw state.authError
+			return (
+				state.authUsers ?? [
+					{
+						_id: USER_ID,
+						uid: USER_ID,
+						email: 'user@example.com',
+						nickname: '小问',
+						active: state.authStatus !== 'disabled',
+						status: state.authStatus ?? ('active' as const),
+					},
+				]
+			)
+		},
+		async getAuthUser(userId: string) {
+			return (await this.listAuthUsers()).find((user) => user.uid === userId) ?? null
+		},
+		async updateAuthUserStatus(userId: string, active: boolean) {
+			if (state.authError) throw state.authError
+			state.authStatus = active ? 'active' : 'disabled'
+			state.authUpdates = [...(state.authUpdates ?? []), { userId, active }]
+		},
 		async getAdminUser(uid: string) {
 			if (uid !== 'admin-uid' || !state.adminRole || !state.adminStatus) return null
 			return {
@@ -441,6 +468,7 @@ async function request(
 		headers?: Record<string, string>
 		env?: Record<string, string | number>
 		fetchImpl?: typeof fetch
+		store?: Partial<ReturnType<typeof createStore>>
 	} = {},
 ) {
 	return handleAdminRequest({
@@ -461,7 +489,7 @@ async function request(
 			releaseEventTokenSecret: EVENT_TOKEN_SECRET,
 			...init.env,
 		},
-		store: createStore(state),
+		store: { ...createStore(state), ...init.store },
 		fetchImpl: init.fetchImpl ?? createFetch(),
 		now: () => TEST_NOW,
 	})
@@ -709,8 +737,8 @@ describe('AdminApi', () => {
 		expect(read.statusCode).toBe(200)
 		expect(parseBody(read).users[0]).toMatchObject({
 			userId: USER_ID,
-			firstSeenAt: '2026-06-30T00:00:00.000Z',
-			lastSeenAt: '2026-07-01T12:00:00.000Z',
+			email: 'user@example.com',
+			nickname: '小问',
 			inputTokens: 12,
 			outputTokens: 8,
 			totalTokens: 20,
@@ -725,7 +753,6 @@ describe('AdminApi', () => {
 			method: 'PATCH',
 			body: {
 				userId: USER_ID,
-				status: 'active',
 				note: 'abnormal usage',
 				reason: 'manual review',
 			},
@@ -750,7 +777,7 @@ describe('AdminApi', () => {
 		})
 	})
 
-	it('rejects legacy status changes that cannot update CloudBase Auth', async () => {
+	it('updates authoritative CloudBase Auth status and audits the intent and result', async () => {
 		const state = createState()
 		const response = await request('/admin/v1/users/status', state, {
 			method: 'PATCH',
@@ -761,10 +788,153 @@ describe('AdminApi', () => {
 			},
 		})
 
-		expect(response.statusCode).toBe(409)
-		expect(parseBody(response).error.message).toMatch(/CloudBase Auth/i)
+		expect(response.statusCode).toBe(200)
+		expect(parseBody(response).user.status).toBe('disabled')
+		expect(state.authUpdates).toEqual([{ userId: USER_ID, active: false }])
 		expect(state.user.active).toBe(true)
-		expect(state.audits).toHaveLength(0)
+		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'applied'])
+	})
+
+	it.each(['active', 'disabled'] as const)(
+		'applies explicit %s status even when the read snapshot matches and a concurrent admin changes it',
+		async (status) => {
+			const state = createState({ authStatus: status })
+			const response = await request('/admin/v1/users/status', state, {
+				method: 'PATCH',
+				body: { userId: USER_ID, status },
+				store: {
+					async getAuthUser() {
+						const snapshot = { _id: USER_ID, uid: USER_ID, active: status === 'active', status }
+						state.authStatus = status === 'active' ? 'disabled' : 'active'
+						return snapshot
+					},
+				},
+			})
+			expect(response.statusCode).toBe(200)
+			expect(state.authUpdates).toEqual([{ userId: USER_ID, active: status === 'active' }])
+			expect(state.authStatus).toBe(status)
+			expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'applied'])
+		},
+	)
+
+	it('uses Auth users and status even when legacy records disagree or are missing', async () => {
+		const state = createState({
+			authUsers: [
+				{
+					_id: USER_ID,
+					uid: USER_ID,
+					active: false,
+					status: 'disabled',
+					email: 'user@example.com',
+					nickname: '同名昵称',
+				},
+				{
+					_id: 'new-uid',
+					uid: 'new-uid',
+					active: true,
+					status: 'active',
+					email: 'new@example.com',
+					nickname: '同名昵称',
+				},
+			],
+		})
+		state.user.note = '业务备注'
+		const users = parseBody(await request('/admin/v1/users', state)).users
+		expect(users).toHaveLength(2)
+		expect(users[0]).toMatchObject({
+			userId: USER_ID,
+			status: 'disabled',
+			note: '业务备注',
+			totalTokens: 20,
+		})
+		expect(users[1]).toMatchObject({
+			userId: 'new-uid',
+			status: 'active',
+			email: 'new@example.com',
+			nickname: '同名昵称',
+		})
+		expect(
+			parseBody(await request('/admin/v1/users', state, { query: { status: 'active', q: 'NEW@' } }))
+				.users,
+		).toHaveLength(1)
+		expect(parseBody(await request('/admin/v1/usage/summary', state)).userStatus).toEqual({
+			active: 1,
+			disabled: 1,
+			total: 2,
+		})
+	})
+
+	it.each(['admin-uid', 'internal-uid'])(
+		'prevents disabling self or internal administrators: %s',
+		async (uid) => {
+			const state = createState({
+				authUsers: [
+					{
+						_id: uid,
+						uid,
+						active: true,
+						status: 'active',
+						userType: uid === 'internal-uid' ? 'internalUser' : 'externalUser',
+					},
+				],
+			})
+			const response = await request('/admin/v1/users/status', state, {
+				method: 'PATCH',
+				body: { userId: uid, status: 'disabled' },
+			})
+			expect(response.statusCode).toBe(403)
+			expect(state.authUpdates).toBeUndefined()
+			expect(state.audits).toEqual([])
+		},
+	)
+
+	it('does not use legacy users when the Auth directory is unavailable', async () => {
+		const state = createState({ authError: new Error('unavailable') })
+		const response = await request('/admin/v1/users', state)
+		expect(response.statusCode).toBe(500)
+		expect(parseBody(response)).not.toHaveProperty('users')
+	})
+
+	it('does not show orphaned legacy accounts or mutate an account absent from Auth', async () => {
+		const state = createState({ authUsers: [] })
+		expect(parseBody(await request('/admin/v1/users', state)).users).toEqual([])
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: USER_ID, note: 'orphan' },
+		})
+		expect(response.statusCode).toBe(404)
+		expect(state.audits).toEqual([])
+	})
+
+	it('requires a durable audit intent before sending an Auth status mutation', async () => {
+		const state = createState()
+		const updateAuthUserStatus = vi.fn()
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: USER_ID, status: 'disabled' },
+			store: {
+				createUserPermissionAudit: vi.fn().mockRejectedValue(new Error('audit unavailable')),
+				updateAuthUserStatus,
+			},
+		})
+		expect(response.statusCode).toBe(500)
+		expect(updateAuthUserStatus).not.toHaveBeenCalled()
+	})
+
+	it('does not report success or change notes when the Auth mutation fails', async () => {
+		const state = createState()
+		const updateUserAccount = vi.fn()
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: USER_ID, status: 'disabled', note: 'changed' },
+			store: {
+				updateAuthUserStatus: vi.fn().mockRejectedValue(new Error('Auth unavailable')),
+				updateUserAccount,
+			},
+		})
+		expect(response.statusCode).toBe(500)
+		expect(updateUserAccount).not.toHaveBeenCalled()
+		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested'])
 	})
 
 	it('builds user status counts from user accounts', () => {
@@ -947,6 +1117,85 @@ describe('AdminApi announcement dispatch', () => {
 		expect(parseBody(response).announcements[0].id).toBe('announcement-51')
 		expect(state.announcementReceiptBatchCalls).toBe(2)
 		expect(state.announcementReceiptBatchSizes).toEqual([50, 15])
+	})
+
+	it.each(['pending', 'ack'])(
+		'checks authoritative Auth state for %s when the user profile omits status',
+		async (target) => {
+			for (const condition of ['active', 'disabled', 'missing', 'failed'] as const) {
+				const state = createState({ announcements: [createAnnouncement()] })
+				const getAuthUser = vi.fn(async (uid: string) => {
+					if (condition === 'failed') throw new Error('sensitive-control-plane-detail')
+					if (condition === 'missing') return null
+					return {
+						_id: uid,
+						uid,
+						active: condition === 'active',
+						status: condition,
+					}
+				})
+				const response = await request(
+					target === 'pending' ? '/v1/client/announcements/pending' : '/v1/client/announcement-ack',
+					state,
+					{
+						method: target === 'pending' ? 'GET' : 'POST',
+						query: { platform: 'darwin', version: '0.1.1' },
+						body: { announcementId: 'announcement-1' },
+						headers: { authorization: 'Bearer user-token' },
+						fetchImpl: async () => Response.json({ sub: USER_ID, type: 'external' }),
+						store: { getAuthUser },
+					},
+				)
+				expect(response.statusCode).toBe(
+					condition === 'active' ? 200 : condition === 'failed' ? 503 : 403,
+				)
+				expect(getAuthUser).toHaveBeenCalledOnce()
+				expect(getAuthUser).toHaveBeenCalledWith(USER_ID, expect.any(Number))
+				expect(response.body).not.toContain('sensitive-control-plane-detail')
+				if (condition !== 'active') {
+					expect(state.receipts).toHaveLength(0)
+					expect(state.announcementReceiptBatchCalls).toBe(0)
+				}
+			}
+		},
+	)
+
+	it.each(['ACTIVE', 'BLOCKED', null])(
+		'keeps an explicit client profile status %s authoritative',
+		async (status) => {
+			const getAuthUser = vi.fn().mockRejectedValue(new Error('must not query'))
+			const response = await request('/v1/client/announcements/pending', createState(), {
+				query: { platform: 'darwin', version: '0.1.1' },
+				headers: { authorization: 'Bearer user-token' },
+				fetchImpl: async () => Response.json({ sub: USER_ID, status }),
+				store: { getAuthUser },
+			})
+			expect(response.statusCode).toBe(status === 'ACTIVE' ? 200 : 403)
+			expect(getAuthUser).not.toHaveBeenCalled()
+		},
+	)
+
+	it('uses the remaining client authentication budget and rejects a mismatched Auth UID', async () => {
+		vi.useFakeTimers()
+		const getAuthUser = vi.fn().mockResolvedValue({ uid: 'wrong-user', active: true })
+		try {
+			const pending = request('/v1/client/announcements/pending', createState(), {
+				query: { platform: 'darwin', version: '0.1.1' },
+				headers: { authorization: 'Bearer user-token' },
+				env: { requestTimeoutMs: 3_000 },
+				fetchImpl: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 2_000))
+					return Response.json({ sub: USER_ID })
+				},
+				store: { getAuthUser },
+			})
+			await vi.advanceTimersByTimeAsync(2_000)
+			const response = await pending
+			expect(response.statusCode).toBe(503)
+			expect(getAuthUser).toHaveBeenCalledWith(USER_ID, 1_000)
+		} finally {
+			vi.useRealTimers()
+		}
 	})
 
 	it('keeps pending delivery available when bounded receipt cleanup fails', async () => {

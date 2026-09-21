@@ -1,6 +1,8 @@
 import cloudbase from '@cloudbase/node-sdk'
 import { createHash } from 'node:crypto'
 
+import { createCloudBaseAuthDirectory } from './cloudbaseAuth.mjs'
+
 /** @typedef {import('./adminApi.mjs').AdminStore} AdminStore */
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
@@ -29,17 +31,21 @@ const SEMVER_PATTERN =
 	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 
 /**
- * @param {{ envId: string, apiKey?: string, fetchImpl?: typeof fetch, timeoutMs?: number, transactionDatabase?: TransactionDatabase, sleepImpl?: (delayMs: number) => Promise<void>, randomImpl?: () => number }} input
+ * @param {{ envId: string, apiKey?: string, region?: string, secretId?: string, secretKey?: string, token?: string, fetchImpl?: typeof fetch, timeoutMs?: number, transactionDatabase?: TransactionDatabase, sleepImpl?: (delayMs: number) => Promise<void>, randomImpl?: () => number }} input
  * @returns {AdminStore}
  */
 export function createCloudBaseAdminStore(input) {
 	const client = createCloudBaseNoSqlClient(input)
+	const auth = createCloudBaseAuthDirectory(input)
 	const transactionDatabase =
 		input.transactionDatabase ?? cloudbase.init({ env: input.envId }).database()
 	const sleepImpl = input.sleepImpl ?? sleep
 	const randomImpl = input.randomImpl ?? Math.random
 
 	return {
+		listAuthUsers: auth.listUsers,
+		getAuthUser: auth.getUser,
+		updateAuthUserStatus: auth.updateUserStatus,
 		async getAdminUser(uid) {
 			return client.getById(ADMIN_USERS_COLLECTION, uid)
 		},
@@ -63,9 +69,13 @@ export function createCloudBaseAdminStore(input) {
 			return client.getById(USER_ACCOUNTS_COLLECTION, userId)
 		},
 		async updateUserAccount(userId, patch) {
-			return (
-				(await client.updateById(USER_ACCOUNTS_COLLECTION, userId, patch)) ??
-				(await client.getById(USER_ACCOUNTS_COLLECTION, userId))
+			return transactionDatabase.runTransaction(
+				/** @param {TransactionHandle} transaction */ async (transaction) => {
+					const current = await transactionGet(transaction, USER_ACCOUNTS_COLLECTION, userId)
+					const updated = { ...current, _id: userId, uid: userId, ...patch }
+					await transactionSet(transaction, USER_ACCOUNTS_COLLECTION, updated)
+					return updated
+				},
 			)
 		},
 		async createUserPermissionAudit(record) {
