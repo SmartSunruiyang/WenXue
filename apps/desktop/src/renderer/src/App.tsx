@@ -2231,7 +2231,18 @@ function TokensPage({
 						</div>
 					</div>
 				</section>
-				<p className="token-cost-note">{strings.tokens.costHint}</p>
+				<details className="token-cost-note">
+					<summary>{strings.tokens.costRules}</summary>
+					<p>{strings.tokens.costHint}</p>
+					<ul>
+						{strings.tokens.costRates.map((rate) => (
+							<li key={rate}>{rate}</li>
+						))}
+					</ul>
+					<p>{strings.tokens.costFormula}</p>
+					<p>{strings.tokens.costHistory}</p>
+					<p>{strings.tokens.costCoverage}</p>
+				</details>
 
 				{hasData ? (
 					<div className="token-sections">

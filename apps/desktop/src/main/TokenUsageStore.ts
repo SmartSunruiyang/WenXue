@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { readFile, rename, rm, writeFile } from 'node:fs/promises'
 import type { AppPaths } from './AppPaths'
 
+const COST_UNITS_PER_CNY = 10_000_000
+
 export interface TokenUsageRecord {
 	id: string
 	ts: number
@@ -128,13 +130,26 @@ function bucket(
 		current.inputTokens += record.inputTokens
 		current.outputTokens += record.outputTokens
 		current.totalTokens += record.totalTokens
-		current.estimatedCostCny = roundCurrency(current.estimatedCostCny + record.estimatedCostCny)
+		current.estimatedCostCny =
+			(Math.round(current.estimatedCostCny * COST_UNITS_PER_CNY) +
+				Math.round(record.estimatedCostCny * COST_UNITS_PER_CNY)) /
+			COST_UNITS_PER_CNY
 		buckets.set(key, current)
 	}
-	return Array.from(buckets.values()).sort((a, b) => b.totalTokens - a.totalTokens)
+	return Array.from(buckets.values())
+		.map((entry) => ({ ...entry, estimatedCostCny: roundCurrency(entry.estimatedCostCny) }))
+		.sort((a, b) => b.totalTokens - a.totalTokens)
 }
 
 function sum(records: TokenUsageRecord[], key: keyof TokenUsageRecord): number {
+	if (key === 'estimatedCostCny') {
+		return (
+			records.reduce(
+				(total, record) => total + Math.round(record.estimatedCostCny * COST_UNITS_PER_CNY),
+				0,
+			) / COST_UNITS_PER_CNY
+		)
+	}
 	return records.reduce((total, record) => {
 		const value = record[key]
 		return typeof value === 'number' ? total + value : total

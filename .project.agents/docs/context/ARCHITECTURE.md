@@ -174,7 +174,7 @@
 
 ```
 ## 模块名：TokenUsageStore
-- 职责：启动器侧本地 tokens 用量记录、按日期/画像/模型聚合与成本估算；作为云端用量读取失败时的本地兜底
+- 职责：启动器侧本地 tokens 用量记录、按日期/画像/模型聚合并累加记录已有的估算金额；累计后再按四位小数展示，作为云端用量读取失败时的本地兜底
 - 不负责：不保存提示词正文；不执行计费扣费；不发起网络请求
 - 输入：AppPaths、LauncherTelemetryIngest 从 LLM usage 提取的记录、单向 tokens 遥测或未来网关计量导入
 - 输出：DesktopBridge、ConsoleUI tokens 页
@@ -358,9 +358,20 @@ OTP、验证证明与未提交资料仅驻留内存，不产生待注册账号�
 - 不负责：不持久化提示词/响应正文；不保存或返回 DashScope Key；不实现订阅/扣费；不实现管理员登录/角色/业务 UI 逻辑，只提供构建后的静态文件与 AdminApi 适配器；M4 实时聚合不做 rollup 预计算
 - 输入：插件 OpenAIClient、UsageCloudClient、桌面激活/消息/更新客户端、AdminConsole、CI 注册请求、CloudBase access token、服务端模型/CloudBase/CI 验证配置、白名单 staging 内的 `apps/admin/dist`
 - 输出：DashScope SSE/JSON 原样回传；按 bearer token 返回当前 `ACTIVE` 用户 uid；写 `token_usage`；返回不含 uid/Key/敏感头的 `TokenUsageSummary`；返回无凭据健康状态；返回 AdminConsole HTML/JS/CSS 与 AdminApi JSON
-- 关键类型/接口：既有 auth/chat/usage/health/admin 静态 targets + §3.2 的 announcement/release/client/internal targets
+- 关键类型/接口：既有 auth/chat/usage/health/admin 静态 targets + §3.2 的 announcement/release/client/internal targets；模块内 `estimateTokenCostCny` 负责内置模型人民币成本估算
 - 持有状态：无业务授权缓存；部署态环境变量由 CloudBase Run 管理
 ```
+
+### 内置模型成本估算（CloudBaseLlmGateway）
+
+- 价格版本 `qwen3.7-list-2026-09-22`，采用用户确认的原价；仅适用于内置模型实时 Chat Completions，不应用限时优惠及 Batch File / Batch Chat 价格。
+- 单位：元 / 百万 tokens。Plus 单次输入（含缓存）≤ 256,000 时，普通输入 / 隐式命中 / 显式创建 / 显式命中 / 输出依次为 2 / 0.4 / 2.5 / 0.2 / 8；大于 256,000 时整次调用采用 6 / 1.2 / 7.5 / 0.6 / 24。Max 对应为 12 / 2.4 / 15 / 1.2 / 36。
+- 阶梯阈值和 Plus 长输入价取自[官方模型文档](https://help.aliyun.com/zh/model-studio/qwen3-7-plus)与[阶梯规则](https://help.aliyun.com/zh/model-studio/model-pricing)，K = 1,000；按整个请求输入决定档位，不按未缓存输入或输入输出之和判档。
+- 根据[缓存协议](https://help.aliyun.com/zh/model-studio/context-cache)，从 `usage.prompt_tokens_details`（兼容 `input_tokens_details`）解析命中和创建数量，并从消息内容/工具的 `cache_control` 标记识别显式缓存。缓存数量是输入子集：普通输入 = 输入 − 命中 − 创建，不重复计费。创建数量大于零也视为显式缓存。
+- `CloudTokenUsage` 新增 `cachedInputTokens`、`cacheCreationInputTokens`、`cacheMode`、`estimatedCostCny`、`pricingVersion`；只保存脱敏计量元数据，不保存请求标记所在正文。输入计数须为非负安全整数，缓存计数之和不得超过输入。
+- 新记录固化当次费用；历史记录未保存费用时在 summary 中依据已有 tokens 补算，缺少缓存数据时按普通输入估算，不回写历史记录。已保存金额（包括 0）保持原值。
+- 网关按 0.0000001 元整数单位计算、累加，summary 总额和各分组完成累加后再保留四位小数；明细保留完整计算精度。桌面离线缓存沿用云端金额。本地 BYO-Key 日志不套用内置供应商价格，未提供价格的其他模型不纳入金额估算。
+- ConsoleUI 在 tokens 总览下提供可展开的原价、阶梯、公式及历史数据估算说明；费用为参考成本，不执行扣费。
 
 ```
 ## 模块名：AdminApi
