@@ -48,6 +48,13 @@ import {
 } from './DesktopAnnouncementService'
 import { DesktopReleaseSignalService } from './DesktopReleaseSignalService'
 import { EmailAuthScreen } from './EmailAuthScreen'
+import {
+	finishOnboarding,
+	hasOnboardingMedia,
+	shouldOfferOnboarding,
+	type OnboardingOutcome,
+} from './onboardingProgress'
+import { OnboardingTour } from './OnboardingTour'
 import { executeSafeSignOut } from './safeSignOut'
 import { strings } from './strings'
 import type {
@@ -64,6 +71,15 @@ import type {
 } from './wenxue'
 
 const isMacPlatform = navigator.userAgent.includes('Macintosh')
+const onboardingMediaAvailable = hasOnboardingMedia(
+	Object.keys(
+		import.meta.glob('../public/onboarding/*.mp4', {
+			query: '?url',
+			import: 'default',
+			eager: true,
+		}),
+	),
+)
 declare const __WENXUE_UPDATE_CHANNEL__: string
 
 type RouteId = 'browsers' | 'logs' | 'tokens' | 'settings'
@@ -149,6 +165,7 @@ export default function App() {
 	const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('launch')
 	const [authReady, setAuthReady] = useState(false)
 	const [authUser, setAuthUser] = useState<LauncherPublicUser | null>(null)
+	const [onboardingAccountId, setOnboardingAccountId] = useState<string | null>(null)
 	const [profiles, setProfiles] = useState<BrowserProfile[]>([])
 	const [statuses, setStatuses] = useState<Record<string, BrowserStatus>>({})
 	const [logs, setLogs] = useState<LauncherLogEntry[]>([])
@@ -283,7 +300,7 @@ export default function App() {
 		}
 	}, [authUser])
 
-	const loadWorkspaceData = useCallback(async () => {
+	const loadWorkspaceData = useCallback(async (userId: string) => {
 		const [nextProfiles, nextStatuses, nextLogs, nextSettings, nextTokens, nextVersions] =
 			await Promise.all([
 				window.wenxue.browser.listProfiles(),
@@ -293,6 +310,9 @@ export default function App() {
 				window.wenxue.tokens.getSummary(),
 				window.wenxue.app.getVersions(),
 			])
+		setOnboardingAccountId(
+			shouldOfferOnboarding(userId, nextProfiles.length, onboardingMediaAvailable) ? userId : null,
+		)
 		setProfiles(nextProfiles)
 		setStatuses(nextStatuses)
 		setLogs(nextLogs.sort((a, b) => a.ts - b.ts))
@@ -361,7 +381,7 @@ export default function App() {
 			if (!synced.ok) {
 				throw new Error(synced.error ?? '账号 session 同步失败')
 			}
-			const nextVersions = await loadWorkspaceData()
+			const nextVersions = await loadWorkspaceData(session.userId)
 			if (mounted) {
 				setAuthUser(toPublicUser(session))
 				setAuthReady(true)
@@ -707,7 +727,7 @@ export default function App() {
 			if (!result.ok) {
 				throw new Error(result.error ?? '账号 session 同步失败')
 			}
-			const nextVersions = await loadWorkspaceData()
+			const nextVersions = await loadWorkspaceData(session.userId)
 			setAuthUser(toPublicUser(session))
 			void announcementServiceRef.current
 				?.start(session, desktopPlatform(shellInfo.platform), nextVersions.app)
@@ -761,6 +781,7 @@ export default function App() {
 				announcementServiceRef.current?.stop()
 				setTokensLoading(false)
 				setAuthUser(null)
+				setOnboardingAccountId(null)
 				setProfiles([])
 				setStatuses({})
 				setLogs([])
@@ -854,6 +875,15 @@ export default function App() {
 		if (!result.ok) setMessage(result.error ?? strings.error.closeWindow)
 	}, [])
 
+	const exitOnboarding = (outcome: OnboardingOutcome) => {
+		if (!authUser) return
+		const saved = finishOnboarding(authUser.userId, outcome)
+		setOnboardingAccountId(null)
+		setRoute('browsers')
+		setAvatarOpen(false)
+		if (!saved) setMessage(strings.onboarding.saveProgressError)
+	}
+
 	const interruptionLayer = (
 		<DesktopInterruptionLayer
 			announcement={authUser ? announcement : null}
@@ -901,6 +931,27 @@ export default function App() {
 							() => setMessage(strings.auth.email.privacyOpenError),
 						)
 					}}
+					windowControls={
+						<WindowControls
+							onError={setMessage}
+							shellInfo={shellInfo}
+							setShellInfo={setShellInfo}
+						/>
+					}
+				/>
+				{interruptionLayer}
+			</>
+		)
+	}
+
+	if (onboardingAccountId === authUser.userId) {
+		return (
+			<>
+				<OnboardingTour
+					key={authUser.userId}
+					frameless={shellInfo.frameless}
+					onExit={exitOnboarding}
+					suspended={Boolean(announcement || visibleDesktopUpdateKey(updateState, dismissedUpdate))}
 					windowControls={
 						<WindowControls
 							onError={setMessage}
@@ -1067,6 +1118,7 @@ export default function App() {
 				{route === 'settings' ? (
 					<SettingsPage
 						checkForUpdates={() => checkForUpdates('about')}
+						onReplayOnboarding={() => setOnboardingAccountId(authUser.userId)}
 						savedTick={savedTick}
 						saving={savingSettings}
 						section={settingsSection}
@@ -1083,6 +1135,21 @@ export default function App() {
 			{interruptionLayer}
 		</main>
 	)
+}
+
+function visibleDesktopUpdateKey(state: UpdateState, dismissed: string | null): string | null {
+	const release = 'release' in state ? state.release : undefined
+	if (!release) return null
+	const key = `${release.releaseId}:${release.mode}:${state.phase}`
+	if (key === dismissed) return null
+	return state.phase === 'available' ||
+		state.phase === 'downloading' ||
+		state.phase === 'ready' ||
+		state.phase === 'opening' ||
+		state.phase === 'handedOff' ||
+		state.phase === 'error'
+		? key
+		: null
 }
 
 function DesktopInterruptionLayer({
@@ -1109,18 +1176,9 @@ function DesktopInterruptionLayer({
 	updateState: UpdateState
 }) {
 	const release = 'release' in updateState ? updateState.release : undefined
-	const updateKey = release ? `${release.releaseId}:${release.mode}:${updateState.phase}` : null
+	const updateKey = visibleDesktopUpdateKey(updateState, dismissedUpdate)
 	const mandatory = release?.mode === 'mandatory'
-	const updateVisible = Boolean(
-		updateKey &&
-		dismissedUpdate !== updateKey &&
-		(updateState.phase === 'available' ||
-			updateState.phase === 'downloading' ||
-			updateState.phase === 'ready' ||
-			updateState.phase === 'opening' ||
-			updateState.phase === 'handedOff' ||
-			updateState.phase === 'error'),
-	)
+	const updateVisible = updateKey !== null
 
 	if (mandatory && updateVisible) {
 		return (
@@ -2357,6 +2415,7 @@ function TokenPanel({
 
 function SettingsPage({
 	checkForUpdates,
+	onReplayOnboarding,
 	savedTick,
 	saving,
 	section,
@@ -2369,6 +2428,7 @@ function SettingsPage({
 	versions,
 }: {
 	checkForUpdates: () => Promise<void>
+	onReplayOnboarding: () => void
 	savedTick: boolean
 	saving: boolean
 	section: SettingsSectionId
@@ -2522,6 +2582,12 @@ function SettingsPage({
 							<section className="settings-panel">
 								<h2>{strings.settings.sections.kernel}</h2>
 								<p className="settings-panel__intro">{strings.settings.kernel.description}</p>
+								{onboardingMediaAvailable ? (
+									<button className="soft-button" onClick={onReplayOnboarding} type="button">
+										<RefreshCw size={15} />
+										{strings.onboarding.reopen}
+									</button>
+								) : null}
 								<div className="version-list">
 									<span>{strings.settings.kernel.browser}</span>
 									<strong>{versions.browser}</strong>
