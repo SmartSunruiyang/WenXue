@@ -66,7 +66,8 @@ describe('CloudBase Auth account directory', () => {
 	it('modifies only authoritative account status without changing identity or password', async () => {
 		const fetchImpl = vi
 			.fn<typeof fetch>()
-			.mockResolvedValue(Response.json({ Response: { Data: { Success: true } } }))
+			.mockResolvedValueOnce(Response.json({ Response: { Data: { Success: true } } }))
+			.mockResolvedValueOnce(usersResponse([{ ...authUser(), UserStatus: 'BLOCKED' }]))
 		await createCloudBaseAuthDirectory({ ...config, fetchImpl }).updateUserStatus('uid-1', false)
 		expect(new Headers(fetchImpl.mock.calls[0][1]?.headers).get('x-tc-action')).toBe('ModifyUser')
 		expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toEqual({
@@ -74,6 +75,53 @@ describe('CloudBase Auth account directory', () => {
 			Uid: 'uid-1',
 			UserStatus: 'BLOCKED',
 		})
+	})
+
+	it.each([
+		{ users: [] },
+		{ users: [authUser()] },
+		{ users: [{ ...authUser('wrong'), UserStatus: 'BLOCKED' }] },
+	])(
+		'rejects a successful write whose Auth readback is absent, stale or mismatched: %j',
+		async ({ users }) => {
+			const fetchImpl = vi
+				.fn<typeof fetch>()
+				.mockResolvedValueOnce(Response.json({ Response: { Data: { Success: true } } }))
+				.mockResolvedValueOnce(usersResponse(users))
+			await expect(
+				createCloudBaseAuthDirectory({ ...config, fetchImpl }).updateUserStatus('uid-1', false),
+			).rejects.toMatchObject({ status: 502 })
+		},
+	)
+
+	it('returns the valid Auth last-login timestamp without exposing raw metadata', async () => {
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValue(
+				usersResponse([{ ...authUser(), LastLoginTime: '2026-09-22T08:30:00+08:00' }]),
+			)
+		const user = await createCloudBaseAuthDirectory({ ...config, fetchImpl }).getUser('uid-1')
+		expect(user).toMatchObject({
+			email: 'uid-1@example.com',
+			nickname: '昵称',
+			lastSeenAt: '2026-09-22T00:30:00.000Z',
+		})
+		expect(user).not.toHaveProperty('LastLoginTime')
+	})
+
+	it('rejects a changing total during Auth pagination', async () => {
+		const fetchImpl = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				usersResponse(
+					Array.from({ length: 100 }, (_, index) => authUser(`uid-${index}`)),
+					101,
+				),
+			)
+			.mockResolvedValueOnce(usersResponse([authUser('last')], 102))
+		await expect(
+			createCloudBaseAuthDirectory({ ...config, fetchImpl }).listUsers(),
+		).rejects.toMatchObject({ status: 502 })
 	})
 
 	it('fails closed before network requests when management credentials are missing', async () => {

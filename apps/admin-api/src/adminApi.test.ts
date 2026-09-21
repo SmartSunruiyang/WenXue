@@ -789,7 +789,11 @@ describe('AdminApi', () => {
 		})
 
 		expect(response.statusCode).toBe(200)
-		expect(parseBody(response).user.status).toBe('disabled')
+		expect(parseBody(response).user).toMatchObject({
+			status: 'disabled',
+			totalTokens: 20,
+			updatedAt: new Date(TEST_NOW).toISOString(),
+		})
 		expect(state.authUpdates).toEqual([{ userId: USER_ID, active: false }])
 		expect(state.user.active).toBe(true)
 		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'applied'])
@@ -888,6 +892,67 @@ describe('AdminApi', () => {
 		},
 	)
 
+	it('returns the complete Auth directory by default and limits only when explicitly requested', async () => {
+		const authUsers = Array.from({ length: 501 }, (_, index) => ({
+			_id: `auth-${index}`,
+			uid: `auth-${index}`,
+			active: true,
+			status: 'active' as const,
+			email: `user-${index}@example.com`,
+			nickname: `用户 ${index}`,
+		}))
+		const state = createState({ authUsers })
+		const response = await request('/admin/v1/users', state)
+		expect(response.statusCode).toBe(200)
+		expect(parseBody(response).users).toHaveLength(501)
+		expect(parseBody(response).users.at(-1)).toMatchObject({
+			userId: 'auth-500',
+			email: 'user-500@example.com',
+		})
+		const limited = await request('/admin/v1/users', state, { query: { limit: '10' } })
+		expect(parseBody(limited).users).toHaveLength(10)
+	})
+
+	it('retains UID-joined historical timestamps and the latest Auth login', async () => {
+		const state = createState({
+			authUsers: [
+				{
+					_id: USER_ID,
+					uid: USER_ID,
+					active: true,
+					status: 'active',
+					email: 'user@example.com',
+					nickname: '小问',
+					lastSeenAt: '2026-09-22T00:00:00.000Z',
+				},
+			],
+		})
+		const response = await request('/admin/v1/users', state)
+		expect(parseBody(response).users[0]).toMatchObject({
+			email: 'user@example.com',
+			nickname: '小问',
+			firstSeenAt: state.user.firstSeenAt,
+			createdAt: state.user.createdAt,
+			lastSeenAt: '2026-09-22T00:00:00.000Z',
+		})
+	})
+
+	it('preserves token totals and records an unconfirmed audit when note persistence fails after a status change', async () => {
+		const state = createState()
+		const response = await request('/admin/v1/users/status', state, {
+			method: 'PATCH',
+			body: { userId: USER_ID, status: 'disabled', note: 'new note' },
+			store: {
+				...createStore(state),
+				updateUserAccount: vi.fn().mockRejectedValue(new Error('storage unavailable')),
+			},
+		})
+		expect(response.statusCode).toBe(500)
+		expect(state.authUpdates).toEqual([{ userId: USER_ID, active: false }])
+		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'unconfirmed'])
+		expect(state.audits[0].operationId).toBe(state.audits[1].operationId)
+	})
+
 	it('does not use legacy users when the Auth directory is unavailable', async () => {
 		const state = createState({ authError: new Error('unavailable') })
 		const response = await request('/admin/v1/users', state)
@@ -934,7 +999,7 @@ describe('AdminApi', () => {
 		})
 		expect(response.statusCode).toBe(500)
 		expect(updateUserAccount).not.toHaveBeenCalled()
-		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested'])
+		expect(state.audits.map((audit) => audit.outcome)).toEqual(['requested', 'unconfirmed'])
 	})
 
 	it('builds user status counts from user accounts', () => {

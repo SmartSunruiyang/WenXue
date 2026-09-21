@@ -237,6 +237,8 @@ revision 一致的 CfT 上，用于归因内核、构建与性能差异。两者
 
 ### AR-11 配套系统兼容
 
+- 后台用户目录及启用/禁用使用 CloudBase Auth 同一 uid 与 `ACTIVE/BLOCKED` 权威状态。无业务元数据或模型用量的新用户也必须可见；用户备注只按 uid 补充，不决定权限。权限更新需审计意图、权威写入与回读验证，兼容当前 AdminApi 契约。
+
 - 当账号控制端申请内置模型任务凭据时，现有 CloudBase Gateway 应先用用户 session 鉴权并校验用户
   启用状态；厂商 Key 只存在服务端，任务凭据签发不得联系模型厂商。
 - 当任务扩展调用内置模型时，它应使用绑定 `uid + TaskId + purpose + expiry` 的短期任务凭据；
@@ -376,13 +378,13 @@ flowchart TB
 
 ### 6.1 运行时进程边界
 
-| 进程/上下文                                      | 主要职责                                                 | 问学业务模块的数据禁区                                                         |
-| ------------------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Chromium browser process                         | 任务目录、Profile 生命周期、窗口宿主、并发配额与更新     | prompt、response、截图、BYO Key 明文或长期 access/refresh token 的持久化与日志 |
+| 进程/上下文                                      | 主要职责                                                                                                                     | 问学业务模块的数据禁区                                                         |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Chromium browser process                         | 任务目录、Profile 生命周期、窗口宿主、并发配额与更新                                                                         | prompt、response、截图、BYO Key 明文或长期 access/refresh token 的持久化与日志 |
 | 账号控制 WebUI/扩展                              | 问学邮箱密码/验证码登录、验证后完整资料提交才建号、忘记密码、人机验证码、昵称/头像配置、短期网关凭据申领/发布与 BYO Key 封装 | 任意任务的网站 Cookie、DOM、浏览历史和 AI 正文                                 |
-| Task Profile extension service worker / renderer | 该任务 Agent、模型调用、AI 历史、任务日志                | 其他任务 Profile、其他任务扩展存储、长期账号 refresh token                     |
-| Task Profile web renderer                        | 该任务页面执行、DOM 序列化与动作反馈                     | 其他任务网站身份、任务目录、用户模型配置                                       |
-| CloudBase Gateway                                | session/任务凭据鉴权、厂商转发、tokens 计量              | prompt/响应持久化、厂商 Key 下发                                               |
+| Task Profile extension service worker / renderer | 该任务 Agent、模型调用、AI 历史、任务日志                                                                                    | 其他任务 Profile、其他任务扩展存储、长期账号 refresh token                     |
+| Task Profile web renderer                        | 该任务页面执行、DOM 序列化与动作反馈                                                                                         | 其他任务网站身份、任务目录、用户模型配置                                       |
+| CloudBase Gateway                                | session/任务凭据鉴权、厂商转发、tokens 计量                                                                                  | prompt/响应持久化、厂商 Key 下发                                               |
 
 ## 7. 原生模块边界
 

@@ -134,7 +134,7 @@ main 的 DesktopUpdateService 不加载 CloudBase Web SDK。模块卡片和依�
 | `--no-first-run`              | —                             | 跳过首次运行向导                                                                            |
 | `--no-default-browser-check`  | —                             | 不弹"设为默认浏览器"                                                                        |
 | `--hide-crash-restore-bubble` | —                             | 上次崩溃后不弹恢复气泡                                                                      |
-| `--disable-infobars`          | —                             | 隐藏不可手动关闭的 Chrome for Testing 顶部说明栏                                             |
+| `--disable-infobars`          | —                             | 隐藏不可手动关闭的 Chrome for Testing 顶部说明栏                                            |
 | `--remote-debugging-pipe`     | 仅冒烟测试注入                | CDP 校验插件加载；**日常启动不开启**（避免暴露调试面）                                      |
 | 位置参数                      | 有序启动 URL（可选）          | 首项为前台标签、其余为后台标签；会话交接使用“新标签页、一次性 localhost 页”的顺序           |
 
@@ -236,7 +236,7 @@ extraResources:
 - 流式计量：当请求 `stream=true` 时，网关必须注入 `stream_options: { include_usage: true }`，否则 DashScope 流式响应不返回 usage。
 - 计量：M0 捕获 usage 与端到端延迟；M1 后写 `token_usage`，记录只含 CloudBase 用户 uid、可选 browserId、model、tokens、latency、createdAt；M4 的 `usage-summary` target 实时读取当前用户 uid 记录并返回脱敏 `TokenUsageSummary`（recent id 不含 uid）。browserId 来自 `X-WenXue-Browser-Id`，限 1–128 位 ASCII 字母、数字、下划线和短横线，仅用于当前鉴权 uid 下的分组，不参与授权、不转发上游。旧记录保留 cloud 分组。
 - 访问（2026-09-22 邮箱认证后端上线后）：当前版本 035 状态 normal，承接 100% 流量（`HasTraffic:true`、`IsReleasing:false`）；部署前后配置经归一化比较无变化，包括既有 EnvParams、`OpenAccessTypes:["OA","PUBLIC","MINIAPP"]`、`Cpu:0.25`、`Mem:0.5`、`MinNum:1`、`MaxNum:2`。旧注册 target 仅返回 410，不再运行用户名注册或其限流逻辑；邮箱发码与验证使用 CloudBase Auth。扩大实例规模或正式公开获客前仍需评估共享网关层限流与审计告警。
-- 组合运行时上线（2026-07-18）：AdminApi 管理、消息、版本、客户端与 CI targets 及 AdminConsole `/admin` 静态 target 已合并到 Gateway；AdminConsole 以 `/admin/` base 构建，产物经白名单 staging 进入镜像，Functions Framework 固定 `1.18.2`。统一域名共 18 条公开路由；独立 `wenxue-admin-api` 与 `wenxue-admin-web` 保留为回滚/排障单元。
+- 组合运行时上线（2026-07-18）：AdminApi 管理、消息、版本、客户端与 CI targets 及 AdminConsole `/admin` 静态 target 已合并到 Gateway；AdminConsole 以 `/admin/` base 构建，产物、AdminApi 的 `cloudbaseAuth.mjs` 与 `packages/client-operations` 服务端契约入口经白名单 staging 进入镜像，Functions Framework 固定 `1.18.2`。统一域名共 18 条公开路由；独立 `wenxue-admin-api` 与 `wenxue-admin-web` 保留为回滚/排障单元。
 - 发布记录：2026-07-17 完成 023 灰度与 024 降配；2026-07-18 完成消息/手动更新控制面并发布 030。中间 028 曾错误使用 `/` base，生产只读冒烟发现 `/assets/*` 404 后改用固定 staging 脚本重建，029 恢复；030 携带最终幂等、健康统计、配额与发布公钥绑定修复。未购买额外资源点，也未开启超限。
 - 2026-09-18 发布：从在线 032 更新为 033，构建 ID `2605704907`，保留既有运行配置、VPC 与全部环境变量。通过固定白名单脚本构建组合运行时，验证两个客户端入口的新画像 ID 校验、健康与鉴权边界、注册 CORS、AdminConsole HTML/JS/CSS；未调用真实收费模型或改写历史用量。详见 [部署记录](../../log/2026-09-18-deploy-and-commit-workspace.md)。
 - 2026-09-22 发布与清理：033 → 034，RunId `1x8iuNFA5uvBGo`、BuildId `2607109111`；两个公网入口均实测 health 200、旧注册 410、实际 CORS 预检 204、无凭据激活/管理用户/用量 API 401，AdminConsole 页面 200 且静态资源字节吻合。短信关闭、邮箱/密码开启、匿名关闭；存储保持 PRIVATE，实际开发安全域 `localhost:5173` 为 ENABLE。删除测试 externalUser 1 个，以及 `token_usage` 82、`machine_accounts` 3、`user_permission_audit` 6、`user_accounts` 5、悬空 `admin_users` 2 条；测试账号与上述测试业务数据复核为 0，仅保留内置 internalUser 及其角色记录 1 条。详见 [邮箱切换执行日志](../../log/2026-09-22-email-auth.md)。
@@ -253,7 +253,7 @@ extraResources:
 
 - 前端：`apps/admin` 静态站点，使用 CloudBase Web SDK 的邮箱密码或内置管理员账号密码登录；路由守卫必须使用 `auth.getSession()`，不得使用已废弃且可能误判的 `getLoginState()`。仓库目标运行形态由 `wenxue-llm-gateway` 的 `/admin` target 提供构建产物；构建固定 `VITE_BASE_PATH=/admin/`、同源 AdminApi、当前 env/region，避免 shell 残留 `VITE_*` 污染 bundle。独立 CloudRun 静态容器保留作回滚。
 - 后端：`apps/admin-api` 是唯一业务实现；PUBLIC 请求均先校验 CloudBase Auth bearer，再查 `admin_users` 角色，前端不直接读写 NoSQL。相同公开 targets 由 Gateway 复用；独立 Function mode 服务保留作回滚。
-- 数据：CloudBase Auth `ACTIVE/BLOCKED` 是账号状态权威。AdminApi 的 `cloudbaseAuth.mjs` 用服务端 CAM 凭据调用 `DescribeUserList`/`ModifyUser`，后台真实用户列表按 UID 关联用量和 `user_accounts` 备注；不使用历史 active 字段授权。`admin_users` 继续管 admin/viewer 角色，普通注册不会获管理角色；内置管理员用户名入口只在管理后台兼容。管理凭据/权限缺失时明确报服务不可用，不退回旧表。
+- 数据：CloudBase Auth `ACTIVE/BLOCKED` 是账号状态权威。AdminApi 的 `cloudbaseAuth.mjs` 用服务端 CAM 凭据调用 `DescribeUserList`/`ModifyUser`，后台真实用户列表按 UID 关联用量和 `user_accounts` 备注及历史时间；状态变更先写 requested 审计、ModifyUser 后回读确认，再写 applied，未确认写 unconfirmed；不使用历史 active 字段授权。`admin_users` 继续管 admin/viewer 角色，普通注册不会获管理角色；内置管理员用户名入口只在管理后台兼容。管理凭据/权限缺失时明确报服务不可用，不退回旧表。
 - 公网部署快照（2026-07-18，当前 Gateway 版本见 §7.1）：
   - AdminConsole 主入口：`https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com/admin`，使用 CloudBase HTTP 网关默认域名；`/admin`、`/admin/`、`/admin/assets/*` 三条路由均指向 `wenxue-llm-gateway` 030，构建期注入 `VITE_BASE_PATH=/admin/` 与同源 AdminApi base URL。
   - AdminApi 主入口：同域的管理、消息、版本、客户端与 CI 精确路由均指向 Gateway；不在默认域名下使用 `/admin/v1/*`，因为 `/admin` 页面路由会按前缀捕获。统一域名当前共 18 条公开路由。
@@ -266,6 +266,7 @@ extraResources:
   - 2026-07-17 降耗结果：唯一常驻 Gateway 为 0.25C/0.5GB、`MinNum=1`、`MaxNum=2`，按配置估算固定计算约 21420 点/月，较 107100 点/月基线约下降 80%。该数值是配置侧估算，不是账单实测；本次未购买资源点、未开启超限。
   - 2026-07-17 清理与切换：隔离静态托管探针路由与本轮上传的 `admin/`、`__admin_probe/` 文件已删除；正式七条后台路由随后全部切换到 Gateway。
   - 2026-07-18 验收：Gateway 030 与 AdminApi 012 均为 `NORMAL` 且承接 100% 流量；健康与 update policy 返回 200，三类未授权边界返回 401，CORS 预检为 204/`*`，`/admin` 及其实际 JS/CSS 均返回 200。
+  - 2026-09-18 验收：Gateway 032 正常承接 100% 流量；源码发布 031 的镜像构建和推送成功但平台状态失败，经 TCR 摘要核验后以同一镜像发布 032。健康、默认域名页面、HTML/JS/CSS 构建哈希、未登录管理接口 401 均通过；使用原服务配置只读查询生产目录，返回 8 个 Auth 账号（7 启用、1 禁用，其中 5 个无用量）及 82 条计量记录。真实账号状态写操作未在线执行，启用/禁用链路由本地集成与浏览器测试覆盖。
 
 #### 自定义域名（2026-09-18）
 

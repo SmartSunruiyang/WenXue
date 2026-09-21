@@ -13,17 +13,46 @@ const REQUEST_TIMEOUT_MS = 10_000
 
 /** @param {AuthDirectoryConfig} input */
 export function createCloudBaseAuthDirectory(input) {
+	/** @param {string} uid @param {number} [timeoutMs] */
+	async function getUser(uid, timeoutMs) {
+		const data = await callUserApi(
+			{ ...input, timeoutMs: timeoutMs ?? input.timeoutMs },
+			'DescribeUserList',
+			{
+				UidList: [uid],
+				PageNo: 1,
+				PageSize: PAGE_SIZE,
+			},
+		)
+		const users = readUserList(data)
+		if (users.some((user) => user.uid !== uid) || users.length > 1 || data.Total !== users.length) {
+			throw new AdminApiError('CloudBase Auth returned a mismatched user', 502)
+		}
+		return users[0] ?? null
+	}
+
 	return {
 		async listUsers() {
 			/** @type {import('./adminApi.mjs').UserAccount[]} */
 			const users = []
 			const seen = new Set()
+			let expectedTotal
 			for (let pageNo = 1; ; pageNo += 1) {
 				const data = await callUserApi(input, 'DescribeUserList', {
 					PageNo: pageNo,
 					PageSize: PAGE_SIZE,
 				})
 				const page = readUserList(data)
+				expectedTotal ??= Number(data.Total)
+				if (
+					data.Total !== expectedTotal ||
+					page.length !== Math.min(PAGE_SIZE, expectedTotal - users.length)
+				) {
+					throw new AdminApiError(
+						'CloudBase Auth user list is incomplete or changed; refresh and retry',
+						502,
+					)
+				}
 				for (const user of page) {
 					if (seen.has(user.uid)) {
 						throw new AdminApiError('CloudBase Auth returned inconsistent pagination', 502)
@@ -37,27 +66,7 @@ export function createCloudBaseAuthDirectory(input) {
 				}
 			}
 		},
-		/** @param {string} uid @param {number} [timeoutMs] */
-		async getUser(uid, timeoutMs) {
-			const data = await callUserApi(
-				{ ...input, timeoutMs: timeoutMs ?? input.timeoutMs },
-				'DescribeUserList',
-				{
-					UidList: [uid],
-					PageNo: 1,
-					PageSize: PAGE_SIZE,
-				},
-			)
-			const users = readUserList(data)
-			if (
-				users.some((user) => user.uid !== uid) ||
-				users.length > 1 ||
-				data.Total !== users.length
-			) {
-				throw new AdminApiError('CloudBase Auth returned a mismatched user', 502)
-			}
-			return users[0] ?? null
-		},
+		getUser,
 		/** @param {string} uid @param {boolean} active */
 		async updateUserStatus(uid, active) {
 			const data = await callUserApi(input, 'ModifyUser', {
@@ -66,6 +75,13 @@ export function createCloudBaseAuthDirectory(input) {
 			})
 			if (data.Success !== true) {
 				throw new AdminApiError('CloudBase Auth did not confirm the user status change', 502)
+			}
+			const user = await getUser(uid)
+			if (!user || user.active !== active) {
+				throw new AdminApiError(
+					'CloudBase Auth user status could not be verified; refresh and retry',
+					502,
+				)
 			}
 		},
 	}
@@ -93,7 +109,12 @@ function readAuthUser(value) {
 	) {
 		throw new AdminApiError('CloudBase Auth returned an invalid user', 502)
 	}
+	const lastLoginTime =
+		typeof value.LastLoginTime === 'string' ? Date.parse(value.LastLoginTime) : NaN
 	return {
+		...(Number.isFinite(lastLoginTime)
+			? { lastSeenAt: new Date(lastLoginTime).toISOString() }
+			: {}),
 		_id: value.Uid,
 		uid: value.Uid,
 		active: value.UserStatus === 'ACTIVE',

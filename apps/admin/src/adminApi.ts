@@ -15,7 +15,7 @@ interface UsersResponse {
 	users: UserAccountView[]
 }
 
-interface UserStatusPatch {
+export interface UserStatusPatch {
 	userId: string
 	status?: UserStatus
 	note?: string

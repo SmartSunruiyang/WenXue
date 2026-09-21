@@ -262,11 +262,11 @@ export async function handleAdminRequest(input) {
 				input.store.listUserAccounts({}),
 			])
 			const q = readQueryText(input.query?.q)?.toLocaleLowerCase()
-			const noteByUid = new Map(
-				notes
-					.filter(isRecord)
-					.map((note) => [readString(note.uid) ?? readString(note._id), note.note]),
-			)
+			const noteByUid = new Map()
+			for (const note of notes.filter(isRecord)) {
+				const uid = readString(note.uid) ?? readString(note._id)
+				if (uid && (!noteByUid.has(uid) || note._id === uid)) noteByUid.set(uid, note)
+			}
 			const users = authUsers
 				.filter(
 					(user) =>
@@ -276,8 +276,13 @@ export async function handleAdminRequest(input) {
 								text?.toLocaleLowerCase().includes(q),
 							)),
 				)
-				.slice(0, readPositiveInteger(input.query?.limit, DEFAULT_USER_LIMIT))
-				.map((user) => ({ ...user, note: readString(noteByUid.get(user.uid)) ?? undefined }))
+				.slice(
+					0,
+					input.query?.limit === undefined
+						? undefined
+						: readPositiveInteger(input.query.limit, DEFAULT_USER_LIMIT),
+				)
+				.map((user) => mergeUserMetadata(user, noteByUid.get(user.uid)))
 			const records = await input.store.listUsageRecords({})
 			const usageByUser = aggregateUsageByUser(records)
 			return jsonResponse(
@@ -300,10 +305,7 @@ export async function handleAdminRequest(input) {
 			const authUser = await input.store.getAuthUser(payload.userId)
 			if (!authUser) throw new AdminApiError('User account not found', 404)
 			const noteRecord = await input.store.getUserAccount(payload.userId)
-			const current = {
-				...authUser,
-				note: isRecord(noteRecord) ? (readString(noteRecord.note) ?? undefined) : undefined,
-			}
+			const current = mergeUserMetadata(authUser, noteRecord)
 			const active = payload.patch.active ?? current.active
 			if (
 				payload.patch.active === false &&
@@ -314,13 +316,17 @@ export async function handleAdminRequest(input) {
 					403,
 				)
 			}
+			const updatedAt = new Date(now()).toISOString()
 			const user = {
 				...current,
+				updatedAt,
 				active,
 				status: /** @type {UserAccountStatus} */ (active ? 'active' : 'disabled'),
 				note: payload.patch.note ?? current.note,
 			}
-			const updatedAt = new Date(now()).toISOString()
+			const usage = aggregateUsageByUser(
+				await input.store.listUsageRecords({ userId: payload.userId }),
+			).get(payload.userId)
 			const operationId = randomUUID()
 			const audit = {
 				operationId,
@@ -331,25 +337,40 @@ export async function handleAdminRequest(input) {
 				reason: payload.reason,
 				createdAt: updatedAt,
 			}
-			if (payload.patch.active !== undefined) {
+			const updatesStatus = payload.patch.active !== undefined
+			if (updatesStatus) {
 				await input.store.createUserPermissionAudit({
 					...audit,
 					_id: randomUUID(),
 					outcome: 'requested',
 				})
-				await input.store.updateAuthUserStatus(payload.userId, active)
 			}
-			if (payload.patch.note !== undefined) {
-				await input.store.updateUserAccount(payload.userId, { note: payload.patch.note, updatedAt })
+			try {
+				if (updatesStatus) await input.store.updateAuthUserStatus(payload.userId, active)
+				if (payload.patch.note !== undefined) {
+					await input.store.updateUserAccount(payload.userId, {
+						note: payload.patch.note,
+						updatedAt,
+					})
+				}
+				await input.store.createUserPermissionAudit({
+					...audit,
+					_id: randomUUID(),
+					outcome: 'applied',
+				})
+			} catch (error) {
+				if (updatesStatus) {
+					await input.store.createUserPermissionAudit({
+						...audit,
+						_id: randomUUID(),
+						outcome: 'unconfirmed',
+					})
+				}
+				throw error
 			}
-			await input.store.createUserPermissionAudit({
-				...audit,
-				_id: randomUUID(),
-				outcome: 'applied',
-			})
 			return jsonResponse(
 				{
-					user: toUserAccountView(user, undefined),
+					user: toUserAccountView(user, usage),
 				},
 				200,
 				corsHeaders,
@@ -2546,6 +2567,30 @@ export function extractBearerToken(headers) {
 	if (!value) return null
 	const match = /^Bearer\s+(.+)$/i.exec(value.trim())
 	return match?.[1] ?? null
+}
+
+/** @param {UserAccount} user @param {unknown} metadata @returns {UserAccount} */
+function mergeUserMetadata(user, metadata) {
+	const result = { ...user }
+	if (!isRecord(metadata)) return result
+	for (const field of /** @type {const} */ ([
+		'createdAt',
+		'updatedAt',
+		'firstSeenAt',
+		'lastSeenAt',
+	])) {
+		const value = readString(metadata[field])
+		if (!value || !Number.isFinite(Date.parse(value))) continue
+		if (
+			field === 'lastSeenAt' &&
+			user.lastSeenAt &&
+			Date.parse(user.lastSeenAt) > Date.parse(value)
+		)
+			continue
+		result[field] = new Date(value).toISOString()
+	}
+	if (typeof metadata.note === 'string') result.note = metadata.note
+	return result
 }
 
 /**

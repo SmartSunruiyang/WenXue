@@ -23,6 +23,9 @@ const sources = [
 	['apps/admin-api/src/cloudbaseAuth.mjs', 'apps/admin-api/src/cloudbaseAuth.mjs'],
 	['apps/admin-api/src/cloudbaseStore.mjs', 'apps/admin-api/src/cloudbaseStore.mjs'],
 	['apps/admin-api/src/index.mjs', 'apps/admin-api/src/index.mjs'],
+	['packages/client-operations/package.json', 'packages/client-operations/package.json'],
+	['packages/client-operations/index.mjs', 'packages/client-operations/index.mjs'],
+	['packages/client-operations/index.d.ts', 'packages/client-operations/index.d.ts'],
 	['apps/admin/dist', 'apps/admin/dist'],
 ]
 
