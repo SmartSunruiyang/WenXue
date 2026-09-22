@@ -175,13 +175,13 @@ electron-builder `extraResources` 将对应平台的 CfT 与插件构建产物�
 
 ```yaml
 extraResources:
-  - from: '.browsers/chrome/${cftPlatformDir}' # 构建脚本按 target 解析
+  - from: '../../.browsers' # 原样拷贝；CI 构建前按 target 只拉一份平台 CfT，本地多平台并存时需自行裁剪
     to: 'browser'
   - from: '../extension/.output/chrome-mv3'
     to: 'extension'
 ```
 
-- 运行时定位：`process.resourcesPath/browser/...`（macOS 为 `WenXue.app/Contents/Resources/browser/Google Chrome for Testing.app`，Windows 为 `resources\browser\chrome.exe`）；
+- 运行时定位：`process.resourcesPath/browser/` 下保留与 `.browsers` 相同的 Puppeteer 缓存布局；`BrowserResources.browserBinary()` 以该缓存相对路径拼接（macOS arm64 为 `WenXue.app/Contents/Resources/browser/chrome/mac_arm-<version>/chrome-mac-arm64/Google Chrome for Testing.app`，Windows 为 `resources\browser\chrome\win64-<version>\chrome-win64\chrome.exe`）；
 - 代价（已接受）：安装包增大约 200MB；CfT 升级必须随 App 发版；
 - **当前分发限制**：Electron + 内置 CfT 的 DMG/NSIS 以 `manual-unsigned` 方式交付；系统可能显示
   未签名来源警告。发布说明、后台候选详情和更新弹窗必须如实提示，用户自行决定是否在系统界面继续，

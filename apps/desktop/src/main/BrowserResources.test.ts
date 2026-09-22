@@ -37,7 +37,7 @@ describe('BrowserResources', () => {
 		)
 	})
 
-	it('resolves the packaged browser binary from resourcesPath', () => {
+	it('resolves the packaged browser binary at the Puppeteer cache layout inside resources/browser', () => {
 		const resources = createBrowserResources({
 			repoRoot,
 			isPackaged: true,
@@ -50,11 +50,34 @@ describe('BrowserResources', () => {
 			path.join(
 				'/Applications/WenXue.app/Contents/Resources',
 				'browser',
+				'chrome',
+				'mac_arm-149.0.7827.55',
 				'chrome-mac-arm64',
 				'Google Chrome for Testing.app',
 				'Contents',
 				'MacOS',
 				'Google Chrome for Testing',
+			),
+		)
+	})
+
+	it('resolves the packaged Windows browser binary at the Puppeteer cache layout', () => {
+		const resources = createBrowserResources({
+			repoRoot,
+			isPackaged: true,
+			resourcesPath: 'C:\\Program Files\\WenXue\\resources',
+			platform: 'win32',
+			arch: 'x64',
+		})
+
+		expect(resources.browserBinary()).toBe(
+			path.join(
+				'C:\\Program Files\\WenXue\\resources',
+				'browser',
+				'chrome',
+				'win64-149.0.7827.55',
+				'chrome-win64',
+				'chrome.exe',
 			),
 		)
 	})
