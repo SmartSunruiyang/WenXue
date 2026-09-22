@@ -51,7 +51,7 @@
 	body {
 		margin: 0;
 		overflow: hidden;
-		background: var(--wx-background);
+		background: transparent;
 		color: var(--wx-foreground);
 		font-family: system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 	}
@@ -93,10 +93,6 @@ textarea {
 
 .app-shell--frameless {
 	--wx-window-control-safe: 148px;
-}
-
-body:has(.app-shell--macos) {
-	background: transparent;
 }
 
 .app-shell.app-shell--macos {
