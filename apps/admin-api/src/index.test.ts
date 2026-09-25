@@ -1,6 +1,7 @@
+import cloudbase from '@cloudbase/node-sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { clientUpdatePolicy, me, users, userStatus } from './index.mjs'
+import { announcements, clientUpdatePolicy, me, users, userStatus } from './index.mjs'
 
 const authCredentialNames = [
 	'TENCENTCLOUD_SECRETID',
@@ -95,6 +96,7 @@ function createAdminFetch() {
 }
 
 afterEach(() => {
+	vi.restoreAllMocks()
 	vi.unstubAllEnvs()
 	vi.unstubAllGlobals()
 })
@@ -120,7 +122,38 @@ describe('Admin API CloudBase adapter', () => {
 
 	it.each([
 		['a direct Functions Framework JSON event', { userId: 'user_123', status: 'disabled' }],
+		[
+			'a direct JSON event with a plain business body',
+			{ userId: 'user_123', status: 'disabled', body: 'Please read this announcement.' },
+		],
+		[
+			'a direct JSON event with a JSON-looking business body',
+			{
+				userId: 'user_123',
+				status: 'disabled',
+				body: '{"message":"Please read this announcement."}',
+			},
+		],
 		['a wrapped HTTP event', { body: JSON.stringify({ userId: 'user_123', status: 'disabled' }) }],
+		[
+			'a wrapped HTTP event with envelope metadata',
+			{
+				body: JSON.stringify({ userId: 'user_123', status: 'disabled' }),
+				httpMethod: 'PATCH',
+				headers: { authorization: 'Bearer test-token' },
+			},
+		],
+		['a wrapped object body', { body: { userId: 'user_123', status: 'disabled' } }],
+		[
+			'a wrapped base64 body',
+			{
+				body: Buffer.from(JSON.stringify({ userId: 'user_123', status: 'disabled' })).toString(
+					'base64',
+				),
+				isBase64Encoded: true,
+			},
+		],
+		['a wrapped raw body', { rawBody: JSON.stringify({ userId: 'user_123', status: 'disabled' }) }],
 	])('passes %s through as the user status request body', async (_label, event) => {
 		vi.stubEnv('CLOUDBASE_ADMIN_API_KEY', 'test-admin-key')
 		vi.stubEnv('TENCENTCLOUD_SECRETID', 'test-secret-id')
@@ -153,6 +186,78 @@ describe('Admin API CloudBase adapter', () => {
 			'audit:applied',
 		])
 	})
+
+	it('rejects malformed JSON in a body-only HTTP wrapper', async () => {
+		vi.stubEnv('CLOUDBASE_ADMIN_API_KEY', 'test-admin-key')
+		const { fetchImpl, operations } = createAdminFetch()
+		vi.stubGlobal('fetch', fetchImpl)
+
+		const response = await userStatus(
+			{ body: '{invalid' },
+			{
+				httpContext: {
+					httpMethod: 'PATCH',
+					headers: { authorization: 'Bearer test-token' },
+				},
+			},
+		)
+
+		expect(response.statusCode).toBe(400)
+		expect(JSON.parse(response.body).error.message).toBe('Invalid JSON body')
+		expect(operations).toEqual([])
+	})
+
+	it.each(['Please read this announcement.', '{"message":"Please read this announcement."}'])(
+		'preserves a direct announcement body through publication: %s',
+		async (body) => {
+			vi.stubEnv('CLOUDBASE_ADMIN_API_KEY', 'test-admin-key')
+			const { fetchImpl } = createAdminFetch()
+			vi.stubGlobal('fetch', fetchImpl)
+			const documents = new Map<string, Record<string, unknown>>()
+			const transaction = {
+				collection(collection: string) {
+					return {
+						doc(id: string) {
+							const key = `${collection}/${id}`
+							return {
+								async get() {
+									return { data: documents.get(key) ?? null }
+								},
+								async set(data: Record<string, unknown>) {
+									documents.set(key, { _id: id, ...data })
+									return { updated: 1 }
+								},
+							}
+						},
+					}
+				},
+			}
+			vi.spyOn(cloudbase, 'init').mockReturnValue({
+				database: () => ({
+					runTransaction: <T>(callback: (value: typeof transaction) => Promise<T>) =>
+						callback(transaction),
+				}),
+			} as unknown as ReturnType<typeof cloudbase.init>)
+
+			const response = await announcements(
+				{ importance: 'normal', title: 'System notice', body, audience: {} },
+				{
+					httpContext: {
+						httpMethod: 'POST',
+						headers: {
+							authorization: 'Bearer test-token',
+							'idempotency-key': 'notice-body-regression',
+						},
+					},
+				},
+			)
+
+			expect(response.statusCode).toBe(201)
+			const published = JSON.parse(response.body).announcement
+			expect(published.body).toBe(body)
+			expect(documents.get(`client_announcements/${published.id}`)?.body).toBe(body)
+		},
+	)
 
 	it.each([
 		['TENCENTCLOUD_SECRETID', 'TENCENTCLOUD_SECRETKEY', 'TENCENTCLOUD_SESSIONTOKEN'],

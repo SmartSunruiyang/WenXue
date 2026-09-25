@@ -1,6 +1,20 @@
 import { handleAdminRequest } from './adminApi.mjs'
 import { createCloudBaseAdminStore } from './cloudbaseStore.mjs'
 
+const HTTP_ENVELOPE_KEYS = new Set([
+	'body',
+	'rawBody',
+	'isBase64Encoded',
+	'headers',
+	'httpMethod',
+	'method',
+	'requestMethod',
+	'queryStringParameters',
+	'query',
+	'path',
+	'url',
+])
+
 /** @typedef {{ httpContext?: { headers?: Record<string, string | string[] | undefined>, httpMethod?: string, url?: string } }} CloudBaseContext */
 
 /**
@@ -239,6 +253,12 @@ function readUrlQuery(value) {
 function readEventBody(event) {
 	if (typeof event === 'string') return event
 	if (!isRecord(event)) return '{}'
+	if (
+		!('body' in event || 'rawBody' in event) ||
+		!Object.keys(event).every((key) => HTTP_ENVELOPE_KEYS.has(key))
+	) {
+		return JSON.stringify(event)
+	}
 	if (typeof event.body === 'string') {
 		const body = /** @type {{ body: string, isBase64Encoded?: boolean }} */ (event)
 		return body.isBase64Encoded ? Buffer.from(body.body, 'base64').toString('utf8') : body.body
@@ -246,7 +266,7 @@ function readEventBody(event) {
 	if (typeof event.rawBody === 'string') {
 		return /** @type {{ rawBody: string }} */ (event).rawBody
 	}
-	return JSON.stringify('body' in event ? event.body : event)
+	return JSON.stringify(event.body)
 }
 
 /**

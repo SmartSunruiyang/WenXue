@@ -397,6 +397,12 @@ OTP、验证证明与未提交资料仅驻留内存，不产生待注册账号�
 - 持有状态：无；持久状态在 CloudBase NoSQL；release slot 负责互斥/版本门禁，audit 不参与控制决策
 ```
 
+2026-09-26 HTTP 入口契约：Functions Framework 将 JSON 请求体直接作为 event 传入，HTTP 元数据
+位于 context.httpContext。AdminApi 仅在 event 具有 body/rawBody 且全部顶层键都属于已支持的
+HTTP 包装字段时拆包；包含业务键的对象整体序列化，公告正文 body 即使看似 JSON 也不再拆解。
+保留已有字符串、body 对象、base64 与 rawBody 包装输入；只有 body 的对象延续包装语义，
+业务必填项和畸形 JSON 仍由统一处理器校验，不回显 event、headers 或运行环境。
+
 2026-09-26 发布矩阵契约：新 CI 候选必须包含 macOS arm64 DMG 与 Windows x64 NSIS 各一份，
 Intel Mac 暂不构建或验收。AdminApi 对 schema v1 登记及存量读取接受上述双目标，或旧完整三目标
 （再含 macOS x64 DMG）；所有其他目标、重复、缺失和类型错配继续拒绝。旧清单不裁剪或重签，
