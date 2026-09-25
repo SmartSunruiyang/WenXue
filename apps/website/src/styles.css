@@ -774,11 +774,6 @@ a:focus-visible {
 	box-shadow: 0 10px 30px rgba(102, 93, 255, 0.12);
 }
 
-.work-demo-section {
-	padding-bottom: 112px;
-	background: var(--bg);
-}
-
 .tutorial-section {
 	padding-top: 104px;
 	background: var(--bg);
@@ -807,10 +802,6 @@ a:focus-visible {
 .demo-shell:hover {
 	filter: drop-shadow(0 24px 44px rgba(8, 9, 10, 0.12));
 	transform: translate3d(0, -8px, 0);
-}
-
-.work-demo-shell {
-	isolation: isolate;
 }
 
 .demo-video-frame {
@@ -2017,10 +2008,6 @@ a:focus-visible {
 		padding-top: 76px;
 		padding-right: 18px;
 		padding-left: 18px;
-	}
-
-	.work-demo-section {
-		padding-bottom: 86px;
 	}
 
 	.tutorial-section {

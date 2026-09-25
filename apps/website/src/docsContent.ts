@@ -309,7 +309,7 @@ export const docsArticles: GuideArticle[] = [
 		id: 'media-checklist',
 		group: '日常使用',
 		title: '操作演示',
-		description: '通过实际录屏，看看如何打开问学，以及一次网页任务如何进行。',
+		description: '通过实际录屏，看看如何打开并固定问学。',
 		readingTime: '视频演示',
 		blocks: [
 			{
@@ -320,15 +320,6 @@ export const docsArticles: GuideArticle[] = [
 				],
 				video: { src: '/assets/wenxue-teaching-demo.mov', label: '打开并固定问学的操作演示' },
 				links: [{ label: '阅读分步教程', href: '#docs/customer-start' }],
-			},
-			{
-				id: 'task-demo',
-				title: '让 Agent 操作网页',
-				paragraphs: [
-					'观察任务输入、网页操作和结果呈现的过程。录屏展示一个具体任务，实际执行结果会受网页、模型和网络状态影响。',
-				],
-				video: { src: '/assets/wenxue-work-demo.mov', label: '问学执行网页任务的操作演示' },
-				links: [{ label: '探索常见任务', href: '#docs/customer-workflows' }],
 			},
 		],
 	},

@@ -17,7 +17,6 @@ import VariableProximity from './VariableProximity'
 import { parseSiteRoute } from './siteRoute'
 
 const githubUrl = 'https://github.com/SmartSunruiyang/WenXue'
-const workDemoVideoSrc = '/assets/wenxue-work-demo.mov'
 const teachingDemoVideoSrc = '/assets/wenxue-teaching-demo.mov'
 const tutorialStepDurationMs = 4200
 const copy = {
@@ -39,10 +38,8 @@ const copy = {
 	},
 	browser: {
 		eyebrow: '浏览器里的问学',
-		titleFirst: '问学是如何工作的',
 		titleSecond: '如何将问学呼出并固定到顶部',
 		tabLabel: '问学使用步骤',
-		workLabel: '问学操作演示',
 		tutorialLabel: '问学教学演示',
 		lessonTabLabel: '呼出与固定步骤',
 		workingStatus: '问学正在操作网页',
@@ -358,17 +355,10 @@ function HomePage() {
 			</section>
 
 			<section
-				className="browser-section work-demo-section"
+				className="browser-section tutorial-section"
 				id="browser-demo"
-				aria-label={copy.browser.titleFirst}
+				aria-label={copy.browser.titleSecond}
 			>
-				<div className="section-copy">
-					<h2 className="reveal-title">{copy.browser.titleFirst}</h2>
-				</div>
-				<WorkDemo copy={copy.browser} />
-			</section>
-
-			<section className="browser-section tutorial-section" aria-label={copy.browser.titleSecond}>
 				<div className="section-copy">
 					<h2 className="reveal-title">{copy.browser.titleSecond}</h2>
 				</div>
@@ -408,31 +398,6 @@ function HomePage() {
 
 interface DemoProps {
 	copy: typeof copy.browser
-}
-
-function WorkDemo({ copy }: DemoProps) {
-	return (
-		<div className="demo-stage work-demo-stage">
-			<article className="demo-shell work-demo-shell">
-				<div className="demo-video-frame">
-					<video
-						aria-label={copy.workLabel}
-						autoPlay
-						className="demo-video"
-						controls={false}
-						controlsList="nodownload noplaybackrate noremoteplayback"
-						disablePictureInPicture
-						loop
-						muted
-						onContextMenu={(event) => event.preventDefault()}
-						playsInline
-						preload="metadata"
-						src={workDemoVideoSrc}
-					/>
-				</div>
-			</article>
-		</div>
-	)
 }
 
 function TutorialDemo({ copy }: DemoProps) {
