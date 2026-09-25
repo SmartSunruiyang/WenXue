@@ -273,5 +273,5 @@ bug 来了不要直接钻进代码。按下列顺序：
 
 - 当前运行时：Electron + 内置 CfT + 问学扩展 + CloudBase；模块与实现记录见 `docs/context/ARCHITECTURE.md` 和 `ROADMAP.md`。历史构建/测试通过记录不代表本轮已重新验证。
 - 历史方案：Chromium AI 浏览器重构提案已废弃；其文档留存于 `.project.agents/docs/refactor/ai-browser/` 供追溯，不再推进。
-- 当前阶段：`.project.agents/docs/superpowers/plans/2026-09-25-desktop-release-notifications-updates.md` 的 P0 文档校准已完成。公告与桌面更新能力尚待计划 P1–P7 核验、实现和验收，不得宣称已可用。
-- 下一步：进入 P1 复现与配置核验；当前产品与工程基线以 `docs/context/` 为准。
+- 当前阶段：`.project.agents/docs/superpowers/plans/2026-09-25-desktop-release-notifications-updates.md` 的 P0 文档校准已完成，P1 只读证据已写入 `log/2026-09-25-p1-release-readiness.md`；P1 整体未验收，P2–P7 未实施，不得宣称正式发布/更新已恢复。
+- 下一步：补齐 P1 的 GitHub 认证、指定测试账号与跨平台环境，按已记录断点进入契约和实现；当前产品与工程基线以 `docs/context/` 为准。
