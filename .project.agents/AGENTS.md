@@ -6,9 +6,9 @@ Rules in `.project.agents/CLAUDE.md` apply to every agent working here. Direct u
 
 The canonical contributor guide is `.project.agents/AGENTS.md`. Do not create or maintain a root-level `AGENTS.md` unless the user explicitly asks for one.
 
-Before any code-changing task, read `.project.agents/SELF_CONSTRAINTS.md` and `.project.agents/VIBECODING_GUIDE.md`, then run `git status --short`. For work on the current Electron + Chrome for Testing runtime, also read the relevant documents under `.project.agents/docs/context/`. For the target Chromium AI browser refactor, start from `.project.agents/docs/refactor/ai-browser/README.md` and follow its authority map.
+Before any code-changing task, read `.project.agents/SELF_CONSTRAINTS.md` and `.project.agents/VIBECODING_GUIDE.md`, then run `git status --short`. For work on the current Electron + Chrome for Testing runtime, also read the relevant documents under `.project.agents/docs/context/`.
 
-The two documentation domains intentionally describe different runtime states: the engineering documents in `docs/context/` are authoritative for the legacy/current runtime until cutover, while `docs/refactor/ai-browser/` is authoritative for target product and runtime work. `docs/context/PRD.md` is now a compatibility pointer to the target PRD. Compatibility or migration changes must update both affected domains.
+`.project.agents/docs/context/` is the authoritative current domain for the maintained Electron + built-in CfT + extension + CloudBase product. `docs/refactor/ai-browser/` preserves the superseded Chromium AI browser proposal as historical material; it is not an active target or synchronization domain. The current PRD and engineering documents in `docs/context/` govern current work.
 
 ## Superpowers Specs & Plans
 
@@ -18,21 +18,21 @@ By default, Superpowers-generated specs and implementation plans live under `.pr
 - Plans go in `.project.agents/docs/superpowers/plans/` and use `YYYY-MM-DD-<topic>.md`.
 - Do not create or use `.project.agents/specs/`, `.project.agents/plans/`, root-level `docs/superpowers/`, or `.project.agents/docs/context/` for Superpowers specs/plans.
 - Plans should reference sibling specs with paths relative to the plan file, for example `../specs/YYYY-MM-DD-<topic>-design.md`.
-- User-authorized exception: all AI browser refactor documents, including its architecture spec and implementation plan, live under `.project.agents/docs/refactor/ai-browser/`. The dated files under `docs/superpowers/` are compatibility pointers only and must not regain duplicate bodies.
+- Historical note: AI browser refactor documents remain under `.project.agents/docs/refactor/ai-browser/` as superseded historical material. The dated files under `docs/superpowers/` are compatibility pointers only and must not regain duplicate bodies.
 
 ## Project Structure & Module Organization
 
 `问学 WenXue` ("WenXue — ask for everything") is currently a cross-platform Electron launcher that ships a bundled Chrome for Testing browser and injects the WenXue MV3 extension (an LLM web-operation agent forked from alibaba/page-agent, MIT). It is a pnpm monorepo: application code lives in `apps/` (`desktop`, `extension`); vendored upstream libraries live in `packages/` (`@page-agent/ui`, `llms`, `page-controller`, `core`). Tests are co-located `*.test.ts` files next to the unit under test.
 
-The approved target is a Chromium-based AI work browser with persistent, isolated, parallel task environments. Its product, architecture, infrastructure, testing, migration, and delivery documentation lives in `.project.agents/docs/refactor/ai-browser/`; target implementation must not be inferred from the legacy architecture below.
+The maintained product is the existing Electron + built-in Chrome for Testing + extension + CloudBase system. Its current requirements and engineering baseline live in `.project.agents/docs/context/`. The former Chromium AI browser proposal in `.project.agents/docs/refactor/ai-browser/` is historical and does not authorize implementation.
 
 The current runtime architecture is documented in `docs/context/ARCHITECTURE.md`: a desktop domain (AppPaths/AppLogger → BrowserResources → LaunchConfig → ProfileStore/BrowserSupervisor → DesktopBridge → ConsoleUI → MainBootstrap) and an extension domain (vendored `@page-agent/*` → MultiPageAgent + SidepanelApp → ExtensionEntrypoints); the two process domains share **no runtime dependency edge** (legacy invariant I3).
 
 ## Source-of-Truth Rules
 
-`docs/context/ARCHITECTURE.md`, `TECH-INFRA.md`, `ROADMAP.md`, `CONVENTIONS.md`, and `UIUX.md` define the current runtime engineering baseline. Its `PRD.md` is a compatibility pointer because the approved product direction now lives in the target domain. For the target AI browser, the source-of-truth hierarchy and change propagation rules in `docs/refactor/ai-browser/README.md` apply. Derived documents follow their selected upstream domain, not the other way around.
+`docs/context/PRD.md`, `ARCHITECTURE.md`, `TECH-INFRA.md`, `ROADMAP.md`, `CONVENTIONS.md`, and `UIUX.md` define the current product and engineering baseline. The archived refactor proposal is retained for historical reference only. Derived documents follow the current context domain's source-of-truth hierarchy, not the other way around.
 
-Target product feature changes must update the refactor PRD. Maintenance-only changes to the current runtime must update its relevant engineering documents and must not contradict the target PRD. Module, dependency, entity, or invariant changes must update that runtime's ARCHITECTURE in the same commit. Do not let code and architecture drift for more than 24 hours.
+Current product feature changes must update `docs/context/PRD.md` and relevant engineering documents. Module, dependency, entity, or invariant changes must update the current `ARCHITECTURE.md` in the same commit. Do not let code and architecture drift for more than 24 hours.
 
 ## Build, Test, and Development Commands
 

@@ -3,11 +3,10 @@
 > 这是 Agent 在本项目工作时必须遵守的硬约束。每次开工前自查本清单，违反任何一条都应**先停下**，与用户对齐后再继续。
 > 完整背景与原理请见 [`VIBECODING_GUIDE.md`](./VIBECODING_GUIDE.md)。本清单只列"不许做什么 / 必须做什么"。
 >
-> 文档约定（本项目）：当前 Electron + Chrome for Testing 运行时的工程上下文位于
-> `.project.agents/docs/context`（其中 `PRD.md` 仅是目标 PRD 的兼容指针）；目标 AI 浏览器重构的上游文档位于
-> `.project.agents/docs/refactor/ai-browser`，其权威链见该目录 `README.md`。
-> 先选择本次任务所属运行时，再读取对应的 PRD / ARCHITECTURE / CONVENTIONS 或交付规范。
-> 派生文档不得反向修改上游；涉及兼容或迁移边界时，两侧受影响文档都要同步。
+> 文档约定（本项目）：当前 Electron + Chrome for Testing 产品与工程上游文档位于
+> `.project.agents/docs/context`。此前 Chromium AI 浏览器重构资料保留在
+> `.project.agents/docs/refactor/ai-browser`，仅作废弃历史参考，不构成当前权威或同步要求。
+> 开工前读取当前相关 PRD / ARCHITECTURE / CONVENTIONS 或交付规范；派生文档不得反向修改上游。
 
 ---
 
@@ -21,7 +20,7 @@
   - 若否，且本次任务**涉及写业务代码**：先停下，按 `VIBECODING_GUIDE` 的流程产出架构文档，再写代码。
   - 若否，且本次任务**只是文档/讨论**：可继续，但应主动提醒用户补架构文档。
 - [ ] **A4. 任务的归属模块清楚吗？** 我能否在 `ARCHITECTURE.md` 的模块清单里指出"这个改动属于哪个模块"？指不出来则停下补架构。
-- [ ] **A5. 对应文档域是否已读？** 当前运行时读取 `docs/context/`；AI 浏览器重构从 `docs/refactor/ai-browser/README.md` 进入。相关 PRD / ARCHITECTURE / 交付规范没读过先读，不要凭印象动手。
+- [ ] **A5. 当前文档是否已读？** 读取 `docs/context/` 中相关 PRD / ARCHITECTURE / 交付规范，不要凭印象动手。`docs/refactor/ai-browser/` 是废弃历史资料。
 
 ---
 
@@ -35,8 +34,7 @@
 - ❌ 不允许出现 `Manager` / `Helper` / `Util` / `Common` / `Misc` / `Tools` 这类语义为空的新模块名；用动词+名词描述真实职责。
 - ✅ 当前运行时 `docs/context/ARCHITECTURE.md` I3 的唯一豁免：允许插件域通过 Chrome Native Messaging
   向桌面域**单向**发送已脱敏日志 / tokens 遥测；禁止桌面域经此通道向插件域发送 Agent 控制指令。
-- ✅ I3 只约束当前 Electron + CfT 运行时；AI 浏览器目标代码服从
-  `docs/refactor/ai-browser/02-design/ARCHITECTURE.md` 的浏览器/扩展/控制面边界。
+- ✅ I3 只约束当前 Electron + CfT 运行时；废弃重构资料中的替代边界不构成当前实现要求。
 
 ### B2. 单一职责
 
@@ -46,10 +44,10 @@
 
 ### B3. 文档同步（与代码改动**同一个 commit** 内）
 
-- 加/删/改目标产品功能 → 同步更新 `docs/refactor/ai-browser/01-product/PRD.md`
-- 只维护当前运行时 → 更新 `docs/context/` 中受影响的工程文档，且不得与目标 PRD 冲突
+- 加/删/改当前产品功能 → 同步更新 `docs/context/PRD.md`
+- 维护当前运行时 → 更新 `docs/context/` 中受影响的工程文档
 - 加/删/改模块或依赖 → 同步更新所属运行时的 `ARCHITECTURE.md`（模块清单 + 依赖图）
-- 改兼容层、数据迁移或新旧切换 → 同步更新两个文档域中受影响的章节
+- 仅当当前方案实际涉及兼容层、数据迁移或新旧切换时，更新当前文档域中受影响的章节
 - 派生文档发现与上游不一致 → 回去改上游，不能让派生文档自走
 
 ### B4. 注释与命名
@@ -126,8 +124,7 @@ bug 处理必须按下列顺序，**严禁跳步**：
 
 - Agent 的配置文件**只**写入 `.project.agents` 子树，禁止写入仓库根目录或其他非约定位置。
 - 当前运行时文档写入 `.project.agents/docs/context`，保持单层目录。
-- 用户已明确授权本次 AI 浏览器重构建立独立文档体系；其全部文档写入
-  `.project.agents/docs/refactor/ai-browser/`，不得在其他路径维护重复正文。
+- `.project.agents/docs/refactor/ai-browser/` 保存废弃 Chromium AI 浏览器方案的历史资料；当前需求不得以该目录为上游。
 - 除上述授权目录外，新增其他文档子目录仍需用户明确要求。
 - 本清单（`SELF_CONSTRAINTS.md`）与指南（`VIBECODING_GUIDE.md`）位于 `.project.agents` 根，与 `CLAUDE.md` 同级。
 

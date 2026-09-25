@@ -1,5 +1,7 @@
 # 桌面手动更新提示与应用内消息推送实施计划
 
+> 2026-09-25：以下保留历史任务与完成记录，不代表当前生产状态。Chromium 重构及其双域同步任务已废弃；当前工作按 [正式发布、公告与更新计划](2026-09-25-desktop-release-notifications-updates.md) 执行，已有手动协议在新计划 P2 更新，历史勾选不能代替新的生产/实机验收。
+
 设计依据：[桌面手动更新提示与应用内消息推送设计](../specs/2026-07-17-desktop-update-announcements-design.md)
 
 > 状态（2026-07-18）：共享契约、AdminApi/Gateway 业务实现、后台页面、Electron 消息/更新服务与

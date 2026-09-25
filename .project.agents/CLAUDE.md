@@ -10,7 +10,7 @@ This file guides Claude Code (and other agents) when working in this repository.
 - 浏览器内核 = Chrome for Testing **打包内置**：品牌版 Chrome 137+ 已移除 `--load-extension`，CfT 永久保留（决策记录：TECH-INFRA §12）
 - 现运行时边界：插件域管"智能"（Agent 循环、LLM、历史），桌面域管"运行时"（CfT 版本、画像、进程看护）；Demo 阶段两域**零运行时通信**（legacy invariant I3）
 - Known environment constraints: Node 22 LTS + pnpm 9（`packageManager` 字段）；CfT 二进制不入库，构建期拉取至 `.browsers/`（国内设 `PUPPETEER_DOWNLOAD_BASE_URL=https://registry.npmmirror.com/-/binary/chrome-for-testing`）；Demo 产物不签名（macOS 需手动放行）
-- 已批准目标：迁移为 Chromium 内核的 AI 工作浏览器；通用任务拥有独立持久化 Profile、标签页、登录态、扩展状态和 Agent 运行域，并可并行工作。目标文档入口：`.project.agents/docs/refactor/ai-browser/README.md`。
+- 当前维护目标：继续维护 Electron + 内置 CfT + 扩展 + CloudBase。正式分发目标为 Windows x64 未签名 NSIS 后台下载并安全退出安装或立即重启更新；macOS arm64/x64 未签名 DMG 后台下载后由用户手动覆盖。暂不办理平台签名。公告支持全体/指定账号、在线及时送达、离线登录补发与账号确认去重。实现按当前 ROADMAP 和已批准计划推进，尚未实现的能力不得描述为可用。
 
 ## Common commands
 
@@ -35,7 +35,7 @@ The current Electron + Chrome for Testing implementation follows the module boun
 - **插件域**（`apps/extension` + vendor `packages/*`）：`@page-agent/ui · llms · page-controller · core`（上游快照，不变量 I5）→ MultiPageAgent（跨标签编排）+ SidepanelApp（对话/配置/历史 UI）→ ExtensionEntrypoints（组装根）
 - 两域之间**没有任何依赖边**（I3）；插件域只经 OpenAI-compatible HTTP 调 LLM（I4）；API Key 永不经过桌面端进程（I2）
 
-The target Chromium AI browser follows `.project.agents/docs/refactor/ai-browser/02-design/ARCHITECTURE.md`. Legacy invariants such as I3 describe the current runtime only; do not apply them to target code when the target architecture defines a replacement boundary.
+The archived Chromium AI browser proposal contains historical architecture notes only. Invariants such as I3 describe the maintained Electron + CfT runtime; do not infer current implementation requirements from the archived proposal.
 
 ## Project-level rules
 
@@ -48,7 +48,7 @@ The target Chromium AI browser follows `.project.agents/docs/refactor/ai-browser
 - **Agent settings live under `.project.agents/`.** Any `settings.json` or other configuration you generate for your own use MUST be written to `.project.agents/` (or a subdirectory) — never the project root, `.claude/`, or `~/.claude/`. This keeps repo-tracked agent state contained.
 
 - **Current-runtime canonical documentation lives under `.project.agents/docs/context/`** as a single flat directory. Canonical files:
-  - `PRD.md` — compatibility pointer to the approved target AI browser PRD
+  - `PRD.md` — current product requirements
   - `ARCHITECTURE.md` — module boundaries, dependencies, contracts, directory layout
   - `TECH-INFRA.md` — 基础设施权威：CfT 供应链、打包分发、CI、启动参数全集、关键决策记录（ADR）
   - `ROADMAP.md` — implementation milestones and acceptance checks
@@ -56,20 +56,15 @@ The target Chromium AI browser follows `.project.agents/docs/refactor/ai-browser
   - `UIUX.md` — visual tokens + interaction details (source of truth for visuals)
   - `UPSTREAM.md` — vendor 同步记录（ROADMAP M1 建立后存在）
 
-- **Target AI browser refactor documentation lives under `.project.agents/docs/refactor/ai-browser/`.**
-  - Start at `README.md`; it defines the document map, authority hierarchy, propagation rules, and G0-G6 gates.
-  - `01-product/PRD.md` and `02-design/ARCHITECTURE.md` are authoritative for target behavior and architecture.
-  - `02-design/DECISIONS.md` / `INFRASTRUCTURE.md` and `03-delivery/` define accepted choices and delivery evidence.
-  - `04-ui/UIUX.md` preserves target functional invariants and references the single shared visual authority in `docs/context/UIUX.md` (approved 2026-09-18).
-  - The engineering documents in `docs/context/` remain authoritative for the current runtime until cutover; its `PRD.md` is only a compatibility pointer. A compatibility or migration change updates both affected domains.
+- **Historical Chromium AI browser proposal:** `.project.agents/docs/refactor/ai-browser/` is retained as a record of the superseded proposal. It is not an active product target, source of requirements, or mandatory synchronization domain. Current requirements and implementation priorities come from `docs/context/`.
 
 - **Superpowers specs and plans live under `.project.agents/docs/superpowers/`.**
   - Specs: `.project.agents/docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
   - Plans: `.project.agents/docs/superpowers/plans/YYYY-MM-DD-<topic>.md`
   - Do not create `.project.agents/specs/`, `.project.agents/plans/`, root-level `docs/superpowers/`, or store Superpowers specs/plans in `.project.agents/docs/context/`.
   - Plans should link their specs with relative sibling paths, e.g. `../specs/YYYY-MM-DD-<topic>-design.md`.
-  - Superpowers docs are derived planning artifacts. Current-runtime behavior/module changes update their owning documents in `.project.agents/docs/context/`; target AI browser changes use the refactor domain below.
-  - User-authorized exception: the AI browser refactor spec and plan live with all other refactor documents under `.project.agents/docs/refactor/ai-browser/`. Its dated files in `docs/superpowers/` are compatibility pointers only.
+  - Superpowers docs are derived planning artifacts. Current behavior/module changes update their owning documents in `.project.agents/docs/context/`.
+  - Historical note: the superseded AI browser refactor spec and plan remain under `.project.agents/docs/refactor/ai-browser/`; dated `docs/superpowers/` files remain compatibility pointers.
 
 - **Current-runtime engineering hierarchy** — on conflict, upstream wins:
 
@@ -77,10 +72,10 @@ The target Chromium AI browser follows `.project.agents/docs/refactor/ai-browser
   ARCHITECTURE.md > TECH-INFRA.md > UIUX.md > CONVENTIONS.md > derived docs
   ```
 
-  分工备注：目标产品行为不得与 refactor PRD 冲突。当前模块边界与依赖以 `ARCHITECTURE.md` 为准；供应链/打包/CI/签名以 `TECH-INFRA.md` 为准，两者按领域各自权威，顺序仅用于裁决重叠地带。目标 AI 浏览器使用其 `README.md` 中的独立权威链。When an upstream doc changes, regenerate the affected sections of derived docs to stay in sync. Feature/module changes must update the corresponding runtime domain in the same commit. Do not let code and architecture drift for more than 24 hours.
+  分工备注：当前产品行为以 `docs/context/PRD.md` 为准。当前模块边界与依赖以 `ARCHITECTURE.md` 为准；供应链/打包/CI/签名以 `TECH-INFRA.md` 为准，两者按领域各自权威，顺序仅用于裁决重叠地带。历史重构资料不构成当前权威。When an upstream doc changes, regenerate the affected sections of derived docs to stay in sync. Feature/module changes must update the corresponding current-runtime documents in the same commit. Do not let code and architecture drift for more than 24 hours.
 
 - **Roadmap execution rules:**
-  1. Current-runtime work advances by `.project.agents/docs/context/ROADMAP.md`; AI browser refactor work advances by `.project.agents/docs/refactor/ai-browser/03-delivery/PLAN.md`. Logs remain in `.project.agents/log/`. Tick each checkbox in the same commit that completes it.
+  1. Current work advances by `.project.agents/docs/context/ROADMAP.md` and the active plan under `.project.agents/docs/superpowers/plans/`. The AI browser refactor plan is archived history. Logs remain in `.project.agents/log/`. Tick each checkbox in the same commit that completes it.
   2. Prefer subagents for concrete implementation; the main conversation decomposes, reviews, and ticks.
   3. **Milestone-level / multi-file / multi-module = a large task**: write a plan/spec first, then execute against it. Small tasks (single file, single checkbox, pure revision) can be done directly.
   4. After each milestone, write an execution log per the `.project.agents/log/` template.

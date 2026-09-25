@@ -1,5 +1,7 @@
 # 问学 Chromium AI 工作浏览器迁移实施计划
 
+> **已废弃（2026-09-25）：** 按用户决定，Chromium AI 浏览器重构方案停止执行。本文件是废弃前历史快照，不代表当前产品现状，也不得作为后续任务或实施依据。当前产品以[当前 PRD](../../../context/PRD.md)为准，发布工作见[桌面发布与通知计划](../../../superpowers/plans/2026-09-25-desktop-release-notifications-updates.md)。
+
 > 文档入口：[AI 浏览器重构文档体系](../README.md)
 >
 > **状态：G0 已批准，等待开工就绪度门禁。** 本计划依据

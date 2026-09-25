@@ -1,13 +1,14 @@
 # 桌面手动更新提示与应用内消息推送设计
 
-> 2026-09-18 视觉规范更新：本文的功能 / 运行时契约继续有效；所有颜色、排版、布局、动效和组件样式以 [统一 UIUX](../../context/UIUX.md) 为准，旧视觉示例仅为历史。
+> 2026-09-25 状态说明：本文保留已实现的 Electron 手动更新与公告设计；Chromium 重构兼容要求已废弃。新的发布目标以 [当前 PRD §6](../../context/PRD.md#6-本轮正式发布公告和更新需求) 和 [实现计划](../plans/2026-09-25-desktop-release-notifications-updates.md) 为准，协议在 P2 更新、能力在后续阶段实现；本文不能继续限制已确认的新目标，也不能证明生产已可用。
+> 2026-09-18 视觉规范更新：所有颜色、排版、布局、动效和组件样式以 [统一 UIUX](../../context/UIUX.md) 为准，旧视觉示例仅为历史。
 
 > - 状态：已确认；2026-07-18 改为未签名安装包的用户触发下载/打开流程
 > - 日期：2026-07-18
 > - 当前运行时上游：[`ARCHITECTURE`](../../context/ARCHITECTURE.md)、
 >   [`TECH-INFRA`](../../context/TECH-INFRA.md)、[`UIUX`](../../context/UIUX.md)
-> - 目标运行时兼容上游：[`AI 浏览器 PRD`](../../refactor/ai-browser/01-product/PRD.md)、
->   [`目标架构`](../../refactor/ai-browser/02-design/ARCHITECTURE.md)
+> - 历史兼容参考（已废弃，不再同步）：[`AI 浏览器 PRD`](../../refactor/ai-browser/01-product/PRD.md)、
+>   [`历史目标架构`](../../refactor/ai-browser/02-design/ARCHITECTURE.md)
 > - 实施计划：[`2026-07-17-desktop-update-announcements.md`](../plans/2026-07-17-desktop-update-announcements.md)
 
 ## 1. 目标与范围
@@ -20,9 +21,9 @@
    配置灰度与可选/强制策略；桌面端自动发现并提示，用户点击后才下载安装包，校验 SHA-512 后由
    系统打开安装包，安装过程完全交给用户和操作系统。
 
-协议与固定展示组件由一方包 `@wenxue/client-operations` 提供。当前 Electron 客户端先落地；未来
-Chromium 客户端复用同一 wire schema、Ed25519 清单、匹配规则和测试 fixtures，不复用 Electron 的
-手动安装包下载器。Chromium 正式分发仍服从其自己的平台签名门禁，不被本次 Electron 临时策略放宽。
+协议与固定展示组件由一方包 `@wenxue/client-operations` 提供。历史方案曾计划供 Chromium 客户端
+复用 wire schema、清单、匹配规则和 fixtures；该重构与其独立签名门禁于 2026-09-25 废弃，
+不再要求为它增加兼容层。当前 Electron 的发布与平台能力按当前 PRD 和新计划推进。
 
 ### 1.1 非目标
 
@@ -267,7 +268,7 @@ type UpdateState =
 
 ## 6. UI 规范与中断交互
 
-视觉由 [统一 UIUX §11](../../context/UIUX.md#11-应用内消息与更新) 唯一规定；本方案不再维护独立的工业风、状态轨、字号、圆角或动效要求。桌面实显、后台预览与目标 Chromium 复用同一规范。
+视觉由 [统一 UIUX §11](../../context/UIUX.md#11-应用内消息与更新) 唯一规定；本方案不再维护独立的工业风、状态轨、字号、圆角或动效要求。桌面实显与后台预览复用同一规范。
 
 应用内消息和更新是高优先级但低频的系统中断。界面必须让用户立即识别来源、重要性和唯一下一步，同时保护浏览器工作与退出权；后台只控制文字和目标，不控制视觉与 CTA，不播放声音。
 

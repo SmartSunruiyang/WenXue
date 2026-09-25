@@ -3,8 +3,8 @@
 > 状态：Design 已于 2026-07-17 经用户确认，并通过独立架构 / 测试复核；2026-07-18 已完成实现与
 > 本地 fixture 验证。当前证据为 23/23 production variant `fixture_verified`、0/23 `live_verified`；未使用
 > 真实平台账号，也未执行加载扩展后的真实 Chromium smoke。
-> 现有上游行为基线：`../../refactor/ai-browser/01-product/PRD.md` F5–F7、F9–F10、F12–F14；
-> 本文新增的 VO capability registry 与多平台范围是本次已批准的产品需求扩展，并已同步上游 PRD。
+> 2026-09-25 当前上游行为基线：[当前 PRD F3/F6](../../context/PRD.md#f6-视觉观察与统一答题能力)。原重构 PRD 的 F5–F7、F9–F10、F12–F14 编号仅作历史追溯，不再承担当前权威。
+> 本文的 VO capability registry 与多平台范围保留既有批准状态；废弃浏览器重构不取消当前 Electron 插件功能，也不新增平台验证结论。
 > 当前运行时依据：`../../context/ARCHITECTURE.md` 的 `MultiPageAgent`、`VisualObservation`、
 > `chaoxing/*`、`ExtensionEntrypoints` 模块。
 > 关联历史设计：`2026-07-04-visual-observe-tool-design.md`、
@@ -443,19 +443,18 @@ Design Phase 不得把下列行为留为实现时临时判断：
 - `filled_verified | fill_failed | filled_unverified | needsReview_notFilled` 状态机；
 - 每个 adapter variant 的检测、读取、精确填写、保存 / 翻页和验证契约。
 
-## 11. 上游文档影响（Requirements 确认后执行）
+## 11. 上游文档影响（2026-09-25 入口校准）
 
-1. `docs/refactor/ai-browser/01-product/PRD.md`
-   - 把本次用户批准的需求记录为冻结基线的显式产品变更并更新文档版本。
-   - CAP-07 从纯观察扩展为通用视觉能力入口，但保持只读默认。
-   - CAP-13 / F9 从学习通专项扩展为统一答题能力及平台支持矩阵。
+1. `docs/context/PRD.md` F3/F6
+   - 当前视觉能力需求在 Electron PRD 维护，保持只读观察默认与统一答题的授权边界。
+   - 原重构 PRD 的 CAP-07/CAP-13 等编号仅为历史引用，不再作为同步目标。
 2. `docs/context/ARCHITECTURE.md`
    - 把 `VisualObservation`、`chaoxing/*` 演进为视觉 capability registry、共享
      `QuestionSolver` 与 adapter registry。
-3. `docs/refactor/ai-browser/02-design/ARCHITECTURE.md`
-   - 更新迁移能力矩阵中的 VO、solver 和 adapter 边界。
-4. `docs/refactor/ai-browser/03-delivery/PLAN.md`、`TESTING.md`、`MIGRATION.md`
-   - 增加统一答题能力的迁移、fixture、等价和双任务隔离门禁。
+3. 历史 `docs/refactor/ai-browser/02-design/ARCHITECTURE.md`
+   - 原迁移能力矩阵保留历史记录，重构已废弃，不再同步。
+4. 历史 `docs/refactor/ai-browser/03-delivery/PLAN.md`、`TESTING.md`、`MIGRATION.md`
+   - 原 Chromium 迁移、等价和隔离门禁停止执行；当前 Electron 能力的 fixture/实机验证仍按当前架构和相关计划执行。
 5. `docs/context/TECH-INFRA.md`
    - 更新 screenshot、main-world / frame 路由和视觉模型使用边界。
 
@@ -2274,8 +2273,8 @@ selector drift、模型配置、成功 / 失败和非敏感证据；没有 check
    新内核，不保留缺少隔离字段的 `CHAOXING_CONTROL` background route。
 6. manifest 新增 `scripting` permission；普通 VO capture 同时迁到“仅当前可见 tab + PNG source +
    实测比例” primitive。现有会主动激活 tab 的行为不作为兼容契约保留。
-7. 目标 Chromium 迁移保留标准 tabs/scripting/webNavigation/captureVisibleTab 语义，并把 capability
-   evidence 纳入 CAP-07/CAP-13 等价矩阵。
+7. 历史 Chromium 迁移曾要求保留标准 tabs/scripting/webNavigation/captureVisibleTab 语义，并把
+   capability evidence 纳入 CAP-07/CAP-13 等价矩阵；该迁移要求于 2026-09-25 废弃，当前扩展自身的 API 和验证边界不变。
 
 ## 28. Design 固定参数
 

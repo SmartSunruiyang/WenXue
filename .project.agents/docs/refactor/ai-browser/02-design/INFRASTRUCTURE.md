@@ -1,5 +1,7 @@
 # Chromium 基础设施与交付规范
 
+> **已废弃（2026-09-25）：** 按用户决定，Chromium AI 浏览器重构方案停止执行。本文件是废弃前历史快照，不代表当前产品现状，也不得作为后续任务或实施依据。当前产品以[当前 PRD](../../../context/PRD.md)为准，发布工作见[桌面发布与通知计划](../../../superpowers/plans/2026-09-25-desktop-release-notifications-updates.md)。
+
 > - 状态：G1 前待评审
 > - 最后更新：2026-07-18
 > - 适用平台：macOS arm64、Windows x64

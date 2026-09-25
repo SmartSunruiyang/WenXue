@@ -1,7 +1,7 @@
 # 首次使用分步操作动画
 
 - 状态：用户已批准制作，2026-09-22；当前 Electron + CfT 运行时。
-- 上游：`../../context/ARCHITECTURE.md` ConsoleUI、`../../context/UIUX.md` 桌面页、`../../refactor/ai-browser/01-product/PRD.md` 首次使用。
+- 上游：`../../context/ARCHITECTURE.md` ConsoleUI、`../../context/UIUX.md` 桌面页、[当前 PRD F11](../../context/PRD.md#f11-首次使用引导)。2026-09-25 仅校准产品入口，已有引导行为不变。
 
 ## 行为
 
