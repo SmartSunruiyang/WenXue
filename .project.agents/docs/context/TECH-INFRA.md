@@ -419,8 +419,9 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 #### 8.2.1 免费私有仓库的操作顺序
 
-1. 在 GitHub 账单页面核实 Actions 的剩余额度与超额停止设置；首次推送前还须解决仓库历史中的
-   超大文件。以上未验证时只做本地验收，不声称远端构建已可用。构建不使用大型付费 runner。
+1. 在 GitHub 账单页面核实 Actions 的剩余额度与超额停止设置；未验证时不启动远端构建。
+   2026-09-26 已按用户决定删除超大演示视频并清理 main 历史、完成首次推送；恢复与 SHA 映射见
+   [移除记录](../../log/2026-09-26-remove-work-video.md)。构建不使用大型付费 runner。
 2. 将已验收的代码放到远端 main，核对完整 commit。先配置公开 repository variables
    `WENXUE_GATEWAY_BASE_URL`、`WENXUE_RELEASE_ED25519_PUBLIC_KEY`，再手动运行
    `desktop-release-candidate.yml`，输入相同的完整 `expected_commit`、package 版本和 channel。

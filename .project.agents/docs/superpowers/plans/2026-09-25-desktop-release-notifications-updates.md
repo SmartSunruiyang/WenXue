@@ -190,7 +190,7 @@ flowchart LR
 
 主要范围：`.github/workflows/desktop-release-candidate.yml`（无发布凭据构建）；`desktop-release-publish.yml` 已退役；`apps/desktop/electron-builder.yml`、`apps/desktop/scripts/publish-local-candidate.mjs` 与既有 seal/evidence/candidate/upload/verify 工具。本机发布配置不进入 GitHub。
 
-- [ ] P4.1 完成本机发布凭据核验（工具与免费构建入口已本地验收），确认 GitHub Free 私有仓库免费额度与阻止超额消费的预算设置；目前预算无法核实。首推还受普通 Git 100 MiB 文件限制阻塞：origin 暂无 refs，`apps/website/public/assets/wenxue-work-demo.mov` 为 163,686,355 字节（约 156.1 MiB），首次加入于 `a6b8f85`；本机未安装 git-lfs。LFS 迁移尚未选择或执行，不代表获准删除视频或改写历史。GitHub 构建 workflow 只配置公开变量，不放签名私钥、COS 写入凭据或候选注册 token。原 `desktop-release-publish.yml` 退役，不等待 Pro 或付费 Environment。
+- [ ] P4.1 完成本机发布凭据核验（工具与免费构建入口已本地验收），确认 GitHub Free 免费额度和超额硬停止预算。用户已选择删除超大视频，首页/文档引用及 main 历史清理、首次推送已完成，不采用 LFS；原始历史有备份和 SHA 映射。GitHub 构建仅配置公开变量，不放签名私钥、COS 写入或候选注册 token；原发布 workflow 已退役。预算及本机发布凭据仍待核验。
 - [ ] P4.2 让 Windows 构建生成实际所需更新元数据和关联文件，并由 CI 保留原字节及 seal artifact；本机复核、签名、上传和公开回读。Mac 本阶段仍为手动 DMG，不为未承诺的自动安装增加 ZIP 发布要求。
 - [ ] P4.3 将产物的版本、channel、平台/架构、网关、公钥指纹和同一提交绑定；Windows x64 与 macOS arm64 两个目标均构建成功并由本机验证后才注册 verified 候选。版本不一致、缺包或签名失败均不能发布。
 - [ ] P4.4 更新候选验收证据模型，区分自动化完整性检查与真实安装/升级测试；保留受信 CI run/产物哈希绑定，不能只改证据名称就宣称经过安装测试。
@@ -311,7 +311,7 @@ Windows x64 与 macOS arm64 两目标打包通过候选工作流执行，主进�
 
 | 依赖                                             | 需要时机            | 当前状态与处理                                                             |
 | ------------------------------------------------ | ------------------- | -------------------------------------------------------------------------- |
-| GitHub 私有仓库免费额度、预算、首推与构建权限    | P1 核验，P4 使用    | GitHub 已认证且具 ADMIN viewerPermission；账单页未登录，预算硬停止无法核实。`git ls-remote origin` 无 refs；163,686,355 字节演示视频（首次加入 `a6b8f85`）超过普通 Git 100 MiB 限制，阻塞首次推送；本机未安装 git-lfs，迁移尚未选择/执行，不表示获准删除视频或改写历史。main workflow 和真实首轮 run 尚未验证；无发布 secrets，不依赖付费 Environment 或分支保护 |
+| GitHub 私有仓库免费额度、预算、首推与构建权限 | P1 核验，P4 使用 | GitHub 已认证；超大视频及 main 历史已清理、首次推送成功，保留历史备份与 SHA 映射。候选 workflow 已可见；账单页未登录，预算硬停止无法核实，尚未启动真实 run。不采用 LFS、不依赖付费 Environment 或分支保护。 |
 | 本机签名、COS 上传与候选注册凭据                | P1 核验，P4 使用    | 发布工具本地验收通过（脚本 28 项测试）；签名私钥、专用最小权限 COSCLI 配置、COS 对象版本控制及注册凭据仍待本机核验，不能用于 GitHub workflow |
 | 测试管理员、两个普通账号与跨设备环境             | P1/P3               | 两个用户提供的普通账号经 CloudBase 精确匹配确认为 ACTIVE；尚未做客户端登录与通知实验，完整邮箱/UID 不入文档 |
 | macOS arm64、Windows x64 安装测试环境             | P1 准备，P5/P7 验收 | Windows x64 与 Apple Silicon 测试机可用；Intel Mac 暂不适配                 |
