@@ -292,6 +292,9 @@ extraResources:
   浏览器验证首页、文档、隐私页和备案链接可见，控制台无错误；`/admin/` 仍返回 200。
   隐私页保留“发布前草案”说明，下载入口仍为占位。详见
   `../../log/2026-09-25-publish-website-docs-privacy.md`。
+- 同日页脚更新：以现有 `wenxue-slogan.png` 图片替换页脚品牌文字，重新发布哈希 JS/CSS
+  与 `index.html`。公网文件与构建产物逐字节一致，页脚图片加载正常；详见
+  `../../log/2026-09-25-replace-website-footer-slogan.md`。
 
 ### 7.3 应用内消息与版本分发（M4.7 / M5.1）
 
