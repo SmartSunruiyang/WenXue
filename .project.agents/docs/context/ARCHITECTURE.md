@@ -44,7 +44,8 @@
 - **DOM 快照**：page-controller 每轮 Agent 循环对页面的文本化表示，用完即弃。
 - **VisualObservation**：Agent 以 Observe mode 调用 `visual_observe` 后，由当前可见视口截图经视觉模型生成的结构化 JSON；图片本体用完即弃，不进入历史、IndexedDB 或日志，JSON 作为工具结果进入任务历史。
 - **VisualCapabilityResult**：Agent 显式调用 `visual_observe` capability mode 后，由注册能力返回的判别式 JSON；`question_solver` 结果包含有界的题目文本/图片标签摘要、结构化答案、证据、状态和完整计数，不含 screenshot/data URL、DOM 引用、attempt 原值、embedded answer 原始对象或页面响应正文；总 wire budget 为 96 KiB，截断时保留完整 counts。
-- **版本三元组**（app / browser / extension）：由打包资源与 lock 文件即时计算。
+- **版本三元组**（app / browser / extension）：由打包资源与 lock 文件即时计算；插件优先取
+  `manifest.version_name` 供界面显示，缺失时回退数值 `version`。
 - **AnnouncementQueue**：当前账号待展示消息的内存队列；重要消息优先，同级按发布时间从旧到新；登出即清空。
 - **UpdateState 状态机**：`idle | checking | available | downloading | ready | opening | handedOff | error`，由
   DesktopUpdateService 持有，经 DesktopBridge 单向推送 ConsoleUI。
@@ -295,6 +296,7 @@
 - 输入：BrowserSupervisor、BrowserProfileStore、LauncherLogStore、LauncherSettingsStore、LauncherTelemetryIngest、TokenUsageStore、UsageCloudClient、UserSessionStore、UserSessionHandoff、DesktopUpdateService、BrowserResources
 - 输出：ConsoleUI（window.wenxue.*）
 - 关键类型/接口：见 §3.2 IPC 契约
+- 版本读取：`app:getVersions` 返回包版本、CfT lock 版本和插件清单可见版本名。
 - 持有状态：当前 `activeAccountNamespace`、首次 session 协调标记、退出事务 `signOutState` 与逐画像
   生命周期队列；均仅内存、不持久化
 ```
@@ -306,7 +308,8 @@
 - 职责：React 启动器 App shell（账号登录/注册、侧栏路由、浏览器多开页、日志页、tokens 页、设置页）；
   邮箱验证、最终注册、密码登录与密码重置使用 CloudBase Web Auth SDK，并在发起请求前执行凭据格式
   校验；退出按“主进程停止当前账号画像 → CloudBase signOut → 清主进程 session”顺序发送意图，只在
-  Cloud signOut 已确定失败且 SDK session 仍存在时解除退出保护；消费消息与更新状态并渲染固定弹窗
+  Cloud signOut 已确定失败且 SDK session 仍存在时解除退出保护；消费消息与更新状态并渲染固定弹窗；
+  无候选更新错误以可关闭的顶部提示呈现，错误详情留在“关于问学”
 - 不负责：不触 Node API；不直接调用 Tencent Cloud 管理 API；不写启动器业务判断（仅消费状态、发送意图）
 - 输入：DesktopBridge、DesktopAnnouncementService、DesktopReleaseSignalService、DispatchContracts、CloudBase Web Auth SDK、CloudBaseLlmGateway `/v1/auth/activate`
 - 输出：用户
@@ -979,7 +982,7 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 - **DesktopAnnouncementService / DesktopReleaseSignalService / DesktopUpdateService**：覆盖启动/登出、
   watch 更新/错误/退避与轮询、消息排序/撤回/确认、更新状态机、dev 启动保持 idle 且仅手动检查返回说明、策略 freshness、
   下载/打开前实时复核、离线缓存不得授权打开、IPC、SHA-512 拒绝与系统安装器交接。发布前必须用
-  `manual-unsigned` 的 macOS arm64/x64 DMG 与 Windows x64 NSIS 完成 `0.1.0 → 0.1.1` 手动安装交接 E2E，
+  `manual-unsigned` 的 macOS arm64/x64 DMG 与 Windows x64 NSIS 完成当前版本到更高 SemVer 版本的手动安装交接 E2E，
   包括系统未签名警告与用户明确继续；开发预览不构成验收。
 - **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。

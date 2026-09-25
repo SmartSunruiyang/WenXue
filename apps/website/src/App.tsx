@@ -7,6 +7,7 @@ import {
 	type MouseEvent,
 	type ReactNode,
 } from 'react'
+import websitePackage from '../package.json'
 import DocsPage from './DocsPage'
 import DotField from './DotField'
 import PrivacyPage from './PrivacyPage'
@@ -27,7 +28,7 @@ const copy = {
 	},
 	hero: {
 		brand: '问学 WenXue',
-		version: 'v0.0.1 beta',
+		version: `v${websitePackage.version.replace(/-beta(?=\.|$)/i, 'beta')}`,
 		titleFirst: 'Agent，',
 		titleSecond: '直接操作浏览器',
 		description:

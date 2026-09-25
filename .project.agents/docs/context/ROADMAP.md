@@ -156,7 +156,7 @@
       candidate 段在受保护分支构建未签名 DMG/NSIS 且不接触发布凭据；待受保护
       `desktop-release-production` Environment 与 candidate manifest Ed25519/COS/注册配置就绪后才能实际发布；
       CI 只注册候选，后台发起 rollout
-- [ ] 完成三平台 `manual-unsigned` `0.1.0 → 0.1.1` 下载、SHA-512 拒绝、系统安装器交接、画像无损、
+- [ ] 完成三平台 `manual-unsigned` 当前版本到更高 SemVer 版本的下载、SHA-512 拒绝、系统安装器交接、画像无损、
       pause/withdraw 和更高版本 hotfix 演练
 - **阻塞**：COS 桶已就绪，但 GitHub/CAM CI 身份、Ed25519 私钥、Gateway/WAF QPS、CloudRun 直达收口、
   真实候选和三平台安装交接完成前不得标记真实分发完成。

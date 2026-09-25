@@ -75,7 +75,7 @@ export const SETTINGS_SECTIONS = [
 }>
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id']
-export const SETTINGS_PAGE_VERSION = 'v0.0.1'
+export const SETTINGS_PAGE_VERSION = __DISPLAY_VERSION__
 export const WENXUE_WEBSITE_URL = 'https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/'
 export const WENXUE_GITHUB_URL = 'https://github.com/SmartSunruiyang/WenXue'
 
