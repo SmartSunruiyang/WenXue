@@ -1286,16 +1286,29 @@ function DesktopInterruptionLayer({
 		)
 	}
 	if (updateState.phase === 'error' && !updateState.release) {
+		const warningKey = `warning:${updateState.message}`
+		if (dismissedUpdate === warningKey) return null
 		return createPortal(
 			<div aria-live="polite" className="desktop-update-warning no-drag" role="status">
 				<Info aria-hidden size={16} />
 				<span>{updateState.message}</span>
-				{updateState.retryable ? (
-					<button onClick={onRetry} type="button">
-						<RefreshCw aria-hidden size={14} />
-						重新检查
+				<div className="desktop-update-warning__actions">
+					{updateState.retryable ? (
+						<button onClick={onRetry} type="button">
+							<RefreshCw aria-hidden size={14} />
+							重新检查
+						</button>
+					) : null}
+					<button
+						aria-label={strings.update.dismissWarning}
+						className="desktop-update-warning__close"
+						onClick={() => onDismissUpdate(warningKey)}
+						title={strings.update.dismissWarning}
+						type="button"
+					>
+						<X aria-hidden size={16} />
 					</button>
-				) : null}
+				</div>
 			</div>,
 			document.body,
 		)
@@ -1461,7 +1474,8 @@ function AvatarMenu({
 				type="button"
 			>
 				<Info size={15} />
-				{strings.settings.sections.about} <span className="menu-meta">{versions.app}</span>
+				{strings.settings.sections.about}{' '}
+				<span className="menu-meta">{formatPublicVersion(versions.app)}</span>
 			</button>
 			<button
 				data-danger
@@ -2580,7 +2594,7 @@ function SettingsPage({
 									<span>{strings.settings.kernel.browser}</span>
 									<strong>{versions.browser}</strong>
 									<span>{strings.settings.kernel.extension}</span>
-									<strong>{versions.extension}</strong>
+									<strong>{formatPublicVersion(versions.extension)}</strong>
 								</div>
 							</section>
 						) : null}
@@ -2592,11 +2606,11 @@ function SettingsPage({
 								</p>
 								<div className="version-list">
 									<span>{strings.settings.about.version}</span>
-									<strong>{versions.app}</strong>
+									<strong>{formatPublicVersion(versions.app)}</strong>
 									<span>{strings.settings.kernel.browser}</span>
 									<strong>{versions.browser}</strong>
 									<span>{strings.settings.kernel.extension}</span>
-									<strong>{versions.extension}</strong>
+									<strong>{formatPublicVersion(versions.extension)}</strong>
 								</div>
 								<p aria-live="polite" className="settings-panel__note">
 									<Info size={15} />
@@ -2880,6 +2894,10 @@ function readUpdateChannel(value: string): 'dev' | 'beta' | 'stable' {
 	return 'stable'
 }
 
+function formatPublicVersion(version: string): string {
+	return version.replace(/-beta(?=\.|$)/i, 'beta')
+}
+
 function desktopPlatform(value: string): 'darwin' | 'win32' {
 	if (value === 'darwin' || value === 'win32') return value
 	return isMacPlatform ? 'darwin' : 'win32'
@@ -2892,11 +2910,11 @@ function describeUpdateState(state: UpdateState): string {
 		case 'checking':
 			return strings.update.status.checking
 		case 'available':
-			return `${strings.update.status.available} v${state.release.version}`
+			return `${strings.update.status.available} v${formatPublicVersion(state.release.version)}`
 		case 'downloading':
 			return `${strings.update.status.downloading} ${Math.round(state.progress.percent)}%`
 		case 'ready':
-			return `${strings.update.status.ready} v${state.release.version}`
+			return `${strings.update.status.ready} v${formatPublicVersion(state.release.version)}`
 		case 'opening':
 			return strings.update.status.opening
 		case 'handedOff':

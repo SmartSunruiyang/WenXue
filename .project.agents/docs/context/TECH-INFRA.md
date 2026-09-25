@@ -298,6 +298,9 @@ extraResources:
   浏览器验证首页、文档、隐私页和备案链接可见，控制台无错误；`/admin/` 仍返回 200。
   隐私页保留“发布前草案”说明，下载入口仍为占位。详见
   `../../log/2026-09-25-publish-website-docs-privacy.md`。
+- 同日页脚更新：以现有 `wenxue-slogan.png` 图片替换页脚品牌文字，重新发布哈希 JS/CSS
+  与 `index.html`。公网文件与构建产物逐字节一致，页脚图片加载正常；详见
+  `../../log/2026-09-25-replace-website-footer-slogan.md`。
 
 ### 7.3 应用内消息与版本分发（M4.7 / M5.1）
 
@@ -361,9 +364,14 @@ extraResources:
   `cam:ListUsers` 与创建 CAM 用户权限，无法创建专用最小权限 CI 子账号。不得复用高权限 Gateway 密钥
   代替该 CI 身份。
 - 当前 Electron 继续分发 `manual-unsigned` DMG/NSIS，不配置或使用平台签名证书。平台签名不是当前
-  Electron 阻塞；GitHub/CAM 配置与三平台 `0.1.0 → 0.1.1` 手动安装交接 E2E 仍未完成。
+  Electron 阻塞；GitHub/CAM 配置与三平台当前版本到更高 SemVer 版本的手动安装交接 E2E 仍未完成。
 
 ## 8. 构建、CI 与分发
+
+本次产品 beta 包在桌面、插件、官网的包版本均为合法 SemVer `0.0.1-beta`，用户界面统一显示
+`0.0.1beta`。Chrome 插件清单的 `version` 为数值 `0.0.1`，`version_name` 为 `0.0.1beta`；
+CfT 与 vendor 库保留各自独立版本。桌面构建未显式提供 `WENXUE_UPDATE_CHANNEL` 时，从包版本的
+`-beta` 标识选择 beta 更新通道；CI 显式通道优先。
 
 ### 8.1 本地构建流水线
 
@@ -419,6 +427,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   未签名状态。
 - 打包运行时的 DesktopUpdateService 在启动 30 秒、每 4 小时、release revision 和“关于问学”手动
   intent 时检查；开发运行时保持 idle，不启动自动更新，用户手动检查时只在“关于问学”显示不可用说明。
+  缺少内置更新公钥的打包版保留更新不可用状态；顶部提示可关闭，错误详情仍可在“关于问学”查看。
   用户点击后才下载，SHA-512/size 校验通过后再次点击“打开安装包”，随后由系统打开 DMG/NSIS。
 - rollout 比例为 1/5/25/50/100；`sha256(releaseId + randomInstallId)` 稳定分桶；mandatory 仅允许
   100%。打开安装包前必须成功完成一次实时策略请求，pause/withdraw/断网都禁止新下载或打开；缓存
@@ -477,7 +486,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 | 桌面端     | 单测（状态机、参数组装、路径解析）+ CDP 冒烟      | F1 验收标准自动化覆盖核心段                                       |
 | 分发协议   | vitest + 组件测试                                 | 消息校验/匹配/回执、候选签名、灰度分桶、固定弹窗可访问性          |
 | 分发服务   | AdminApi/Gateway 集成 + watch 故障注入            | 发布/撤回/signal/pending/ack、rollout/policy/event token/TTL      |
-| 更新 E2E   | macOS arm64 / Windows x64 安装包（Intel 暂缓）    | `0.1.0 → 0.1.1`、篡改拒绝、系统警告、画像无损、暂停与前向 hotfix  |
+| 更新 E2E   | macOS arm64 / Windows x64 安装包（Intel 暂缓）    | 当前版到更高 SemVer 版、篡改拒绝、系统警告、画像无损、暂停与前向 hotfix  |
 | 端到端演示 | 演示脚本（research + 多平台答题 fixture）人工演练 | PRD 第 9 节成功指标；adapter 在真实 smoke 前仅 `fixture_verified` |
 
 ## 12. 关键决策记录（ADR 摘要）

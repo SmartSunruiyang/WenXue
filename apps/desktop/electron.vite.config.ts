@@ -1,11 +1,16 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'path'
 
 const DEFAULT_GATEWAY_BASE_URL =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
 const gatewayBaseUrl = resolveGatewayBaseUrl(process.env.WENXUE_GATEWAY_BASE_URL)
+const desktopVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
+	.version as string
+const defaultUpdateChannel = /-beta(?:\.|$)/i.test(desktopVersion) ? 'beta' : 'stable'
+const updateChannel = process.env.WENXUE_UPDATE_CHANNEL ?? defaultUpdateChannel
 
 function resolveGatewayBaseUrl(value: string | undefined): string {
 	const candidate = value?.trim() || DEFAULT_GATEWAY_BASE_URL
@@ -33,7 +38,7 @@ export default defineConfig({
 			__WENXUE_RELEASE_ED25519_PUBLIC_KEY__: JSON.stringify(
 				process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY ?? '',
 			),
-			__WENXUE_UPDATE_CHANNEL__: JSON.stringify(process.env.WENXUE_UPDATE_CHANNEL ?? 'stable'),
+			__WENXUE_UPDATE_CHANNEL__: JSON.stringify(updateChannel),
 		},
 		plugins: [
 			externalizeDepsPlugin({
@@ -47,7 +52,7 @@ export default defineConfig({
 	renderer: {
 		define: {
 			__WENXUE_GATEWAY_BASE_URL__: JSON.stringify(gatewayBaseUrl),
-			__WENXUE_UPDATE_CHANNEL__: JSON.stringify(process.env.WENXUE_UPDATE_CHANNEL ?? 'stable'),
+			__WENXUE_UPDATE_CHANNEL__: JSON.stringify(updateChannel),
 		},
 		resolve: {
 			alias: {

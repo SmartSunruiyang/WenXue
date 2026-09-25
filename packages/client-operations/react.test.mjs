@@ -115,6 +115,28 @@ test('ready manual downloads hand off to the operating-system installer without 
 	assert.doesNotMatch(markup, /重启并安装|安装成功/)
 })
 
+test('beta update dialogs show the public version label', () => {
+	const markup = renderToStaticMarkup(
+		h(UpdateDialog, {
+			presentation: 'preview',
+			state: {
+				phase: 'available',
+				release: {
+					releaseId: 'electron-beta-0.0.1-beta',
+					version: '0.0.1-beta',
+					channel: 'beta',
+					title: '问学 beta 更新',
+					notes: '更新说明',
+					mode: 'optional',
+					distribution: { mode: 'manual-unsigned' },
+					size: 120_000_000,
+				},
+			},
+		}),
+	)
+	assert.match(markup, /v0\.0\.1beta · beta/)
+})
+
 test('handed-off updates explain that installation completion is not observable', () => {
 	const markup = renderToStaticMarkup(
 		h(UpdateDialog, {

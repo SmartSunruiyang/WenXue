@@ -1090,6 +1090,16 @@ describe('registerDesktopBridge', () => {
 			browser: '149.0.7827.55',
 			extension: '1.2.3',
 		})
+
+		await writeFile(
+			path.join(tempDir, 'manifest.json'),
+			JSON.stringify({ version: '0.0.1', version_name: '0.0.1beta' }),
+		)
+		await expect(handler?.()).resolves.toEqual({
+			app: '0.0.0',
+			browser: '149.0.7827.55',
+			extension: '0.0.1beta',
+		})
 	})
 })
 

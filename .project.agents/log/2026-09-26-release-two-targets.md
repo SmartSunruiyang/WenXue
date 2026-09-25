@@ -32,6 +32,16 @@ GitHub 官方说明：私有仓库的[分支保护](https://docs.github.com/en/r
 
 ## 提交与下一步
 
-本段提交为本日志所属提交 `ci(desktop): target Apple Silicon and Windows releases`，父提交为 `4aaaaf0`；代码、上游文档与日志一起验收并提交。
+矩阵实现提交：`56aaf58 ci(desktop): target Apple Silicon and Windows releases`，父提交为 `4aaaaf0`；代码、上游文档与日志一起验收并提交。
+
+随后同步本地 main 固定提交 `2a55287`，保留其他任务已提交的官网页脚、产品版本与更新错误提示修复，以及原插件格式改动。唯一合并冲突位于 ARCHITECTURE 的 E2E 说明，保留当前双目标和“当前版本到更高 SemVer”两项要求。当前源码产品版本为 `0.0.1-beta`；此前安装包 `0.1.0` 的实测证据仍是历史事实，发布时不可把较低 SemVer 当成可自动升级的新版本。
+
+合并复验暴露官网 `test` 脚本调用 `tsx` 却未声明依赖的 CI 阻断。为 `apps/website` 显式添加工作区已有的 `tsx ^4.22.4`，锁文件仅增加该 importer 的三行记录，未升级其他包。此同步与依赖修复为本日志更新所属合并提交，其父提交为 `56aaf58` 和 `2a55287`。
+
+合并后的 Node 22.22.3 验证：
+
+- `pnpm install --frozen-lockfile --offline` 通过。
+- `pnpm -r test` 全部通过，共 **1,602 项**：AdminApi 119、Gateway 124、website 6、client-operations 14、llms 90、page-controller 17、core 38、admin 2、desktop 403 + scripts 18、extension 771。
+- AdminApi、Gateway、desktop 三项 typecheck 以及全量发布 lint 通过；合并文件无未解决冲突，diff 检查通过。
 
 下一步按用户选择确定可执行的 GitHub 发布门禁，再配置远端代码与 CI；P2 仍需落实新更新协议、Windows 安装器关联元数据、服务端统一资格判断、安装前复核与启动结果。P3 使用两个指定测试账号验证公告，不向全体真实用户广播测试内容。CAM 专用 CI 身份和 COS 版本状态仍待核验。

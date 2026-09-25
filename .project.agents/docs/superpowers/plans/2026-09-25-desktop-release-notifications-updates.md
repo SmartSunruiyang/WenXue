@@ -50,6 +50,8 @@
 
 启动本计划时原工作区有一处已有改动：`apps/extension/src/agent/visualObserve.background.ts`。本计划保存在独立工作区，未复制、暂存或提交该改动。后续如需纳入新的已提交修复，先记录新的执行基线。
 
+2026-09-26 同步本地 main 的固定提交 `2a55287`：保留其他任务已提交的插件格式、官网页脚以及产品版本/更新错误提示修复。当前源码产品版本为 `0.0.1-beta`，不能据此改写已验过的旧包 `0.1.0` 证据；首个候选版本仍按 P4.6 的真实发布历史分配，禁止把较低 SemVer 误当成旧包可自动安装的升级。
+
 上游与历史参考：
 
 - [当前运行时架构](../../context/ARCHITECTURE.md)、[基础设施](../../context/TECH-INFRA.md)、[路线图](../../context/ROADMAP.md)、[开发规范](../../context/CONVENTIONS.md)。

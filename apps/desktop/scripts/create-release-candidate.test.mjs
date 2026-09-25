@@ -18,6 +18,17 @@ const desktopPackage = JSON.parse(
 	await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
 )
 
+test('desktop, bundled extension and website share the product version', async () => {
+	const extensionPackage = JSON.parse(
+		await readFile(fileURLToPath(new URL('../../extension/package.json', import.meta.url)), 'utf8'),
+	)
+	const websitePackage = JSON.parse(
+		await readFile(fileURLToPath(new URL('../../website/package.json', import.meta.url)), 'utf8'),
+	)
+	assert.equal(extensionPackage.version, desktopPackage.version)
+	assert.equal(websitePackage.version, desktopPackage.version)
+})
+
 test('creates a verifiable manual-unsigned candidate for the required Electron matrix', async () => {
 	const releaseRoot = await createReleaseDirectory()
 	try {

@@ -130,7 +130,11 @@ function bridgeFixture(): Window['wenxue'] {
 			},
 		},
 		app: {
-			getVersions: async () => ({ app: '0.1.0', browser: '137', extension: '0.1.0' }),
+			getVersions: async () => ({
+				app: '0.0.1-beta',
+				browser: '137',
+				extension: '0.0.1beta',
+			}),
 			getShellInfo: async () => ({
 				platform: 'darwin',
 				frameless: false,
@@ -205,6 +209,28 @@ afterEach(async () => {
 })
 
 describe('App onboarding integration', () => {
+	it('lets users close an unavailable-update warning while keeping its detail in About', async () => {
+		await render()
+		const warning = '此构建未固定更新签名公钥，更新检查不可用。'
+		await act(async () => updateListener({ phase: 'error', message: warning, retryable: false }))
+		expect(document.querySelector('.desktop-update-warning')?.textContent).toContain(warning)
+		await click(strings.update.dismissWarning)
+		expect(document.querySelector('.desktop-update-warning')).toBeNull()
+		await act(async () => updateListener({ phase: 'error', message: warning, retryable: false }))
+		expect(document.querySelector('.desktop-update-warning')).toBeNull()
+
+		await click(strings.onboarding.skip)
+		await click(strings.account.menuLabel)
+		const menu = document.querySelector('[role="menu"]')!
+		expect(menu.textContent).toContain('0.0.1beta')
+		const aboutButton = Array.from(menu.querySelectorAll('button')).find((item) =>
+			item.textContent?.startsWith(strings.settings.sections.about),
+		)!
+		await act(async () => aboutButton.click())
+		expect(container.querySelector('.version-list')?.textContent).toContain('0.0.1beta')
+		expect(container.querySelector('.settings-panel__note')?.textContent).toContain(warning)
+	})
+
 	it('opens the ready tutorial for a fresh account and returns to the account workspace on skip', async () => {
 		await render()
 		expect(container.querySelector('.onboarding-tour')).not.toBeNull()

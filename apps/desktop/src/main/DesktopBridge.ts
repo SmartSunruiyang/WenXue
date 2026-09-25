@@ -792,7 +792,13 @@ interface UpdateMutationResult extends LaunchResult {
 function readExtensionVersion(extensionDir: string): string {
 	try {
 		const manifestPath = path.join(extensionDir, 'manifest.json')
-		const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { version?: unknown }
+		const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+			version?: unknown
+			version_name?: unknown
+		}
+		if (typeof manifest.version_name === 'string' && manifest.version_name.length > 0) {
+			return manifest.version_name
+		}
 		if (typeof manifest.version === 'string' && manifest.version.length > 0) {
 			return manifest.version
 		}

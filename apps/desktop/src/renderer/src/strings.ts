@@ -476,6 +476,7 @@ export const strings = {
 		installError: '无法打开安装包，请稍后重试。',
 		checkAction: '检查更新',
 		checkingAction: '正在检查',
+		dismissWarning: '关闭更新提示',
 		status: {
 			idle: '当前未发现可用更新。',
 			checking: '正在检查可用更新。',
