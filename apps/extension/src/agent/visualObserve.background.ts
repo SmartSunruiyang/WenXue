@@ -4,6 +4,7 @@ import {
 	type CaptureTabsApi,
 } from './questionSolver/capture'
 
+
 export const VISUAL_OBSERVE_PROTOCOL_VERSION = 2 as const
 
 export type VisualObserveMessage =
