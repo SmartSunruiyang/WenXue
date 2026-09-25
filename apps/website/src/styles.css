@@ -2179,16 +2179,15 @@ main:focus {
 	color: var(--muted);
 }
 .footer-brand {
-	font-weight: 600;
-	font-size: 16px;
-	color: var(--ink);
-	white-space: nowrap;
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
 }
-.footer-brand span {
-	margin-left: 8px;
-	font-size: 12px;
-	font-weight: 400;
-	color: var(--muted);
+.footer-brand img {
+	display: block;
+	width: 179px;
+	max-width: 100%;
+	height: auto;
 }
 .site-footer nav {
 	display: flex;
