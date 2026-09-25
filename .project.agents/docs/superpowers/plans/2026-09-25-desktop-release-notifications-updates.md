@@ -186,7 +186,7 @@ flowchart LR
 
 2026-09-26 客户端恢复实现已通过主 Agent 代码验收：`DesktopAnnouncementService` 在 `online`、窗口重新聚焦和页面重新可见时补拉，合并重复请求但保留新 revision 的补拉。确认成功后的迟到 pending 不再恢复弹窗；切号或停止服务后，旧 ack 的成功、HTTP 失败和网络异常均不影响新会话；当前账号确认失败仍可重试。18/18 个服务测试、typecheck、目标 lint 与 format 已独立复核通过，详见[恢复日志](../../../log/2026-09-26-announcement-recovery.md)。本次尚未打包新客户端，P3 实机出口仍未完成。
 
-真实后台发布复现返回 `Invalid JSON body`，未创建公告。当前定位为 AdminApi 适配器将 Functions Framework 直接传入的业务 `body` 误按 HTTP 包装体拆解；服务端修复、部署和复测另行记录。后台与 Mac 测试 A 已就绪，尚无客户端送达或确认实证。
+真实后台曾返回 `Invalid JSON body`，原因是 AdminApi 适配器将 Functions Framework 直接传入的业务 `body` 误按 HTTP 包装体拆解。修复提交 `12ad186` 已部署至组合网关 037，实际定向公告发布及 signal 更新成功；后台与 Mac 测试 A 已就绪，客户端送达、确认和跨设备去重仍待实证。详见[后台发布修复日志](../../../log/2026-09-26-announcement-body-adapter.md)。
 
 出口：满足第 5 节 N 系列用例，后台发布和用户确认可核对；不使用向全体真实用户发送测试公告作为验收方式。
 

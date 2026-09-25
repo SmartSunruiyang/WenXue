@@ -548,7 +548,7 @@ fork 应用层（apps/extension）：
   页面编辑纯文本/目标并复用固定组件预览，版本页面只选择受信构建且 verified 的候选与 rollout 策略
 - 不负责：不直接读写 `token_usage` / `user_accounts` / `admin_users`；不持久化管理员密码；不调用 LLM；不接收机器 token 登录
 - 输入：CloudBase Web Auth username/password session、AdminApi JSON 响应、DispatchContracts
-- 输出：`VITE_BASE_PATH=/admin/` 的静态构建产物；主入口为 CloudBase HTTP 网关默认域名 `/admin`。线上 18 条管理、消息、版本、客户端与 CI 路由由 CloudBaseLlmGateway 030 同实例承接 100% 流量，Gateway 为 0.25C/0.5GB、`MinNum:1`、`MaxNum:2`；独立 `wenxue-admin-web` 007 与 `wenxue-admin-api` 012 保留为回滚/排障单元
+- 输出：`VITE_BASE_PATH=/admin/` 的静态构建产物；主入口为 CloudBase HTTP 网关默认域名 `/admin`。管理、消息、版本、客户端与 CI 路由由 CloudBaseLlmGateway 同实例承接，当前部署版本与验收证据见 TECH-INFRA；Gateway 为 0.25C/0.5GB、`MinNum:1`、`MaxNum:2`；独立 `wenxue-admin-web` 007 与 `wenxue-admin-api` 012 保留为历史排障单元，不代表同步到当前组合服务
 - 关键类型/接口：signInWithPassword · getSession · adminApiFetch · AdminDashboard
 - 持有状态：浏览器 local auth session 与 UI 态
 ```

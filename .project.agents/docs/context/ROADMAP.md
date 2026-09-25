@@ -201,7 +201,9 @@
 - [ ] P6 后台与官网：发布、灰度、暂停、撤回和稳定下载入口保持一致。
 - [ ] P7 受控正式发布：完成旧版两跳迁移和异常恢复演练，记录首发证据及发版操作步骤。
 
-P1 的[2026-09-25 核验记录](../../log/2026-09-25-p1-release-readiness.md)保留当日状态快照：确认旧包公钥为空、生产无公告/候选/rollout，159 项本地测试通过。2026-09-26 较早的条件快照记载 GitHub 远端仓库为空、无 workflow/run、vars/secrets 尚未配置；该快照不代表当前状态。当前 GitHub Free Actions 额度及停止超额预算已核验，Windows x64 与 macOS arm64 测试机可用，两个测试账号经 CloudBase 精确匹配确认为 ACTIVE；尚未进行客户端登录或通知端到端实验，完整邮箱/UID不记录于文档。Intel Mac 暂不适配。
+P1 的[2026-09-25 核验记录](../../log/2026-09-25-p1-release-readiness.md)保留当日状态快照：确认旧包公钥为空、生产无公告/候选/rollout，159 项本地测试通过。2026-09-26 较早的条件快照记载 GitHub 远端仓库为空、无 workflow/run、vars/secrets 尚未配置；该快照不代表当前状态。当前 GitHub Free Actions 额度及停止超额预算已核验，Windows x64 与 macOS arm64 测试机可用，两个测试账号经 CloudBase 精确匹配确认为 ACTIVE；后台及 Mac 测试 A 已登录就绪，完整邮箱/UID 不记录于文档。Intel Mac 暂不适配。
+
+2026-09-26 公告链路进展：已复现并修复 AdminApi 错拆公告正文的 `Invalid JSON body`，部署组合网关 037 后，真实定向公告创建与 signal 更新成功。客户端恢复/迟到确认竞态代码已提交并通过 18 项服务测试，尚未重新打包；客户端送达、确认和跨设备去重仍待实证，P3 保持未验收。详见[客户端恢复日志](../../log/2026-09-26-announcement-recovery.md)及[后台发布修复日志](../../log/2026-09-26-announcement-body-adapter.md)。
 
 2026-09-26 Windows x64/macOS arm64 双目标矩阵实现和本地验证已完成，详见[矩阵验证记录](../../log/2026-09-26-release-two-targets.md)：119 项 Admin API 测试、17 项发布脚本测试、API typecheck、完整 release lint 和 workflow YAML 解析通过。此结果不代表 P1、P2 或 P4 阶段完成。
 

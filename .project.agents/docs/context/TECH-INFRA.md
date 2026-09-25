@@ -2,7 +2,7 @@
 
 > 2026-09-25：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。本文现有手动分发协议与带日期的资源快照保留为实现/历史依据；[PRD §6](PRD.md#6-本轮正式发布公告和更新需求) 的新发布目标按[实现计划](../superpowers/plans/2026-09-25-desktop-release-notifications-updates.md)推进，P1 复核资源现状、P2 更新协议，不能据本轮文档校准推断生产已可用。
 
-> 同日 P1 只读核验已记录在[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)：生产组合服务为 036，当前没有公告、候选或 rollout；本地旧包未内嵌更新公钥。正式域名只有站点/管理路由，不能直接替代旧包内嵌的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
+> P1 历史核验见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。2026-09-26 组合服务已升级至 037，后台定向公告创建成功；客户端送达及确认仍待验收，候选与 rollout 尚未登记。正式域名不能直接替代客户端的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
 
 > 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；§8.2 已同步本地双目标 CI 与 v1 服务端兼容要求。GitHub 与测试账号的新证据见[本次执行日志](../../log/2026-09-26-release-two-targets.md)，尚未完成远端构建或生产部署。
 
@@ -241,7 +241,7 @@ extraResources:
 - 上游：`https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`；DashScope Key 只来自 CloudBase Run 环境变量 `DASHSCOPE_API_KEY`。
 - 流式计量：当请求 `stream=true` 时，网关必须注入 `stream_options: { include_usage: true }`，否则 DashScope 流式响应不返回 usage。
 - 计量：M0 捕获 usage 与端到端延迟；M1 后写 `token_usage`，记录只含 CloudBase 用户 uid、可选 browserId、model、tokens、latency、createdAt；M4 的 `usage-summary` target 实时读取当前用户 uid 记录并返回脱敏 `TokenUsageSummary`（recent id 不含 uid）。browserId 来自 `X-WenXue-Browser-Id`，限 1–128 位 ASCII 字母、数字、下划线和短横线，仅用于当前鉴权 uid 下的分组，不参与授权、不转发上游。旧记录保留 cloud 分组。
-- 访问（2026-09-22 邮箱认证后端上线后）：当前版本 036 状态 normal，承接 100% 流量（`HasTraffic:true`、`IsReleasing:false`）；部署前后配置经归一化比较无变化，包括既有 EnvParams、`OpenAccessTypes:["OA","PUBLIC","MINIAPP"]`、`Cpu:0.25`、`Mem:0.5`、`MinNum:1`、`MaxNum:2`。旧注册 target 仅返回 410，不再运行用户名注册或其限流逻辑；邮箱发码与验证使用 CloudBase Auth。扩大实例规模或正式公开获客前仍需评估共享网关层限流与审计告警。
+- 访问（2026-09-26 公告修复上线后）：当前版本 037 状态 normal，承接 100% 流量（`IsReleasing:false`）；部署前后 CPU、内存、实例数、端口、环境变量与扩缩容策略一致，访问类型集合仍为 `OA/PUBLIC/MINIAPP`（仅返回顺序变化）。资源仍为 `Cpu:0.25`、`Mem:0.5`、`MinNum:1`、`MaxNum:2`。旧注册 target 仅返回 410，不再运行用户名注册或其限流逻辑；邮箱发码与验证使用 CloudBase Auth。扩大实例规模或正式公开获客前仍需评估共享网关层限流与审计告警。
 - 组合运行时上线（2026-07-18）：AdminApi 管理、消息、版本、客户端与 CI targets 及 AdminConsole `/admin` 静态 target 已合并到 Gateway；AdminConsole 以 `/admin/` base 构建，产物、AdminApi 的 `cloudbaseAuth.mjs` 与 `packages/client-operations` 服务端契约入口经白名单 staging 进入镜像，Functions Framework 固定 `1.18.2`。统一域名共 18 条公开路由；独立 `wenxue-admin-api` 与 `wenxue-admin-web` 保留为回滚/排障单元。
 - 发布记录：2026-07-17 完成 023 灰度与 024 降配；2026-07-18 完成消息/手动更新控制面并发布 030。中间 028 曾错误使用 `/` base，生产只读冒烟发现 `/assets/*` 404 后改用固定 staging 脚本重建，029 恢复；030 携带最终幂等、健康统计、配额与发布公钥绑定修复。未购买额外资源点，也未开启超限。
 - 2026-09-18 发布：从在线 032 更新为 033，构建 ID `2605704907`，保留既有运行配置、VPC 与全部环境变量。通过固定白名单脚本构建组合运行时，验证两个客户端入口的新画像 ID 校验、健康与鉴权边界、注册 CORS、AdminConsole HTML/JS/CSS；未调用真实收费模型或改写历史用量。详见 [部署记录](../../log/2026-09-18-deploy-and-commit-workspace.md)。
@@ -249,6 +249,8 @@ extraResources:
 - 2026-09-22 状态缺省修复：真实密码登录 signin 200、user/me 200，但后者省略 `status`；Auth 管理查询同 UID 为 ACTIVE，旧 guard 因而误报 activate 403。已修复并发布 035，DeployTime `2026-09-22 03:24:20`、BuildId `2607117927`、RunId `1x8jcidyBo3zT8`；health 200、旧 register 410、activate 无 token 401。Gateway 87 项、AdminApi 101 项测试及类型检查通过，定向 ESLint、AdminConsole build 与 staging 字节核对通过。
 - 2026-09-23 成本估算发布：确认此前线上 035 的 `toTokenUsageRecord` 固定返回 `estimatedCostCny: 0`，而已合并的内置模型计价实现尚未部署。以 035 白名单发布包为基线，仅替换 `apps/llm-gateway/src/gateway.mjs` 后发布 036；DeployTime `2026-09-23 02:56:30`、BuildId `2607262307`、RunId `1x95fKT8Fb8sZO`，状态 normal、流量 100%，CPU/内存/实例数/端口/访问类型及环境变量原样保留。网关 124 项测试与 typecheck 通过；客户端实际使用的 `run.wxcloudrun.com` 入口 health 200、无凭据 usage 401，旧注册 410、后台页面 200。真实桌面 Tokens 页刷新后显示 152,720 tokens、参考成本 ¥1.9262；历史缺少金额的内置模型记录由 036 的 summary 补算，不改写历史记录。详见 [部署日志](../../log/2026-09-23-fix-token-estimated-cost.md)。
 - 邮箱验收进展：`is_user` 是官方可选字段，省略按未注册处理，适配已修复；用户完成邮箱验证及资料提交后已创建真实 ACTIVE 账号。原自定义邮箱 `askforeverythingai@askwenxue.com` 已由用户重新填写授权码，恢复 `smtp.qq.com:465` / SSL 并经管理接口复核。035 上线后认证通过，正常 Quit 并重启 dev 后工作台可见，账号菜单正确，原 UID 会话恢复成功；此前旧开发实例白屏未归因为 GPU，未修改布局。桌面全量 273 项 + 脚本 14 项通过，其后补充 UI 定向 11 项（含新增 1 项）、认证服务 58 项及最新 typecheck/build 通过。忘记密码验证进行中；头像及验证码校验后、最终提交前的无账号远程快照仍待补齐，不宣称全部端到端通过。
+- 2026-09-26 公告适配发布：以冻结提交 `12ad186` 构建 AdminConsole 并准备 16 文件白名单包，部署 037（BuildId `2607399952`、RunId `1xADV8Eoy4KhrL`）。本次包括公告 direct event 正文适配修复和此前已验收的 schema v1 双目标候选兼容；保留既有计价逻辑。健康检查正常，后台仅对测试 A 的公告创建和 signal revision 更新均有实证，客户端送达/确认未据此宣称通过。详见[发布修复日志](../../log/2026-09-26-announcement-body-adapter.md)。
+
 - 公网默认入口：统一功能入口使用 `https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com`；底层排障入口为 `https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com`，2026-09-18 `/healthz` 已验证 200；客户端原 `run.wxcloudrun.com` 入口也已验证同一新逻辑。
 - NoSQL 容量边界：2026-07-15 环境资源点配额 40000 已耗尽，数据库 REST 与 server SDK 写均返回 `EXCEED_REQUEST_LIMIT`。注册、登录、激活与网关用户授权因此改为只依赖 CloudBase Auth 原生 `ACTIVE/BLOCKED` 状态，不消耗 NoSQL 资源点；`token_usage` 写入与 usage/admin NoSQL 查询仍可能受该配额影响，写入失败按既有 best-effort 处理，展示层保留本地缓存兜底，资源点恢复前不得把云端计量/后台状态页表述为可用验收。
 - 用户 session：邮箱密码登录、邮箱验证码登录与密码重置使用 CloudBase Web Auth SDK；`usernamePassword` 平台开关必须保留以支持邮箱密码，email 开启、phone 关闭、anonymous 关闭。注册昵称可重复且仅展示；密码 8–32 位、首字符英文字母，仅允许 ASCII 字母数字与 `()!@#$%^&*|?><_-`，至少含四类字符中的三类。登录仅要求密码非空。验证码有效期遵从平台返回值；网络等待以 12 秒为界，人机挑战等待用户输入时暂停计时。不可中止的 SDK 请求保持互斥直到实际完成，取消/超时后的晚到登录清理会话。忘记密码使用 `target:'USER'` 邮箱验证与 `resetPassword`，成功返回密码登录，不改变 UID。桌面端不生成或展示 `wxm_` token；内置环境 publishable key 不是管理密钥。
