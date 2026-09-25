@@ -86,7 +86,6 @@ async function createReleaseDirectory() {
 	const root = await mkdtemp(path.join(tmpdir(), 'wenxue-publish-candidate-'))
 	await Promise.all([
 		writeArtifact(root, 'darwin/arm64/WenXue.dmg', 'mac-arm64-dmg'),
-		writeArtifact(root, 'darwin/x64/WenXue.dmg', 'mac-x64-dmg'),
 		writeArtifact(root, 'win32/x64/WenXue.exe', 'win-installer'),
 		writeArtifact(root, 'candidate-manifest.sig', 'signature'),
 		writeArtifact(root, 'candidate-manifest.json', 'manifest'),

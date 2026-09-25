@@ -72,10 +72,10 @@ test('creates a verifiable manual-unsigned candidate for the required Electron m
 
 		assert.equal(manifest.releaseId, `electron:beta:${desktopPackage.version}`)
 		assert.deepEqual(manifest.distribution, { mode: 'manual-unsigned' })
-		assert.equal(manifest.artifacts.length, 3)
+		assert.equal(manifest.artifacts.length, 2)
 		assert.deepEqual(
 			manifest.artifacts.map(({ platform, arch, kind }) => `${platform}:${arch}:${kind}`),
-			['darwin:arm64:dmg', 'darwin:x64:dmg', 'win32:x64:nsis'],
+			['darwin:arm64:dmg', 'win32:x64:nsis'],
 		)
 		assert.equal(
 			manifest.artifacts.some((value) => Object.hasOwn(value, 'feedUrl')),
@@ -159,7 +159,7 @@ test('creates a verifiable manual-unsigned candidate for the required Electron m
 		await rm(path.join(releaseRoot, 'darwin/arm64/WenXue.dmg'))
 		await assert.rejects(
 			execFileAsync(process.execPath, scriptArguments, { env: releaseEnv }),
-			/(Expected exactly dmg for darwin\/arm64|No release artifacts found)/i,
+			/(exactly two target installers|No release artifacts found)/i,
 		)
 	} finally {
 		await rm(releaseRoot, { recursive: true, force: true })
@@ -170,7 +170,6 @@ async function createReleaseDirectory() {
 	const root = await mkdtemp(path.join(tmpdir(), 'wenxue-release-candidate-'))
 	await Promise.all([
 		writeArtifact(root, 'darwin/arm64/WenXue.dmg', 'mac-arm64-dmg'),
-		writeArtifact(root, 'darwin/x64/WenXue.dmg', 'mac-x64-dmg'),
 		writeArtifact(root, 'win32/x64/WenXue.exe', 'windows-installer'),
 		writeArtifact(root, 'builder-debug.yml', 'do-not-publish: true'),
 	])

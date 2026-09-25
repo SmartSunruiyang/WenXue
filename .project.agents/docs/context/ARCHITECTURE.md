@@ -389,6 +389,12 @@ OTP、验证证明与未提交资料仅驻留内存，不产生待注册账号�
 - 持有状态：无；持久状态在 CloudBase NoSQL；release slot 负责互斥/版本门禁，audit 不参与控制决策
 ```
 
+2026-09-26 发布矩阵契约：新 CI 候选必须包含 macOS arm64 DMG 与 Windows x64 NSIS 各一份，
+Intel Mac 暂不构建或验收。AdminApi 对 schema v1 登记及存量读取接受上述双目标，或旧完整三目标
+（再含 macOS x64 DMG）；所有其他目标、重复、缺失和类型错配继续拒绝。旧清单不裁剪或重签，
+以保持候选不可变与旧协议兼容。构建封存和发布验证只允许当前双目标，固定三项测试证据不变。
+部署顺序为先更新 AdminApi/组合网关，再登记双目标候选；当前 schema v1 客户端按自身平台选取产物的协议不变。
+
 AdminApi 内部适配器 `cloudbaseAuth.mjs` 使用腾讯云 TC3 签名调用 `DescribeUserList`（真实邮箱用户列表）
 和 `ModifyUser`（ACTIVE/BLOCKED 状态）。仅服务端读取 `TENCENTCLOUD_SECRETID` / `TENCENTCLOUD_SECRETKEY`
 / 可选 `TENCENTCLOUD_SESSIONTOKEN` 或运行时 SCF 临时凭据；CAM 需授权上述两个操作，不再需要 CreateUser。
@@ -973,14 +979,14 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 - **AdminApi / AdminConsole**：覆盖未登录/非 admin_users/禁用管理员拒绝、viewer 只读、Auth 列表分页和 UID 查询、真实 ACTIVE/BLOCKED 修改与回读确认、requested/applied/unconfirmed 审计、Auth-only 用户及历史时间戳、管理凭据缺失与请求超时、tokens/用户分页总数不被固定窗口截断、响应不含敏感字段；AdminConsole 通过 typecheck/build。后台登录兼容邮箱与 CloudBase 内置管理员账号，普通注册无管理授权。
 - **DispatchContracts / AdminApi 分发**：覆盖消息字段与 HTTPS URL 校验、三维 audience AND 匹配、回执
   幂等、候选 Ed25519/哈希/版本不可变校验、固定三项 tests 与同一 buildRunUrl 绑定、稳定 rollout 分桶、
-  build seal v2 三平台最终 `app.asar` 发布公钥指纹一致、严格 SemVer、rollout 丢响应后的同 key 幂等重试、
+  build seal v2 双目标最终 `app.asar` 发布公钥指纹一致、v1 双目标/旧三目标候选兼容、严格 SemVer、rollout 丢响应后的同 key 幂等重试、
   mandatory=100%、admin/viewer 权限、
   release slot 原子互斥/最高版本门禁/列表过滤、纯审计追加、signal revision、event token 绑定/篡改拒绝、
   `expiresAt` TTL 与更新事件敏感字段拒绝。
 - **DesktopAnnouncementService / DesktopReleaseSignalService / DesktopUpdateService**：覆盖启动/登出、
   watch 更新/错误/退避与轮询、消息排序/撤回/确认、更新状态机、dev 启动保持 idle 且仅手动检查返回说明、策略 freshness、
   下载/打开前实时复核、离线缓存不得授权打开、IPC、SHA-512 拒绝与系统安装器交接。发布前必须用
-  `manual-unsigned` 的 macOS arm64/x64 DMG 与 Windows x64 NSIS 完成 `0.1.0 → 0.1.1` 手动安装交接 E2E，
+  `manual-unsigned` 的 macOS arm64 DMG 与 Windows x64 NSIS 完成 `0.1.0 → 0.1.1` 手动安装交接 E2E，
   包括系统未签名警告与用户明确继续；开发预览不构成验收。
 - **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。

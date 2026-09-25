@@ -8,10 +8,6 @@ import { isValidSemver } from '@wenxue/client-operations'
 
 import { readReleaseArtifactSet } from './release-artifact-set.mjs'
 
-const REQUIRED_TARGET_KINDS = {
-	darwin: ['dmg'],
-	win32: ['nsis'],
-}
 const REQUIRED_TEST_EVIDENCE = new Set([
 	'quality',
 	'manual-installer-integrity',
@@ -56,7 +52,6 @@ async function main() {
 		}),
 	)
 	const artifacts = artifactRecords.map((record) => record.artifact)
-	assertTargetMatrix(artifactRecords)
 
 	const testEvidenceRaw = options.testEvidenceFile
 		? await readFile(path.resolve(options.testEvidenceFile), 'utf8')
@@ -140,30 +135,6 @@ function readOptions(argv) {
 		releaseDir: requireValue(values.get('release-dir'), '--release-dir'),
 		outputDir: requireValue(values.get('output-dir'), '--output-dir'),
 		testEvidenceFile: values.get('test-evidence'),
-	}
-}
-
-function assertTargetMatrix(records) {
-	const artifacts = records.map((record) => record.artifact)
-	const targets = [
-		{ platform: 'darwin', arch: 'arm64' },
-		{ platform: 'darwin', arch: 'x64' },
-		{ platform: 'win32', arch: 'x64' },
-	]
-	for (const target of targets) {
-		const targetArtifacts = artifacts.filter(
-			(artifact) => artifact.platform === target.platform && artifact.arch === target.arch,
-		)
-		const actualKinds = targetArtifacts.map((artifact) => artifact.kind).sort()
-		const requiredKinds = REQUIRED_TARGET_KINDS[target.platform]
-		if (
-			actualKinds.length !== requiredKinds.length ||
-			actualKinds.some((kind, index) => kind !== requiredKinds[index])
-		) {
-			throw new Error(
-				`Expected exactly ${requiredKinds.join(', ')} for ${target.platform}/${target.arch}`,
-			)
-		}
 	}
 }
 

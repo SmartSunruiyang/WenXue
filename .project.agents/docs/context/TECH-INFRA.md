@@ -4,6 +4,8 @@
 
 > 同日 P1 只读核验已记录在[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)：生产组合服务为 036，当前没有公告、候选或 rollout；本地旧包未内嵌更新公钥。正式域名只有站点/管理路由，不能直接替代旧包内嵌的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
 
+> 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；§8.2 已同步本地双目标 CI 与 v1 服务端兼容要求。GitHub 与测试账号的新证据见[本次执行日志](../../log/2026-09-26-release-two-targets.md)，尚未完成远端构建或生产部署。
+
 | 项       | 内容               |
 | -------- | ------------------ |
 | 文档版本 | v0.2（当前运行时） |
@@ -171,7 +173,7 @@ main 的 DesktopUpdateService 不加载 CloudBase Web SDK。模块卡片和依�
 
 - 构建期由 `apps/desktop/scripts/fetch-browser.ts` 调用 **`@puppeteer/browsers`** 下载 `browser.lock.json` 指定版本，落盘 `.browsers/`（gitignore）；
 - 国内构建环境设置镜像：`PUPPETEER_DOWNLOAD_BASE_URL=https://registry.npmmirror.com/-/binary/chrome-for-testing`；
-- 产物矩阵：`mac-arm64`、`mac-x64`、`win64` 三份。
+- 当前正式产物矩阵：`mac-arm64`、`win64` 两份（2026-09-26 用户确认）。Intel Mac 暂不适配；历史下载器中的 `mac-x64` 能力不作为本轮构建或验收要求。
 
 ### 5.2 打包内置（已评审决策：内置而非首启下载）
 
@@ -310,8 +312,8 @@ extraResources:
 - **版本信号**：未登录 renderer 可只读 `desktop_release_signal/<runtime>:<channel>` revision；
   DesktopReleaseSignalService 变化后经 typed IPC 发送 `updates:check(reason='signal')`，再由 main 经 HTTPS
   获取 update policy。signal 不含候选 URL、签名或发布说明，main 不加载 CloudBase Web SDK。
-- **候选密钥绑定**：build seal v2 要求 macOS arm64/x64 与 Windows x64 的最终 `app.asar` 都内嵌
-  与发布配置相同的 Ed25519 公钥；三份 SPKI SHA-256 指纹必须一致，并继续绑定到 candidate manifest。
+- **候选密钥绑定**：build seal v2 要求 macOS arm64 与 Windows x64 的最终 `app.asar` 都内嵌
+  与发布配置相同的 Ed25519 公钥；两份 SPKI SHA-256 指纹必须一致，并继续绑定到 candidate manifest。
   这项清单完整性校验不依赖 Apple Developer ID/notarization 或 Windows Authenticode 平台证书。
 - **管理路由**：新增 `/api/admin/v1/announcements`、`/api/admin/v1/announcement-withdraw`、
   `/api/admin/v1/release-candidates`、`/api/admin/v1/releases`、`/api/admin/v1/release-publish`、
@@ -378,12 +380,17 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 - PR 门禁：lint + typecheck + `pnpm -r test`；
 - `desktop-release-candidate.yml` 是无发布凭据的原字节候选构建段：在受保护分支上运行质量门禁，
-  生成 macOS arm64/x64 未签名 DMG 与 Windows x64 未签名 NSIS。三平台产物与 `release-build.json`
+  生成 macOS arm64 未签名 DMG 与 Windows x64 未签名 NSIS。双目标产物与 `release-build.json`
   seal 都以 Actions artifacts 保留 30 天。
 - seal v2 锁定 repository、commit、version、channel、`buildRunUrl`、`artifactSetSha512`、逐产物哈希/尺寸
-  与 Ed25519 SPKI SHA-256 公钥指纹；三个最终 `app.asar` 的指纹证明必须一致且等于发布时配置。
+  与 Ed25519 SPKI SHA-256 公钥指纹；两个最终 `app.asar` 的指纹证明必须一致且等于发布时配置。
   tests 必须且只能是 `quality`、`manual-installer-integrity`、`manifest-tamper-rejection` 三项 passed 记录，
   三者 URL 均等于该成功首轮 `buildRunUrl`。
+- 新候选的构建封存、清单生成与公开字节验证必须严格包含 `darwin/arm64:dmg` 和
+  `win32/x64:nsis` 各一份；缺失、重复、额外平台或错误类型均拒绝。schema v1 的服务端登记/读取
+  同时接受旧的完整三目标清单（额外 `darwin/x64:dmg`），保留原清单字节与签名，不裁剪旧候选；
+  不因此恢复 Intel Mac 构建。该兼容只服务已有 v1 协议，新 CI 不再产生 Intel 包。三个测试证据名称不变。
+  上线时先部署接受双目标的 AdminApi/组合网关，再登记新 CI 候选；旧服务端仍要求三份安装包，会拒绝新双目标清单。
 - `desktop-release-publish.yml` 是签候选/发布段：经 `desktop-release-production` 运行，只接受当前
   protected commit 的指定成功首轮 `desktop-release-candidate.yml` run（`run_attempt=1`）。它重下载原字节和
   seal，先重算 `artifactSetSha512`，再校验固定三项 tests 与同一 `buildRunUrl`/产物集绑定；不接收外部
@@ -392,7 +399,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   `Closed`，通过 `--forbid-overwrite` 上传，再从公开 COS origin 逐字节复核并注册。
 - CI 只注册 candidate，不自动发布 rollout；发布比例和 optional/mandatory 只能在后台“版本更新”发起。
 - `desktop-release-production` 必须在 GitHub 仓库/组织侧创建并配置 protected branch/reviewer/最小权限
-  secrets 与 variables；当前仍等待 GitHub 登录授权。COS bucket 已就绪，但专用最小权限 CAM CI 子账号
+  secrets 与 variables；2026-09-26 已确认 GitHub 认证与仓库 ADMIN 权限，但远端为空仓库、Environment/variables/secrets 均未配置，保护规则接口返回私有仓库套餐限制。COS bucket 已就绪，但专用最小权限 CAM CI 子账号
   仍需有权管理员创建，不能复用 Gateway 高权限身份。候选构建段不使用受保护 Environment 或发布凭据。
 
 ### 8.3 冒烟测试（发布门禁）
@@ -470,7 +477,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 | 桌面端     | 单测（状态机、参数组装、路径解析）+ CDP 冒烟      | F1 验收标准自动化覆盖核心段                                       |
 | 分发协议   | vitest + 组件测试                                 | 消息校验/匹配/回执、候选签名、灰度分桶、固定弹窗可访问性          |
 | 分发服务   | AdminApi/Gateway 集成 + watch 故障注入            | 发布/撤回/signal/pending/ack、rollout/policy/event token/TTL      |
-| 更新 E2E   | 三平台 `manual-unsigned` 安装包手动交接           | `0.1.0 → 0.1.1`、篡改拒绝、系统警告、画像无损、暂停与前向 hotfix  |
+| 更新 E2E   | macOS arm64 / Windows x64 安装包（Intel 暂缓）    | `0.1.0 → 0.1.1`、篡改拒绝、系统警告、画像无损、暂停与前向 hotfix  |
 | 端到端演示 | 演示脚本（research + 多平台答题 fixture）人工演练 | PRD 第 9 节成功指标；adapter 在真实 smoke 前仅 `fixture_verified` |
 
 ## 12. 关键决策记录（ADR 摘要）

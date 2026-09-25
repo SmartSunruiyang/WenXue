@@ -10,7 +10,7 @@ This file guides Claude Code (and other agents) when working in this repository.
 - 浏览器内核 = Chrome for Testing **打包内置**：品牌版 Chrome 137+ 已移除 `--load-extension`，CfT 永久保留（决策记录：TECH-INFRA §12）
 - 现运行时边界：插件域管"智能"（Agent 循环、LLM、历史），桌面域管"运行时"（CfT 版本、画像、进程看护）；Demo 阶段两域**零运行时通信**（legacy invariant I3）
 - Known environment constraints: Node 22 LTS + pnpm 9（`packageManager` 字段）；CfT 二进制不入库，构建期拉取至 `.browsers/`（国内设 `PUPPETEER_DOWNLOAD_BASE_URL=https://registry.npmmirror.com/-/binary/chrome-for-testing`）；Demo 产物不签名（macOS 需手动放行）
-- 当前维护目标：继续维护 Electron + 内置 CfT + 扩展 + CloudBase。正式分发目标为 Windows x64 未签名 NSIS 后台下载并安全退出安装或立即重启更新；macOS arm64/x64 未签名 DMG 后台下载后由用户手动覆盖。暂不办理平台签名。公告支持全体/指定账号、在线及时送达、离线登录补发与账号确认去重。实现按当前 ROADMAP 和已批准计划推进，尚未实现的能力不得描述为可用。
+- 当前维护目标：继续维护 Electron + 内置 CfT + 扩展 + CloudBase。本轮正式分发与实机验收目标仅为 Windows x64 未签名 NSIS 后台下载并安全退出安装或立即重启更新，以及 macOS Apple Silicon（arm64）未签名 DMG 后台下载后由用户手动覆盖；Intel Mac 暂不适配。暂不办理平台签名。公告支持全体/指定账号、在线及时送达、离线登录补发与账号确认去重。实现按当前 ROADMAP 和已批准计划推进，尚未实现的能力不得描述为可用。
 
 ## Common commands
 

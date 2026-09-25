@@ -4,15 +4,12 @@ import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
+import { assertReleaseTargetMatrix } from './release-artifact-set.mjs'
+
 const SMALL_REQUEST_TIMEOUT_MS = 30_000
 const ARTIFACT_REQUEST_TIMEOUT_MS = 20 * 60 * 1000
 const REQUEST_ATTEMPTS = 4
 const MAX_CONTROL_FILE_BYTES = 5 * 1024 * 1024
-const REQUIRED_TARGET_KINDS = {
-	'darwin:arm64': ['dmg'],
-	'darwin:x64': ['dmg'],
-	'win32:x64': ['nsis'],
-}
 const REQUIRED_TEST_EVIDENCE = new Set([
 	'quality',
 	'manual-installer-integrity',
@@ -49,7 +46,7 @@ export async function verifyPublishedCandidate(options, dependencies = {}) {
 	}
 	assertExpectedManifest(manifest, options, publicKeyFingerprint)
 	assertReleaseTests(manifest.tests)
-	assertTargetMatrix(manifest.artifacts)
+	assertReleaseTargetMatrix(manifest.artifacts)
 
 	const baseUrl = new URL('./', manifestUrl)
 	for (const value of manifest.artifacts) {
@@ -148,32 +145,6 @@ function assertReleaseTests(tests) {
 	for (const required of REQUIRED_TEST_EVIDENCE) {
 		if (!names.has(required)) {
 			throw new Error(`Published candidate is missing required test evidence: ${required}`)
-		}
-	}
-}
-
-function assertTargetMatrix(artifacts) {
-	if (!Array.isArray(artifacts) || artifacts.length === 0) {
-		throw new Error('Published candidate has no artifacts')
-	}
-	const targets = new Map()
-	for (const artifact of artifacts) {
-		if (!isRecord(artifact)) throw new Error('Published candidate contains an invalid artifact')
-		const key = `${artifact.platform}:${artifact.arch}`
-		const kinds = targets.get(key) ?? []
-		kinds.push(artifact.kind)
-		targets.set(key, kinds)
-	}
-	if (targets.size !== Object.keys(REQUIRED_TARGET_KINDS).length) {
-		throw new Error('Published candidate target matrix is incomplete')
-	}
-	for (const [target, requiredKinds] of Object.entries(REQUIRED_TARGET_KINDS)) {
-		const actualKinds = (targets.get(target) ?? []).sort()
-		if (
-			actualKinds.length !== requiredKinds.length ||
-			actualKinds.some((kind, index) => kind !== requiredKinds[index])
-		) {
-			throw new Error(`Published candidate target ${target} has an invalid artifact set`)
 		}
 	}
 }

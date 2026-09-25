@@ -6,10 +6,9 @@ import { pathToFileURL } from 'node:url'
 
 import { isValidSemver } from '@wenxue/client-operations'
 
-import { readReleaseArtifactSet } from './release-artifact-set.mjs'
+import { readReleaseArtifactSet, REQUIRED_RELEASE_TARGETS } from './release-artifact-set.mjs'
 
 const EMBEDDED_RELEASE_KEY_PROOF_NAME = 'release-public-key-fingerprint.txt'
-const REQUIRED_RELEASE_TARGETS = ['darwin/arm64', 'darwin/x64', 'win32/x64']
 
 async function main() {
 	const [command, ...argv] = process.argv.slice(2)
@@ -122,7 +121,8 @@ async function verifyBuildSeal(options) {
 async function readEmbeddedReleaseKeyFingerprint(releaseDirValue) {
 	const releaseDir = path.resolve(releaseDirValue)
 	const fingerprints = await Promise.all(
-		REQUIRED_RELEASE_TARGETS.map(async (target) => {
+		REQUIRED_RELEASE_TARGETS.map(async ({ platform, arch }) => {
+			const target = `${platform}/${arch}`
 			const proof = await readFile(
 				path.join(releaseDir, target, EMBEDDED_RELEASE_KEY_PROOF_NAME),
 				'utf8',

@@ -35,6 +35,7 @@ test('seals exact release bytes and rejects a changed artifact', async () => {
 		})
 		const sealContents = JSON.parse(await readFile(seal, 'utf8'))
 		assert.equal(sealContents.schemaVersion, 2)
+		assert.equal(sealContents.artifacts.length, 2)
 		assert.equal(sealContents.releasePublicKeyFingerprint, publicKeyFingerprint)
 		const githubEnvContents = await readFile(githubEnv, 'utf8')
 		assert.match(githubEnvContents, /WENXUE_RELEASE_CREATED_AT=2026-07-17T10:00:00.000Z/)
@@ -116,6 +117,42 @@ test('rejects installer artifacts built with different release keys', async () =
 	}
 })
 
+test('requires both target public-key proofs and rejects an extra installer', async () => {
+	const root = await createReleaseDirectory()
+	const seal = path.join(root, 'release-build.json')
+	try {
+		await rm(path.join(root, 'win32/x64/release-public-key-fingerprint.txt'))
+		await assert.rejects(
+			execFileAsync(
+				process.execPath,
+				[scriptPath, 'create', '--release-dir', root, '--output', seal],
+				{
+					env: createEnvironment(),
+				},
+			),
+			/ENOENT/i,
+		)
+		await writeArtifact(
+			root,
+			'win32/x64/release-public-key-fingerprint.txt',
+			`${publicKeyFingerprint}\n`,
+		)
+		await writeArtifact(root, 'darwin/x64/WenXue.dmg', 'extra-intel-installer')
+		await assert.rejects(
+			execFileAsync(
+				process.execPath,
+				[scriptPath, 'create', '--release-dir', root, '--output', seal],
+				{
+					env: createEnvironment(),
+				},
+			),
+			/exactly two target installers/i,
+		)
+	} finally {
+		await rm(root, { recursive: true, force: true })
+	}
+})
+
 function createEnvironment() {
 	return {
 		...process.env,
@@ -156,16 +193,10 @@ async function createReleaseDirectory() {
 	const root = await mkdtemp(path.join(tmpdir(), 'wenxue-release-seal-'))
 	await Promise.all([
 		writeArtifact(root, 'darwin/arm64/WenXue.dmg', 'mac-arm64-dmg'),
-		writeArtifact(root, 'darwin/x64/WenXue.dmg', 'mac-x64-dmg'),
 		writeArtifact(root, 'win32/x64/WenXue.exe', 'win-installer'),
 		writeArtifact(
 			root,
 			'darwin/arm64/release-public-key-fingerprint.txt',
-			`${publicKeyFingerprint}\n`,
-		),
-		writeArtifact(
-			root,
-			'darwin/x64/release-public-key-fingerprint.txt',
 			`${publicKeyFingerprint}\n`,
 		),
 		writeArtifact(

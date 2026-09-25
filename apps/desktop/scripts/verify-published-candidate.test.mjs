@@ -18,7 +18,7 @@ test('verifies the signed public manifest and every published artifact byte', as
 			requestAttempts: 1,
 		})
 		assert.equal(result.manifest.releaseId, `electron:beta:${version}`)
-		assert.equal(result.manifest.artifacts.length, 3)
+		assert.equal(result.manifest.artifacts.length, 2)
 	})
 })
 
@@ -74,12 +74,34 @@ test('rejects missing, duplicate, or extended public release test evidence', asy
 	}
 })
 
+test('rejects signed public manifests with missing, extra, or mistyped targets', async () => {
+	const expected = [
+		artifact('darwin', 'arm64', 'dmg', 'WenXue-arm64.dmg', 'mac-arm64-dmg'),
+		artifact('win32', 'x64', 'nsis', 'WenXue.exe', 'win-installer'),
+	]
+	for (const artifacts of [
+		[expected[0]],
+		[...expected, artifact('darwin', 'x64', 'dmg', 'WenXue-x64.dmg', 'mac-x64-dmg')],
+		[{ ...expected[0], kind: 'nsis' }, expected[1]],
+	]) {
+		const fixture = createFixture({ artifacts })
+		await withReleasePublicKey(fixture.publicKeyPem, async () => {
+			await assert.rejects(
+				verifyPublishedCandidate(readOptions(), {
+					fetchImpl: fixture.fetchImpl,
+					requestAttempts: 1,
+				}),
+				/target installers|release target/i,
+			)
+		})
+	}
+})
+
 function createFixture(options = {}) {
 	const { privateKey, publicKey } = generateKeyPairSync('ed25519')
 	const responses = new Map()
-	const artifacts = [
+	const artifacts = options.artifacts ?? [
 		artifact('darwin', 'arm64', 'dmg', 'WenXue-arm64.dmg', 'mac-arm64-dmg'),
-		artifact('darwin', 'x64', 'dmg', 'WenXue-x64.dmg', 'mac-x64-dmg'),
 		artifact('win32', 'x64', 'nsis', 'WenXue.exe', 'win-installer'),
 	]
 	for (const value of artifacts) responses.set(value.url, value.bytes)

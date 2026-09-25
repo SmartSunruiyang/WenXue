@@ -4,6 +4,10 @@ import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 
 const RELEASE_BINARY_EXTENSIONS = new Set(['.dmg', '.exe'])
+export const REQUIRED_RELEASE_TARGETS = [
+	{ platform: 'darwin', arch: 'arm64', kind: 'dmg' },
+	{ platform: 'win32', arch: 'x64', kind: 'nsis' },
+]
 
 export async function readReleaseArtifactSet(rootValue) {
 	const root = path.resolve(rootValue)
@@ -28,6 +32,7 @@ export async function readReleaseArtifactSet(rootValue) {
 		}),
 	)
 	records.sort((left, right) => left.relativePath.localeCompare(right.relativePath))
+	assertReleaseTargetMatrix(records.map((record) => record.artifact))
 	const entries = records.map(({ relativePath, artifact }) => ({
 		path: relativePath,
 		...artifact,
@@ -38,6 +43,27 @@ export async function readReleaseArtifactSet(rootValue) {
 		entries,
 		artifactSetSha512: createHash('sha512').update(canonicalJson(entries)).digest('base64'),
 	}
+}
+
+export function assertReleaseTargetMatrix(artifacts) {
+	if (!Array.isArray(artifacts) || artifacts.length !== REQUIRED_RELEASE_TARGETS.length) {
+		throw new Error('Release artifact set must contain exactly two target installers')
+	}
+	const remaining = new Set(
+		REQUIRED_RELEASE_TARGETS.map(({ platform, arch }) => `${platform}/${arch}`),
+	)
+	for (const artifact of artifacts) {
+		if (!isRecord(artifact)) throw new Error('Release artifact is invalid')
+		const target = `${artifact.platform}/${artifact.arch}`
+		const required = REQUIRED_RELEASE_TARGETS.find(
+			(value) => value.platform === artifact.platform && value.arch === artifact.arch,
+		)
+		if (!required || !remaining.has(target) || artifact.kind !== required.kind) {
+			throw new Error(`Unexpected, duplicate, or invalid release target ${target}:${artifact.kind}`)
+		}
+		remaining.delete(target)
+	}
+	if (remaining.size !== 0) throw new Error(`Missing release target ${[...remaining].join(', ')}`)
 }
 
 async function collectReleaseFiles(root) {

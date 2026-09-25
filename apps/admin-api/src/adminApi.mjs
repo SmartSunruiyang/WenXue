@@ -1776,8 +1776,8 @@ function normalizeReleaseTests(value) {
  * @returns {ReleaseArtifact[]}
  */
 function normalizeReleaseArtifacts(value) {
-	if (!Array.isArray(value) || value.length !== 3) {
-		throw new AdminApiError('artifacts must contain exactly three manual installers', 400)
+	if (!Array.isArray(value) || (value.length !== 2 && value.length !== 3)) {
+		throw new AdminApiError('artifacts must contain two or three manual installers', 400)
 	}
 	const artifacts = value.map((artifact) => {
 		if (!isRecord(artifact)) throw new AdminApiError('Invalid release artifact', 400)
@@ -1818,16 +1818,18 @@ function normalizeReleaseArtifacts(value) {
 	if (unique.size !== artifacts.length) {
 		throw new AdminApiError('Artifact targets and kinds must be unique', 400)
 	}
-	const expectedTargets = new Set(['darwin:arm64:dmg', 'darwin:x64:dmg', 'win32:x64:nsis'])
+	const requiredTargets = new Set(['darwin:arm64:dmg', 'win32:x64:nsis'])
+	const allowedTargets = new Set([...requiredTargets, 'darwin:x64:dmg'])
 	for (const artifact of artifacts) {
 		const target = `${artifact.platform}:${artifact.arch}:${artifact.kind}`
-		if (!expectedTargets.delete(target)) {
+		if (!allowedTargets.has(target)) {
 			throw new AdminApiError(`Unexpected manual installer artifact: ${target}`, 400)
 		}
+		requiredTargets.delete(target)
 	}
-	if (expectedTargets.size > 0) {
+	if (requiredTargets.size > 0) {
 		throw new AdminApiError(
-			`Release artifact matrix is missing ${Array.from(expectedTargets).join(', ')}`,
+			`Release artifact matrix is missing ${Array.from(requiredTargets).join(', ')}`,
 			400,
 		)
 	}

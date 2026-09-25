@@ -579,6 +579,28 @@ function keyFingerprint(publicKey: KeyObject) {
 		.digest('hex')
 }
 
+function signedReleaseRegistration(manifest: ReturnType<typeof createReleaseManifest>) {
+	const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+	return {
+		method: 'POST',
+		headers: { authorization: 'Bearer ci-token' },
+		env: {
+			releaseCiToken: 'ci-token',
+			releaseManifestPublicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+		},
+		body: {
+			manifestUrl: manifest.manifestUrl,
+			manifest,
+			manifestSignature: sign(
+				null,
+				Buffer.from(sharedCanonicalJson(manifest)),
+				privateKey,
+			).toString('base64'),
+			publicKeyFingerprint: keyFingerprint(publicKey),
+		},
+	}
+}
+
 function releaseEventToken(installIdHash: string, overrides: Record<string, unknown> = {}) {
 	const encoded = Buffer.from(
 		JSON.stringify({
@@ -1332,6 +1354,90 @@ describe('AdminApi announcement dispatch', () => {
 })
 
 describe('AdminApi release dispatch', () => {
+	it('registers, rereads, and publishes a signed two-target candidate', async () => {
+		const manifest = createReleaseManifest({
+			artifacts: [createArtifact('darwin', 'arm64', 'dmg'), createArtifact('win32', 'x64', 'nsis')],
+		})
+		const registration = signedReleaseRegistration(manifest)
+		const state = createState()
+		const first = await request('/internal/v1/release-candidates/register', state, registration)
+		const replay = await request('/internal/v1/release-candidates/register', state, registration)
+		const listed = await request('/admin/v1/release-candidates', state)
+		const published = await request('/admin/v1/release-publish', state, {
+			method: 'POST',
+			body: {
+				candidateId: manifest.releaseId,
+				title: '问学 0.1.1',
+				notes: '稳定性改进',
+				percentage: 100,
+				mode: 'optional',
+			},
+		})
+
+		expect(first.statusCode).toBe(200)
+		expect(replay.statusCode).toBe(200)
+		expect(parseBody(replay).candidate).toEqual(parseBody(first).candidate)
+		expect(state.candidates).toHaveLength(1)
+		expect(listed.statusCode).toBe(200)
+		expect(parseBody(listed).candidates).toEqual([parseBody(first).candidate])
+		expect(parseBody(first).candidate.artifacts).toEqual(manifest.artifacts)
+		expect(parseBody(first).candidate.manifestSignature).toBe(registration.body.manifestSignature)
+		expect(published.statusCode).toBe(201)
+		for (const [platform, arch, kind] of [
+			['darwin', 'arm64', 'dmg'],
+			['win32', 'x64', 'nsis'],
+		]) {
+			const policy = await request('/v1/client/update-policy', state, {
+				query: {
+					runtime: 'electron',
+					platform,
+					arch,
+					channel: 'stable',
+					version: '0.1.0',
+					installIdHash: 'a'.repeat(64),
+				},
+			})
+			expect(policy.statusCode).toBe(200)
+			expect(parseBody(policy).policy.artifacts).toEqual([
+				expect.objectContaining({ platform, arch, kind }),
+			])
+		}
+	})
+
+	it.each([
+		['missing Windows', [createArtifact('darwin', 'arm64', 'dmg')]],
+		[
+			'missing macOS arm64',
+			[createArtifact('darwin', 'x64', 'dmg'), createArtifact('win32', 'x64', 'nsis')],
+		],
+		[
+			'duplicate target',
+			[createArtifact('darwin', 'arm64', 'dmg'), createArtifact('darwin', 'arm64', 'dmg')],
+		],
+		[
+			'wrong installer kind',
+			[createArtifact('darwin', 'arm64', 'nsis'), createArtifact('win32', 'x64', 'nsis')],
+		],
+		[
+			'unsupported extra target',
+			[
+				createArtifact('darwin', 'arm64', 'dmg'),
+				createArtifact('win32', 'x64', 'nsis'),
+				createArtifact('linux', 'x64', 'deb'),
+			],
+		],
+	] as const)('rejects a signed matrix with %s', async (_reason, artifacts) => {
+		const state = createState()
+		const manifest = createReleaseManifest({ artifacts })
+		const response = await request(
+			'/internal/v1/release-candidates/register',
+			state,
+			signedReleaseRegistration(manifest),
+		)
+		expect(response.statusCode).toBe(400)
+		expect(state.candidates).toHaveLength(0)
+	})
+
 	it('authenticates CI, verifies Ed25519, and registers an immutable candidate idempotently', async () => {
 		const { privateKey, publicKey } = generateKeyPairSync('ed25519')
 		const manifest = createReleaseManifest()

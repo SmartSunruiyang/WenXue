@@ -74,14 +74,6 @@ jobs:
 
   macos:
     needs: quality
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            browser_platform: mac-arm64
-          - arch: x64
-            browser_platform: mac-x64
     runs-on: macos-14
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -94,9 +86,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Fetch managed browser
-        run: pnpm -F desktop fetch-browser -- --platform "$BROWSER_PLATFORM"
-        env:
-          BROWSER_PLATFORM: ${{ matrix.browser_platform }}
+        run: pnpm -F desktop fetch-browser -- --platform mac-arm64
       - run: pnpm -F extension build
       - name: Build update-aware desktop bundle
         run: |
@@ -112,9 +102,8 @@ jobs:
           WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
           WENXUE_UPDATE_CHANNEL: ${{ inputs.channel }}
       - name: Package unsigned DMG
-        run: pnpm -F desktop exec electron-builder --mac dmg "--$DESKTOP_ARCH" --publish never
+        run: pnpm -F desktop exec electron-builder --mac dmg --arm64 --publish never
         env:
-          DESKTOP_ARCH: ${{ matrix.arch }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: Verify packaged version
         run: >-
@@ -135,7 +124,7 @@ jobs:
           WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: desktop-darwin-${{ matrix.arch }}
+          name: desktop-darwin-arm64
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/release-public-key-fingerprint.txt
@@ -229,10 +218,6 @@ jobs:
         with:
           name: desktop-darwin-arm64
           path: candidate/darwin/arm64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: desktop-darwin-x64
-          path: candidate/darwin/x64
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: desktop-win32-x64
