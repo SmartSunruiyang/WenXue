@@ -2,7 +2,7 @@
 
 > 2026-09-25：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。本文现有手动分发协议与带日期的资源快照保留为实现/历史依据；[PRD §6](PRD.md#6-本轮正式发布公告和更新需求) 的新发布目标按[实现计划](../superpowers/plans/2026-09-25-desktop-release-notifications-updates.md)推进，P1 复核资源现状、P2 更新协议，不能据本轮文档校准推断生产已可用。
 
-> P1 历史核验见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。2026-09-26 组合服务已升级至 037，后台定向公告创建成功；客户端送达及确认仍待验收，候选与 rollout 尚未登记。正式域名不能直接替代客户端的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
+> P1 历史核验见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。2026-09-26 组合服务已升级至 037，后台定向公告创建成功，已观察到 Mac 测试 A 弹窗；在线时延、确认和跨设备去重仍待验收，候选与 rollout 尚未登记。正式域名不能直接替代客户端的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
 
 > 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；§8.2 已同步本地双目标 CI 与 v1 服务端兼容要求。GitHub 与测试账号的新证据见[本次执行日志](../../log/2026-09-26-release-two-targets.md)，尚未完成远端构建或生产部署。
 
@@ -249,7 +249,7 @@ extraResources:
 - 2026-09-22 状态缺省修复：真实密码登录 signin 200、user/me 200，但后者省略 `status`；Auth 管理查询同 UID 为 ACTIVE，旧 guard 因而误报 activate 403。已修复并发布 035，DeployTime `2026-09-22 03:24:20`、BuildId `2607117927`、RunId `1x8jcidyBo3zT8`；health 200、旧 register 410、activate 无 token 401。Gateway 87 项、AdminApi 101 项测试及类型检查通过，定向 ESLint、AdminConsole build 与 staging 字节核对通过。
 - 2026-09-23 成本估算发布：确认此前线上 035 的 `toTokenUsageRecord` 固定返回 `estimatedCostCny: 0`，而已合并的内置模型计价实现尚未部署。以 035 白名单发布包为基线，仅替换 `apps/llm-gateway/src/gateway.mjs` 后发布 036；DeployTime `2026-09-23 02:56:30`、BuildId `2607262307`、RunId `1x95fKT8Fb8sZO`，状态 normal、流量 100%，CPU/内存/实例数/端口/访问类型及环境变量原样保留。网关 124 项测试与 typecheck 通过；客户端实际使用的 `run.wxcloudrun.com` 入口 health 200、无凭据 usage 401，旧注册 410、后台页面 200。真实桌面 Tokens 页刷新后显示 152,720 tokens、参考成本 ¥1.9262；历史缺少金额的内置模型记录由 036 的 summary 补算，不改写历史记录。详见 [部署日志](../../log/2026-09-23-fix-token-estimated-cost.md)。
 - 邮箱验收进展：`is_user` 是官方可选字段，省略按未注册处理，适配已修复；用户完成邮箱验证及资料提交后已创建真实 ACTIVE 账号。原自定义邮箱 `askforeverythingai@askwenxue.com` 已由用户重新填写授权码，恢复 `smtp.qq.com:465` / SSL 并经管理接口复核。035 上线后认证通过，正常 Quit 并重启 dev 后工作台可见，账号菜单正确，原 UID 会话恢复成功；此前旧开发实例白屏未归因为 GPU，未修改布局。桌面全量 273 项 + 脚本 14 项通过，其后补充 UI 定向 11 项（含新增 1 项）、认证服务 58 项及最新 typecheck/build 通过。忘记密码验证进行中；头像及验证码校验后、最终提交前的无账号远程快照仍待补齐，不宣称全部端到端通过。
-- 2026-09-26 公告适配发布：以冻结提交 `12ad186` 构建 AdminConsole 并准备 16 文件白名单包，部署 037（BuildId `2607399952`、RunId `1xADV8Eoy4KhrL`）。本次包括公告 direct event 正文适配修复和此前已验收的 schema v1 双目标候选兼容；保留既有计价逻辑。健康检查正常，后台仅对测试 A 的公告创建和 signal revision 更新均有实证，客户端送达/确认未据此宣称通过。详见[发布修复日志](../../log/2026-09-26-announcement-body-adapter.md)。
+- 2026-09-26 公告适配发布：以冻结提交 `12ad186` 构建 AdminConsole 并准备 16 文件白名单包，部署 037（BuildId `2607399952`、RunId `1xADV8Eoy4KhrL`）。本次包括公告 direct event 正文适配修复和此前已验收的 schema v1 双目标候选兼容；保留既有计价逻辑。健康检查正常，后台仅对测试 A 的公告创建和 signal revision 更新均有实证，Mac 可访问性树已观察到该弹窗；近实时送达和确认尚未通过。详见[发布修复日志](../../log/2026-09-26-announcement-body-adapter.md)。
 
 - 公网默认入口：统一功能入口使用 `https://wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.app.tcloudbase.com`；底层排障入口为 `https://wenxue-llm-gateway-4037646-1427406869.ap-shanghai.run.tcloudbase.com`，2026-09-18 `/healthz` 已验证 200；客户端原 `run.wxcloudrun.com` 入口也已验证同一新逻辑。
 - NoSQL 容量边界：2026-07-15 环境资源点配额 40000 已耗尽，数据库 REST 与 server SDK 写均返回 `EXCEED_REQUEST_LIMIT`。注册、登录、激活与网关用户授权因此改为只依赖 CloudBase Auth 原生 `ACTIVE/BLOCKED` 状态，不消耗 NoSQL 资源点；`token_usage` 写入与 usage/admin NoSQL 查询仍可能受该配额影响，写入失败按既有 best-effort 处理，展示层保留本地缓存兜底，资源点恢复前不得把云端计量/后台状态页表述为可用验收。
