@@ -416,6 +416,11 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   COSCLI 固定 1.0.8，注册请求仅允许 HTTPS 且禁止重定向，不回显凭据或原始错误响应。
   私有仓库的免费额度不等于无限构建；不自动购买额度、升级套餐或改为公开仓库。专用 CAM 发布身份
   仍需核验，不能复用 Gateway 高权限身份。本机按具体 commit 审阅并签名，不冒称 GitHub 分支保护已生效。
+- 2026-09-26 构建配置核验：两个公开 repository variables 已配置并逐值回读一致；公钥取自当前
+  Gateway 036 配置，Ed25519 SPKI SHA-256 为 `bbacf14f6a6de5f743cf499bd85ccad61434d83f8f110ae4119b2b02eb01c336`。
+  用同一公开配置进行本地 desktop build 与内嵌公钥验证通过。用户登录后，账单页已核实 GitHub Free、
+  Actions 0/2,000 分钟与 0/0.5 GB，账号 Actions 预算为 $0 且 Stop usage=Yes；可在此预算内启动
+  首次远端 run，构建结果另行记录，详见 [CI 预检记录](../../log/2026-09-26-ci-preflight.md)。
 
 #### 8.2.1 免费私有仓库的操作顺序
 
