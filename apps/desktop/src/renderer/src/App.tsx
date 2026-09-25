@@ -362,6 +362,27 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 	}, [])
 
 	useEffect(() => {
+		const resume = () => {
+			void announcementServiceRef.current
+				?.resume()
+				.catch((error: unknown) =>
+					setMessage(readCloudBaseErrorMessage(error, strings.announcement.syncError)),
+				)
+		}
+		const resumeWhenVisible = () => {
+			if (document.visibilityState === 'visible') resume()
+		}
+		window.addEventListener('online', resume)
+		window.addEventListener('focus', resume)
+		document.addEventListener('visibilitychange', resumeWhenVisible)
+		return () => {
+			window.removeEventListener('online', resume)
+			window.removeEventListener('focus', resume)
+			document.removeEventListener('visibilitychange', resumeWhenVisible)
+		}
+	}, [])
+
+	useEffect(() => {
 		let mounted = true
 		const releaseSignalService = releaseSignalServiceRef.current
 		const unsubscribe = window.wenxue.updates.onStateChange((state) => {

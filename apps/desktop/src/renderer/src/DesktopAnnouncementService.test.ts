@@ -174,6 +174,156 @@ describe('DesktopAnnouncementService', () => {
 		service.stop()
 	})
 
+	it('resumes immediately, coalesces repeated recovery intents, and follows a revision during fetch', async () => {
+		vi.useFakeTimers()
+		const callbacks = new Map<
+			string,
+			{ onChange: (snapshot: unknown) => void; onError: (error: unknown) => void }
+		>()
+		const watchSignal = vi.fn(
+			(
+				documentId: string,
+				next: { onChange: (snapshot: unknown) => void; onError: (error: unknown) => void },
+			) => {
+				callbacks.set(documentId, next)
+				return { close: vi.fn() }
+			},
+		)
+		let completePending: ((response: Response) => void) | undefined
+		const fetchImpl = vi.fn<typeof fetch>(
+			async () =>
+				new Promise<Response>((resolve) => {
+					completePending = resolve
+				}),
+		)
+		const service = new DesktopAnnouncementService({ fetchImpl, watchSignal })
+		await service.resume()
+		expect(fetchImpl).not.toHaveBeenCalled()
+		const started = service.start(session, 'darwin', '0.1.0')
+		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce())
+		completePending?.(Response.json({ announcements: [] }))
+		await started
+
+		callbacks.get('global')?.onError(new Error('offline'))
+		const resumed = service.resume()
+		void service.resume()
+		void service.resume()
+		expect(watchSignal).toHaveBeenCalledTimes(3)
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+		completePending?.(Response.json({ announcements: [] }))
+		await resumed
+		expect(fetchImpl).toHaveBeenCalledTimes(2)
+
+		const revisionRun = service.resume()
+		expect(fetchImpl).toHaveBeenCalledTimes(3)
+		callbacks.get('global')?.onChange({ docs: [{ revision: 2 }] })
+		completePending?.(Response.json({ announcements: [] }))
+		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(4))
+		completePending?.(
+			Response.json({ announcements: [announcement('new', 'normal', '2026-07-17T12:00:00.000Z')] }),
+		)
+		await revisionRun
+		expect(service.current()?.id).toBe('new')
+		service.stop()
+	})
+
+	it('keeps a successful ack removed when an older pending response arrives, and retries failed ack', async () => {
+		let finishPending: ((response: Response) => void) | undefined
+		let ackFails = true
+		let pendingCalls = 0
+		const item = announcement('message-1', 'normal', '2026-07-17T12:00:00.000Z')
+		const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+			if (String(input).includes('/announcement-ack')) {
+				return ackFails ? new Response(null, { status: 500 }) : new Response(null, { status: 204 })
+			}
+			pendingCalls += 1
+			if (pendingCalls === 2) {
+				return new Promise<Response>((resolve) => {
+					finishPending = resolve
+				})
+			}
+			return Response.json({ announcements: [item] })
+		})
+		const service = new DesktopAnnouncementService({
+			fetchImpl,
+			watchSignal: () => ({ close: vi.fn() }),
+		})
+		const observed: Array<string | null> = []
+		service.subscribe((snapshot) => observed.push(snapshot.current?.id ?? null))
+		await service.start(session, 'darwin', '0.1.0')
+		void service.resume()
+		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2))
+		await expect(service.acknowledge(item.id)).rejects.toThrow()
+		expect(service.current()?.id).toBe(item.id)
+		ackFails = false
+		await service.acknowledge(item.id)
+		expect(service.current()).toBeNull()
+		observed.length = 0
+		expect(finishPending).toBeDefined()
+		finishPending?.(Response.json({ announcements: [item] }))
+		await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(5))
+		expect(service.current()).toBeNull()
+		expect(observed).not.toContain(item.id)
+		service.stop()
+	})
+
+	it('does not carry an acknowledged ID into another account session', async () => {
+		const item = announcement('shared-id', 'normal', '2026-07-17T12:00:00.000Z')
+		const fetchImpl = vi.fn<typeof fetch>(async (input) =>
+			String(input).includes('/announcement-ack')
+				? new Response(null, { status: 204 })
+				: Response.json({ announcements: [item] }),
+		)
+		const service = new DesktopAnnouncementService({
+			fetchImpl,
+			watchSignal: () => ({ close: vi.fn() }),
+		})
+		await service.start(session, 'darwin', '0.1.0')
+		await service.acknowledge(item.id)
+		expect(service.current()).toBeNull()
+		await service.start({ ...session, userId: 'user-2' }, 'darwin', '0.1.0')
+		expect(service.current()?.id).toBe(item.id)
+		service.stop()
+	})
+
+	it.each([
+		['success', 'switch'],
+		['failure', 'switch'],
+		['network rejection', 'switch'],
+		['success', 'stop'],
+		['failure', 'stop'],
+		['network rejection', 'stop'],
+	] as const)('ignores stale ack %s after %s', async (result, transition) => {
+		const item = announcement('shared-id', 'normal', '2026-07-17T12:00:00.000Z')
+		let resolveAck!: (response: Response) => void
+		let rejectAck!: (error: Error) => void
+		const deferredAck = new Promise<Response>((resolve, reject) => {
+			resolveAck = resolve
+			rejectAck = reject
+		})
+		const fetchImpl = vi.fn<typeof fetch>(async (input) =>
+			String(input).includes('/announcement-ack')
+				? deferredAck
+				: Response.json({ announcements: [item] }),
+		)
+		const service = new DesktopAnnouncementService({
+			fetchImpl,
+			watchSignal: () => ({ close: vi.fn() }),
+		})
+		await service.start(session, 'darwin', '0.1.0')
+		const oldAck = service.acknowledge(item.id)
+		if (transition === 'switch') {
+			await service.start({ ...session, userId: 'user-2' }, 'darwin', '0.1.0')
+		} else {
+			service.stop()
+		}
+		if (result === 'network rejection') rejectAck(new Error('offline'))
+		else resolveAck(new Response(null, { status: result === 'success' ? 204 : 500 }))
+		await expect(oldAck).resolves.toBeUndefined()
+		expect(service.current()?.id ?? null).toBe(transition === 'switch' ? item.id : null)
+		service.stop()
+	})
+
 	it('ignores stale account watcher callbacks after switching users', async () => {
 		const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ announcements: [] }))
 		const subscriptions: Array<{

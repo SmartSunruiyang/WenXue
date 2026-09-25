@@ -223,16 +223,21 @@
 ```
 ## 模块名：DesktopAnnouncementService
 - 职责：renderer 在登录/启动时拉取当前账号待展示消息；同时监听 CloudBase 全局发布/撤回 signal 与
-  当前账号确认 signal；维护
-  watch 指数退避、15 分钟轮询、单弹窗队列与账号级 ack
+  当前账号确认 signal；维护 watch 指数退避、15 分钟轮询、单弹窗队列与账号级 ack；收到网络恢复、
+  窗口重新聚焦或页面重新可见的 resume intent 时立即补拉，并重建仍在退避的监听
 - 不负责：不渲染弹窗；不读取其他账号消息或目标 UID 列表；不持久化用户 token；不处理应用更新
 - 输入：ConsoleUI 当前 CloudBase Auth session、CloudBase Web SDK watch、CloudBaseLlmGateway 客户端
   announcement API、DispatchContracts
 - 输出：ConsoleUI 可消费的当前 AnnouncementView 与状态；ack/撤回后的队列变化
-- 关键类型/接口：start(session, platform, version) · stop() · current() · acknowledge(id) · subscribe(listener)
+- 关键类型/接口：start(session, platform, version) · stop() · resume() · current() · acknowledge(id) · subscribe(listener)
 - 持有状态：当前 userId、两个按 generation 隔离的 watch handle、退避/轮询 timer、至多 10 条内存队列；
   登出全部释放
 ```
+
+2026-09-26 公告恢复契约：ConsoleUI 只把 `online`、`focus`、可见 `visibilitychange` 转成 resume intent，
+卸载移除事件；服务在未登录时无操作，重复恢复信号合并请求且不延后真实新 revision 的补拉。
+异步 pending/ack/watch 回调都绑定当前会话；确认成功前保持弹窗可重试，成功后已发出的旧 pending
+响应不得恢复该弹窗。已确认 ID 仅作为同一会话内竞态隔离，不持久化，也不替代服务端账号回执。
 
 ```
 ## 模块名：DesktopReleaseSignalService

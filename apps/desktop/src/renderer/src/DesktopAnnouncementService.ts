@@ -71,6 +71,13 @@ export class DesktopAnnouncementService {
 		context: AnnouncementContext
 		promise: Promise<DesktopAnnouncementSession>
 	} | null = null
+	private pendingSync: {
+		context: AnnouncementContext
+		promise: Promise<void>
+		resumed: boolean
+	} | null = null
+	private syncAgain = false
+	private readonly acknowledgedIds = new Set<string>()
 	private queue: ClientAnnouncementView[] = []
 	private signalSubscriptions: AnnouncementSignalSubscription[] = []
 	private pollTimer: ReturnType<typeof setInterval> | null = null
@@ -114,13 +121,16 @@ export class DesktopAnnouncementService {
 		this.error = undefined
 		this.startPolling()
 		this.openWatchers()
-		await this.refresh()
+		await this.requestRefresh()
 	}
 
 	stop(): void {
 		this.generation += 1
 		this.requestSequence += 1
 		this.context = null
+		this.pendingSync = null
+		this.syncAgain = false
+		this.acknowledgedIds.clear()
 		this.queue = []
 		this.error = undefined
 		this.closeSignalSubscriptions()
@@ -136,6 +146,19 @@ export class DesktopAnnouncementService {
 		return this.queue[0] ?? null
 	}
 
+	resume(): Promise<void> {
+		if (!this.context) return Promise.resolve()
+		for (const subscription of this.signalSubscriptions) {
+			if (subscription.reconnectTimer) {
+				this.clearTimeoutImpl(subscription.reconnectTimer)
+				subscription.reconnectTimer = null
+				subscription.reconnectDelay = INITIAL_RECONNECT_MS
+				this.openWatcher(subscription)
+			}
+		}
+		return this.requestRefresh(true)
+	}
+
 	subscribe(listener: AnnouncementListener): () => void {
 		this.listeners.add(listener)
 		listener(this.snapshot())
@@ -147,27 +170,63 @@ export class DesktopAnnouncementService {
 		if (!context) throw new Error('消息会话已结束，请重新登录后重试。')
 		if (!this.queue.some((announcement) => announcement.id === announcementId)) return
 
-		const response = await this.authorizedFetch(
-			context,
-			`${normalizeGatewayBaseUrl(context.session.gatewayBaseUrl)}/v1/client/announcement-ack`,
-			{
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
+		try {
+			const response = await this.authorizedFetch(
+				context,
+				`${normalizeGatewayBaseUrl(context.session.gatewayBaseUrl)}/v1/client/announcement-ack`,
+				{
+					method: 'POST',
+					headers: {
+						'content-type': 'application/json',
+					},
+					body: JSON.stringify({ announcementId }),
 				},
-				body: JSON.stringify({ announcementId }),
-			},
-		)
-		if (!response.ok && response.status !== 404 && response.status !== 410) {
-			throw new Error(await readApiError(response, `消息确认失败 (${response.status})`))
+			)
+			if (this.context !== context) return
+			if (!response.ok && response.status !== 404 && response.status !== 410) {
+				throw new Error(await readApiError(response, `消息确认失败 (${response.status})`))
+			}
+		} catch (error) {
+			if (this.context !== context) return
+			throw error
 		}
 
 		if (this.context !== context) return
+		this.acknowledgedIds.add(announcementId)
 		this.queue = this.queue.filter((announcement) => announcement.id !== announcementId)
 		this.error = undefined
 		this.scheduleExpiry()
 		this.notify()
-		void this.refresh().catch(() => undefined)
+		void this.requestRefresh().catch(() => undefined)
+	}
+
+	private requestRefresh(resume = false): Promise<void> {
+		const context = this.context
+		if (!context) return Promise.resolve()
+		if (this.pendingSync?.context === context) {
+			if (!resume || !this.pendingSync.resumed) this.syncAgain = true
+			if (resume) this.pendingSync.resumed = true
+			return this.pendingSync.promise
+		}
+		const promise = (async () => {
+			try {
+				let lastError: unknown
+				do {
+					this.syncAgain = false
+					lastError = undefined
+					try {
+						await this.refresh()
+					} catch (error) {
+						lastError = error
+					}
+				} while (this.syncAgain && this.context === context)
+				if (lastError) throw lastError
+			} finally {
+				if (this.pendingSync?.context === context) this.pendingSync = null
+			}
+		})()
+		this.pendingSync = { context, promise, resumed: resume }
+		return promise
 	}
 
 	private async refresh(): Promise<void> {
@@ -195,7 +254,11 @@ export class DesktopAnnouncementService {
 				return
 			}
 			this.queue = sortAnnouncements(queue)
-				.filter((announcement) => Date.parse(announcement.expiresAt) > this.now())
+				.filter(
+					(announcement) =>
+						!this.acknowledgedIds.has(announcement.id) &&
+						Date.parse(announcement.expiresAt) > this.now(),
+				)
 				.slice(0, 10)
 			this.error = undefined
 			this.scheduleExpiry()
@@ -216,7 +279,7 @@ export class DesktopAnnouncementService {
 
 	private startPolling(): void {
 		this.pollTimer = this.setIntervalImpl(() => {
-			void this.refresh().catch(() => undefined)
+			void this.requestRefresh().catch(() => undefined)
 		}, POLL_INTERVAL_MS)
 	}
 
@@ -245,7 +308,7 @@ export class DesktopAnnouncementService {
 		const revision = readSignalRevision(snapshot)
 		if (revision !== null && subscription.lastRevision === revision) return
 		subscription.lastRevision = revision
-		void this.refresh().catch(() => undefined)
+		void this.requestRefresh().catch(() => undefined)
 	}
 
 	private handleWatchError(subscription: AnnouncementSignalSubscription, error: unknown): void {
