@@ -3,6 +3,10 @@ name: Desktop release build
 on:
   workflow_dispatch:
     inputs:
+      expected_commit:
+        description: Full reviewed commit SHA on main
+        required: true
+        type: string
       version:
         description: Version already committed in apps/desktop/package.json
         required: true
@@ -42,11 +46,19 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Require a protected release ref
-        run: test "$GITHUB_REF_PROTECTED" = true
+      - name: Validate reviewed source commit
+        run: |
+          if [[ "$GITHUB_REF" != 'refs/heads/main' || "$GITHUB_EVENT_NAME" != 'workflow_dispatch' || "$GITHUB_RUN_ATTEMPT" != '1' ]]; then
+            echo 'Release build requires a first-attempt manual run on main' >&2
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_COMMIT" =~ ^[a-fA-F0-9]{40}$ || "$EXPECTED_COMMIT" != "$GITHUB_SHA" ]]; then
+            echo 'expected_commit must be the full reviewed GITHUB_SHA' >&2
+            exit 1
+          fi
         env:
-          GITHUB_REF_PROTECTED: ${{ github.ref_protected }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+      - run: pnpm install --frozen-lockfile
       - name: Validate requested version
         run: >-
           node -e 'const actual=require("./apps/desktop/package.json").version;
@@ -129,7 +141,7 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/release-public-key-fingerprint.txt
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
 
   windows:
     needs: quality
@@ -197,7 +209,7 @@ jobs:
             apps/desktop/release/*.exe
             apps/desktop/release/release-public-key-fingerprint.txt
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
 
   seal-artifacts:
     needs:
@@ -241,4 +253,4 @@ jobs:
           name: desktop-release-seal
           path: candidate/release-build.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1

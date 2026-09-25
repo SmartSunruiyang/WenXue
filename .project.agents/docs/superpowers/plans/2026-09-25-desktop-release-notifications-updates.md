@@ -2,7 +2,7 @@
 
 > 日期：2026-09-25
 >
-> 状态：P0 已完成；P1 条件补齐与验收仍在进行。Windows x64 与 macOS arm64 [双目标矩阵代码已完成并通过本地验证](../../../log/2026-09-26-release-two-targets.md)，P1、P2、P4 阶段均未完成；未跑通候选 CI 或正式发布。当前目标不含 Intel Mac。本轮未修改云资源、未发布公告或版本。
+> 状态：P0 已完成；本机发布工具处于最终验收。Windows x64 与 macOS arm64 [双目标矩阵代码已完成并通过本地验证](../../../log/2026-09-26-release-two-targets.md)，P1、P2、P4 阶段均未完成；尚未真实运行候选 CI、签名上传或注册，也未部署。当前目标不含 Intel Mac。本轮未修改云资源、未发布公告或版本。
 >
 > 产品边界已由用户在本会话确认；本文件将其整理为需求、设计约束、实施任务与验收门禁。详细接口和数据变更在 P2 登记到上游架构后再实现，不将计划中的建议冒充已经落地的能力。
 
@@ -25,6 +25,7 @@
 
 - 公告只覆盖登录客户端；不要求应用完全退出后仍收到系统推送，不新增 OS 推送基础设施。
 - 当前发布与实机验收目标仅为 Windows x64 与 macOS arm64；Intel Mac 暂不适配。暂不办理 Apple Developer 或 Windows 平台签名证书；保留 Ed25519 清单签名与文件完整性校验。二者不等同于平台签名。
+- 已确定使用 GitHub 私有仓库免费路线：GitHub 只做无发布凭据的 main 手动首轮构建；`expected_commit` 必须是 40 位十六进制并匹配实际构建 SHA。仅从该 run 下载构建产物和 seal artifacts，保留 1 天。本机 `publish-local-candidate.mjs prepare` 复核下载并生成 review；`publish` 再核对 commit、run、seal 与操作者确认的 artifact hash，之后才签名、向 COS 不可变上传、公开回读并注册候选。签名私钥、COS 凭据和注册 token 不放 GitHub；原 `desktop-release-publish.yml` 退役，不等待 Pro 或付费 Environment。
 - 第一阶段使用可延后更新体验；既有 mandatory 策略须在 P2 明确兼容处理，不能借此增加强制重启、强杀浏览器或离线自动安装。
 - 不改 LLM 路由、Agent 能力、计费和账号体系；不引入整套替代后台，不顺带升级整套 Electron 技术栈。
 - Windows ARM、Mac 自动安装、后台静默替换 DMG、自动降级均不属于本轮交付。
@@ -40,7 +41,7 @@
 | `DesktopUpdateService`                                       | `manual-unsigned`，检查、下载、校验、打开安装包                 | 保留现有策略校验，新增自动下载与平台安装分支               |
 | `DesktopAnnouncementService` / `DesktopReleaseSignalService` | 已有 watch、轮询、账号回执和更新检查意图                        | 先复现和修复断点，避免重复建立另一套服务                   |
 | `AdminApi` / 管理后台                                        | 已有公告、候选、rollout 与发布操作                              | 验证线上可用性，再补充平台能力、状态和官网消费能力         |
-| 两份桌面发布工作流                                           | 本地有候选构建、seal、清单签名、COS 上传、候选注册代码          | 补配置验证、Windows 更新元数据与两个目标平台发布证据       |
+| GitHub 候选工作流与本机发布工具                              | GitHub 构建/seal 与候选签名、COS 上传、注册分段处理            | 构建只保留无发布凭据的工作流；本机工具承担 prepare/publish   |
 | 历史计划与 ROADMAP                                           | 曾记录 GitHub/CAM、真实候选、实机升级等未完成                   | 作为排查线索；不得据此断言今天的生产配置仍相同             |
 | 产品文档入口                                                 | 当前 PRD 仍指向 Chromium 重构                                   | P0 按用户已明确的废弃决定纠正有效文档入口                  |
 
@@ -144,7 +145,7 @@ flowchart LR
 - [ ] P1.2 分别记录公告发布/接收、后台候选发布、客户端下载/打开安装包的复现步骤、响应状态、脱敏错误码和所属模块；遵循“复现 → 架构 → 接口 → 单模块代码”排查顺序。
 - [ ] P1.3 只读核验实际客户端内嵌网关、公钥、channel 与 server 配置是否匹配；验证官网域名、默认域名与实际使用的管理/client/internal 路由、CORS 和 HTTPS。不要根据历史域名路由数量推断齐全。
 - [ ] P1.4 核验 Auth 的 ACTIVE 状态验证、管理员/viewer、普通用户与定向目标过滤；核对 announcement/release signal、NoSQL 规则/索引/TTL、监听读权限及轮询请求。
-- [ ] P1.5 核对 GitHub 登录和仓库权限、受保护分支、发布 Environment、变量/secrets 是否存在、专用最小权限 CAM 身份、COS 读/写/列目录边界及已存在产物。只记录配置项是否就绪，不输出密钥。
+- [ ] P1.5 核对 GitHub 登录和仓库权限、免费私有仓库 Actions 加权分钟与共享 artifact 存储额度、超额时的阻断行为及 Actions 预算硬停止设置；账单页浏览器未登录，当前无法核实硬停止预算是否设置。核验本机签名私钥、专用最小权限 COSCLI 身份、COS 读/写/列目录边界、候选注册凭据与已存在产物。GitHub 不配置发布 secrets；只记录配置项是否就绪，不输出凭据。
 - [ ] P1.6 核对公开更新端点的请求预算、限流和默认域名是否绕开既有保护；复用现有资源，记录真实外部阻塞及可继续的本地工作。
 - [x] P1.7 产出三条链路故障表，区分已复现根因、代码缺口、配置缺口与待实机验证；配置修复和业务修复进入对应阶段，不能以顺手部署替代记录。
 
@@ -187,13 +188,13 @@ flowchart LR
 
 关联需求：R2、R5–R7、R9、R10。
 
-主要范围：`.github/workflows/desktop-release-candidate.yml`、`desktop-release-publish.yml`；`apps/desktop/electron-builder.yml`、`scripts/` 下既有 seal/evidence/candidate/upload/verify 工具；发布配置。
+主要范围：`.github/workflows/desktop-release-candidate.yml`（无发布凭据构建）；`desktop-release-publish.yml` 已退役；`apps/desktop/electron-builder.yml`、`apps/desktop/scripts/publish-local-candidate.mjs` 与既有 seal/evidence/candidate/upload/verify 工具。本机发布配置不进入 GitHub。
 
-- [ ] P4.1 根据 P1 核验结果补齐缺失的 GitHub/CAM/COS 配置，区分公开变量与 secrets；继续隔离不持发布凭据的构建段与受保护的签名/上传段。
-- [ ] P4.2 让 Windows 构建生成实际所需更新元数据和关联文件，并被 CI 原字节保留、seal、签名、上传和公开回读验证；Mac 本阶段仍为手动 DMG，不为未承诺的自动安装增加 ZIP 发布要求。
-- [ ] P4.3 将产物的版本、channel、平台/架构、网关、公钥指纹和同一提交绑定；Windows x64 与 macOS arm64 两个目标均构建成功后才注册 verified 候选。版本不一致、缺包或签名失败均不能发布。
+- [ ] P4.1 完成本机发布凭据核验（工具与免费构建入口已本地验收），确认 GitHub Free 私有仓库免费额度与阻止超额消费的预算设置；目前预算无法核实。首推还受普通 Git 100 MiB 文件限制阻塞：origin 暂无 refs，`apps/website/public/assets/wenxue-work-demo.mov` 为 163,686,355 字节（约 156.1 MiB），首次加入于 `a6b8f85`；本机未安装 git-lfs。LFS 迁移尚未选择或执行，不代表获准删除视频或改写历史。GitHub 构建 workflow 只配置公开变量，不放签名私钥、COS 写入凭据或候选注册 token。原 `desktop-release-publish.yml` 退役，不等待 Pro 或付费 Environment。
+- [ ] P4.2 让 Windows 构建生成实际所需更新元数据和关联文件，并由 CI 保留原字节及 seal artifact；本机复核、签名、上传和公开回读。Mac 本阶段仍为手动 DMG，不为未承诺的自动安装增加 ZIP 发布要求。
+- [ ] P4.3 将产物的版本、channel、平台/架构、网关、公钥指纹和同一提交绑定；Windows x64 与 macOS arm64 两个目标均构建成功并由本机验证后才注册 verified 候选。版本不一致、缺包或签名失败均不能发布。
 - [ ] P4.4 更新候选验收证据模型，区分自动化完整性检查与真实安装/升级测试；保留受信 CI run/产物哈希绑定，不能只改证据名称就宣称经过安装测试。
-- [ ] P4.5 真实运行候选构建 → 不可变上传 → 公开字节复核 → 注册；重复运行只能安全复用相同字节，不覆盖已有版本对象，半成品不可成为可发布版本。
+- [ ] P4.5 实际运行 main 手动首轮构建，再由本机 prepare 下载并复核 artifacts、生成 review；publish 每次重新核验 commit/run/seal 和操作者确认的 `artifactSetSha512` 后签名、不可变上传、公开逐字节回读并注册。重复运行只能安全复用相同字节，不覆盖已有版本对象，半成品不可成为可发布版本。
 - [ ] P4.6 准备可重复生成的旧版、过渡版 N、后续版 N+1；具体版本在执行时按真实最高发布版本分配，不把历史示例 `0.1.0 → 0.1.1` 当成当前必用版本。
 
 出口：后台能看到 Windows x64 与 macOS arm64 两目标齐备且证据绑定的真实候选；仅注册候选不自动创建正式 rollout。后续客户端改动需要在冻结提交重新构建，不能复用与源码不一致的旧产物。
@@ -310,14 +311,14 @@ Windows x64 与 macOS arm64 两目标打包通过候选工作流执行，主进�
 
 | 依赖                                             | 需要时机            | 当前状态与处理                                                             |
 | ------------------------------------------------ | ------------------- | -------------------------------------------------------------------------- |
-| GitHub 仓库、受保护分支与发布 Environment 权限   | P1 核验，P4 配置    | 已认证且具 ADMIN viewerPermission；仓库内容为空，无实际 main 提交/workflow/run，Environment/vars/secrets 为空；保护规则 API 403 为套餐限制，状态待用户确认 |
-| COS 专用 CI 身份、候选签名/注册配置              | P1 核验，P4 使用    | 服务端配置存在、匿名列目录被拒；CI 身份/对象/版本控制仍待认证核验          |
+| GitHub 私有仓库免费额度、预算、首推与构建权限    | P1 核验，P4 使用    | GitHub 已认证且具 ADMIN viewerPermission；账单页未登录，预算硬停止无法核实。`git ls-remote origin` 无 refs；163,686,355 字节演示视频（首次加入 `a6b8f85`）超过普通 Git 100 MiB 限制，阻塞首次推送；本机未安装 git-lfs，迁移尚未选择/执行，不表示获准删除视频或改写历史。main workflow 和真实首轮 run 尚未验证；无发布 secrets，不依赖付费 Environment 或分支保护 |
+| 本机签名、COS 上传与候选注册凭据                | P1 核验，P4 使用    | 发布工具本地验收通过（脚本 28 项测试）；签名私钥、专用最小权限 COSCLI 配置、COS 对象版本控制及注册凭据仍待本机核验，不能用于 GitHub workflow |
 | 测试管理员、两个普通账号与跨设备环境             | P1/P3               | 两个用户提供的普通账号经 CloudBase 精确匹配确认为 ACTIVE；尚未做客户端登录与通知实验，完整邮箱/UID 不入文档 |
 | macOS arm64、Windows x64 安装测试环境             | P1 准备，P5/P7 验收 | Windows x64 与 Apple Silicon 测试机可用；Intel Mac 暂不适配                 |
 | 已分发旧版原始安装包                             | P1 收集，P7 迁移    | 已哈希核验本地 arm64 0.1.0 DMG；其他旧包与实际用户分发情况待确认           |
 | 正式平台签名                                     | 后续独立阶段        | 用户明确暂不办理，不作为本阶段 Windows/Mac 手动交付的前置条件              |
 
-**P0 已完成，当前为 P1 条件补齐与验收。** 执行分支为 `codex/release-notifications-updates`；初始计划提交为 `9f1c11f`，原工作区的插件改动仍独立保留。业务阶段只有取得对应证据后才勾选，文档基线完成不表示发布链路已经恢复。
+**P0 已完成，本机发布工具与免费构建入口已完成本地验收。** 执行分支为 `codex/release-notifications-updates`；初始计划提交为 `9f1c11f`，主线既有插件改动已随主线合并，其独立提交保留。P1、P2、P4 尚未完成，业务阶段只有取得对应证据后才勾选；本地实现不表示真实 CI、签名上传、候选注册或部署已通过。
 
 ## 8. 技术核验来源
 

@@ -325,7 +325,7 @@ extraResources:
   `/v1/client/announcement-ack`、`/v1/client/update-policy`、`/v1/client/update-events` 和
   `/api/internal/v1/release-candidates/register`。消息接口要求用户 bearer；update policy 用匿名
   `installIdHash` 换取绑定 release/runtime/platform/arch/fromVersion/过期时间的短期 event token，
-  events 必须验证该 token；CI 注册只接受专用 bearer。event token 只防未取得 policy 的随意写入，
+  events 必须验证该 token；候选注册只接受专用 bearer（保留 CI token 配置名，由本机工具使用）。event token 只防未取得 policy 的随意写入，
   不证明真实下载/安装，也不替代 Gateway/WAF QPS。
 - **NoSQL**：`client_announcements`、`client_announcement_receipts`、
   `desktop_release_candidates`、`desktop_release_rollouts`、`desktop_release_events`、
@@ -386,10 +386,11 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ### 8.2 CI（GitHub Actions，Demo 期最小集）
 
-- PR 门禁：lint + typecheck + `pnpm -r test`；
-- `desktop-release-candidate.yml` 是无发布凭据的原字节候选构建段：在受保护分支上运行质量门禁，
+- 发布构建门禁：lint + typecheck + `pnpm -r test`；当前仅配置手动发布构建，不把它表述为已启用的 PR 门禁。
+- `desktop-release-candidate.yml` 是免费私有仓库的无发布凭据构建段：仅允许 main 上的手动首轮运行，
+  操作者输入的完整 `expected_commit` 必须等于实际构建 SHA，再运行质量门禁；
   生成 macOS arm64 未签名 DMG 与 Windows x64 未签名 NSIS。双目标产物与 `release-build.json`
-  seal 都以 Actions artifacts 保留 30 天。
+  seal 都以 Actions artifacts 保留 1 天。仅手动触发，不开启每次 push 的多平台打包；运行前确认 Actions 额度与阻止超额消费的预算设置。
 - seal v2 锁定 repository、commit、version、channel、`buildRunUrl`、`artifactSetSha512`、逐产物哈希/尺寸
   与 Ed25519 SPKI SHA-256 公钥指纹；两个最终 `app.asar` 的指纹证明必须一致且等于发布时配置。
   tests 必须且只能是 `quality`、`manual-installer-integrity`、`manifest-tamper-rejection` 三项 passed 记录，
@@ -399,16 +400,62 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   同时接受旧的完整三目标清单（额外 `darwin/x64:dmg`），保留原清单字节与签名，不裁剪旧候选；
   不因此恢复 Intel Mac 构建。该兼容只服务已有 v1 协议，新 CI 不再产生 Intel 包。三个测试证据名称不变。
   上线时先部署接受双目标的 AdminApi/组合网关，再登记新 CI 候选；旧服务端仍要求三份安装包，会拒绝新双目标清单。
-- `desktop-release-publish.yml` 是签候选/发布段：经 `desktop-release-production` 运行，只接受当前
-  protected commit 的指定成功首轮 `desktop-release-candidate.yml` run（`run_attempt=1`）。它重下载原字节和
-  seal，先重算 `artifactSetSha512`，再校验固定三项 tests 与同一 `buildRunUrl`/产物集绑定；不接收外部
-  evidence 公钥、URL 或签名输入。
-- 上述验证全部通过后，publish 段才生成确定性 Ed25519 候选清单，验证 COS versioning 为
+- 原 `desktop-release-publish.yml` 退役。`publish-local-candidate.mjs prepare` 在可信本机运行，要求干净
+  checkout 的 HEAD 等于操作者显式输入的完整 commit、origin 对应预期 GitHub 仓库，并验证源 run
+  的仓库、main 分支、工作流路径、workflow_dispatch、success、`run_attempt=1`、SHA 与规范 run URL。
+  只下载该 run 的 `desktop-darwin-arm64`、`desktop-win32-x64`、`desktop-release-seal` 三个未过期且唯一
+  artifact，写入全新的候选目录，复核 seal、双目标公钥和原字节哈希，生成不含凭据的 review JSON。
+- `publish-local-candidate.mjs publish` 使用同一显式 run/commit/version/channel 与已准备目录，另外要求
+  操作者传入 review 中的 `artifactSetSha512`。每次重新核对 checkout、源 run、seal、产物哈希与公钥，
+  不把可修改的 review 文件当授权。构建证据仍绑定同一 run；本机工具不会执行下载目录中的代码。
+- 验证全部通过后，本机 publish 才生成确定性 Ed25519 候选清单，验证 COS versioning 为
   `Closed`，通过 `--forbid-overwrite` 上传，再从公开 COS origin 逐字节复核并注册。
-- CI 只注册 candidate，不自动发布 rollout；发布比例和 optional/mandatory 只能在后台“版本更新”发起。
-- `desktop-release-production` 必须在 GitHub 仓库/组织侧创建并配置 protected branch/reviewer/最小权限
-  secrets 与 variables；2026-09-26 已确认 GitHub 认证与仓库 ADMIN 权限，但远端为空仓库、Environment/variables/secrets 均未配置，保护规则接口返回私有仓库套餐限制。COS bucket 已就绪，但专用最小权限 CAM CI 子账号
-  仍需有权管理员创建，不能复用 Gateway 高权限身份。候选构建段不使用受保护 Environment 或发布凭据。
+- 本机工具只注册 candidate，不自动发布 rollout；发布比例和 optional/mandatory 只能在后台“版本更新”发起。
+- GitHub 只配置公开的网关 origin 与 Ed25519 公钥变量，不配置签名私钥、COS 写入或候选注册 secrets。
+  私钥和专用最小权限 COSCLI 配置保存在可信本机仓库外，注册 token 仅在 publish 进程中使用；
+  COSCLI 固定 1.0.8，注册请求仅允许 HTTPS 且禁止重定向，不回显凭据或原始错误响应。
+  私有仓库的免费额度不等于无限构建；不自动购买额度、升级套餐或改为公开仓库。专用 CAM 发布身份
+  仍需核验，不能复用 Gateway 高权限身份。本机按具体 commit 审阅并签名，不冒称 GitHub 分支保护已生效。
+
+#### 8.2.1 免费私有仓库的操作顺序
+
+1. 在 GitHub 账单页面核实 Actions 的剩余额度与超额停止设置；首次推送前还须解决仓库历史中的
+   超大文件。以上未验证时只做本地验收，不声称远端构建已可用。构建不使用大型付费 runner。
+2. 将已验收的代码放到远端 main，核对完整 commit。先配置公开 repository variables
+   `WENXUE_GATEWAY_BASE_URL`、`WENXUE_RELEASE_ED25519_PUBLIC_KEY`，再手动运行
+   `desktop-release-candidate.yml`，输入相同的完整 `expected_commit`、package 版本和 channel。
+3. 在同一 commit 的干净本机 checkout 中使用 Node 22、pnpm 9 和已登录的 `gh`。设置同一公开
+   `WENXUE_RELEASE_ED25519_PUBLIC_KEY`；产物目录放在仓库外且事先不存在。成功运行后 1 天内准备：
+
+   ```sh
+   node apps/desktop/scripts/publish-local-candidate.mjs prepare \
+     --repository SmartSunruiyang/WenXue \
+     --run-id "$RELEASE_RUN_ID" --commit "$REVIEWED_COMMIT" \
+     --version "$RELEASE_VERSION" --channel beta \
+     --release-dir "$CANDIDATE_DIR"
+   ```
+
+4. 审阅 `release-review.json` 的源码 commit、构建链接、版本、两个安装包及其 hash、公钥指纹，
+   保存确认过的 `artifactSetSha512`。prepare 不需要发布私钥、COS 写入配置或注册 token。
+5. 确认双目标服务端契约已部署、专用 COS 发布身份权限正确。通过本机安全配置向发布进程提供
+   `WENXUE_RELEASE_ED25519_PRIVATE_KEY`、`WENXUE_RELEASE_CI_TOKEN`、
+   `WENXUE_UPDATE_COS_BUCKET`、`WENXUE_UPDATE_COS_REGION`、`WENXUE_UPDATE_COS_BASE_URL`、
+   `WENXUE_RELEASE_REGISTER_URL`；不要把值写入仓库、命令参数或日志。`COS_CONFIG_PATH` 指向仓库外的
+   COSCLI 1.0.8 配置，`CONFIRMED_ARTIFACT_SET_SHA512` 是上一步已确认的 hash，不自动读取 review 代签：
+
+   ```sh
+   node apps/desktop/scripts/publish-local-candidate.mjs publish \
+     --repository SmartSunruiyang/WenXue \
+     --run-id "$RELEASE_RUN_ID" --commit "$REVIEWED_COMMIT" \
+     --version "$RELEASE_VERSION" --channel beta \
+     --release-dir "$CANDIDATE_DIR" \
+     --artifact-set-sha512 "$CONFIRMED_ARTIFACT_SET_SHA512" \
+     --cos-config "$COS_CONFIG_PATH"
+   ```
+
+6. 注册成功应返回同一 `releaseId`、清单 URL 和 `status=verified`。最后进入后台“版本更新”确认候选，
+   再按验收计划开启灰度；上述命令不会触发客户端更新。产物过期且未下载时重新发起新的首轮构建，
+   不使用 rerun 绕过来源校验。
 
 ### 8.3 冒烟测试（发布门禁）
 
@@ -418,12 +465,12 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 - 新建独立 COS bucket，COSCLI `bucket-versioning --method get` 必须证明状态为 `Closed`；“已暂停版本控制”不满足要求。对象路径至少包含
   `runtime/channel/version/platform/arch`，写入后不可变，同版本禁止覆盖。
-- bucket 对象公开读、禁止列目录，只有 CI 身份可写；候选发布身份无一般删除/覆盖权限；不修改现有私有
-  CloudBase storage bucket。CI 每个对象上传必须使用 COSCLI `--forbid-overwrite`；已有对象只有在公开源哈希/尺寸
+- bucket 对象公开读、禁止列目录，只有专用发布身份可写；候选发布身份无一般删除/覆盖权限；不修改现有私有
+  CloudBase storage bucket。每个对象上传必须使用 COSCLI `--forbid-overwrite`；已有对象只有在公开源哈希/尺寸
   与本次原字节完全相同时才可幂等复用。
 - 候选 manifest 固定包含 schema、releaseId/version/channel/runtime、源码 commit、CfT/扩展版本、
   artifact URL/SHA-512/size、`distribution.mode=manual-unsigned`、`releasePublicKeyFingerprint` 和测试证据；Ed25519
-  公钥固定在 App，私钥仅在隔离 CI。Ed25519 证明清单与产物字节来源，不改变安装包在操作系统中的
+  公钥固定在 App，私钥仅保存在可信本机发布环境。Ed25519 证明清单与产物字节来源，不改变安装包在操作系统中的
   未签名状态。
 - 打包运行时的 DesktopUpdateService 在启动 30 秒、每 4 小时、release revision 和“关于问学”手动
   intent 时检查；开发运行时保持 idle，不启动自动更新，用户手动检查时只在“关于问学”显示不可用说明。
@@ -500,7 +547,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 | 4   | 单 pnpm monorepo，vendor 上游                                                                                                                          | 双仓库 fork 跟踪：小团队跨仓成本高于上游同步收益                                                                                  |
 | 5   | 浏览器进程不内嵌 Electron                                                                                                                              | Electron 扩展 API 子集跑不动 MV3 sidePanel 插件                                                                                   |
 | 6   | App 退出不强杀浏览器                                                                                                                                   | 保护用户未保存的页面工作                                                                                                          |
-| 8   | 更新发布 = CI 注册不可变候选，后台“版本更新”只控制通道/灰度/模式                                                                                       | 后台上传二进制：扩大密钥与误操作面；CI 自动全量发布：无法安全暂停和运营灰度                                                       |
+| 8   | 更新发布 = 无发布凭据 CI 构建、可信本机验证签名并注册不可变候选，后台“版本更新”控制通道/灰度/模式                                                       | 免费私有仓库不依赖付费保护功能；后台上传二进制会扩大密钥与误操作面，自动全量发布无法安全暂停和运营灰度                              |
 | 9   | 实时推送 = CloudBase watch 仅监听 revision，再由鉴权 HTTPS 拉取正文/策略                                                                               | watch 全量消息集合：会暴露其他账号正文和 UID；自建 WebSocket：当前规模增加不必要的常驻基础设施                                    |
 
 ## 13. 里程碑对应的 Infra 演进

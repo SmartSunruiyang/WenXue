@@ -32,15 +32,64 @@ test('rejects a different workflow and malformed @ref suffixes', () => {
 	}
 })
 
+test('rejects source runs outside the reviewed repository, commit, and main branch', () => {
+	for (const changes of [
+		{ id: 123456790 },
+		{ repository: { full_name: 'other/WenXue' } },
+		{ head_repository: { full_name: 'other/WenXue' } },
+		{ head_branch: 'release' },
+		{ head_sha: 'f'.repeat(40) },
+		{ head_sha: 'not-a-commit' },
+	]) {
+		assert.throws(
+			() => validateTrustedSourceRun({ ...sourceRun(), ...changes }, expected()),
+			/reviewed commit|40 character commit/,
+		)
+	}
+	assert.throws(
+		() => validateTrustedSourceRun(sourceRun(), { ...expected(), expectedCommit: 'f'.repeat(40) }),
+		/reviewed commit/,
+	)
+})
+
+test('rejects noncanonical source run URLs', () => {
+	for (const htmlUrl of [
+		`https://github.com/other/WenXue/actions/runs/${runId}`,
+		`${sourceRunUrl()}/`,
+		`${sourceRunUrl()}?check_suite_focus=true`,
+		`http://github.com/${repository}/actions/runs/${runId}`,
+	]) {
+		assert.throws(
+			() => validateTrustedSourceRun({ ...sourceRun(), html_url: htmlUrl }, expected()),
+			/reviewed commit/,
+		)
+	}
+})
+
+test('rejects non-manual, failed, incomplete, and repeated source runs', () => {
+	for (const changes of [
+		{ event: 'push' },
+		{ status: 'in_progress' },
+		{ conclusion: 'failure' },
+		{ run_attempt: 2 },
+	]) {
+		assert.throws(
+			() => validateTrustedSourceRun({ ...sourceRun(), ...changes }, expected()),
+			/reviewed commit/,
+		)
+	}
+})
+
 function expected() {
 	return { runId, repository, expectedCommit }
 }
 
-function sourceRun(workflowPath) {
+function sourceRun(workflowPath = '.github/workflows/desktop-release-candidate.yml') {
 	return {
 		id: Number(runId),
 		html_url: sourceRunUrl(),
 		path: workflowPath,
+		head_branch: 'main',
 		event: 'workflow_dispatch',
 		status: 'completed',
 		conclusion: 'success',

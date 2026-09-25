@@ -31,7 +31,7 @@
 | UserPermissionAudit      | \_id、operationId、userId、adminUid、before、after、reason?、outcome、createdAt                                                                                                                          | 由 AdminApi 在 Auth 状态和备注调整时追加；状态操作先记录 requested，确认后记录 applied，未确认记录 unconfirmed | 是：CloudBase NoSQL `user_permission_audit`；不含 access token、refresh token、提示词正文或厂商 Key                                                                     |
 | ClientAnnouncement       | \_id、status、importance、title、body、detailUrl?、audience、publishedAt、expiresAt                                                                                                                      | 1:N → AnnouncementReceipt；由 AdminApi 发布/撤回                                                               | 是：CloudBase NoSQL `client_announcements`；ADMINONLY；正文和目标 UID 不进入 signal                                                                                     |
 | AnnouncementReceipt      | \_id=`announcementId:uid`、announcementId、uid、acknowledgedAt、expiresAt                                                                                                                                | N:1 → ClientAnnouncement；同一账号跨设备共享                                                                   | 是：CloudBase NoSQL `client_announcement_receipts`；ADMINONLY；`expiresAt` 为公告到期后 24 小时的 BSON Date，由 TTL 主清理并以限量清理兜底；客户端仅经鉴权 API 幂等写入 |
-| ReleaseCandidate         | \_id、runtime、version、channel、manifestUrl/signature、artifacts、sourceCoordinates（含 releasePublicKeyFingerprint）、distribution.mode=`manual-unsigned`、tests、status                               | 由 CI 注册；1:N → ReleaseRollout                                                                               | 是：CloudBase NoSQL `desktop_release_candidates`；ADMINONLY；版本候选不可覆盖                                                                                           |
+| ReleaseCandidate         | \_id、runtime、version、channel、manifestUrl/signature、artifacts、sourceCoordinates（含 releasePublicKeyFingerprint）、distribution.mode=`manual-unsigned`、tests、status                               | 由可信发布工具注册；1:N → ReleaseRollout                                                                               | 是：CloudBase NoSQL `desktop_release_candidates`；ADMINONLY；版本候选不可覆盖                                                                                           |
 | ReleaseRollout           | \_id、runtime、channel、releaseId、status、percentage、mode、minSupportedVersion?、title、notes、publishedAt                                                                                             | N:1 → ReleaseCandidate；同 runtime/channel 仅一个 active                                                       | 是：CloudBase NoSQL `desktop_release_rollouts`；ADMINONLY；策略变化增加公开 release signal revision                                                                     |
 | ReleaseChannelSlot       | \_id=`release-slot:<runtime>:<channel>`、recordType=`release-slot`、currentRolloutId?、activeRolloutId?、highestVersion?、updatedAt                                                                      | 每 runtime/channel 一个；与 rollout/signal/audit 在同一交易内变更                                              | 是：与 rollout 共用 `desktop_release_rollouts`；内部保留文档，API/后台历史必须过滤；原子维护活动互斥与版本单调门禁                                                      |
 
@@ -59,7 +59,7 @@
 - **I4.** 插件域只经 OpenAI-compatible HTTP 接口调用 LLM；更换供应商/接入网关只允许改配置（baseURL/key/model），不允许改 Agent 核心代码。
 - **I5.** vendor 的 `@page-agent/*` 四包保持上游包名、目录结构与版权头；任何本地改动必须登记 `UPSTREAM.md`（ROADMAP M1 建立）。
 - **I6.** 应用内消息正文与目标 UID 只能经鉴权客户端 API 返回给匹配账号，signal 只承载 revision；当前
-  Electron 更新只接受 CI 注册、Ed25519 清单与 SHA-512/size 验证均通过且标记 `manual-unsigned` 的
+  Electron 更新只接受可信发布工具注册、Ed25519 清单与 SHA-512/size 验证均通过且标记 `manual-unsigned` 的
   不可变候选，后台不得上传或改写二进制。
 - **I7.** 浏览器画像及其中的 Cookie、网站状态、扩展 IndexedDB、AI 历史与记忆按当前 CloudBase
   `userId` 对应的 `AccountNamespace` 隔离。主进程必须用内置网关和 access token 调 `/v1/auth/activate`
@@ -362,7 +362,7 @@ OTP、验证证明与未提交资料仅驻留内存，不产生待注册账号�
 ## 模块名：CloudBaseLlmGateway
 - 职责：CloudBase Run 容器型（Dockerfile + Functions Framework 多 target）的组合运行时。除 OpenAI-compatible 网关外，复用 `apps/admin-api` 的管理、消息、更新和 CI 候选 targets，并从镜像内 `apps/admin/dist` 提供 `/admin` HTML 与 `/admin/assets/*`；用户激活、模型鉴权、usage 计量继续沿用既有边界；旧注册 target 仅返回 410；为桌面端提供鉴权消息 pending/ack、公开 update-policy/events 与无凭据 `/healthz`
 - 不负责：不持久化提示词/响应正文；不保存或返回 DashScope Key；不实现订阅/扣费；不实现管理员登录/角色/业务 UI 逻辑，只提供构建后的静态文件与 AdminApi 适配器；M4 实时聚合不做 rollup 预计算
-- 输入：插件 OpenAIClient、UsageCloudClient、桌面激活/消息/更新客户端、AdminConsole、CI 注册请求、CloudBase access token、服务端模型/CloudBase/CI 验证配置、白名单 staging 内的 `apps/admin/dist`
+- 输入：插件 OpenAIClient、UsageCloudClient、桌面激活/消息/更新客户端、AdminConsole、本机候选注册请求、CloudBase access token、服务端模型/CloudBase/CI 验证配置、白名单 staging 内的 `apps/admin/dist`
 - 输出：DashScope SSE/JSON 原样回传；按 bearer token 返回当前 `ACTIVE` 用户 uid；写 `token_usage`；返回不含 uid/Key/敏感头的 `TokenUsageSummary`；返回无凭据健康状态；返回 AdminConsole HTML/JS/CSS 与 AdminApi JSON
 - 关键类型/接口：既有 auth/chat/usage/health/admin 静态 targets + §3.2 的 announcement/release/client/internal targets；模块内 `estimateTokenCostCny` 负责内置模型人民币成本估算
 - 持有状态：无业务授权缓存；部署态环境变量由 CloudBase Run 管理
@@ -534,7 +534,7 @@ fork 应用层（apps/extension）：
 ```
 ## 模块名：AdminConsole
 - 职责：内部后台登录页、受保护路由、tokens 看板、用户列表，以及“消息推送”“版本更新”入口；消息
-  页面编辑纯文本/目标并复用固定组件预览，版本页面只选择 CI verified 候选与 rollout 策略
+  页面编辑纯文本/目标并复用固定组件预览，版本页面只选择受信构建且 verified 的候选与 rollout 策略
 - 不负责：不直接读写 `token_usage` / `user_accounts` / `admin_users`；不持久化管理员密码；不调用 LLM；不接收机器 token 登录
 - 输入：CloudBase Web Auth username/password session、AdminApi JSON 响应、DispatchContracts
 - 输出：`VITE_BASE_PATH=/admin/` 的静态构建产物；主入口为 CloudBase HTTP 网关默认域名 `/admin`。线上 18 条管理、消息、版本、客户端与 CI 路由由 CloudBaseLlmGateway 030 同实例承接 100% 流量，Gateway 为 0.25C/0.5GB、`MinNum:1`、`MaxNum:2`；独立 `wenxue-admin-web` 007 与 `wenxue-admin-api` 012 保留为回滚/排障单元
@@ -571,6 +571,22 @@ fork 应用层（apps/extension）：
 
 > `@wenxue/client-operations` 是问学一方包，不是上游 vendor。I5 只约束
 > `@page-agent/{ui,llms,page-controller,core}`，不得把一方协议演进登记为 vendor patch。
+
+### 2.7 构建与发布工具（apps/desktop/scripts）
+
+```
+## 模块名：DesktopReleaseTooling
+- 职责：无发布凭据的 GitHub 构建；本机 prepare/publish 两阶段核对 reviewed commit、源 run、原字节 seal、双目标公钥与产物哈希，签署并注册不可变候选
+- 输入：本机干净 checkout 的完整 commit、GitHub CLI 认证、成功首轮 main workflow_dispatch run、显式 version/channel、公钥；publish 额外接收操作者确认的 artifactSetSha512、本机私钥、COSCLI 配置及候选注册凭据
+- 输出：prepare 的公开元数据报告；publish 的已验签且公开回读通过的候选，绝不创建 rollout
+- 不负责：不将发布凭据放进 Actions、不在准备阶段签名/上传、不执行下载产物中的代码、不代替客户端安装或后台发布决策
+- 关键接口：publish-local-candidate.mjs prepare|publish；validateTrustedSourceRun；现有 seal/evidence/candidate/upload/public-verify CLI
+- 持有状态：本机独立候选目录，prepare 不覆盖已有目录；报告不是安装许可，publish 每次重新核对源 run、checkout、seal 与用户确认的哈希
+```
+
+现有注册 target 与 `WENXUE_RELEASE_CI_TOKEN` 保留协议名称；实际调用者为可信本机发布工具，token 不进入 GitHub。
+
+2026-09-26 免费套餐的信任边界：原付费 Environment 发布 workflow 退役；候选 build 仅允许 main 手动首轮运行，输入的完整 commit 必须匹配实际构建 SHA。本机必须使用该经审阅 commit 的干净代码，验证 run 仓库/分支/工作流/事件/结果/首轮次数/完整 SHA/规范 URL 后才消费其三个具名 artifacts。GitHub 管理员仍可改代码；本机签名者对具体 commit 的审阅是发布授权来源，不能将此描述成受保护分支的等价替代。
 
 ## 3. 依赖图（DAG）
 
@@ -671,6 +687,12 @@ graph TD
 	    subgraph 官网域
 	        WebsiteSite --> WebsiteAssets["透明品牌资产"]
 	    end
+        subgraph 构建发布工具
+            DesktopReleaseTooling --> DispatchContracts
+            DesktopReleaseTooling --> GitHubActions["GitHub Actions / CLI"]
+            DesktopReleaseTooling --> ReleaseCOS["专用 COS / COSCLI"]
+            DesktopReleaseTooling --> AdminApi
+        end
 ```
 
 > 桌面域与插件域无运行时控制边（I3）；当前仅允许用户 session 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；后台管理域只依赖 CloudBase Web Auth 与 AdminApi，不直接读写 NoSQL；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`VisualObservation` 使用公开 LLMConfig 形状直接发 OpenAI-compatible 多模态请求，图片只在工具调用内存中存在；`chrome.tabs` 与 `chrome.webNavigation` 均为浏览器外部 API，分别供 ExtensionEntrypoints 截取当前可见视口和发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
@@ -952,7 +974,7 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 | 应用内消息                                              | CloudBase NoSQL `client_announcements`                                                                                                    | AdminApi                                                                 | ADMINONLY；纯文本；平台/版本/UID 目标只在服务端匹配；正文与 UID 不进入 signal                                                                                                                                                                                                                                                                                                                    |
 | 消息账号回执                                            | CloudBase NoSQL `client_announcement_receipts`                                                                                            | AdminApi                                                                 | ADMINONLY；`announcementId:uid` 唯一；`expiresAt` 为公告到期后 24 小时的 BSON Date，`expireAfterSeconds=0` TTL 主清理，pending/ack 每 5 分钟至多触发一次 20 条清理兜底；客户端只经用户 bearer API 幂等确认                                                                                                                                                                                       |
 | 消息 revision                                           | CloudBase NoSQL `desktop_announcement_signal/global` 与 `user:<sha256(uid)>`                                                              | AdminApi                                                                 | 服务端写；global 只因发布/撤回递增，账号文档只因该账号确认递增且带 uid；读规则仅允许登录用户读 global 或 `doc.uid == auth.uid`；仅 revision/updatedAt/uid，不含消息正文或目标                                                                                                                                                                                                                    |
-| 更新候选与 rollout                                      | CloudBase NoSQL `desktop_release_candidates` / `desktop_release_rollouts`                                                                 | CI 注册 target / AdminApi                                                | ADMINONLY；候选不可变；后台只能选择 verified 候选并改变动态策略；rollouts 集合内以 `recordType=release-slot` 保留文档维护 active/current/highestVersion，列表过滤该文档；`runtime_channel_published` 支持发布历史                                                                                                                                                                                |
+| 更新候选与 rollout                                      | CloudBase NoSQL `desktop_release_candidates` / `desktop_release_rollouts`                                                                 | 本机发布工具 → 注册 target / AdminApi                                                | ADMINONLY；候选不可变；后台只能选择 verified 候选并改变动态策略；rollouts 集合内以 `recordType=release-slot` 保留文档维护 active/current/highestVersion，列表过滤该文档；`runtime_channel_published` 支持发布历史                                                                                                                                                                                |
 | 更新 revision                                           | CloudBase NoSQL `desktop_release_signal/<runtime>:<channel>`                                                                              | AdminApi                                                                 | 公开只读、服务端写；仅 revision/updatedAt，不含私有候选元数据                                                                                                                                                                                                                                                                                                                                    |
 | 匿名更新事件                                            | CloudBase NoSQL `desktop_release_events`                                                                                                  | AdminApi                                                                 | 不含 uid/session/硬件指纹；保存 installId hash、阶段结果与 `expiresAt` BSON Date；`expiresAt` 上 `expireAfterSeconds=0` TTL 在 30 天后清理；同集合事务维护最多 32 shard 的全局 UTC 日共享配额，冲突指数退避，重复结果不重复计数；`release_created_cursor` 支持稳定健康游标；仅对最多 6 个活动/暂停 rollout 各读取最多 2,000 条，未覆盖项返回原因；event token 只防随意写入，健康统计不是可信遥测 |
 | 分发审计                                                | CloudBase NoSQL `admin_dispatch_audit`                                                                                                    | AdminApi                                                                 | ADMINONLY、纯审计、只追加；记录发布/撤回/暂停/恢复的管理员与前后摘要；不保存 release slot，不参与互斥或版本门禁                                                                                                                                                                                                                                                                                  |
@@ -1008,7 +1030,7 @@ WenXue/
 │   │   │                            #   · UserSessionStore · UserSessionHandoff · BrowserSupervisor · DesktopUpdateService · MainBootstrap
 │   │   ├── src/preload/             # DesktopBridge（preload 侧）
 │   │   ├── src/renderer/            # ConsoleUI · DesktopAnnouncementService · DesktopReleaseSignalService
-│   │   ├── scripts/                 # fetch-browser.ts / smoke-launch.ts（构建工具，非运行时模块）
+│   │   ├── scripts/                 # fetch-browser.ts / smoke-launch.ts / DesktopReleaseTooling（非运行时模块）
 │   │   ├── browser.lock.json        # BrowserRuntimeDescriptor 版本来源
 │   │   └── electron-builder.yml
 │   ├── extension/                   # 插件域 fork：SidepanelApp · MultiPageAgent · Logging · VisualCapabilities · QuestionSolver · ExtensionEntrypoints

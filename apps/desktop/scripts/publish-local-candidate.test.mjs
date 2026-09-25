@@ -1,0 +1,510 @@
+import assert from 'node:assert/strict'
+import { execFile as execFileCallback } from 'node:child_process'
+import { generateKeyPairSync } from 'node:crypto'
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+
+import { runLocalCandidate } from './publish-local-candidate.mjs'
+
+const execFile = promisify(execFileCallback)
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+const sealScript = path.join(repoRoot, 'apps/desktop/scripts/release-build-seal.mjs')
+const commit = 'a'.repeat(40)
+const repository = 'SmartSunruiyang/WenXue'
+const runId = '12345'
+const runUrl = `https://github.com/${repository}/actions/runs/${runId}`
+const version = JSON.parse(await readFile(path.join(repoRoot, 'apps/desktop/package.json'))).version
+
+async function fixture() {
+	const root = await mkdtemp(path.join(os.tmpdir(), 'wenxue-local-candidate-'))
+	const source = path.join(root, 'source')
+	const releaseDir = path.join(root, 'candidate')
+	const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+	const publicDer = publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
+	const fingerprint = (await import('node:crypto'))
+		.createHash('sha256')
+		.update(publicKey.export({ type: 'spki', format: 'der' }))
+		.digest('hex')
+	for (const [directory, file] of [
+		['darwin/arm64', 'WenXue.dmg'],
+		['win32/x64', 'WenXue.exe'],
+	]) {
+		await mkdir(path.join(source, directory), { recursive: true })
+		await writeFile(path.join(source, directory, file), `${directory} installer bytes`)
+		await writeFile(
+			path.join(source, directory, 'release-public-key-fingerprint.txt'),
+			`${fingerprint}\n`,
+		)
+	}
+	const baseEnv = {
+		...process.env,
+		GITHUB_REPOSITORY: repository,
+		GITHUB_SHA: commit,
+		RELEASE_VERSION: version,
+		RELEASE_CHANNEL: 'beta',
+		WENXUE_RELEASE_RUN_URL: runUrl,
+		WENXUE_RELEASE_CREATED_AT: '2026-09-25T00:00:00.000Z',
+		WENXUE_RELEASE_ED25519_PUBLIC_KEY: publicDer,
+	}
+	await execFile(
+		process.execPath,
+		[
+			sealScript,
+			'create',
+			'--release-dir',
+			source,
+			'--output',
+			path.join(source, 'release-build.json'),
+		],
+		{ cwd: repoRoot, env: baseEnv },
+	)
+	const seal = JSON.parse(await readFile(path.join(source, 'release-build.json')))
+	const options = { repository, runId, commit, version, channel: 'beta', releaseDir }
+	const run = {
+		id: Number(runId),
+		html_url: runUrl,
+		path: '.github/workflows/desktop-release-candidate.yml',
+		head_branch: 'main',
+		event: 'workflow_dispatch',
+		status: 'completed',
+		conclusion: 'success',
+		run_attempt: 1,
+		repository: { full_name: repository },
+		head_repository: { full_name: repository },
+		head_sha: commit,
+	}
+	const artifacts = {
+		total_count: 3,
+		artifacts: ['desktop-darwin-arm64', 'desktop-win32-x64', 'desktop-release-seal'].map(
+			(name, index) => ({ name, id: index + 1, expired: false }),
+		),
+	}
+	const calls = []
+	const fakeExec = async (file, args, settings = {}) => {
+		calls.push([file, args])
+		if (file === 'git') {
+			if (args[0] === 'status') return ''
+			if (args[0] === 'rev-parse') return `${commit}\n`
+			if (args[0] === 'remote') return `git@github.com:${repository}.git\n`
+		}
+		if (file === 'gh' && args[0] === 'api') {
+			assert.deepEqual(args.slice(0, 3), ['api', '--hostname', 'github.com'])
+			return JSON.stringify(args.at(-1).includes('/artifacts?') ? artifacts : run)
+		}
+		if (file === 'gh' && args[0] === 'run') {
+			assert.equal(args[args.indexOf('--repo') + 1], `github.com/${repository}`)
+			const name = args[args.indexOf('--name') + 1]
+			const target = args[args.indexOf('--dir') + 1]
+			const sourceDir = name === 'desktop-darwin-arm64' ? 'darwin/arm64' : 'win32/x64'
+			if (name === 'desktop-release-seal')
+				await cp(path.join(source, 'release-build.json'), path.join(target, 'release-build.json'))
+			else await cp(path.join(source, sourceDir), target, { recursive: true })
+			return ''
+		}
+		if (file === 'coscli') {
+			return args[0] === '--version'
+				? 'coscli version v1.0.8\n'
+				: 'bucket versioning status is Closed'
+		}
+		if (file === process.execPath) {
+			const scriptName = path.basename(args[0])
+			if (
+				['publish-immutable-candidate.mjs', 'verify-published-candidate.mjs'].includes(scriptName)
+			) {
+				return ''
+			}
+			const { stdout } = await execFile(file, args, { ...settings, maxBuffer: 4 * 1024 * 1024 })
+			return stdout
+		}
+		throw new Error('Unexpected command')
+	}
+	return {
+		root,
+		source,
+		releaseDir,
+		options,
+		run,
+		artifacts,
+		calls,
+		fakeExec,
+		seal,
+		publicDer,
+		privateKey,
+		baseEnv,
+	}
+}
+
+async function publicationFixture() {
+	const value = await fixture()
+	const configPath = path.join(value.root, 'cos.yaml')
+	await writeFile(configPath, 'trusted local credentials')
+	const names = [
+		'WENXUE_RELEASE_ED25519_PUBLIC_KEY',
+		'WENXUE_RELEASE_ED25519_PRIVATE_KEY',
+		'WENXUE_UPDATE_COS_BUCKET',
+		'WENXUE_UPDATE_COS_REGION',
+		'WENXUE_UPDATE_COS_BASE_URL',
+		'WENXUE_RELEASE_REGISTER_URL',
+		'WENXUE_RELEASE_CI_TOKEN',
+	]
+	const prior = Object.fromEntries(names.map((name) => [name, process.env[name]]))
+	Object.assign(process.env, {
+		WENXUE_RELEASE_ED25519_PUBLIC_KEY: value.publicDer,
+		WENXUE_RELEASE_ED25519_PRIVATE_KEY: value.privateKey
+			.export({ type: 'pkcs8', format: 'der' })
+			.toString('base64'),
+		WENXUE_UPDATE_COS_BUCKET: 'wenxue-123456',
+		WENXUE_UPDATE_COS_REGION: 'ap-shanghai',
+		WENXUE_UPDATE_COS_BASE_URL: 'https://wenxue-123456.cos.ap-shanghai.myqcloud.com/',
+		WENXUE_RELEASE_REGISTER_URL: 'https://example.com/api/internal/v1/release-candidates/register',
+		WENXUE_RELEASE_CI_TOKEN: 'top-secret-token',
+	})
+	const exec = async (file, args, settings) => {
+		if (file === process.execPath) {
+			const isSigner = path.basename(args[0]) === 'create-release-candidate.mjs'
+			assert.equal(settings.env.WENXUE_RELEASE_CI_TOKEN, undefined)
+			assert.equal(
+				settings.env.WENXUE_RELEASE_ED25519_PRIVATE_KEY,
+				isSigner ? process.env.WENXUE_RELEASE_ED25519_PRIVATE_KEY : undefined,
+			)
+		}
+		if (file === process.execPath && path.basename(args[0]) === 'create-release-candidate.mjs') {
+			const { stdout } = await execFile(file, args, { ...settings, maxBuffer: 4 * 1024 * 1024 })
+			value.calls.push([file, args])
+			return stdout
+		}
+		return value.fakeExec(file, args, settings)
+	}
+	return {
+		value,
+		exec,
+		options: {
+			...value.options,
+			artifactSetSha512: value.seal.artifactSetSha512,
+			cosConfig: configPath,
+		},
+		restore: () => {
+			for (const [name, previous] of Object.entries(prior)) {
+				if (previous === undefined) delete process.env[name]
+				else process.env[name] = previous
+			}
+		},
+	}
+}
+
+test('prepare downloads only the three trusted artifacts and verifies their actual bytes', async () => {
+	const value = await fixture()
+	const previous = process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
+	process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = value.publicDer
+	try {
+		const review = await runLocalCandidate('prepare', value.options, { exec: value.fakeExec })
+		assert.equal(review.artifactSetSha512, value.seal.artifactSetSha512)
+		assert.equal(review.publicKeyFingerprint, value.seal.releasePublicKeyFingerprint)
+		assert.deepEqual(review.artifacts, value.seal.artifacts)
+		assert.equal(
+			JSON.parse(await readFile(path.join(value.releaseDir, 'release-review.json'))).runUrl,
+			runUrl,
+		)
+		assert.equal(value.calls.filter(([file, args]) => file === 'gh' && args[0] === 'run').length, 3)
+		assert.equal(
+			value.calls.some(
+				([file, args]) => file === 'coscli' || args[0]?.endsWith('create-release-candidate.mjs'),
+			),
+			false,
+		)
+	} finally {
+		if (previous === undefined) delete process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
+		else process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = previous
+	}
+})
+
+test('checkout and source run rejection happens before any download or publish side effect', async () => {
+	for (const rejection of [
+		'dirty',
+		'head',
+		'origin',
+		'run',
+		'missing',
+		'expired',
+		'unknown-expiry',
+		'duplicate',
+		'bad-count',
+		'zero-id',
+	]) {
+		const value = await fixture()
+		const original = value.fakeExec
+		const exec = async (file, args, settings) => {
+			if (rejection === 'dirty' && file === 'git' && args[0] === 'status') return '?? stray.txt\n'
+			if (rejection === 'head' && file === 'git' && args[0] === 'rev-parse')
+				return `${'b'.repeat(40)}\n`
+			if (rejection === 'origin' && file === 'git' && args[0] === 'remote')
+				return 'https://token@github.com/SmartSunruiyang/WenXue.git\n'
+			if (
+				rejection === 'run' &&
+				file === 'gh' &&
+				args[0] === 'api' &&
+				!args.at(-1).includes('/artifacts?')
+			)
+				return JSON.stringify({ ...value.run, head_sha: 'b'.repeat(40) })
+			if (file === 'gh' && args[0] === 'api' && args.at(-1).includes('/artifacts?')) {
+				const artifacts = structuredClone(value.artifacts)
+				if (rejection === 'missing') artifacts.artifacts.pop()
+				if (rejection === 'expired') artifacts.artifacts[0].expired = true
+				if (rejection === 'unknown-expiry') delete artifacts.artifacts[0].expired
+				if (rejection === 'duplicate') {
+					artifacts.artifacts.push(artifacts.artifacts[0])
+					artifacts.total_count += 1
+				}
+				if (rejection === 'bad-count') artifacts.total_count -= 1
+				if (rejection === 'zero-id') artifacts.artifacts[0].id = 0
+				return JSON.stringify(artifacts)
+			}
+			return original(file, args, settings)
+		}
+		await assert.rejects(runLocalCandidate('prepare', value.options, { exec }))
+		assert.equal(
+			value.calls.some(([file, args]) => file === 'gh' && args[0] === 'run'),
+			false,
+			rejection,
+		)
+	}
+})
+
+test('publish rechecks seal and operator hash before signing, upload or registration', async () => {
+	const value = await fixture()
+	const previous = process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
+	process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = value.publicDer
+	try {
+		await runLocalCandidate('prepare', value.options, { exec: value.fakeExec })
+		await assert.rejects(
+			runLocalCandidate(
+				'publish',
+				{
+					...value.options,
+					artifactSetSha512: Buffer.alloc(64).toString('base64'),
+					cosConfig: path.join(value.root, 'cos.yaml'),
+				},
+				{ exec: value.fakeExec },
+			),
+			/Confirmed artifact set/,
+		)
+		assert.equal(
+			value.calls.some(
+				([file, args]) => file === 'coscli' || args[0]?.endsWith('create-release-candidate.mjs'),
+			),
+			false,
+		)
+		await writeFile(
+			path.join(value.releaseDir, 'darwin/arm64/WenXue.dmg'),
+			'changed installer bytes',
+		)
+		await assert.rejects(
+			runLocalCandidate(
+				'publish',
+				{
+					...value.options,
+					artifactSetSha512: value.seal.artifactSetSha512,
+					cosConfig: path.join(value.root, 'cos.yaml'),
+				},
+				{ exec: value.fakeExec },
+			),
+			/release command failed|seal/i,
+		)
+		assert.equal(
+			value.calls.some(
+				([file, args]) => file === 'coscli' || args[0]?.endsWith('create-release-candidate.mjs'),
+			),
+			false,
+		)
+	} finally {
+		if (previous === undefined) delete process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
+		else process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = previous
+	}
+})
+
+test('publish signs after verification, checks COS, uploads, verifies public bytes, then registers', async () => {
+	const { value, exec, options, restore } = await publicationFixture()
+	try {
+		await runLocalCandidate('prepare', value.options, { exec })
+		const publication = await runLocalCandidate('publish', options, {
+			exec,
+			fetchImpl: async (_url, request) => {
+				assert.equal(request.redirect, 'error')
+				assert.equal(request.headers.Authorization, 'Bearer top-secret-token')
+				assert.equal(JSON.parse(request.body).manifest.sourceCoordinates.commit, commit)
+				value.calls.push(['register', []])
+				return {
+					ok: true,
+					json: async () => ({
+						candidate: {
+							releaseId: `electron:beta:${version}`,
+							manifestUrl: `https://wenxue-123456.cos.ap-shanghai.myqcloud.com/electron/beta/${version}/candidate-manifest.json`,
+							status: 'verified',
+						},
+					}),
+				}
+			},
+		})
+		assert.equal(publication.status, 'verified')
+		const ordered = value.calls.map(([file, args]) =>
+			file === 'register'
+				? 'register'
+				: file === 'coscli'
+					? `coscli:${args[0]}`
+					: file === process.execPath
+						? path.basename(args[0])
+						: '',
+		)
+		const position = (name) => ordered.lastIndexOf(name)
+		assert.ok(position('release-build-seal.mjs') < position('create-release-candidate.mjs'))
+		assert.ok(position('create-release-candidate.mjs') < position('coscli:bucket-versioning'))
+		assert.ok(position('coscli:bucket-versioning') < position('publish-immutable-candidate.mjs'))
+		assert.ok(
+			position('publish-immutable-candidate.mjs') < position('verify-published-candidate.mjs'),
+		)
+		assert.ok(position('verify-published-candidate.mjs') < position('register'))
+		assert.equal(JSON.stringify(publication).includes('top-secret-token'), false)
+	} finally {
+		restore()
+	}
+})
+
+test('publish stops before registration on COS or public verification failure and bounds registration retries', async () => {
+	const { value, exec, options, restore } = await publicationFixture()
+	try {
+		await runLocalCandidate('prepare', value.options, { exec })
+		for (const failure of ['cos-version', 'versioning', 'upload', 'public-verify']) {
+			let registrationCalls = 0
+			const failingExec = async (file, args, settings) => {
+				const scriptName = file === process.execPath ? path.basename(args[0]) : ''
+				if (failure === 'cos-version' && file === 'coscli' && args[0] === '--version')
+					return 'coscli version v1.0.7'
+				if (failure === 'versioning' && file === 'coscli' && args[0] === 'bucket-versioning')
+					return 'bucket versioning status is Enabled'
+				if (failure === 'upload' && scriptName === 'publish-immutable-candidate.mjs')
+					throw new Error('Immutable upload failed')
+				if (failure === 'public-verify' && scriptName === 'verify-published-candidate.mjs')
+					throw new Error('Published bytes differ')
+				return exec(file, args, settings)
+			}
+			await assert.rejects(
+				runLocalCandidate('publish', options, {
+					exec: failingExec,
+					fetchImpl: async () => {
+						registrationCalls += 1
+						throw new Error('Registration must not run')
+					},
+				}),
+				undefined,
+				failure,
+			)
+			assert.equal(registrationCalls, 0, failure)
+		}
+		let attempts = 0
+		await assert.rejects(
+			runLocalCandidate('publish', options, {
+				exec,
+				delay: async () => {},
+				fetchImpl: async () => {
+					attempts += 1
+					return { ok: false, status: 503, text: async () => 'response-body-secret' }
+				},
+			}),
+			(error) => {
+				assert.match(error.message, /could not be confirmed/)
+				assert.equal(error.message.includes('response-body-secret'), false)
+				assert.equal(error.message.includes('top-secret-token'), false)
+				return true
+			},
+		)
+		assert.equal(attempts, 3)
+	} finally {
+		restore()
+	}
+})
+
+test('different configured public key fails publish before any signing or COS operation', async () => {
+	const value = await fixture()
+	const prior = process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
+	process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = value.publicDer
+	try {
+		await runLocalCandidate('prepare', value.options, { exec: value.fakeExec })
+		const otherKey = generateKeyPairSync('ed25519')
+			.publicKey.export({ type: 'spki', format: 'der' })
+			.toString('base64')
+		process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = otherKey
+		await assert.rejects(
+			runLocalCandidate(
+				'publish',
+				{
+					...value.options,
+					artifactSetSha512: value.seal.artifactSetSha512,
+					cosConfig: path.join(value.root, 'cos.yaml'),
+				},
+				{ exec: value.fakeExec },
+			),
+		)
+		assert.equal(
+			value.calls.some(
+				([file, args]) => file === 'coscli' || args[0]?.endsWith('create-release-candidate.mjs'),
+			),
+			false,
+		)
+	} finally {
+		if (prior === undefined) delete process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
+		else process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = prior
+	}
+})
+
+test('malformed register URL cannot leak its input in an error', async () => {
+	const value = await fixture()
+	const configPath = path.join(value.root, 'cos.yaml')
+	await writeFile(configPath, 'trusted local credentials')
+	const names = [
+		'WENXUE_RELEASE_ED25519_PUBLIC_KEY',
+		'WENXUE_RELEASE_ED25519_PRIVATE_KEY',
+		'WENXUE_UPDATE_COS_BUCKET',
+		'WENXUE_UPDATE_COS_REGION',
+		'WENXUE_UPDATE_COS_BASE_URL',
+		'WENXUE_RELEASE_REGISTER_URL',
+		'WENXUE_RELEASE_CI_TOKEN',
+	]
+	const prior = Object.fromEntries(names.map((name) => [name, process.env[name]]))
+	Object.assign(process.env, {
+		WENXUE_RELEASE_ED25519_PUBLIC_KEY: value.publicDer,
+		WENXUE_RELEASE_ED25519_PRIVATE_KEY: 'private-secret',
+		WENXUE_UPDATE_COS_BUCKET: 'wenxue-123456',
+		WENXUE_UPDATE_COS_REGION: 'ap-shanghai',
+		WENXUE_UPDATE_COS_BASE_URL: 'https://wenxue-123456.cos.ap-shanghai.myqcloud.com/',
+		WENXUE_RELEASE_REGISTER_URL: 'https://user:secret@',
+		WENXUE_RELEASE_CI_TOKEN: 'top-secret-token',
+	})
+	try {
+		await runLocalCandidate('prepare', value.options, { exec: value.fakeExec })
+		await assert.rejects(
+			runLocalCandidate(
+				'publish',
+				{
+					...value.options,
+					artifactSetSha512: value.seal.artifactSetSha512,
+					cosConfig: configPath,
+				},
+				{ exec: value.fakeExec },
+			),
+			(error) => {
+				assert.match(error.message, /WENXUE_RELEASE_REGISTER_URL/)
+				assert.equal(error.message.includes('secret'), false)
+				return true
+			},
+		)
+	} finally {
+		for (const [name, previous] of Object.entries(prior)) {
+			if (previous === undefined) delete process.env[name]
+			else process.env[name] = previous
+		}
+	}
+})

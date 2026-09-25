@@ -60,10 +60,12 @@ async function main() {
 }
 
 export function validateTrustedSourceRun(run, { runId, repository, expectedCommit }) {
-	const runUrl = requireHttpsUrl(run?.html_url, 'source run html_url')
+	const runUrl = `https://github.com/${repository}/actions/runs/${runId}`
 	if (
 		run.id !== Number(runId) ||
+		run.html_url !== runUrl ||
 		!isTrustedBuildWorkflowPath(run.path) ||
+		run.head_branch !== 'main' ||
 		run.event !== 'workflow_dispatch' ||
 		run.status !== 'completed' ||
 		run.conclusion !== 'success' ||
@@ -73,7 +75,7 @@ export function validateTrustedSourceRun(run, { runId, repository, expectedCommi
 		requireCommit(run.head_sha, 'source run head_sha') !== expectedCommit
 	) {
 		throw new Error(
-			'Source run must be a successful first-attempt desktop build from this protected commit',
+			'Source run must be a successful first-attempt desktop build from this reviewed commit',
 		)
 	}
 	return runUrl
