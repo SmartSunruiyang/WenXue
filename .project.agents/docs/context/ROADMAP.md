@@ -193,20 +193,25 @@
 本轮继续使用 Electron + CfT + CloudBase。当前正式分发与实机验收仅覆盖 Windows x64 和 macOS arm64：前者使用未签名 NSIS 自动下载与安全退出安装，后者使用未签名 DMG 自动下载和手动覆盖。Intel Mac 暂不适配；上述目标行为尚需以下阶段实现和验收。GitHub 私有仓库采用免费路线，仅运行无发布凭据的 main 手动首轮构建；本机工具负责核验、签名、COS 不可变上传、公开回读和候选注册。不得把签名私钥、COS 凭据或注册 token 放入 GitHub，也不等待购买 Pro 或付费 Environment。§1–§3 中既有三平台记录是历史里程碑口径，不扩大本轮范围。
 
 - [x] P0 文档与执行基线：恢复当前产品入口，废弃重构文档的实施权威，固定隔离分支和提交。
-- [ ] P1 复现与配置核验：按消息、候选发布、客户端下载分别记录真实断点和外部条件；核验 GitHub 免费额度与超额硬停止预算，以及本机发布凭据；本轮实机范围为 Windows x64 与 macOS arm64。
+- [ ] P1 复现与配置核验：按消息、候选发布、客户端下载分别记录真实断点和外部条件；GitHub 免费额度与超额硬停止预算已核验，本机发布凭据及其余链路仍待核验；本轮实机范围为 Windows x64 与 macOS arm64。
 - [ ] P2 契约与门禁：登记新旧协议、平台能力、签名产物、安装复核和结果语义。
 - [ ] P3 公告闭环：全体/指定账号、离线补发、跨设备确认、撤回和过期通过测试账号实测。
-- [ ] P4 候选构建与本机发布工具：实现无发布凭据的双目标构建和 1 天 artifact 保留；本机 prepare 复核下载并生成 review，publish 复核 commit/run/seal/操作者确认的哈希后签名、COS 不可变上传、公开回读并注册候选。免费额度与硬停止预算仍待核验；尚未真实运行 CI、上传或部署。
+- [ ] P4 候选构建与本机发布工具：无发布凭据双目标构建、1 天 artifact 保留、真实 main 首轮 CI 和本机 prepare 已完成；签名、COS 不可变上传、公开回读、候选注册、部署及实机验收仍待完成。GitHub 免费额度与硬停止预算已核验。
 - [ ] P5 客户端更新：Windows x64 自动安装与 macOS arm64 手动覆盖分别通过实装及资料保留验证。
 - [ ] P6 后台与官网：发布、灰度、暂停、撤回和稳定下载入口保持一致。
 - [ ] P7 受控正式发布：完成旧版两跳迁移和异常恢复演练，记录首发证据及发版操作步骤。
 
-P1 的[2026-09-25 核验记录](../../log/2026-09-25-p1-release-readiness.md)保留当日状态快照：确认旧包公钥为空、生产无公告/候选/rollout，159 项本地测试通过。2026-09-26 条件更新：GitHub 已认证，Windows x64 与 macOS arm64 测试机可用，两个测试账号经 CloudBase 精确匹配确认为 ACTIVE；尚未进行客户端登录或通知端到端实验，完整邮箱/UID不记录于文档。远端仓库 viewerPermission 为 ADMIN、Actions 已启用，但 repository 内容为空，GraphQL `defaultBranchRef` 为 null、无实际 main 提交/workflow/run，Environment、vars、secrets 均为空。保护规则 API 返回套餐限制 403，当前状态待进一步确认；P1 条件补齐与验收仍在进行，P1 阶段未完成。Intel Mac 暂不适配。
+P1 的[2026-09-25 核验记录](../../log/2026-09-25-p1-release-readiness.md)保留当日状态快照：确认旧包公钥为空、生产无公告/候选/rollout，159 项本地测试通过。2026-09-26 较早的条件快照记载 GitHub 远端仓库为空、无 workflow/run、vars/secrets 尚未配置；该快照不代表当前状态。当前 GitHub Free Actions 额度及停止超额预算已核验，Windows x64 与 macOS arm64 测试机可用，两个测试账号经 CloudBase 精确匹配确认为 ACTIVE；尚未进行客户端登录或通知端到端实验，完整邮箱/UID不记录于文档。Intel Mac 暂不适配。
 
-2026-09-26 Windows x64/macOS arm64 双目标矩阵实现和本地验证已完成，详见[矩阵验证记录](../../log/2026-09-26-release-two-targets.md)：119 项 Admin API 测试、17 项发布脚本测试、API typecheck、完整 release lint 和 workflow YAML 解析通过。此结果不代表 P1、P2 或 P4 阶段完成，也不代表远端 CI workflow、候选构建、上传或注册已跑通。
+2026-09-26 Windows x64/macOS arm64 双目标矩阵实现和本地验证已完成，详见[矩阵验证记录](../../log/2026-09-26-release-two-targets.md)：119 项 Admin API 测试、17 项发布脚本测试、API typecheck、完整 release lint 和 workflow YAML 解析通过。此结果不代表 P1、P2 或 P4 阶段完成。
 
 既有 M4.7/M5.1 的代码、资源历史和未完成实机门禁保留；新阶段不能凭旧勾选继承通过状态。每阶段完成时同时更新本节、详细计划和执行日志。
 
 本轮双目标 CI/候选校验的本地改动和验证结果见[2026-09-26 执行日志](../../log/2026-09-26-release-two-targets.md)。这部分完成不代表 P4 已通过真实构建和注册验收。
 
-当前状态：本机发布工具与免费构建入口已完成本地验收，发布脚本 28 项测试及相关静态检查通过。2026-09-26 用户决定删除超大网页任务演示视频；网站引用与发布主线历史已清理，240 条提交保留、90 条提交 SHA 改变，main 首次推送成功。其他旧工作树与备份保留旧历史，后续不得直接合并回 main。账单页浏览器未登录，Actions 硬停止预算仍无法核实；尚未启动真实 CI。候选签名上传、注册、部署和实机更新仍待验收，P4 保持未勾选。详情见 [移除记录](../../log/2026-09-26-remove-work-video.md)。
+2026-09-26 已按用户决定移除超大演示视频，并清理发布主线历史；原始历史备份与 SHA 映射见
+[移除记录](../../log/2026-09-26-remove-work-video.md)。其他旧工作树与备份保留旧历史，后续不得直接合并回 main。
+
+当前状态（2026-09-26 首次 CI 验收）：repo 为 private，main 已推送；两个公开 repository variables 已配置且公钥校验通过，GitHub 仅使用公开变量。登录账单页后核实，构建前 GitHub Free Actions 用量为 0/2000 分钟、0/0.5 GB，Actions budget 为 $0 且 Stop usage=Yes。run [36188670852](https://github.com/SmartSunruiyang/WenXue/actions/runs/36188670852) attempt 1 由 workflow_dispatch 在 main SHA `79b42ada2cd855ab645bab63aa01b27c7f463d70` 构建 `0.0.1-beta` / `beta`，quality、macos、windows、seal-artifacts 四个 job 均成功。本机 Node 22 `publish-local-candidate.mjs prepare` 从同 SHA clean worktree 下载双目标产物并验证 seal、原字节哈希和公钥，生成 `release-review.json`；产物保存在 `/Users/outas/Downloads/WenXue-CI-36188670852`。详细证据见[首次 CI 构建日志](../../log/2026-09-26-first-ci-build.md)。此前关于空仓库、无 vars/workflow/run 和预算未登录的描述均为历史快照。
+
+P4 仍未完成：新 CI 产物版本 `0.0.1-beta` 低于已核验旧包 `0.1.0`，不可作为其升级候选；尚未签名、上传 COS、注册 candidate、部署服务端或进行实机安装/升级验证。发布私钥、专用最小权限 COS 身份和双目标后端部署仍待核验。P1、P2、P4 的未完成部分不得整体勾选；P4.5 仅完成 CI run 与 prepare/review 的文字范围，checkbox 继续保留未勾选。
