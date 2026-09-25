@@ -160,7 +160,11 @@ function bridgeFixture(): Window['wenxue'] {
 			onStateChange: unsubscribe,
 		},
 		app: {
-			getVersions: async () => ({ app: '0.1.0', browser: '137', extension: '0.1.0' }),
+			getVersions: async () => ({
+				app: '0.0.1-beta',
+				browser: '137',
+				extension: '0.0.1beta',
+			}),
 			getShellInfo: async () => ({
 				platform: 'darwin',
 				frameless: false,

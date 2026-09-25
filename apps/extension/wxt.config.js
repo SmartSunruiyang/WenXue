@@ -6,6 +6,7 @@ const chromeProfile = '.wxt/chrome-data'
 mkdirSync(chromeProfile, { recursive: true })
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
+const publicVersion = pkg.version.replace(/-beta(?=\.|$)/i, 'beta')
 const defaultGatewayBaseUrl =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
 const gatewayBaseUrl = resolveGatewayBaseUrl(process.env.WENXUE_GATEWAY_BASE_URL)
@@ -42,6 +43,7 @@ export default defineConfig({
 		plugins: [tailwindcss()],
 		define: {
 			__VERSION__: JSON.stringify(pkg.version),
+			__DISPLAY_VERSION__: JSON.stringify(`v${publicVersion}`),
 			__WENXUE_GATEWAY_BASE_URL__: JSON.stringify(gatewayBaseUrl),
 		},
 		optimizeDeps: {
@@ -63,6 +65,7 @@ export default defineConfig({
 		artifactTemplate: 'page-agent-ext-{{version}}-{{browser}}.zip',
 	},
 	manifest: {
+		version_name: publicVersion,
 		key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqbzT0iTYeYlnCvDJIGDnGU8oarJgZILDzSfLi/ufuSxXEPDKuMyD892GhvrMCZNVHS11Sh6NYUOc/PcUOhtaR2urHtcNkrpSJNV10zUamY7fxBdVEkOucfyLu8INVy+teis62MoRWYPaUPkfZUjrLGW8MsZ9aFzARfu9GGDEp2EAYsWDN6w6vyz9LJ82pm542EWnVT4MjmDPgvYFCWGBtaU/dfHD+GAX6URJFapsCvryVURKJ+76c/GO9/I3EX1IBfbY6dec78bLCMvVxiTmiv36KyGPwX1OpakW8IiCpXWdbAxjm+plbYlp5t5zTyyoE3sOSFeXsBH0Kg27o8GcvQIDAQAB',
 		default_locale: 'en',
 		name: '__MSG_extName__',

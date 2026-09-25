@@ -172,7 +172,11 @@ export function UpdateDialog({
 				phaseOwnsCopy ? updatePhaseTitle(state) : (release?.title ?? updatePhaseTitle(state)),
 			),
 			release &&
-				h('span', { className: 'wx-ops-version' }, `v${release.version} · ${release.channel}`),
+				h(
+					'span',
+					{ className: 'wx-ops-version' },
+					`v${release.version.replace(/-beta(?=\.|$)/i, 'beta')} · ${release.channel}`,
+				),
 			h(
 				'p',
 				{ id: bodyId, className: 'wx-ops-body' },

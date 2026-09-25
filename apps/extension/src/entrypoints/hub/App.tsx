@@ -64,7 +64,7 @@ export default function App() {
 					<HubConfig />
 					<ProtocolDocsCollapsible />
 					<footer>
-						<span>v{__VERSION__}</span>
+						<span>{__DISPLAY_VERSION__}</span>
 						<a
 							href="https://github.com/alibaba/page-agent/tree/main/packages/mcp"
 							target="_blank"

@@ -1711,6 +1711,11 @@ textarea {
 	min-width: 0;
 	overflow-wrap: anywhere;
 }
+.desktop-update-warning__actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
 .desktop-update-warning button {
 	display: inline-flex;
 	min-height: 32px;
@@ -1726,6 +1731,11 @@ textarea {
 }
 .desktop-update-warning button:hover {
 	background: var(--wx-hover);
+}
+.desktop-update-warning .desktop-update-warning__close {
+	width: 32px;
+	justify-content: center;
+	padding: 0;
 }
 .empty-state {
 	display: flex;

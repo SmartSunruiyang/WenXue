@@ -358,9 +358,14 @@ extraResources:
   `cam:ListUsers` 与创建 CAM 用户权限，无法创建专用最小权限 CI 子账号。不得复用高权限 Gateway 密钥
   代替该 CI 身份。
 - 当前 Electron 继续分发 `manual-unsigned` DMG/NSIS，不配置或使用平台签名证书。平台签名不是当前
-  Electron 阻塞；GitHub/CAM 配置与三平台 `0.1.0 → 0.1.1` 手动安装交接 E2E 仍未完成。
+  Electron 阻塞；GitHub/CAM 配置与三平台当前版本到更高 SemVer 版本的手动安装交接 E2E 仍未完成。
 
 ## 8. 构建、CI 与分发
+
+本次产品 beta 包在桌面、插件、官网的包版本均为合法 SemVer `0.0.1-beta`，用户界面统一显示
+`0.0.1beta`。Chrome 插件清单的 `version` 为数值 `0.0.1`，`version_name` 为 `0.0.1beta`；
+CfT 与 vendor 库保留各自独立版本。桌面构建未显式提供 `WENXUE_UPDATE_CHANNEL` 时，从包版本的
+`-beta` 标识选择 beta 更新通道；CI 显式通道优先。
 
 ### 8.1 本地构建流水线
 
@@ -411,6 +416,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   未签名状态。
 - 打包运行时的 DesktopUpdateService 在启动 30 秒、每 4 小时、release revision 和“关于问学”手动
   intent 时检查；开发运行时保持 idle，不启动自动更新，用户手动检查时只在“关于问学”显示不可用说明。
+  缺少内置更新公钥的打包版保留更新不可用状态；顶部提示可关闭，错误详情仍可在“关于问学”查看。
   用户点击后才下载，SHA-512/size 校验通过后再次点击“打开安装包”，随后由系统打开 DMG/NSIS。
 - rollout 比例为 1/5/25/50/100；`sha256(releaseId + randomInstallId)` 稳定分桶；mandatory 仅允许
   100%。打开安装包前必须成功完成一次实时策略请求，pause/withdraw/断网都禁止新下载或打开；缓存
