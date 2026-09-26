@@ -1,10 +1,10 @@
 # 问学 WenXue — 技术基础设施文档（Tech Infra）
 
-> 2026-09-26：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。P2 的 AdminApi schema 2、CI seal v3 与本机发布脚本已本地实现并验证，但新构建尚未运行、服务端尚未部署；P5 安装协调仍在进行，Windows 手动验收待新包和 P5 完成后开展，不表示更新已上线。
+> 2026-09-27：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。P2 的 AdminApi schema 2、CI seal v3 与本机发布脚本已实现；桌面候选 `0.1.1-beta.1` 已由 GitHub Actions run `36260499160` 构建并成功登记为 verified candidate，尚未创建 rollout 或完成安装/升级验收。P5 两端实机验收仍待完成。
 
-> P1 历史核验见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。2026-09-26 组合服务已升级至 037，后台定向公告创建成功，已观察到 Mac 测试 A 弹窗；在线时延、确认和跨设备去重仍待验收，候选与 rollout 尚未登记。正式域名不能直接替代客户端的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
+> P1 历史核验见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。组合服务 039 已上线；后台定向公告创建成功，Mac 测试 A 已由用户目视看到弹窗并点击确认。服务端回执独立核验、公告在线时延和跨设备去重仍待验收。`0.1.1-beta.1` 候选已登记并在后台显示 Ed25519 verified；尚无 rollout。正式域名不能直接替代客户端的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
 
-> 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；P2 本地验证与构建/部署状态见[本次执行日志](../../log/2026-09-26-release-key-and-protocol.md)。尚未运行新的 GitHub 构建或部署服务端。
+> 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；P2 本地验证与构建/部署状态见[本次执行日志](../../log/2026-09-26-release-key-and-protocol.md)。2026-09-27 新候选 CI、公开托管回读和候选登记结果见[候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。
 
 | 项       | 内容               |
 | -------- | ------------------ |
@@ -370,8 +370,7 @@ extraResources:
 
 ## 8. 构建、CI 与分发
 
-本次产品 beta 包在桌面、插件、官网的包版本均为合法 SemVer `0.0.1-beta`，用户界面统一显示
-`0.0.1beta`。Chrome 插件清单的 `version` 为数值 `0.0.1`，`version_name` 为 `0.0.1beta`；
+当前桌面候选版本为合法 SemVer `0.1.1-beta.1`，通道为 `beta`。桌面包、插件包与官网包需分别读取各自 package metadata，不能由桌面版本推断三者统一。Chrome 插件清单的 `version` 为数值 `0.1.1`，`version_name` 使用其品牌版本字符串；
 CfT 与 vendor 库保留各自独立版本。桌面构建未显式提供 `WENXUE_UPDATE_CHANNEL` 时，从包版本的
 `-beta` 标识选择 beta 更新通道；CI 显式通道优先。
 
@@ -392,9 +391,9 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 - `desktop-release-candidate.yml` 是免费私有仓库的无发布凭据构建段：仅允许 main 上的手动首轮运行，
   操作者输入的完整 `expected_commit` 必须等于实际构建 SHA，再运行质量门禁；当前构建配置生成
   macOS arm64 未签名 DMG、Windows x64 未签名 NSIS 与对应 update YAML；`release-build.json` 当前使用
-  seal v3，并与三项产物一同作为 Actions artifacts 保留 1 天。工作流尚未实际运行本次新配置，不能宣称已完成构建或部署。仅手动触发，不开启每次 push 的多平台打包；运行前确认 Actions 额度与阻止超额消费的预算设置。
+  seal v3，并与三项产物一同作为 Actions artifacts 保留 1 天。2026-09-27 run `36260499160` 在 commit `6fb2731a9e303e2ead81567b78d06c69b42e9a0c`、version `0.1.1-beta.1`、channel `beta` 上以 attempt 1 成功；quality、macOS arm64、Windows x64、seal-artifacts 四个 job 全通过。仅手动触发，不开启每次 push 的多平台打包；运行前确认 Actions 额度与阻止超额消费的预算设置。
 - P2 协议实现状态：AdminApi schema 2/兼容逻辑、CI seal v3 与本机发布脚本已在本地实现并验证
-  （Admin API 141/141；发布脚本 31/31）。尚未运行新配置的 GitHub 构建或部署服务端。schema 1 候选及其原始
+  （Admin API 141/141；发布脚本 31/31）。新配置已通过上述 CI；schema 1 候选及其原始
   清单字节/Ed25519 签名保持不变；AdminApi 登记、读取兼容 schema 1 双目标和旧完整三目标，不裁剪或重签。
   schema 2 只允许 Electron 候选，产物集合必须且只能为 `darwin/arm64:dmg`、
   `win32/x64:nsis`、`win32/x64:nsis-yaml`，分发模式为 `platform-unsigned`。Windows NSIS 成功产出后，
@@ -408,7 +407,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   未知协议版本返回 HTTP 400。只有 schema 2 候选响应显式携带 `policy.schemaVersion: 2`，schema 1
   响应字段保持原样。旧客户端由用户从官网或测试分发手动覆盖安装过渡包；P2 禁止向旧协议客户端下发
   schema 2，也不允许 v2 策略设为 mandatory。P2 协议与脚本已通过本地验证；P5 安装协调和实机验收仍在
-  进行，新 GitHub 构建及服务端部署尚未执行。
+  进行；新 CI 构建及网关 039 部署已完成，设备安装/升级仍待验收。
 - 历史 seal v2 锁定 repository、commit、version、channel、`buildRunUrl`、`artifactSetSha512`、逐产物哈希/尺寸
   与 Ed25519 SPKI SHA-256 公钥指纹；两个最终 `app.asar` 的指纹证明必须一致且等于发布时配置。
   tests 必须且只能是 `quality`、`manual-installer-integrity`、`manifest-tamper-rejection` 三项 passed 记录，
@@ -439,12 +438,12 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   签名清单与三项产物的公开验证；仅全部通过才使用注册 token 登记候选，不需要私钥或 COS 写入凭据。
   这是工具和操作层的不可覆盖约束，不是存储桶 WORM 保证。现有 `publish` 自动 COS 路径保留兼容，
   本轮不选用。
-- 本机工具只注册 candidate，不自动发布 rollout；发布比例和 optional/mandatory 只能在后台“版本更新”发起。
+- 本机工具只注册 candidate，不自动发布 rollout；发布比例和 optional/mandatory 只能在后台“版本更新”发起。候选 `electron:beta:0.1.1-beta.1` 已登记为 verified；后台核对显示强制更新 disabled，发布记录尚未发起版本发布。
 - GitHub 只配置公开的网关 origin 与 Ed25519 公钥变量，不配置签名私钥、COS 写入或候选注册 secrets。
   私钥留在可信本机，仅 `prepare-upload` 签名时使用；注册 token 仅在 `register-upload` 进程中使用。
   managed upload 使用当前已授权 CloudBase 工具，不提取 MCP 会话凭据、不创建 CAM 上传子账号；
   注册请求仅允许 HTTPS 且禁止重定向，不回显凭据或原始错误响应。私有仓库的免费额度不等于无限构建；
-  不自动购买额度、升级套餐或改为公开仓库。上传及注册尚未执行；本机按具体 commit 审阅并签名，
+  不自动购买额度、升级套餐或改为公开仓库。候选已上传并登记；本机按具体 commit 审阅并签名，
   不冒称 GitHub 分支保护已生效。
 - 2026-09-26 发布密钥自检：可信本机 Keychain 中的 Ed25519 签名材料已通过进程内挑战签名验证；派生
   SPKI SHA-256 指纹 `bbacf14f6a6de5f743cf499bd85ccad61434d83f8f110ae4119b2b02eb01c336` 与 Keychain
@@ -453,11 +452,10 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 - 2026-09-26 构建配置核验：两个公开 repository variables 已配置并逐值回读一致；公钥取自当前
   Gateway 036 配置，Ed25519 SPKI SHA-256 为 `bbacf14f6a6de5f743cf499bd85ccad61434d83f8f110ae4119b2b02eb01c336`。
   用同一公开配置进行本地 desktop build 与内嵌公钥验证通过。用户登录后，账单页已核实 GitHub Free、
-  构建前 Actions 0/2,000 分钟与 0/0.5 GB，账号 Actions 预算为 $0 且 Stop usage=Yes，详见
-  [CI 预检记录](../../log/2026-09-26-ci-preflight.md)。随后首轮 run `36188670852` 的 quality、macos、
-  windows、seal-artifacts 全部成功；本机在同一源码提交执行 prepare，下载并复核两份安装包和 seal
-  通过。此轮版本 `0.0.1-beta` 仅验证构建链路，尚未签名上传 COS、注册候选或进行实机升级，详见
-  [首次 CI 验收记录](../../log/2026-09-26-first-ci-build.md)。
+  首轮构建前 Actions 0/2,000 分钟与 0/0.5 GB，账号 Actions 预算为 $0 且 Stop usage=Yes；2026-09-27 本轮构建前账单页显示 35.7/2,000 分钟、存储显示 0 GB/0.5 GB（页面取整）、当前应付 $0 且 Actions 预算 $0 / Stop usage=Yes。详见
+  [CI 预检记录](../../log/2026-09-26-ci-preflight.md)及[本轮候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。随后首轮 run `36188670852` 的 quality、macos、
+  windows、seal-artifacts 全部成功；此首轮版本 `0.0.1-beta` 仅为构建试跑，详见
+  [首次 CI 验收记录](../../log/2026-09-26-first-ci-build.md)。随后 run `36260499160` 四个 job 全部成功，本机 `prepare` 与 `prepare-upload` 通过；manageHosting 先上传 DMG，再批量上传 `beta.yml`、EXE 和 signature，最后上传 manifest，共五对象。`register-upload` 从公开 URL 验证签名和每个对象原字节、大小及 SHA-512 后返回 `candidateId=electron:beta:0.1.1-beta.1`、`status=verified`。该 verified candidate 尚未创建 rollout，未完成实际安装或升级验收；旧 run 三个 artifact 已删除，新 run artifacts 保留。详见[本轮候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。
 
 #### 8.2.1 免费私有仓库的操作顺序
 
