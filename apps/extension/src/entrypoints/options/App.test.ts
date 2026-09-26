@@ -9,6 +9,7 @@ import { SETTINGS_SECTIONS, WENXUE_GITHUB_URL, WENXUE_WEBSITE_URL } from '@/comp
 import { isConfigStorageChange } from '@/lib/configStorage'
 import { BUILT_IN_MODEL_ID, BUILT_IN_VISION_MODEL_ID } from '@/lib/modelConfig'
 
+import extensionPackage from '../../../package.json'
 import App, { SETTINGS_PAGE_VERSION, resolveActiveSettingsSection } from './App'
 
 type StorageChangeListener = (
@@ -109,7 +110,9 @@ describe('options navigation', () => {
 	})
 
 	it('shows the requested public version', () => {
-		expect(SETTINGS_PAGE_VERSION).toBe('v0.1.1beta.1')
+		expect(SETTINGS_PAGE_VERSION).toBe(
+			`v${extensionPackage.version.replace(/-beta(?=\.|$)/i, 'beta')}`,
+		)
 	})
 
 	it('recognizes external model settings updates for live synchronization', () => {

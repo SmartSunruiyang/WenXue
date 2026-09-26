@@ -2,7 +2,7 @@
 
 > 日期：2026-09-25
 >
-> 状态（2026-09-27）：P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。P2/AdminApi schema 2 已部署至生产 039；CI run `36260499160` 在 commit `6fb2731a9e303e2ead81567b78d06c69b42e9a0c` 构建的 `0.1.1-beta.1` 已通过签名、CloudBase 托管公开回读并登记为 verified candidate。P4.1–P4.3 完成，未创建 rollout，两端设备安装和下一版升级仍待验收。当前目标不含 Intel Mac。见[候选登记日志](../../../log/2026-09-27-beta-candidate-registration.md)。
+> 状态（2026-09-27）：P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。P2/AdminApi schema 2 已部署至生产 039；CI run `36260499160` 在 commit `6fb2731a9e303e2ead81567b78d06c69b42e9a0c` 构建的 `0.1.1-beta.1` 已通过签名、CloudBase 托管公开回读并登记为 verified candidate。用户反馈 Windows 与 macOS 均已安装测试，版本/资料/CfT 插件检查正常；未收集系统具体版本与实机哈希，自动升级未测试，因此不勾选 P5 整体。当前准备 N+1 `0.1.1-beta.2`，尚未触发 CI；两端下一版升级仍待验收。run `36260499160` 三项 GitHub 临时 artifacts 已精确删除，回查剩余为 0，操作证据留在候选下载目录；下载备份和 CloudBase 候选保留。当前目标不含 Intel Mac。见[候选登记日志](../../../log/2026-09-27-beta-candidate-registration.md)及[N+1 演练日志](../../../log/2026-09-27-nplus1-upgrade-rehearsal.md)。
 >
 > 产品边界已由用户在本会话确认；本文件将其整理为需求、设计约束、实施任务与验收门禁。详细接口和数据变更在 P2 登记到上游架构后再实现，不将计划中的建议冒充已经落地的能力。
 
@@ -156,7 +156,7 @@ flowchart LR
 - [ ] P1.2 分别记录公告发布/接收、后台候选发布、客户端下载/打开安装包的复现步骤、响应状态、脱敏错误码和所属模块；遵循“复现 → 架构 → 接口 → 单模块代码”排查顺序。
 - [ ] P1.3 只读核验实际客户端内嵌网关、公钥、channel 与 server 配置是否匹配；验证官网域名、默认域名与实际使用的管理/client/internal 路由、CORS 和 HTTPS。不要根据历史域名路由数量推断齐全。
 - [ ] P1.4 核验 Auth 的 ACTIVE 状态验证、管理员/viewer、普通用户与定向目标过滤；核对 announcement/release signal、NoSQL 规则/索引/TTL、监听读权限及轮询请求。
-- [ ] P1.5 核对 GitHub 登录和仓库权限、免费私有仓库 Actions 加权分钟与共享 artifact 存储额度、超额时的阻断行为及 Actions 预算硬停止设置；2026-09-26 构建前用量为 0/2000 分钟、0/0.5 GB，Actions budget 为 $0 且 Stop usage=Yes。2026-09-27 本轮构建前账单页显示 35.7/2000 分钟、存储显示 0 GB/0.5 GB（页面取整）、当前应付 $0，Actions budget 仍为 $0 且 Stop usage=Yes。本机签名私钥已由 Keychain 核实并匹配现有公钥；CloudBase 业务 bucket 保持 PRIVATE，静态托管 bucket public-online；五对象托管上传、公开字节验证和候选登记已完成。GitHub 不配置发布 secrets；只记录配置项是否就绪，不输出凭据。P1 其他账号、公告时延与跨设备实测仍未完成。
+- [ ] P1.5 核对 GitHub 登录和仓库权限、免费私有仓库 Actions 加权分钟与共享 artifact 存储额度、超额时的阻断行为及 Actions 预算硬停止设置；2026-09-26 构建前用量为 0/2000 分钟、0/0.5 GB，Actions budget 为 $0 且 Stop usage=Yes。2026-09-27 首轮构建前账单页显示 35.7/2000 分钟、存储显示 0 GB/0.5 GB（页面取整）、当前应付 $0；N+1 CI 触发前显示 70.3/2000 分钟、存储 0 GB/0.5 GB（页面取整）、当前应付 $0，Actions budget $0、spent $0、Stop usage=Yes。相关配置均未修改。本机签名私钥已由 Keychain 核实并匹配现有公钥；CloudBase 业务 bucket 保持 PRIVATE，静态托管 bucket public-online；五对象托管上传、公开字节验证和候选登记已完成。GitHub 不配置发布 secrets；只记录配置项是否就绪，不输出凭据。P1 其他账号、公告时延与跨设备实测仍未完成。
 - [ ] P1.6 核对公开更新端点的请求预算、限流和默认域名是否绕开既有保护；复用现有资源，记录真实外部阻塞及可继续的本地工作。
 - [x] P1.7 产出三条链路故障表，区分已复现根因、代码缺口、配置缺口与待实机验证；配置修复和业务修复进入对应阶段，不能以顺手部署替代记录。
 
@@ -231,9 +231,9 @@ flowchart LR
 
 2026-09-26 本地实现同步（P5 仍未验收）：`DesktopUpdateService` 已接入 `electron-updater` 6.8.9 / `NsisUpdater`（Windows only）、schema 2 optional 自动后台下载和严格 metadata→EXE 大小/哈希复核；schema 1 手动路径及不超过 24 小时 mandatory 缓存策略门禁/下载保留，但离线缓存策略不能授权打开，schema 2 不接受 mandatory。安装动作由 `state.release.installAction` 表达；typed IPC 的 `openInstaller()` 保持 `UpdateMutationResult={ok,state,error?}`，立即重启走独立 `updates:restartInstall`。`withInstallGuard` 和 BrowserSupervisor 的 launch lock / 异步 `allProfilesIdleForInstall()` 检查负责下载后、缓存恢复和交接前的策略/浏览器占用复核；Windows 只关闭经 EXE 路径及 parent PID 核实、由本应用跟踪的 CfT，等待退出，不 kill；检查所有 profile 锁（含未跟踪实例）。`withInstallLaunchLock(operation, retainAfterSuccess?)` 在 Windows 已接受交接后保留至进程退出。OS session-end/shutdown 不安装，只有真正 `will-quit` 才停止 updater。普通退出使用 `quitAndInstall(true, false)`，明确立即重启才用 `(true, true)`；macOS 若 CfT 占用提示用户先手动关闭再打开 DMG。更新 UI 按 capability 渲染，network/窗口 online、focus、visible 恢复时去重检查。
 
-根 Agent 前期独立验证：admin-api 146/146、Bridge/App 58/58、DesktopUpdateService 42/42、shared client-operations 17/17、desktop typecheck、lint:desktop-release、desktop build 与内嵌公钥验证通过。首次本地全仓测试曾因 extension 旧版本断言失败，修正后完成定向验证；2026-09-27 CI run `36260499160` 在冻结提交 `6fb2731a9e303e2ead81567b78d06c69b42e9a0c` 上的完整 `pnpm -r test` 和质量门禁已通过，双平台打包与 seal v3 均成功。签名候选 `0.1.1-beta.1` 已上传 CloudBase 静态托管、从公网验证原字节并登记为 verified，后台可见但尚未发起 rollout。旧 run 的三个 artifacts 已按用户授权删除，本机备份保留；新 run artifacts 保留。
+根 Agent 前期独立验证：admin-api 146/146、Bridge/App 58/58、DesktopUpdateService 42/42、shared client-operations 17/17、desktop typecheck、lint:desktop-release、desktop build 与内嵌公钥验证通过。首次本地全仓测试曾因 extension 旧版本断言失败，修正后完成定向验证；2026-09-27 CI run `36260499160` 在冻结提交 `6fb2731a9e303e2ead81567b78d06c69b42e9a0c` 上的完整 `pnpm -r test` 和质量门禁已通过，双平台打包与 seal v3 均成功。签名候选 `0.1.1-beta.1` 已上传 CloudBase 静态托管、从公网验证原字节并登记为 verified，后台可见但尚未发起 rollout。Windows 与 macOS 对 beta.1 的安装检查为用户实机反馈：两端均正常，检查版本、资料和 CfT 插件；系统具体版本与实机哈希未收集，自动升级未测试。旧 run 的三个 artifacts 已按用户授权删除，本机备份保留；run `36260499160` 三项 artifacts 已精确删除并回查为 0；本机备份及 CloudBase 文件保留。
 
-后台部署 039（BuildId `2607439703`、RunId `1xARiPgBq89D7p`，100% normal）对应代码 `bb4dc29`；后续 `6fb2731` 为文档提交。AdminConsole bundle `Cr1Z5t0W` 已上线；P5.5 手动下载兜底和 P5.7 启动确认已实现并进入本轮候选。Windows 测试包和覆盖安装、保留数据、启动 CfT/插件的步骤已发给用户，结果待反馈；macOS 实际覆盖和启动也未核实，所有 P5 checkbox 保持未勾选。P6 官网同源入口与完整发布、P7 两跳演练和受控正式发布仍待。详见[启动确认日志](../../../log/2026-09-26-update-startup-confirmation.md)与[候选登记日志](../../../log/2026-09-27-beta-candidate-registration.md)。
+后台部署 039（BuildId `2607439703`、RunId `1xARiPgBq89D7p`，100% normal）对应代码 `bb4dc29`；后续 `6fb2731` 为文档提交。AdminConsole bundle `Cr1Z5t0W` 已上线；P5.5 手动下载兜底和 P5.7 启动确认已实现并进入本轮候选。用户确认 beta.1 在 Windows 与 macOS 均安装正常，并检查了版本、资料和 CfT 插件；系统版本/实机哈希未收集，自动升级未测试，故不勾 P5 整体。N+1 `0.1.1-beta.2` 已同步 desktop、extension 与 website 三个 package 版本元数据，保留三包版本一致断言并调整显示版本断言；无 UI/业务变化，不构建/上传或部署官网，CI 尚未触发。Sol 的 frozen-lock 检查通过；根 Agent 独立复核候选脚本 2/2、扩展 options 11/11、website 6/6 通过。用户询问 Windows UI 是否需双套代码后，已说明共用逻辑与 UI、局部平台样式/组件；此轮未授权 UI 改造。用户已明确本次及以后可在完整备份、校验通过且确认不再被 prepare/签名/注册使用后自动清理旧 CI 临时产物；本次 run `36260499160` 三项 artifact 已由根 Agent 精确删除并回查剩余为 0。下载目录和 CloudBase 候选保留，永久操作证据在 `/Users/outas/Downloads/WenXue-CI-36260499160/github-artifact-cleanup.json`。新 CI 触发前账单快照为 GitHub Free、Actions 70.3/2000 分钟、存储 0 GB/0.5 GB（页面取整）、应付 `$0`、budget `$0`、spent `$0` 且 Stop usage=Yes，均未修改。P6 官网同源入口与完整发布、P7 两跳演练和受控正式发布仍待。详见[启动确认日志](../../../log/2026-09-26-update-startup-confirmation.md)、[候选登记日志](../../../log/2026-09-27-beta-candidate-registration.md)与[N+1 演练日志](../../../log/2026-09-27-nplus1-upgrade-rehearsal.md)。
 
 出口：Windows 真正完成退出安装/立即更新；Mac 完成自动下载和人工覆盖；单纯 mock 或 `pnpm dev` 不能满足出口。
 
@@ -339,7 +339,7 @@ Windows x64 与 macOS arm64 两目标打包通过候选工作流执行，主进�
 | 已分发旧版原始安装包                             | P1 收集，P7 迁移    | 已哈希核验本地 arm64 0.1.0 DMG；其他旧包与实际用户分发情况待确认           |
 | 正式平台签名                                     | 后续独立阶段        | 用户明确暂不办理，不作为本阶段 Windows/Mac 手动交付的前置条件              |
 
-**P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。** 执行分支为 `codex/release-notifications-updates`；初始计划提交为 `9f1c11f`，P2 AdminApi schema 2 与发布脚本另有提交 `6915974`（API 141/141、脚本 31/31 通过），后台部署 039 已上线（BuildId `2607439703`、RunId `1xARiPgBq89D7p`，100% normal 流量）。真实 CI 双目标构建、本机 prepare/prepare-upload、五对象上传与公开字节验证已通过；候选 `electron:beta:0.1.1-beta.1` 状态 verified，但尚未创建 rollout。P4.1–P4.3 已完成，P4.5 因未执行重复上传复用/冲突/半成品恢复演练而保持未勾选，P4.6 尚未完成。P5 自动化测试不能代替 Windows/macOS 用户实机安装升级；Mac 实际覆盖和启动结果也未核实。P6 官网同源入口及后台完整发布、P7 两跳演练/受控正式发布仍待完成。历史首轮 `0.0.1-beta` 低于旧包 `0.1.0`，但不适用于当前候选 `0.1.1-beta.1`。
+**P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。** 执行分支为 `codex/release-notifications-updates`；初始计划提交为 `9f1c11f`，P2 AdminApi schema 2 与发布脚本另有提交 `6915974`（API 141/141、脚本 31/31 通过），后台部署 039 已上线（BuildId `2607439703`、RunId `1xARiPgBq89D7p`，100% normal 流量）。真实 CI 双目标构建、本机 prepare/prepare-upload、五对象上传与公开字节验证已通过；候选 `electron:beta:0.1.1-beta.1` 状态 verified，但尚未创建 rollout。P4.1–P4.3 已完成，P4.5 因未执行重复上传复用/冲突/半成品恢复演练而保持未勾选，P4.6 尚未完成。用户已反馈 beta.1 在 Windows 与 macOS 均安装检查正常，系统具体版本/实机哈希未收集，自动升级未测试，P5 整体仍未完成；Mac N→N+1 手动覆盖升级未验证。N+1 `0.1.1-beta.2` 已同步 desktop、extension、website 的版本元数据并保留三包版本一致断言，另调整显示版本断言；无 UI/业务变化、未部署官网；CI 尚未触发；根 Agent 独立通过 19 项定向检查，Sol 的 frozen-lock 检查通过。run `36260499160` 三项临时 GitHub artifacts 已删除且回查为 0，备份和 CloudBase 候选保留。P6 官网同源入口及后台完整发布、P7 两跳演练/受控正式发布仍待完成。历史首轮 `0.0.1-beta` 低于旧包 `0.1.0`，但不适用于当前候选 `0.1.1-beta.1`。
 
 ## 8. 技术核验来源
 
