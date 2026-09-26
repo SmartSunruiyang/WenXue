@@ -2,7 +2,7 @@
 
 > 日期：2026-09-25
 >
-> 状态（2026-09-26）：P0 已完成；P1、P2、P4、P5、P6、P7 整体仍未完成。P2/AdminApi schema 2 后台部署 038 已上线（BuildId `2607440724`，100% normal 流量）；P5.5/P5.7 已完成本地实现与定向验收，待提交/部署及新安装包设备验收。当前目标不含 Intel Mac。部署核验及本轮契约见[启动确认日志](../../../log/2026-09-26-update-startup-confirmation.md)。
+> 状态（2026-09-26）：P0 已完成；P1、P2、P4、P5、P6、P7 整体仍未完成。P2/AdminApi schema 2 已部署至生产 039（BuildId `2607439703`、RunId `1xARiPgBq89D7p`，100% normal）；P5.5/P5.7 已提交 `bb4dc29` 并 push 至 `origin/main`，待新 CI 构建、候选上传/注册及新安装包设备验收。当前目标不含 Intel Mac。部署核验及本轮契约见[启动确认日志](../../../log/2026-09-26-update-startup-confirmation.md)。
 >
 > 产品边界已由用户在本会话确认；本文件将其整理为需求、设计约束、实施任务与验收门禁。详细接口和数据变更在 P2 登记到上游架构后再实现，不将计划中的建议冒充已经落地的能力。
 
@@ -116,7 +116,7 @@ flowchart LR
 - `downloaded`、`installer-started/handedOff` 不算安装成功。下一次进程启动且实际版本匹配目标后，才记录目标版本已启动；无后续上报应显示未知，不能直接计为失败。
 - 现有 event token 绑定 release/runtime/platform/arch/fromVersion 与有效期。P2 设计跨版本启动后的结果关联和 token 更新/过期路径，不能简单复用过期或版本不匹配的旧 token。事件保持匿名、幂等、有限期保存，仍不作为可信证明或自动放量唯一依据。
 
-2026-09-26 P5.7 本地实现与验收状态（待提交/部署及新安装包设备验收）：`DesktopUpdateService` 独占 `<userData>/update-install-attempt.json`，原子 mode `0600` 写；记录本地唯一 attemptId（不上传）、受签名 manifest/signature、fromVersion、targetVersion、releaseId、channel/platform/arch、原 eventInstallIdHash、受限 eventToken、attemptedAt/expiresAt 及 `prepared | accepted | failed` handoff 阶段，最多保存 7 天，不含账号、硬件 ID 或安装路径。只有最后在线策略、签名候选及浏览器空闲复核通过后、实际交接前才写 `prepared`；写入失败取消本次安装交接，但正常退出仍可继续。交接成功更新 `accepted`，明确失败更新 `failed`。应用退出或重启中断时允许留下 `prepared`。同文件的写入/删除由 service 串行队列处理，attemptId 用于隔离旧异步清理和新尝试。macOS 的 accepted 仅代表打开 DMG。
+2026-09-26 P5.7 实现已提交至 `bb4dc29` 并 push 至 `origin/main`；新桌面构建、候选发布与设备验收待完成：`DesktopUpdateService` 独占 `<userData>/update-install-attempt.json`，原子 mode `0600` 写；记录本地唯一 attemptId（不上传）、受签名 manifest/signature、fromVersion、targetVersion、releaseId、channel/platform/arch、artifactSha512、原 eventInstallIdHash、受限 eventToken、attemptedAt/expiresAt 及 `prepared | accepted | failed` handoff 阶段，最多保存 7 天，不含账号、硬件 ID 或安装路径。只有最后在线策略、签名候选及浏览器空闲复核通过后、实际交接前才写 `prepared`；写入失败取消本次安装交接，但正常退出仍可继续。交接成功更新 `accepted`，明确失败更新 `failed`。应用退出或重启中断时允许留下 `prepared`。同文件的写入/删除由 service 串行队列处理，attemptId 用于隔离旧异步清理和新尝试。macOS 的 accepted 仅代表打开 DMG。
 
 打包版下次启动验签本机记录并核对实际版本、releaseId 与平台产物。仅实际 `app.getVersion() === targetVersion` 时，客户端不依赖当前 active policy，使用原有效 token 请求 API 按历史 verified candidate 核对版本及 manifest 对应平台 `artifactSha512`，再带原 fromVersion、eventInstallIdHash、eventToken 和 artifact SHA-512 匿名幂等上报 `target-started/success`。这只是版本与候选关联回报，不是可信遥测或运行中安装目录逐字节验证。恢复到 fromVersion 仅显示本地 `unconfirmed`，不报告失败；版本跳转、记录损坏/过期不得报告 success。回报网络错误或 5xx 可退避重试、不阻断启动；401、400 或过期则终止；stop 清理计时器且不重复回报。`UpdateState.lastInstallAttempt?` 只暴露 targetVersion 和 `unconfirmed | confirmed | failed` 状态；prepared/accepted 均显示为未确认，accepted 只表示交接成功。后台健康数据增加独立 `stages.targetStarted.success`，handoff 与 target-started 分开统计；旧服务端缺 `stages.targetStarted` 字段时显示未知；字段值 0 表示未收到确认，未知不计作失败。
 
@@ -231,7 +231,7 @@ flowchart LR
 
 2026-09-26 本地实现同步（P5 仍未验收）：`DesktopUpdateService` 已接入 `electron-updater` 6.8.9 / `NsisUpdater`（Windows only）、schema 2 optional 自动后台下载和严格 metadata→EXE 大小/哈希复核；schema 1 手动路径及不超过 24 小时 mandatory 缓存策略门禁/下载保留，但离线缓存策略不能授权打开，schema 2 不接受 mandatory。安装动作由 `state.release.installAction` 表达；typed IPC 的 `openInstaller()` 保持 `UpdateMutationResult={ok,state,error?}`，立即重启走独立 `updates:restartInstall`。`withInstallGuard` 和 BrowserSupervisor 的 launch lock / 异步 `allProfilesIdleForInstall()` 检查负责下载后、缓存恢复和交接前的策略/浏览器占用复核；Windows 只关闭经 EXE 路径及 parent PID 核实、由本应用跟踪的 CfT，等待退出，不 kill；检查所有 profile 锁（含未跟踪实例）。`withInstallLaunchLock(operation, retainAfterSuccess?)` 在 Windows 已接受交接后保留至进程退出。OS session-end/shutdown 不安装，只有真正 `will-quit` 才停止 updater。普通退出使用 `quitAndInstall(true, false)`，明确立即重启才用 `(true, true)`；macOS 若 CfT 占用提示用户先手动关闭再打开 DMG。更新 UI 按 capability 渲染，network/窗口 online、focus、visible 恢复时去重检查。
 
-根 Agent 独立验证：最新 admin-api 146/146、Bridge/App 58/58、DesktopUpdateService 42/42、shared client-operations 17/17 通过；desktop typecheck、lint:desktop-release、desktop build 与 verify-embedded-release-key 通过。全仓 `pnpm -r test` 首次以 exit 1 结束，唯一失败为 extension 旧版本断言；修正后 extension 771/771、root 定向 App 回归 11/11 通过，未在修正后重跑全仓，不能声称全仓修复后通过。此前自绘确认 UI 本地 85/85 通过。新安装包及 Windows/macOS 实机验收仍待。候选注册工具 seal 与 CI run 换包绑定验收通过；正式候选五对象上传、公网回读与候选注册未执行。后台部署 038（BuildId `2607440724`）已上线、100% normal；P5.5/P5.7 客户端尚未部署。AdminConsole bundle `Cr1Z5t0W` 已 build 并通过白名单 staging，尚未发起部署，生产仍为 038。P5.5 手动下载兜底与 P5.7 启动确认已本地实现并定向验收；P6 官网正式下载指针/发布闭环、P7 两跳演练/受控发布仍待。详见[2026-09-26 启动确认日志](../../../log/2026-09-26-update-startup-confirmation.md)。
+根 Agent 独立验证：最新 admin-api 146/146、Bridge/App 58/58、DesktopUpdateService 42/42、shared client-operations 17/17 通过；desktop typecheck、lint:desktop-release、desktop build 与 verify-embedded-release-key 通过。全仓 `pnpm -r test` 首次以 exit 1 结束，唯一失败为 extension 旧版本断言；修正后 extension 771/771、root 定向 App 回归 11/11 通过，未在修正后重跑全仓，不能声称全仓修复后通过。此前自绘确认 UI 本地 85/85 通过。新安装包及 Windows/macOS 实机验收仍待。候选注册工具 seal 与 CI run 换包绑定验收通过；正式候选五对象上传、公网回读与候选注册未执行。后台部署 039（BuildId `2607439703`、RunId `1xARiPgBq89D7p`）已上线、100% normal，对应提交 `bb4dc29` 已 push 至 `origin/main`；AdminConsole bundle `Cr1Z5t0W` 已通过 staging 并随 039 上线。新桌面 CI 尚未触发，候选五对象上传/注册及两端实机验收仍待；GitHub 旧产物永久删除确认仍等待用户回复。此前 038 已由 039 替代。P5.5 手动下载兜底与 P5.7 启动确认已本地实现并定向验收；P6 官网正式下载指针/发布闭环、P7 两跳演练/受控发布仍待。详见[2026-09-26 启动确认日志](../../../log/2026-09-26-update-startup-confirmation.md)。
 
 出口：Windows 真正完成退出安装/立即更新；Mac 完成自动下载和人工覆盖；单纯 mock 或 `pnpm dev` 不能满足出口。
 
@@ -331,13 +331,13 @@ Windows x64 与 macOS arm64 两目标打包通过候选工作流执行，主进�
 | 依赖                                             | 需要时机            | 当前状态与处理                                                             |
 | ------------------------------------------------ | ------------------- | -------------------------------------------------------------------------- |
 | GitHub 私有仓库免费额度、预算、首推与构建权限 | P1 核验，P4 使用 | GitHub 已认证；超大视频及 main 历史已清理、首次推送成功，保留历史备份与 SHA 映射。候选 workflow 已运行，两个公开 repository variables 已配置且公钥校验通过；账单页已核实构建前 Actions 0/2,000 分钟、0/0.5 GB，以及 $0 预算且 Stop usage=Yes。run 36188670852 与 prepare 验收详见上方记录。不采用 LFS、不依赖付费 Environment 或分支保护。 |
-| 本机签名、CloudBase 托管上传与候选注册          | P1 核验，P4 使用    | Keychain 私钥与既有公钥匹配；现有托管 bucket ACL 与 MCP 上传公开回读探针已核验。正式候选五对象上传、异哈希冲突检查与 register-upload 回读/注册尚未执行；后台部署 038 已上线；不新建 CAM 身份或复制主 API Key |
+| 本机签名、CloudBase 托管上传与候选注册          | P1 核验，P4 使用    | Keychain 私钥与既有公钥匹配；现有托管 bucket ACL 与 MCP 上传公开回读探针已核验。正式候选五对象上传、异哈希冲突检查与 register-upload 回读/注册尚未执行；后台部署 039 已上线；不新建 CAM 身份或复制主 API Key |
 | 测试管理员、两个普通账号与跨设备环境             | P1/P3               | 两个用户提供的普通账号经 CloudBase 精确匹配确认为 ACTIVE；尚未做客户端登录与通知实验，完整邮箱/UID 不入文档 |
 | macOS arm64、Windows x64 安装测试环境             | P1 准备，P5/P7 验收 | Windows x64 与 Apple Silicon 测试机可用；Intel Mac 暂不适配                 |
 | 已分发旧版原始安装包                             | P1 收集，P7 迁移    | 已哈希核验本地 arm64 0.1.0 DMG；其他旧包与实际用户分发情况待确认           |
 | 正式平台签名                                     | 后续独立阶段        | 用户明确暂不办理，不作为本阶段 Windows/Mac 手动交付的前置条件              |
 
-**P0 已完成；P1、P2、P4、P5、P6、P7 整体仍未完成。** 执行分支为 `codex/release-notifications-updates`；初始计划提交为 `9f1c11f`，P2 AdminApi schema 2 与发布脚本另有提交 `6915974`（API 141/141、脚本 31/31 通过），后台部署 038 已上线（BuildId `2607440724`，100% normal 流量）。真实 CI 双目标构建、本机 prepare/review、Keychain 公钥匹配和托管静态下载探针已验证；正式候选尚未上传、回读注册或执行 rollout。P4.5 与所有 P5 checkbox 保持未勾选；P5 自动化测试不能代替主 Agent 独立验收与 Windows 用户实机测试，Mac 实际覆盖和启动结果也未核实。P6 官网同源入口及后台完整发布、P7 两跳演练/受控正式发布仍待完成。不得将低于旧包 `0.1.0` 的本次 `0.0.1-beta` 作为升级候选。
+**P0 已完成；P1、P2、P4、P5、P6、P7 整体仍未完成。** 执行分支为 `codex/release-notifications-updates`；初始计划提交为 `9f1c11f`，P2 AdminApi schema 2 与发布脚本另有提交 `6915974`（API 141/141、脚本 31/31 通过），后台部署 039 已上线（BuildId `2607439703`、RunId `1xARiPgBq89D7p`，100% normal 流量）。真实 CI 双目标构建、本机 prepare/review、Keychain 公钥匹配和托管静态下载探针已验证；正式候选尚未上传、回读注册或执行 rollout。P4.5 与所有 P5 checkbox 保持未勾选；P5 自动化测试不能代替主 Agent 独立验收与 Windows 用户实机测试，Mac 实际覆盖和启动结果也未核实。P6 官网同源入口及后台完整发布、P7 两跳演练/受控正式发布仍待完成。不得将低于旧包 `0.1.0` 的本次 `0.0.1-beta` 作为升级候选。
 
 ## 8. 技术核验来源
 

@@ -2,7 +2,7 @@
 
 > 模块、依赖、契约、目录布局的**唯一权威**。新增/重命名/移动模块或调整依赖方向，必须先改本文，再改代码（同一个 commit）。
 > 上游：`PRD.md`（行为）。本文不重复需求，只回答"怎么拆"。
-> 2026-09-26 状态校准：本文继续描述现有 Electron + CfT 实现，Chromium 重构域已废弃。P2 AdminApi schema 2 与后台部署 038 已上线（BuildId `2607440724`，100% 流量）；P5.5/P5.7 本地实现与定向验收通过：admin-api 146/146、Bridge/App 58/58、DesktopUpdateService 42/42、shared client-operations 17/17，desktop typecheck、lint:desktop-release、desktop build 与 verify-embedded-release-key 通过；代码待提交/部署，新安装包设备验收仍待。全仓测试首次运行因一条 extension 旧版本断言失败；修复后 extension 全套与受影响定向测试通过，未重跑全仓。候选注册工具换包绑定已实现并以 scripts 33/33 验证。Windows 用户实机和 macOS 安装验收仍待完成，不代表整条发布链路生产验收完成。
+> 2026-09-26 状态校准：本文继续描述现有 Electron + CfT 实现，Chromium 重构域已废弃。P2 AdminApi schema 2 已随部署 039 上线（BuildId `2607439703`、RunId `1xARiPgBq89D7p`，100% normal；代码 `bb4dc29`）。P5.5/P5.7 本地实现与定向验收通过：admin-api 146/146、Bridge/App 58/58、DesktopUpdateService 42/42、shared client-operations 17/17，desktop typecheck、lint:desktop-release、desktop build 与 verify-embedded-release-key 通过；客户端新 CI 构建、候选注册和设备验收仍待。全仓测试首次运行因一条 extension 旧版本断言失败；修复后 extension 全套与受影响定向测试通过，未重跑全仓。候选注册工具换包绑定已实现并以 scripts 33/33 验证。Windows 用户实机和 macOS 安装验收仍待完成，不代表整条发布链路生产验收完成。
 
 ## 0. 阅读指引
 
@@ -34,7 +34,7 @@
 | ReleaseCandidate         | \_id、schemaVersion、runtime、version、channel、manifestUrl/signature、artifacts、sourceCoordinates（含 releasePublicKeyFingerprint）、distribution.mode（schema 1=`manual-unsigned`；schema 2=`platform-unsigned`）、tests、status | 由可信发布工具注册；1:N → ReleaseRollout                                                                               | 是：CloudBase NoSQL `desktop_release_candidates`；ADMINONLY；版本候选不可覆盖                                                                                           |
 | ReleaseRollout           | \_id、runtime、channel、releaseId、status、percentage、mode、minSupportedVersion?、title、notes、publishedAt                                                                                             | N:1 → ReleaseCandidate；同 runtime/channel 仅一个 active                                                       | 是：CloudBase NoSQL `desktop_release_rollouts`；ADMINONLY；策略变化增加公开 release signal revision                                                                     |
 | ReleaseChannelSlot       | \_id=`release-slot:<runtime>:<channel>`、recordType=`release-slot`、currentRolloutId?、activeRolloutId?、highestVersion?、updatedAt                                                                      | 每 runtime/channel 一个；与 rollout/signal/audit 在同一交易内变更                                              | 是：与 rollout 共用 `desktop_release_rollouts`；内部保留文档，API/后台历史必须过滤；原子维护活动互斥与版本单调门禁                                                      |
-| UpdateInstallAttempt    | schema、attemptId（本地唯一，不上传）、签名 manifest 与 signature、fromVersion、targetVersion、releaseId、channel/platform/arch、eventInstallIdHash、eventToken、attemptedAt、expiresAt、handoff（`prepared`/`accepted`/`failed`） | DesktopUpdateService 写入，打包版下次启动读取；不关联账号 | `<userData>/update-install-attempt.json`；原子写，文件 mode `0600`；写入/删除经 DesktopUpdateService 串行队列；最多保留 7 天；不含 uid、硬件 ID 或安装路径 |
+| UpdateInstallAttempt    | schema、attemptId（本地唯一，不上传）、签名 manifest 与 signature、fromVersion、targetVersion、releaseId、channel/platform/arch、artifactSha512、eventInstallIdHash、eventToken、attemptedAt、expiresAt、handoff（`prepared`/`accepted`/`failed`） | DesktopUpdateService 写入，打包版下次启动读取；不关联账号 | `<userData>/update-install-attempt.json`；原子写，文件 mode `0600`；写入/删除经 DesktopUpdateService 串行队列；最多保留 7 天；不含 uid、硬件 ID 或安装路径 |
 
 扩展侧 `WenXueUserSession` 另保存可选 `browserId`，由启动器在校验账号与画像归属后交接；
 刷新登录凭据保留此 ID。内置模型的 `customFetch` 将其作为网关统计维度，普通 Agent 创建时
@@ -306,12 +306,13 @@
 该兜底不操作更新缓存、不自动退出、不创建安装尝试，也不表示已经安装；UAC、SmartScreen 或组织策略仍可能阻止
 用户后续手动安装。typed IPC `updates:openManualDownload` 返回 `UpdateMutationResult`。
 
-P2 协议状态：AdminApi schema 2 与 schema 1 兼容、CI seal v3 及本机候选发布脚本已实现；后台部署 038
-已上线，BuildId `2607440724`，100% 流量处于 normal。根 Agent 实际核验 CloudRun health 为 200，legacy/v2
-policy 均为 200/null，非法 protocol `999` 为 400；`askwenxue.com/admin` 提供新 bundle `5hb6vin4`，
-`/api/admin/v1/me` 未认证返回 401。既有官网 `/v1/client` 与 `/healthz` 路由仍返回 404；桌面客户端固定使用
-CloudRun 域名，不为此变更增加域名路由。部署保留原 CPU、内存、实例数、环境变量、VPC、ingress 与端口设置。
-P5.5/P5.7 客户端实现尚未部署；后台上线不等于客户端升级或全链路发布完成。
+P2 协议状态：AdminApi schema 2 与 schema 1 兼容、CI seal v3 及本机候选发布脚本已实现；后台部署 039
+已上线（BuildId `2607439703`、RunId `1xARiPgBq89D7p`，100% normal），对应提交 `bb4dc29` 并已 push 到
+`origin/main`。根 Agent 在线核验 CloudRun health 200、legacy/v2 policy 200/null、非法 protocol `999` 返回 400、
+缺少 `targetVersion` 的 target-started 请求返回 400 `Invalid targetVersion`（未写事件）、未认证 AdminApi 返回
+401，`askwenxue.com/admin` bundle `Cr1Z5t0W` 返回 200。所有部署配置对比未变（含环境变量、VPC、规格）。
+Desktop 客户端代码已提交，但新 CI 构建、候选五对象上传/注册和两端实机验收仍待；后台部署不等于客户端
+已更新或整条升级链路完成。
 
 P5.5/P5.7 本地实现与定向验收状态（admin-api 146/146，Bridge/App 58/58，DesktopUpdateService 42/42，shared client-operations 17/17；desktop typecheck、lint:desktop-release、desktop build 与 verify-embedded-release-key 通过）：所有安装交接经
 `withInstallGuard(intent, operation(canInstall))`，每次在系统交接前再次确认 `canInstall`。正常退出只有真正
@@ -324,7 +325,7 @@ P5.5/P5.7 本地实现与定向验收状态（admin-api 146/146，Bridge/App 58/
 确认全空闲后完成交接。macOS 若 CfT 占用，要求用户先手动关闭再打开 DMG。更新结果事件中的成功表示
 系统安装器交接成功；重启后目标版本启动确认与幂等结果已本地实现并定向验收，真实安装包与设备升级仍待验证，不表示已部署或生产端到端验收完成。
 
-P5.7 启动确认（本地已实现并定向验收，待提交/部署）：仅在最终在线策略、签名候选及 CfT 空闲均复核通过后、真正调用安装器前，
+P5.7 启动确认（已提交至 `bb4dc29`，待新桌面构建、候选发布及设备验收）：仅在最终在线策略、签名候选及 CfT 空闲均复核通过后、真正调用安装器前，
 原子写入 `update-install-attempt.json` 的 `prepared` 记录；若写入失败则取消本次安装交接，但正常退出仍可继续。
 交接成功改为 `accepted`，交接明确失败改为 `failed`。
 交接后进程退出或重启中断时保留 `prepared`，使下一次打包版启动可继续核对。记录包含本地唯一 `attemptId`，最多 7 天；文件权限为
@@ -335,7 +336,7 @@ P5.7 启动确认（本地已实现并定向验收，待提交/部署）：仅�
 `stage='target-started', result='success'`。Mac 的 `accepted` 只代表 DMG 已打开。回到 `fromVersion` 时仅显示本地
 未确认线索，不报告失败；版本跳转、记录过期或损坏都不得报告成功。明确交接失败可本地标记 failed。
 
-`prepared` 和 `accepted` 均映射为 `lastInstallAttempt.status='unconfirmed'`，UI 显示“更新尝试已记录，等待新版启动确认”；`accepted` 只表示交接成功（Mac 为 DMG 已打开），不能据此宣称安装完成。该事件是版本启动与签名候选的关联回报，不是可信遥测或对运行中安装目录的逐字节验证。缺少旧服务端
+`prepared` 和 `accepted` 均映射为 `lastInstallAttempt.status='unconfirmed'`，UI 展示目标版本启动尚未确认的事实状态；`accepted` 只表示交接成功（Mac 为 DMG 已打开），不能据此宣称安装完成。该事件是版本启动与签名候选的关联回报，不是可信遥测或对运行中安装目录的逐字节验证。缺少旧服务端
 `stages.targetStarted` 字段时后台显示“未知”；字段存在且值为 0 表示尚未收到确认，不能把缺失或未知计为失败。
 token 格式错误不得将原始错误内容写入日志。
 

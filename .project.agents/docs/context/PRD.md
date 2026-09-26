@@ -172,5 +172,5 @@ Chromium 源码浏览器重构、Linux/Windows ARM 新平台、macOS 自动安�
 
 - 当前需求以本文为准，模块与接口以 ARCHITECTURE 为准，构建/分发以 TECH-INFRA 为准，视觉与交互以 UIUX 为准，工程约定以 CONVENTIONS 为准；派生计划不能覆盖上游。
 - ARCHITECTURE 和 TECH-INFRA 中仍描述的 `manual-unsigned` 是 schema 1 兼容基线；schema 2 optional 下载与安装协调已进入本地实现，生产/实机验收仍待完成。具体状态见实施计划与执行日志。
-- 2026-09-26 后台部署 038（BuildId `2607440724`）已上线并处于 100% normal 流量；P5.5/P5.7 客户端已完成本地实现与定向验收，仍待提交、部署及新安装包设备验收；不能据此宣称 P5 或完整发布链路已完成。
+- 2026-09-26 后台部署 039（BuildId `2607439703`，RunId `1xARiPgBq89D7p`）已上线并处于 100% normal 流量，对应代码 `bb4dc29` 已 push 至 `origin/main`；P5.5/P5.7 桌面代码已提交，仍待新 CI 构建、候选上传/注册和新安装包设备验收；不能据此宣称 P5 或完整发布链路已完成。
 - GitHub 配置、CloudBase 托管配额与访问边界、生产故障、旧版安装包和两个目标平台的测试条件按实施计划核验；带日期的旧记录只代表当时状态，不推断当前条件。
