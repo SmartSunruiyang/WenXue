@@ -66,7 +66,7 @@ const REQUIRED_RELEASE_TEST_EVIDENCE = new Set([
 /** @typedef {{ importance: AnnouncementImportance, title: string, body: string, detailUrl?: string, audience: AnnouncementAudience, expiresAt: string }} NormalizedAnnouncementInput */
 /** @typedef {{ _id: string, schemaVersion: number, status: 'published' | 'withdrawn', importance: AnnouncementImportance, title: string, body: string, detailUrl?: string, audience: AnnouncementAudience, publishedAt: string, expiresAt: string, publishedBy: string, withdrawnAt?: string, withdrawnBy?: string }} AnnouncementRecord */
 /** @typedef {{ platform: DesktopPlatform, arch: DesktopArchitecture, kind: string, fileName: string, url: string, sha512: string, size: number }} ReleaseArtifact */
-/** @typedef {{ mode: 'manual-unsigned' }} ReleaseDistribution */
+/** @typedef {{ mode: 'manual-unsigned' | 'platform-unsigned' }} ReleaseDistribution */
 /** @typedef {{ name: string, status: 'passed', url: string }} ReleaseTestEvidence */
 /** @typedef {{ _id: string, schemaVersion: number, runtime: DesktopRuntime, version: string, channel: ReleaseChannel, createdAt: string, manifestUrl: string, manifestSignature: string, artifacts: ReleaseArtifact[], sourceCoordinates: Record<string, unknown>, distribution: ReleaseDistribution, tests: ReleaseTestEvidence[], status: 'verified', registeredAt: string }} ReleaseCandidateRecord */
 /** @typedef {{ _id: string, runtime: DesktopRuntime, channel: ReleaseChannel, releaseId: string, status: ReleaseStatus, percentage: number, mode: UpdateMode, minSupportedVersion?: string, title: string, notes: string, publishedAt: string, publishedBy: string, updatedAt: string, updatedBy: string }} ReleaseRolloutRecord */
@@ -960,6 +960,9 @@ async function publishRelease(input) {
 	if (!candidate || candidate.status !== 'verified') {
 		throw new AdminApiError('Verified release candidate not found', 404)
 	}
+	if (candidate.schemaVersion === 2 && mode === 'mandatory') {
+		throw new AdminApiError('Platform updates must be optional', 400)
+	}
 	if (minSupportedVersion && compareSemver(minSupportedVersion, candidate.version) >= 0) {
 		throw new AdminApiError('minSupportedVersion must be lower than candidate version', 400)
 	}
@@ -1101,6 +1104,10 @@ async function changeReleaseState(input) {
  * @param {{ query: Record<string, string | undefined>, store: AdminStore, eventTokenSecret?: string, now: () => number }} input
  */
 async function buildClientUpdatePolicy(input) {
+	const protocolVersion = input.query.protocolVersion
+	if (protocolVersion !== undefined && protocolVersion !== '2') {
+		throw new AdminApiError('Unsupported update protocol version', 400)
+	}
 	const runtime = readRuntime(input.query.runtime)
 	const platform = readPlatform(input.query.platform)
 	const arch = readArchitecture(input.query.arch)
@@ -1137,6 +1144,8 @@ async function buildClientUpdatePolicy(input) {
 		await input.store.getReleaseCandidate(active.releaseId),
 	)
 	if (!candidate || candidate.status !== 'verified') return null
+	if (candidate.schemaVersion === 2 && protocolVersion !== '2') return null
+	if (candidate.schemaVersion === 2 && active.mode !== 'optional') return null
 	if (candidate.runtime !== runtime || candidate.channel !== channel) return null
 	if (compareSemver(candidate.version, version) <= 0) return null
 	const artifacts = candidate.artifacts.filter(
@@ -1178,6 +1187,7 @@ async function buildClientUpdatePolicy(input) {
 		manifestSignature: candidate.manifestSignature,
 		distribution: candidate.distribution,
 		artifacts,
+		...(candidate.schemaVersion === 2 ? { schemaVersion: 2 } : {}),
 		publishedAt: active.publishedAt,
 		checkedAt: new Date(checkedAtMs).toISOString(),
 		validUntil: new Date(checkedAtMs + UPDATE_POLICY_FRESHNESS_MS).toISOString(),
@@ -1658,11 +1668,17 @@ function normalizeReleaseCandidateInput(manifest, wrapperManifestUrl, manifestSi
 		'tests',
 		'artifacts',
 	])
-	if (manifest.schemaVersion !== 1) throw new AdminApiError('Unsupported manifest schema', 400)
+	if (manifest.schemaVersion !== 1 && manifest.schemaVersion !== 2) {
+		throw new AdminApiError('Unsupported manifest schema', 400)
+	}
+	const schemaVersion = manifest.schemaVersion
 	const id = readBoundedId(manifest.releaseId, 'releaseId')
 	const runtime = readRuntime(manifest.runtime)
 	const channel = readChannel(manifest.channel)
 	if (!runtime || !channel) throw new AdminApiError('Invalid release runtime or channel', 400)
+	if (schemaVersion === 2 && runtime !== 'electron') {
+		throw new AdminApiError('Platform release requires Electron runtime', 400)
+	}
 	const version = readSemver(manifest.version, 'version')
 	const createdAtMs = readIsoTimestamp(manifest.createdAt, 'createdAt')
 	const embeddedManifestUrl = readHttpsUrl(manifest.manifestUrl, 'manifest.manifestUrl', 2_048)
@@ -1675,12 +1691,19 @@ function normalizeReleaseCandidateInput(manifest, wrapperManifestUrl, manifestSi
 		throw new AdminApiError('manifestSignature must be base64', 400)
 	}
 	const sourceCoordinates = normalizeSourceCoordinates(manifest.sourceCoordinates)
-	const distribution = normalizeReleaseDistribution(manifest.distribution)
+	if (schemaVersion === 2 && !sourceCoordinates.releasePublicKeyFingerprint) {
+		throw new AdminApiError('Platform release requires public key fingerprint', 400)
+	}
+	const distribution = normalizeReleaseDistribution(manifest.distribution, schemaVersion)
 	const tests = normalizeReleaseTests(manifest.tests)
-	const artifacts = normalizeReleaseArtifacts(manifest.artifacts)
+	const artifacts = normalizeReleaseArtifacts(manifest.artifacts, schemaVersion, channel)
+	if (schemaVersion === 2) {
+		assertUnsignedReleaseUrl(embeddedManifestUrl, 'manifest.manifestUrl')
+		for (const test of tests) assertUnsignedReleaseUrl(test.url, 'test url')
+	}
 	return {
 		_id: id,
-		schemaVersion: 1,
+		schemaVersion,
 		runtime,
 		version,
 		channel,
@@ -1733,14 +1756,17 @@ function normalizeSourceCoordinates(value) {
 
 /**
  * @param {unknown} value
+ * @param {1 | 2} schemaVersion
+ * @returns {ReleaseDistribution}
  */
-function normalizeReleaseDistribution(value) {
+function normalizeReleaseDistribution(value, schemaVersion) {
 	if (!isRecord(value)) throw new AdminApiError('distribution must be an object', 400)
 	assertOnlyKeys(value, ['mode'])
-	if (value.mode !== 'manual-unsigned') {
-		throw new AdminApiError('distribution.mode must be manual-unsigned', 400)
+	const requiredMode = schemaVersion === 2 ? 'platform-unsigned' : 'manual-unsigned'
+	if (value.mode !== requiredMode) {
+		throw new AdminApiError(`distribution.mode must be ${requiredMode}`, 400)
 	}
-	return { mode: /** @type {'manual-unsigned'} */ ('manual-unsigned') }
+	return { mode: requiredMode }
 }
 
 /**
@@ -1773,11 +1799,21 @@ function normalizeReleaseTests(value) {
 
 /**
  * @param {unknown} value
+ * @param {1 | 2} schemaVersion
+ * @param {ReleaseChannel} channel
  * @returns {ReleaseArtifact[]}
  */
-function normalizeReleaseArtifacts(value) {
-	if (!Array.isArray(value) || (value.length !== 2 && value.length !== 3)) {
-		throw new AdminApiError('artifacts must contain two or three manual installers', 400)
+function normalizeReleaseArtifacts(value, schemaVersion, channel) {
+	if (
+		!Array.isArray(value) ||
+		(schemaVersion === 2 ? value.length !== 3 : value.length !== 2 && value.length !== 3)
+	) {
+		throw new AdminApiError(
+			schemaVersion === 2
+				? 'artifacts must contain three platform release files'
+				: 'artifacts must contain two or three manual installers',
+			400,
+		)
 	}
 	const artifacts = value.map((artifact) => {
 		if (!isRecord(artifact)) throw new AdminApiError('Invalid release artifact', 400)
@@ -1819,11 +1855,28 @@ function normalizeReleaseArtifacts(value) {
 		throw new AdminApiError('Artifact targets and kinds must be unique', 400)
 	}
 	const requiredTargets = new Set(['darwin:arm64:dmg', 'win32:x64:nsis'])
-	const allowedTargets = new Set([...requiredTargets, 'darwin:x64:dmg'])
+	if (schemaVersion === 2) requiredTargets.add('win32:x64:nsis-yaml')
+	const allowedTargets =
+		schemaVersion === 2 ? new Set(requiredTargets) : new Set([...requiredTargets, 'darwin:x64:dmg'])
 	for (const artifact of artifacts) {
 		const target = `${artifact.platform}:${artifact.arch}:${artifact.kind}`
 		if (!allowedTargets.has(target)) {
-			throw new AdminApiError(`Unexpected manual installer artifact: ${target}`, 400)
+			throw new AdminApiError(
+				`Unexpected ${schemaVersion === 2 ? 'platform release' : 'manual installer'} artifact: ${target}`,
+				400,
+			)
+		}
+		if (schemaVersion === 2) {
+			assertUnsignedReleaseUrl(artifact.url, 'artifact.url')
+			let urlFileName
+			try {
+				urlFileName = decodeURIComponent(new URL(artifact.url).pathname.split('/').at(-1) ?? '')
+			} catch {
+				throw new AdminApiError('Artifact URL contains invalid encoding', 400)
+			}
+			if (urlFileName !== artifact.fileName) {
+				throw new AdminApiError('Artifact URL must name its file', 400)
+			}
 		}
 		requiredTargets.delete(target)
 	}
@@ -1833,7 +1886,31 @@ function normalizeReleaseArtifacts(value) {
 			400,
 		)
 	}
+	if (schemaVersion === 2) {
+		const yaml = artifacts.find((artifact) => artifact.kind === 'nsis-yaml')
+		const nsis = artifacts.find((artifact) => artifact.kind === 'nsis')
+		const expectedName = channel === 'stable' ? 'latest.yml' : `${channel}.yml`
+		if (
+			!yaml ||
+			!nsis ||
+			yaml.fileName !== expectedName ||
+			new URL('.', yaml.url).href !== new URL('.', nsis.url).href
+		) {
+			throw new AdminApiError('NSIS metadata must match channel and installer directory', 400)
+		}
+	}
 	return artifacts
+}
+
+/** @param {string} value @param {string} name */
+function assertUnsignedReleaseUrl(value, name) {
+	const url = new URL(value)
+	if (url.username || url.password || url.search || url.hash || url.toString() !== value) {
+		throw new AdminApiError(
+			`${name} must be a canonical HTTPS URL without credentials, query, or hash`,
+			400,
+		)
+	}
 }
 
 /**
@@ -1842,7 +1919,13 @@ function normalizeReleaseArtifacts(value) {
  */
 function hasInstallableArtifactSet(artifacts, platform) {
 	const expectedKind = platform === 'darwin' ? 'dmg' : 'nsis'
-	return artifacts.length === 1 && artifacts[0]?.kind === expectedKind
+	return (
+		(artifacts.length === 1 && artifacts[0]?.kind === expectedKind) ||
+		(platform === 'win32' &&
+			artifacts.length === 2 &&
+			artifacts.some((artifact) => artifact.kind === 'nsis') &&
+			artifacts.some((artifact) => artifact.kind === 'nsis-yaml'))
+	)
 }
 
 /**

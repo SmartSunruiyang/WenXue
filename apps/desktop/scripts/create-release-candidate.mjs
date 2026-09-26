@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { isValidSemver } from '@wenxue/client-operations'
 
-import { readReleaseArtifactSet } from './release-artifact-set.mjs'
+import { readReleaseArtifactSet, REQUIRED_RELEASE_TARGETS } from './release-artifact-set.mjs'
 
 const REQUIRED_TEST_EVIDENCE = new Set([
 	'quality',
@@ -32,7 +32,10 @@ async function main() {
 		throw new Error(`package version ${desktopPackage.version} does not match requested ${version}`)
 	}
 
-	const artifactSet = await readReleaseArtifactSet(releaseRoot)
+	const artifactSet = await readReleaseArtifactSet(releaseRoot, {
+		version,
+		channel: options.channel,
+	})
 	const baseUrl = requireHttpsUrl(options.baseUrl, 'baseUrl').replace(/\/+$/, '')
 	const releaseId = `electron:${options.channel}:${version}`
 	const publicKey = releasePublicKey(process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY)
@@ -46,7 +49,7 @@ async function main() {
 				file,
 				artifact: {
 					...record.artifact,
-					url: `${baseUrl}/${relativePath}`,
+					url: `${baseUrl}/${relativePath.split('/').map(encodeURIComponent).join('/')}`,
 				},
 			}
 		}),
@@ -62,7 +65,7 @@ async function main() {
 		'WENXUE_RELEASE_CREATED_AT',
 	)
 	const manifest = {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		releaseId,
 		runtime: 'electron',
 		channel: options.channel,
@@ -77,7 +80,7 @@ async function main() {
 			releasePublicKeyFingerprint: publicKeyFingerprint,
 		},
 		distribution: {
-			mode: 'manual-unsigned',
+			mode: 'platform-unsigned',
 		},
 		tests,
 		artifacts: artifacts.sort(compareArtifacts),
@@ -206,9 +209,14 @@ function canonicalJson(value) {
 }
 
 function compareArtifacts(left, right) {
-	return `${left.platform}:${left.arch}:${left.fileName}`.localeCompare(
-		`${right.platform}:${right.arch}:${right.fileName}`,
-	)
+	const rank = (value) =>
+		REQUIRED_RELEASE_TARGETS.findIndex(
+			(target) =>
+				target.platform === value.platform &&
+				target.arch === value.arch &&
+				target.kind === value.kind,
+		)
+	return rank(left) - rank(right)
 }
 
 function requireSemver(value, name) {

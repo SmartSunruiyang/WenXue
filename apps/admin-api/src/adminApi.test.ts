@@ -563,6 +563,28 @@ function createArtifact(platform: string, arch: string, kind: string) {
 	}
 }
 
+function createPlatformManifest(fingerprint: string, overrides: Record<string, unknown> = {}) {
+	const nsis = createArtifact('win32', 'x64', 'nsis')
+	return createReleaseManifest({
+		schemaVersion: 2,
+		sourceCoordinates: {
+			...createReleaseManifest().sourceCoordinates,
+			releasePublicKeyFingerprint: fingerprint,
+		},
+		distribution: { mode: 'platform-unsigned' },
+		artifacts: [
+			createArtifact('darwin', 'arm64', 'dmg'),
+			nsis,
+			{
+				...createArtifact('win32', 'x64', 'nsis-yaml'),
+				fileName: 'latest.yml',
+				url: 'https://updates.example.test/artifacts/latest.yml',
+			},
+		],
+		...overrides,
+	})
+}
+
 function candidateRecord(manifest = createReleaseManifest()) {
 	return {
 		...manifest,
@@ -597,6 +619,33 @@ function signedReleaseRegistration(manifest: ReturnType<typeof createReleaseMani
 				privateKey,
 			).toString('base64'),
 			publicKeyFingerprint: keyFingerprint(publicKey),
+		},
+	}
+}
+
+function signedPlatformRegistration(overrides: Record<string, unknown> = {}) {
+	const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+	const manifest = createPlatformManifest(keyFingerprint(publicKey), overrides)
+	return {
+		manifest,
+		privateKey,
+		request: {
+			method: 'POST',
+			headers: { authorization: 'Bearer ci-token' },
+			env: {
+				releaseCiToken: 'ci-token',
+				releaseManifestPublicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+			},
+			body: {
+				manifestUrl: manifest.manifestUrl,
+				manifest,
+				manifestSignature: sign(
+					null,
+					Buffer.from(sharedCanonicalJson(manifest)),
+					privateKey,
+				).toString('base64'),
+				publicKeyFingerprint: keyFingerprint(publicKey),
+			},
 		},
 	}
 }
@@ -1354,6 +1403,198 @@ describe('AdminApi announcement dispatch', () => {
 })
 
 describe('AdminApi release dispatch', () => {
+	it('registers and reads a signed platform release, gates old clients, and keeps Windows metadata paired', async () => {
+		const { manifest, request: registration } = signedPlatformRegistration()
+		const state = createState()
+		const registered = await request(
+			'/internal/v1/release-candidates/register',
+			state,
+			registration,
+		)
+		const replay = await request('/internal/v1/release-candidates/register', state, registration)
+		const listed = await request('/admin/v1/release-candidates', state)
+		expect(registered.statusCode).toBe(200)
+		expect(parseBody(replay)).toEqual(parseBody(registered))
+		expect(parseBody(registered).candidate).toMatchObject({
+			schemaVersion: 2,
+			distribution: { mode: 'platform-unsigned' },
+			artifacts: manifest.artifacts,
+		})
+		expect(parseBody(listed).candidates[0]).toEqual(parseBody(registered).candidate)
+		const mandatory = await request('/admin/v1/release-publish', state, {
+			method: 'POST',
+			body: {
+				candidateId: manifest.releaseId,
+				title: '更新',
+				notes: '说明',
+				percentage: 100,
+				mode: 'mandatory',
+			},
+		})
+		expect(mandatory.statusCode).toBe(400)
+		const published = await request('/admin/v1/release-publish', state, {
+			method: 'POST',
+			body: {
+				candidateId: manifest.releaseId,
+				title: '更新',
+				notes: '说明',
+				percentage: 100,
+				mode: 'optional',
+			},
+		})
+		expect(published.statusCode).toBe(201)
+		const baseQuery = {
+			runtime: 'electron',
+			platform: 'win32',
+			arch: 'x64',
+			channel: 'stable',
+			version: '0.1.0',
+			installIdHash: 'a'.repeat(64),
+		}
+		const oldPolicy = await request('/v1/client/update-policy', state, { query: baseQuery })
+		const newPolicy = await request('/v1/client/update-policy', state, {
+			query: { ...baseQuery, protocolVersion: '2' },
+		})
+		const unknownProtocol = await request('/v1/client/update-policy', state, {
+			query: { ...baseQuery, protocolVersion: '1' },
+		})
+		expect(parseBody(oldPolicy)).toEqual({ policy: null })
+		expect(unknownProtocol.statusCode).toBe(400)
+		expect(parseBody(newPolicy).policy).toMatchObject({
+			schemaVersion: 2,
+			distribution: { mode: 'platform-unsigned' },
+			mode: 'optional',
+		})
+		expect(
+			parseBody(newPolicy).policy.artifacts.map((artifact: { kind: string }) => artifact.kind),
+		).toEqual(['nsis', 'nsis-yaml'])
+		state.releases[0].mode = 'mandatory'
+		const staleMandatory = await request('/v1/client/update-policy', state, {
+			query: { ...baseQuery, protocolVersion: '2' },
+		})
+		expect(parseBody(staleMandatory)).toEqual({ policy: null })
+	})
+
+	it.each([
+		[
+			'unknown schema',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({ ...manifest, schemaVersion: 3 }),
+		],
+		[
+			'missing metadata',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: manifest.artifacts.slice(0, 2),
+			}),
+		],
+		[
+			'extra metadata',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [...manifest.artifacts, manifest.artifacts[2]],
+			}),
+		],
+		[
+			'missing metadata size',
+			(manifest: ReturnType<typeof createReleaseManifest>) => {
+				const metadata = Object.fromEntries(
+					Object.entries(manifest.artifacts[2]).filter(([key]) => key !== 'size'),
+				)
+				return { ...manifest, artifacts: [...manifest.artifacts.slice(0, 2), metadata] }
+			},
+		],
+		[
+			'extra metadata field',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [
+					...manifest.artifacts.slice(0, 2),
+					{ ...manifest.artifacts[2], blockmap: 'unexpected' },
+				],
+			}),
+		],
+		[
+			'wrong target',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [...manifest.artifacts.slice(0, 2), { ...manifest.artifacts[2], arch: 'arm64' }],
+			}),
+		],
+		[
+			'wrong YAML name',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [
+					...manifest.artifacts.slice(0, 2),
+					{ ...manifest.artifacts[2], fileName: 'dev.yml' },
+				],
+			}),
+		],
+		[
+			'different YAML directory',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [
+					...manifest.artifacts.slice(0, 2),
+					{ ...manifest.artifacts[2], url: 'https://updates.example.test/other/latest.yml' },
+				],
+			}),
+		],
+		[
+			'artifact query',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [
+					{ ...manifest.artifacts[0], url: `${manifest.artifacts[0].url}?token=x` },
+					...manifest.artifacts.slice(1),
+				],
+			}),
+		],
+		[
+			'test evidence query',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				tests: [
+					{ ...manifest.tests[0], url: `${manifest.tests[0].url}?token=x` },
+					...manifest.tests.slice(1),
+				],
+			}),
+		],
+		[
+			'missing fingerprint',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				sourceCoordinates: createReleaseManifest().sourceCoordinates,
+			}),
+		],
+	] as const)('rejects signed platform manifest with %s', async (_reason, mutate) => {
+		const { request: registration, privateKey } = signedPlatformRegistration()
+		const manifest = mutate(registration.body.manifest)
+		const response = await request('/internal/v1/release-candidates/register', createState(), {
+			...registration,
+			body: {
+				...registration.body,
+				manifest,
+				manifestSignature: sign(
+					null,
+					Buffer.from(sharedCanonicalJson(manifest)),
+					privateKey,
+				).toString('base64'),
+			},
+		})
+		expect(response.statusCode).toBe(400)
+	})
+
+	it('rejects a tampered platform release signature', async () => {
+		const { request: registration } = signedPlatformRegistration()
+		const state = createState()
+		const response = await request('/internal/v1/release-candidates/register', state, {
+			...registration,
+			body: { ...registration.body, manifest: { ...registration.body.manifest, version: '0.1.2' } },
+		})
+		expect(response.statusCode).toBe(400)
+		expect(state.candidates).toHaveLength(0)
+	})
 	it('registers, rereads, and publishes a signed two-target candidate', async () => {
 		const manifest = createReleaseManifest({
 			artifacts: [createArtifact('darwin', 'arm64', 'dmg'), createArtifact('win32', 'x64', 'nsis')],
@@ -1401,7 +1642,20 @@ describe('AdminApi release dispatch', () => {
 			expect(parseBody(policy).policy.artifacts).toEqual([
 				expect.objectContaining({ platform, arch, kind }),
 			])
+			expect(parseBody(policy).policy).not.toHaveProperty('schemaVersion')
 		}
+		const modernClient = await request('/v1/client/update-policy', state, {
+			query: {
+				runtime: 'electron',
+				platform: 'win32',
+				arch: 'x64',
+				channel: 'stable',
+				version: '0.1.0',
+				installIdHash: 'a'.repeat(64),
+				protocolVersion: '2',
+			},
+		})
+		expect(parseBody(modernClient).policy).not.toHaveProperty('schemaVersion')
 	})
 
 	it.each([

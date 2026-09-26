@@ -2,7 +2,7 @@
 
 > 模块、依赖、契约、目录布局的**唯一权威**。新增/重命名/移动模块或调整依赖方向，必须先改本文，再改代码（同一个 commit）。
 > 上游：`PRD.md`（行为）。本文不重复需求，只回答"怎么拆"。
-> 2026-09-25 路线校准：本文继续描述现有 Electron + CfT 实现，Chromium 重构域已废弃。PRD §6 新增的自动下载/Windows 安装目标尚未实现；本文件现有 `manual-unsigned` 契约在发布计划 P2 登记变更后，再由后续阶段实现，不能把需求目标视为当前能力。
+> 2026-09-26 状态校准：本文继续描述现有 Electron + CfT 实现，Chromium 重构域已废弃。P2 AdminApi schema 2、CI seal v3 与本机发布脚本已本地实现并验证；新构建尚未运行、服务端尚未部署。P5 安装协调仍在进行，Windows 手动验收待新包与 P5 完成后开展，不得表述为已上线能力。
 
 ## 0. 阅读指引
 
@@ -31,7 +31,7 @@
 | UserPermissionAudit      | \_id、operationId、userId、adminUid、before、after、reason?、outcome、createdAt                                                                                                                          | 由 AdminApi 在 Auth 状态和备注调整时追加；状态操作先记录 requested，确认后记录 applied，未确认记录 unconfirmed | 是：CloudBase NoSQL `user_permission_audit`；不含 access token、refresh token、提示词正文或厂商 Key                                                                     |
 | ClientAnnouncement       | \_id、status、importance、title、body、detailUrl?、audience、publishedAt、expiresAt                                                                                                                      | 1:N → AnnouncementReceipt；由 AdminApi 发布/撤回                                                               | 是：CloudBase NoSQL `client_announcements`；ADMINONLY；正文和目标 UID 不进入 signal                                                                                     |
 | AnnouncementReceipt      | \_id=`announcementId:uid`、announcementId、uid、acknowledgedAt、expiresAt                                                                                                                                | N:1 → ClientAnnouncement；同一账号跨设备共享                                                                   | 是：CloudBase NoSQL `client_announcement_receipts`；ADMINONLY；`expiresAt` 为公告到期后 24 小时的 BSON Date，由 TTL 主清理并以限量清理兜底；客户端仅经鉴权 API 幂等写入 |
-| ReleaseCandidate         | \_id、runtime、version、channel、manifestUrl/signature、artifacts、sourceCoordinates（含 releasePublicKeyFingerprint）、distribution.mode=`manual-unsigned`、tests、status                               | 由可信发布工具注册；1:N → ReleaseRollout                                                                               | 是：CloudBase NoSQL `desktop_release_candidates`；ADMINONLY；版本候选不可覆盖                                                                                           |
+| ReleaseCandidate         | \_id、schemaVersion、runtime、version、channel、manifestUrl/signature、artifacts、sourceCoordinates（含 releasePublicKeyFingerprint）、distribution.mode（schema 1=`manual-unsigned`；schema 2=`platform-unsigned`）、tests、status | 由可信发布工具注册；1:N → ReleaseRollout                                                                               | 是：CloudBase NoSQL `desktop_release_candidates`；ADMINONLY；版本候选不可覆盖                                                                                           |
 | ReleaseRollout           | \_id、runtime、channel、releaseId、status、percentage、mode、minSupportedVersion?、title、notes、publishedAt                                                                                             | N:1 → ReleaseCandidate；同 runtime/channel 仅一个 active                                                       | 是：CloudBase NoSQL `desktop_release_rollouts`；ADMINONLY；策略变化增加公开 release signal revision                                                                     |
 | ReleaseChannelSlot       | \_id=`release-slot:<runtime>:<channel>`、recordType=`release-slot`、currentRolloutId?、activeRolloutId?、highestVersion?、updatedAt                                                                      | 每 runtime/channel 一个；与 rollout/signal/audit 在同一交易内变更                                              | 是：与 rollout 共用 `desktop_release_rollouts`；内部保留文档，API/后台历史必须过滤；原子维护活动互斥与版本单调门禁                                                      |
 
@@ -270,7 +270,7 @@
 - 不负责：不组参数（LaunchConfig）；不定位资源（BrowserResources）；不渲染 UI
 - 输入：LaunchConfig、BrowserResources、ProfileStore、AppLogger
 - 输出：状态事件 → DesktopBridge
-- 关键类型/接口：见 §3.2
+- 关键类型/接口：见 §3.2；Windows 发布安装目标另增 `withInstallLaunchLock`，在安装事务期间阻止新画像启动
 - 持有状态：profileId → 子进程句柄 + BrowserStatus
 ```
 
@@ -285,10 +285,21 @@
 - 输入：AppPaths、本地随机 installId、DesktopBridge check intent、CloudBaseLlmGateway update-policy/events、
   系统 HTTPS 下载与 shell open 能力、DispatchContracts
 - 输出：UpdateState → DesktopBridge；已校验安装包的系统打开 intent；匿名更新事件
-- 关键类型/接口：start() · stop() · state() · check(reason) · download() · openInstaller()
+- 关键类型/接口：start() · stop() · state() · check(reason) · download() · openInstaller() · restartInstall() ·
+  installOnQuit() · withInstallGuard(intent: 'open-dmg' | 'restart' | 'quit', operation(canInstall))
 - 持有状态：UpdateState、当前已验证策略/候选、检查 timer、下载状态；缓存 mandatory 策略可在
   24 小时内继续离线门禁/下载，但不能授权打开安装包；不加载 CloudBase Web SDK，不保存 uid
 ```
+
+P2 协议状态：AdminApi schema 2 与 schema 1 兼容、CI seal v3 及本机候选发布脚本已在本地实现并通过
+对应验证（Admin API 141/141；发布脚本 31/31）。新的 GitHub 构建尚未运行，服务端尚未部署；不能据此
+宣称发布或 Windows 更新已上线。此服务的打包产物链路与 P5 安装交接仍须完成构建、验收。
+
+P5 已确定的安装协调目标（实现与实机验收进行中）：所有打开/重启/退出安装操作经
+`withInstallGuard(intent, operation(canInstall))` 执行，guard 在安装器交接前再次确认 `canInstall`。
+Windows 由现有 BrowserSupervisor 在本模块内按受管子进程 PID 与 binary 精确定位并发送 `WM_CLOSE`，等待
+child exit 且所有 profile 空闲；不得调用 kill。安装事务持有 `withInstallLaunchLock`，阻止新画像启动。
+macOS 若 CfT 仍占用，提示用户手动关闭后再重试。以上尚待实现和实机验收，不表示安装流程已上线。
 
 #### Layer 4 — 桥接
 
@@ -576,7 +587,7 @@ fork 应用层（apps/extension）：
 - 不负责：不发起网络、watch、IPC、磁盘或数据库 IO；不持有 session/队列/更新器状态；不包含私钥
 - 输入：无；由 desktop/admin/admin-api/llm-gateway 以公开导出消费
 - 输出：`@wenxue/client-operations` 一方包
-- 关键类型/接口：AnnouncementInput/View · ReleaseCandidate · ReleaseRollout · UpdatePolicy · UpdateState · validate* · matchesAudience · rolloutBucket · AnnouncementDialog · UpdateDialog
+- 关键类型/接口：AnnouncementInput/View · ReleaseCandidate(schema 1|2) · ReleaseRollout · UpdatePolicy · UpdateState · validate* · matchesAudience · rolloutBucket · AnnouncementDialog · UpdateDialog
 - 持有状态：无；React 组件只消费 props、发送 intent
 ```
 
@@ -943,7 +954,9 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 //   POST /v1/client/announcement-ack
 //     Authorization = Bearer <CloudBase accessToken>；body = { announcementId }
 //     side effect = 以 announcementId:uid 幂等写 client_announcement_receipts，并只增加当前账号 signal
-//   GET /v1/client/update-policy?runtime=&platform=&arch=&channel=&version=&installIdHash=
+//   GET /v1/client/update-policy?runtime=&platform=&arch=&channel=&version=&installIdHash=&protocolVersion=2?
+//     缺省协议版本仅协商 schema 1；显式 2 可接收 schema 1 或 2；其他值返回 400
+//     schema 2 候选响应显式携带 policy.schemaVersion=2；schema 1 响应字段保持原样
 //     不要求登录；限流；只返回适用 active rollout 和已验证候选的安全字段
 //     response 含短期 event token，HMAC 绑定 releaseId/installIdHash/runtime/platform/arch/fromVersion/expiresAt
 //   POST /v1/client/update-events

@@ -25,7 +25,8 @@ export async function publishImmutableCandidate(options, dependencies = {}) {
 	const requestAttempts = dependencies.requestAttempts ?? REQUEST_ATTEMPTS
 	const retryDelay = dependencies.retryDelay ?? delay
 	const releaseDir = path.resolve(options.releaseDir)
-	const artifactSet = await readReleaseArtifactSet(releaseDir)
+	const [, channel, version] = options.prefix.split('/')
+	const artifactSet = await readReleaseArtifactSet(releaseDir, { channel, version })
 	const entries = artifactSet.records.map((record) => ({
 		file: record.file,
 		key: `${options.prefix}/${record.relativePath}`,

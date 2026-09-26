@@ -8,6 +8,8 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
+import { generateWindowsUpdateMetadata } from './release-artifact-set.mjs'
+
 const execFileAsync = promisify(execFile)
 const scriptPath = fileURLToPath(new URL('./release-build-seal.mjs', import.meta.url))
 const commit = '0123456789abcdef0123456789abcdef01234567'
@@ -34,8 +36,8 @@ test('seals exact release bytes and rejects a changed artifact', async () => {
 			env: createEnvironment(),
 		})
 		const sealContents = JSON.parse(await readFile(seal, 'utf8'))
-		assert.equal(sealContents.schemaVersion, 2)
-		assert.equal(sealContents.artifacts.length, 2)
+		assert.equal(sealContents.schemaVersion, 3)
+		assert.equal(sealContents.artifacts.length, 3)
 		assert.equal(sealContents.releasePublicKeyFingerprint, publicKeyFingerprint)
 		const githubEnvContents = await readFile(githubEnv, 'utf8')
 		assert.match(githubEnvContents, /WENXUE_RELEASE_CREATED_AT=2026-07-17T10:00:00.000Z/)
@@ -58,12 +60,12 @@ test('seals exact release bytes and rejects a changed artifact', async () => {
 			/embedded or configured release public key/i,
 		)
 
-		await writeArtifact(root, 'win32/x64/WenXue.exe', 'changed-installer')
+		await writeArtifact(root, 'win32/x64/WenXue-0.1.1-win-x64.exe', 'changed-installer')
 		await assert.rejects(
 			execFileAsync(process.execPath, verifyArguments(root, seal, githubEnv), {
 				env: createEnvironment(),
 			}),
-			/downloaded artifact bytes/i,
+			/(downloaded artifact bytes|Windows update metadata)/i,
 		)
 	} finally {
 		await rm(root, { recursive: true, force: true })
@@ -146,7 +148,7 @@ test('requires both target public-key proofs and rejects an extra installer', as
 					env: createEnvironment(),
 				},
 			),
-			/exactly two target installers/i,
+			/(exactly 3 target artifacts|Unsupported target)/i,
 		)
 	} finally {
 		await rm(root, { recursive: true, force: true })
@@ -193,7 +195,7 @@ async function createReleaseDirectory() {
 	const root = await mkdtemp(path.join(tmpdir(), 'wenxue-release-seal-'))
 	await Promise.all([
 		writeArtifact(root, 'darwin/arm64/WenXue.dmg', 'mac-arm64-dmg'),
-		writeArtifact(root, 'win32/x64/WenXue.exe', 'win-installer'),
+		writeArtifact(root, 'win32/x64/WenXue-0.1.1-win-x64.exe', 'win-installer'),
 		writeArtifact(
 			root,
 			'darwin/arm64/release-public-key-fingerprint.txt',
@@ -205,6 +207,7 @@ async function createReleaseDirectory() {
 			`${publicKeyFingerprint}\n`,
 		),
 	])
+	await generateWindowsUpdateMetadata(path.join(root, 'win32/x64'), '0.1.1', 'beta')
 	return root
 }
 

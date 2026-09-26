@@ -1,10 +1,10 @@
 # 问学 WenXue — 技术基础设施文档（Tech Infra）
 
-> 2026-09-25：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。本文现有手动分发协议与带日期的资源快照保留为实现/历史依据；[PRD §6](PRD.md#6-本轮正式发布公告和更新需求) 的新发布目标按[实现计划](../superpowers/plans/2026-09-25-desktop-release-notifications-updates.md)推进，P1 复核资源现状、P2 更新协议，不能据本轮文档校准推断生产已可用。
+> 2026-09-26：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。P2 的 AdminApi schema 2、CI seal v3 与本机发布脚本已本地实现并验证，但新构建尚未运行、服务端尚未部署；P5 安装协调仍在进行，Windows 手动验收待新包和 P5 完成后开展，不表示更新已上线。
 
 > P1 历史核验见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。2026-09-26 组合服务已升级至 037，后台定向公告创建成功，已观察到 Mac 测试 A 弹窗；在线时延、确认和跨设备去重仍待验收，候选与 rollout 尚未登记。正式域名不能直接替代客户端的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
 
-> 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；§8.2 已同步本地双目标 CI 与 v1 服务端兼容要求。GitHub 与测试账号的新证据见[本次执行日志](../../log/2026-09-26-release-two-targets.md)，尚未完成远端构建或生产部署。
+> 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；P2 本地验证与构建/部署状态见[本次执行日志](../../log/2026-09-26-release-key-and-protocol.md)。尚未运行新的 GitHub 构建或部署服务端。
 
 | 项       | 内容               |
 | -------- | ------------------ |
@@ -317,7 +317,7 @@ extraResources:
 - **版本信号**：未登录 renderer 可只读 `desktop_release_signal/<runtime>:<channel>` revision；
   DesktopReleaseSignalService 变化后经 typed IPC 发送 `updates:check(reason='signal')`，再由 main 经 HTTPS
   获取 update policy。signal 不含候选 URL、签名或发布说明，main 不加载 CloudBase Web SDK。
-- **候选密钥绑定**：build seal v2 要求 macOS arm64 与 Windows x64 的最终 `app.asar` 都内嵌
+- **候选密钥绑定**：当前 build seal v3 要求 macOS arm64 与 Windows x64 的最终 `app.asar` 都内嵌
   与发布配置相同的 Ed25519 公钥；两份 SPKI SHA-256 指纹必须一致，并继续绑定到 candidate manifest。
   这项清单完整性校验不依赖 Apple Developer ID/notarization 或 Windows Authenticode 平台证书。
 - **管理路由**：新增 `/api/admin/v1/announcements`、`/api/admin/v1/announcement-withdraw`、
@@ -390,10 +390,26 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 - 发布构建门禁：lint + typecheck + `pnpm -r test`；当前仅配置手动发布构建，不把它表述为已启用的 PR 门禁。
 - `desktop-release-candidate.yml` 是免费私有仓库的无发布凭据构建段：仅允许 main 上的手动首轮运行，
-  操作者输入的完整 `expected_commit` 必须等于实际构建 SHA，再运行质量门禁；
-  生成 macOS arm64 未签名 DMG 与 Windows x64 未签名 NSIS。双目标产物与 `release-build.json`
-  seal 都以 Actions artifacts 保留 1 天。仅手动触发，不开启每次 push 的多平台打包；运行前确认 Actions 额度与阻止超额消费的预算设置。
-- seal v2 锁定 repository、commit、version、channel、`buildRunUrl`、`artifactSetSha512`、逐产物哈希/尺寸
+  操作者输入的完整 `expected_commit` 必须等于实际构建 SHA，再运行质量门禁；当前构建配置生成
+  macOS arm64 未签名 DMG、Windows x64 未签名 NSIS 与对应 update YAML；`release-build.json` 当前使用
+  seal v3，并与三项产物一同作为 Actions artifacts 保留 1 天。工作流尚未实际运行本次新配置，不能宣称已完成构建或部署。仅手动触发，不开启每次 push 的多平台打包；运行前确认 Actions 额度与阻止超额消费的预算设置。
+- P2 协议实现状态：AdminApi schema 2/兼容逻辑、CI seal v3 与本机发布脚本已在本地实现并验证
+  （Admin API 141/141；发布脚本 31/31）。尚未运行新配置的 GitHub 构建或部署服务端。schema 1 候选及其原始
+  清单字节/Ed25519 签名保持不变；AdminApi 登记、读取兼容 schema 1 双目标和旧完整三目标，不裁剪或重签。
+  schema 2 只允许 Electron 候选，产物集合必须且只能为 `darwin/arm64:dmg`、
+  `win32/x64:nsis`、`win32/x64:nsis-yaml`，分发模式为 `platform-unsigned`。Windows NSIS 成功产出后，
+  受控发布脚本生成合法 YAML（可用 JSON 序列化，因其是合法 YAML），含 `version`、恰好一个 EXE 的
+  `files` 项（含 `url`、`sha512`、`size`）、顶层 `sha512`（须与 EXE 一致）及安装器 `path`；元数据不超过
+  64 KiB。按通道生成 `dev.yml`、`beta.yml` 或 `latest.yml`，与 EXE 同目录。候选中的 URL 必须是无 userinfo、
+  query、fragment 的 HTTPS URL；元数据文件字节和安装器字节均由候选签名绑定。版本、文件名 URL、size、
+  文件内与候选中的 SHA-512 均须一致。CI seal v3 固定封存上述三项。seal v2 仅作为历史版本供验签，
+  新构建与本机发布流程只生成并接受 seal v3。
+- 客户端请求带 `protocolVersion=2` 时可接收 schema 1 或 schema 2 候选；参数缺省时只协商 schema 1，
+  未知协议版本返回 HTTP 400。只有 schema 2 候选响应显式携带 `policy.schemaVersion: 2`，schema 1
+  响应字段保持原样。旧客户端由用户从官网或测试分发手动覆盖安装过渡包；P2 禁止向旧协议客户端下发
+  schema 2，也不允许 v2 策略设为 mandatory。P2 协议与脚本已通过本地验证；P5 安装协调和实机验收仍在
+  进行，新 GitHub 构建及服务端部署尚未执行。
+- 历史 seal v2 锁定 repository、commit、version、channel、`buildRunUrl`、`artifactSetSha512`、逐产物哈希/尺寸
   与 Ed25519 SPKI SHA-256 公钥指纹；两个最终 `app.asar` 的指纹证明必须一致且等于发布时配置。
   tests 必须且只能是 `quality`、`manual-installer-integrity`、`manifest-tamper-rejection` 三项 passed 记录，
   三者 URL 均等于该成功首轮 `buildRunUrl`。
@@ -416,8 +432,13 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 - GitHub 只配置公开的网关 origin 与 Ed25519 公钥变量，不配置签名私钥、COS 写入或候选注册 secrets。
   私钥和专用最小权限 COSCLI 配置保存在可信本机仓库外，注册 token 仅在 publish 进程中使用；
   COSCLI 固定 1.0.8，注册请求仅允许 HTTPS 且禁止重定向，不回显凭据或原始错误响应。
-  私有仓库的免费额度不等于无限构建；不自动购买额度、升级套餐或改为公开仓库。专用 CAM 发布身份
-  仍需核验，不能复用 Gateway 高权限身份。本机按具体 commit 审阅并签名，不冒称 GitHub 分支保护已生效。
+  私有仓库的免费额度不等于无限构建；不自动购买额度、升级套餐或改为公开仓库。本轮按用户选择由主账号
+  通过腾讯云控制台手动上传，不新建 CAM 上传子账号；该上传尚未执行。本机按具体 commit 审阅并签名，
+  不冒称 GitHub 分支保护已生效。
+- 2026-09-26 发布密钥自检：可信本机 Keychain 中的 Ed25519 签名材料已通过进程内挑战签名验证；派生
+  SPKI SHA-256 指纹 `bbacf14f6a6de5f743cf499bd85ccad61434d83f8f110ae4119b2b02eb01c336` 与 Keychain
+  公钥、GitHub 公钥变量及已安装客户端内嵌公钥一致。私钥值未导出到文件或写入仓库。本项只证明密钥可用
+  及公钥匹配，不代表 schema 2 实现、Windows 更新验收或发布门禁通过。
 - 2026-09-26 构建配置核验：两个公开 repository variables 已配置并逐值回读一致；公钥取自当前
   Gateway 036 配置，Ed25519 SPKI SHA-256 为 `bbacf14f6a6de5f743cf499bd85ccad61434d83f8f110ae4119b2b02eb01c336`。
   用同一公开配置进行本地 desktop build 与内嵌公钥验证通过。用户登录后，账单页已核实 GitHub Free、
@@ -493,6 +514,12 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   不降级。
 - mandatory 只在最近验证策略不超过 24 小时时阻断工作区；超过 24 小时且服务不可达时降级为持续
   警告与重试，用户始终可以退出 App。
+- P5 安装协调目标（实现与实机验收进行中）：DesktopUpdateService 增加 `restartInstall()`、
+  `installOnQuit()` 与 `withInstallGuard(intent, operation(canInstall))`，其中 intent 为 `open-dmg`、
+  `restart` 或 `quit`；在每种安装器交接前通过 guard 实时确认 `canInstall`。Windows 由现有
+  BrowserSupervisor 在本模块内按受管子进程 PID 与 binary 精确定位并发送 `WM_CLOSE`，等待 child exit
+  且全部 profile 空闲，禁止 kill；`withInstallLaunchLock` 在安装事务期间阻止任何新 launch。macOS 若仍有
+  受管 CfT 占用，需用户手动关闭后重试。该设计待代码与实机验收，当前不能描述为已上线或可完成自动安装。
 
 ## 9. 错误处理与可观测性
 

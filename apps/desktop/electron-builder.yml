@@ -4,6 +4,9 @@ asar: true
 # v1 ships manual installers. Authenticity comes from the embedded Ed25519 release key,
 # while platform code signing/notarization remains deliberately disabled.
 forceCodeSigning: false
+publish:
+  provider: generic
+  url: https://wenxue-desktop-releases-1427406869.cos.ap-shanghai.myqcloud.com/
 
 directories:
   output: release

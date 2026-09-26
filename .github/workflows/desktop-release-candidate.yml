@@ -190,6 +190,15 @@ jobs:
           --platform win32
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+      - name: Generate Windows updater metadata from the packaged NSIS bytes
+        shell: pwsh
+        run: >-
+          node apps/desktop/scripts/release-artifact-set.mjs
+          create-windows-metadata apps/desktop/release
+          "$env:RELEASE_VERSION" "$env:RELEASE_CHANNEL"
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
       - name: Bind the packaged app release key to the installer artifact
         shell: pwsh
         run: |
@@ -207,6 +216,7 @@ jobs:
           name: desktop-win32-x64
           path: |
             apps/desktop/release/*.exe
+            apps/desktop/release/${{ inputs.channel == 'stable' && 'latest' || inputs.channel }}.yml
             apps/desktop/release/release-public-key-fingerprint.txt
           if-no-files-found: error
           retention-days: 1

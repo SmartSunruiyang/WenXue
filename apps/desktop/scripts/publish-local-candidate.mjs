@@ -284,7 +284,10 @@ async function verifySeal(input, runUrl, releaseDir, repoRoot, exec) {
 			WENXUE_RELEASE_ED25519_PUBLIC_KEY: process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY,
 		},
 	)
-	return JSON.parse(await readFile(sealPath, 'utf8'))
+	const seal = JSON.parse(await readFile(sealPath, 'utf8'))
+	if (seal.schemaVersion !== 3)
+		throw new Error('Local publication requires a v3 release build seal')
+	return seal
 }
 
 async function validatePublication(input, repoRoot, exec) {

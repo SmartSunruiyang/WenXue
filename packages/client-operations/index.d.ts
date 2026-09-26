@@ -6,7 +6,7 @@ export type AnnouncementImportance = 'normal' | 'important'
 export type AnnouncementStatus = 'published' | 'withdrawn'
 export type UpdateMode = 'optional' | 'mandatory'
 export type ReleaseRolloutStatus = 'active' | 'paused' | 'withdrawn' | 'superseded'
-export type ReleaseDistributionMode = 'manual-unsigned'
+export type ReleaseDistributionMode = 'manual-unsigned' | 'platform-unsigned'
 
 export interface AnnouncementAudience {
 	platforms?: ClientPlatform[]
@@ -62,6 +62,10 @@ export interface ReleaseArtifact {
 	size: number
 }
 
+export type PlatformReleaseArtifact =
+	| (ReleaseArtifact & { platform: 'darwin'; arch: 'arm64'; kind: 'dmg' })
+	| (ReleaseArtifact & { platform: 'win32'; arch: 'x64'; kind: 'nsis' | 'nsis-yaml' })
+
 export interface ReleaseSourceCoordinates {
 	repository: string
 	commit: string
@@ -71,7 +75,11 @@ export interface ReleaseSourceCoordinates {
 }
 
 export interface ReleaseDistribution {
-	mode: ReleaseDistributionMode
+	mode: 'manual-unsigned'
+}
+
+export interface PlatformReleaseDistribution {
+	mode: 'platform-unsigned'
 }
 
 export interface ReleaseTestEvidence {
@@ -94,11 +102,31 @@ export interface ReleaseCandidateManifest {
 	artifacts: ReleaseArtifact[]
 }
 
-export interface ReleaseCandidate extends ReleaseCandidateManifest {
+export interface ReleaseCandidateManifestV2 extends Omit<
+	ReleaseCandidateManifest,
+	'schemaVersion' | 'runtime' | 'distribution' | 'artifacts'
+> {
+	schemaVersion: 2
+	runtime: 'electron'
+	distribution: PlatformReleaseDistribution
+	artifacts: PlatformReleaseArtifact[]
+}
+
+export type SignedReleaseCandidateManifest = ReleaseCandidateManifest | ReleaseCandidateManifestV2
+
+export interface ReleaseCandidateV1 extends ReleaseCandidateManifest {
 	manifestSignature: string
 	status: 'verified'
 	registeredAt: string
 }
+
+export interface ReleaseCandidateV2 extends ReleaseCandidateManifestV2 {
+	manifestSignature: string
+	status: 'verified'
+	registeredAt: string
+}
+
+export type ReleaseCandidate = ReleaseCandidateV1 | ReleaseCandidateV2
 
 export interface ReleaseStageHealth {
 	success: number
@@ -166,7 +194,18 @@ export interface UpdatePolicy {
 	eventToken: string
 }
 
-export type UpdatePolicyResponse = { policy: UpdatePolicy } | { policy: null }
+export interface UpdatePolicyV2 extends Omit<
+	UpdatePolicy,
+	'runtime' | 'mode' | 'distribution' | 'artifacts'
+> {
+	schemaVersion: 2
+	runtime: 'electron'
+	mode: 'optional'
+	distribution: PlatformReleaseDistribution
+	artifacts: PlatformReleaseArtifact[]
+}
+
+export type UpdatePolicyResponse = { policy: UpdatePolicy | UpdatePolicyV2 } | { policy: null }
 
 export interface UpdateReleaseView {
 	releaseId: string
@@ -175,7 +214,7 @@ export interface UpdateReleaseView {
 	title: string
 	notes: string
 	mode: UpdateMode
-	distribution: ReleaseDistribution
+	distribution: ReleaseDistribution | PlatformReleaseDistribution
 	size: number
 }
 

@@ -29,7 +29,7 @@ test('desktop, bundled extension and website share the product version', async (
 	assert.equal(websitePackage.version, desktopPackage.version)
 })
 
-test('creates a verifiable manual-unsigned candidate for the required Electron matrix', async () => {
+test('creates a verifiable platform-unsigned candidate for the required Electron matrix', async () => {
 	const releaseRoot = await createReleaseDirectory()
 	try {
 		const { privateKey, publicKey } = generateKeyPairSync('ed25519')
@@ -82,11 +82,12 @@ test('creates a verifiable manual-unsigned candidate for the required Electron m
 		)
 
 		assert.equal(manifest.releaseId, `electron:beta:${desktopPackage.version}`)
-		assert.deepEqual(manifest.distribution, { mode: 'manual-unsigned' })
-		assert.equal(manifest.artifacts.length, 2)
+		assert.equal(manifest.schemaVersion, 2)
+		assert.deepEqual(manifest.distribution, { mode: 'platform-unsigned' })
+		assert.equal(manifest.artifacts.length, 3)
 		assert.deepEqual(
 			manifest.artifacts.map(({ platform, arch, kind }) => `${platform}:${arch}:${kind}`),
-			['darwin:arm64:dmg', 'win32:x64:nsis'],
+			['darwin:arm64:dmg', 'win32:x64:nsis', 'win32:x64:nsis-yaml'],
 		)
 		assert.equal(
 			manifest.artifacts.some((value) => Object.hasOwn(value, 'feedUrl')),
@@ -170,7 +171,7 @@ test('creates a verifiable manual-unsigned candidate for the required Electron m
 		await rm(path.join(releaseRoot, 'darwin/arm64/WenXue.dmg'))
 		await assert.rejects(
 			execFileAsync(process.execPath, scriptArguments, { env: releaseEnv }),
-			/(exactly two target installers|No release artifacts found)/i,
+			/(exactly 3 target artifacts|No release artifacts found)/i,
 		)
 	} finally {
 		await rm(releaseRoot, { recursive: true, force: true })
@@ -182,7 +183,22 @@ async function createReleaseDirectory() {
 	await Promise.all([
 		writeArtifact(root, 'darwin/arm64/WenXue.dmg', 'mac-arm64-dmg'),
 		writeArtifact(root, 'win32/x64/WenXue.exe', 'windows-installer'),
-		writeArtifact(root, 'builder-debug.yml', 'do-not-publish: true'),
+		writeArtifact(
+			root,
+			'win32/x64/beta.yml',
+			`${JSON.stringify({
+				version: desktopPackage.version,
+				files: [
+					{
+						url: 'WenXue.exe',
+						sha512: createHash('sha512').update('windows-installer').digest('base64'),
+						size: 17,
+					},
+				],
+				path: 'WenXue.exe',
+				sha512: createHash('sha512').update('windows-installer').digest('base64'),
+			})}\n`,
+		),
 	])
 	return root
 }

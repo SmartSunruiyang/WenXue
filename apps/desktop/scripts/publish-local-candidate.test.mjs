@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { runLocalCandidate } from './publish-local-candidate.mjs'
+import { generateWindowsUpdateMetadata } from './release-artifact-set.mjs'
 
 const execFile = promisify(execFileCallback)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -31,7 +32,7 @@ async function fixture() {
 		.digest('hex')
 	for (const [directory, file] of [
 		['darwin/arm64', 'WenXue.dmg'],
-		['win32/x64', 'WenXue.exe'],
+		['win32/x64', `WenXue-${version}-win-x64.exe`],
 	]) {
 		await mkdir(path.join(source, directory), { recursive: true })
 		await writeFile(path.join(source, directory, file), `${directory} installer bytes`)
@@ -40,6 +41,7 @@ async function fixture() {
 			`${fingerprint}\n`,
 		)
 	}
+	await generateWindowsUpdateMetadata(path.join(source, 'win32/x64'), version, 'beta')
 	const baseEnv = {
 		...process.env,
 		GITHUB_REPOSITORY: repository,
@@ -219,6 +221,38 @@ test('prepare downloads only the three trusted artifacts and verifies their actu
 	} finally {
 		if (previous === undefined) delete process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
 		else process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = previous
+	}
+})
+
+test('prepare rejects altered updater metadata and historical v2 seals before publication', async () => {
+	for (const failure of ['metadata', 'v2-seal']) {
+		const value = await fixture()
+		const previous = process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
+		process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = value.publicDer
+		try {
+			if (failure === 'metadata') {
+				const metadataPath = path.join(value.source, 'win32/x64/beta.yml')
+				const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
+				metadata.files[0].url = '../wrong.exe'
+				await writeFile(metadataPath, JSON.stringify(metadata))
+			} else {
+				await writeFile(
+					path.join(value.source, 'release-build.json'),
+					JSON.stringify({ ...value.seal, schemaVersion: 2 }),
+				)
+			}
+			await assert.rejects(
+				runLocalCandidate('prepare', value.options, { exec: value.fakeExec }),
+				/(Windows update metadata|release command failed|v3 release build seal|target artifacts)/i,
+			)
+			assert.equal(
+				value.calls.some(([file]) => file === 'coscli'),
+				false,
+			)
+		} finally {
+			if (previous === undefined) delete process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY
+			else process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = previous
+		}
 	}
 })
 
