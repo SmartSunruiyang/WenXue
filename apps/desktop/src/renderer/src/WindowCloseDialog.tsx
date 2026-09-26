@@ -12,6 +12,8 @@ export interface WindowCloseDialogCopy {
 	errorDescription: string
 	dismiss: string
 	communicationError: string
+	updateRestart: { title: string; description: string; confirm: string }
+	updateQuit: { title: string; description: string; skip: string; confirm: string }
 }
 
 export function WindowCloseDialog({
@@ -72,12 +74,19 @@ export function WindowCloseDialog({
 		}
 	}
 	const failure = prompt.kind === 'error'
+	const purpose = prompt.purpose ?? 'close'
+	const confirmationCopy =
+		purpose === 'update-restart'
+			? copy.updateRestart
+			: purpose === 'update-quit'
+				? copy.updateQuit
+				: copy
 
 	return (
 		<DesktopDialog
 			key={prompt.requestId}
-			title={failure ? copy.errorTitle : copy.title}
-			description={failure ? copy.errorDescription : copy.description}
+			title={failure ? copy.errorTitle : confirmationCopy.title}
+			description={failure ? copy.errorDescription : confirmationCopy.description}
 			onClose={() => void respond(failure ? 'dismiss' : 'cancel')}
 		>
 			{failed && <p role="alert">{copy.communicationError}</p>}
@@ -91,6 +100,44 @@ export function WindowCloseDialog({
 					>
 						{copy.dismiss}
 					</button>
+				) : purpose === 'update-restart' ? (
+					<>
+						<button
+							type="button"
+							className="soft-button"
+							disabled={busy}
+							onClick={() => void respond('cancel')}
+						>
+							{copy.cancel}
+						</button>
+						<button
+							type="button"
+							className="primary-button"
+							disabled={busy}
+							onClick={() => void respond('closeBrowsers')}
+						>
+							{copy.updateRestart.confirm}
+						</button>
+					</>
+				) : purpose === 'update-quit' ? (
+					<>
+						<button
+							type="button"
+							className="soft-button"
+							disabled={busy}
+							onClick={() => void respond('launcherOnly')}
+						>
+							{copy.updateQuit.skip}
+						</button>
+						<button
+							type="button"
+							className="primary-button"
+							disabled={busy}
+							onClick={() => void respond('closeBrowsers')}
+						>
+							{copy.updateQuit.confirm}
+						</button>
+					</>
 				) : (
 					<>
 						<button

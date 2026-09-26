@@ -115,6 +115,63 @@ test('ready manual downloads hand off to the operating-system installer without 
 	assert.doesNotMatch(markup, /重启并安装|安装成功/)
 })
 
+test('platform Windows update offers background download and both safe install intents', () => {
+	const release = {
+		releaseId: 'release-2',
+		version: '2.0.0',
+		channel: 'stable',
+		title: '问学更新',
+		notes: '平台更新',
+		mode: 'optional',
+		distribution: { mode: 'platform-unsigned' },
+		installAction: 'restart',
+		size: 100_000_000,
+	}
+	const available = renderToStaticMarkup(
+		h(UpdateDialog, {
+			presentation: 'preview',
+			state: { phase: 'available', release },
+		}),
+	)
+	const ready = renderToStaticMarkup(
+		h(UpdateDialog, {
+			presentation: 'preview',
+			state: { phase: 'ready', release },
+		}),
+	)
+	assert.match(available, /后台下载更新/)
+	assert.match(ready, /退出并安装/)
+	assert.match(ready, /立即重启更新/)
+	assert.match(ready, /未签名安装包/)
+	assert.doesNotMatch(ready, /打开安装包/)
+})
+
+test('platform macOS update explains the manual DMG replacement', () => {
+	const markup = renderToStaticMarkup(
+		h(UpdateDialog, {
+			presentation: 'preview',
+			state: {
+				phase: 'ready',
+				release: {
+					releaseId: 'release-2',
+					version: '2.0.0',
+					channel: 'stable',
+					title: '问学更新',
+					notes: '平台更新',
+					mode: 'optional',
+					distribution: { mode: 'platform-unsigned' },
+					installAction: 'open-dmg',
+					size: 100_000_000,
+				},
+			},
+		}),
+	)
+	assert.match(markup, /打开 DMG/)
+	assert.match(markup, /手动覆盖问学应用/)
+	assert.match(markup, /未签名安装包/)
+	assert.doesNotMatch(markup, /立即重启更新/)
+})
+
 test('beta update dialogs show the public version label', () => {
 	const markup = renderToStaticMarkup(
 		h(UpdateDialog, {

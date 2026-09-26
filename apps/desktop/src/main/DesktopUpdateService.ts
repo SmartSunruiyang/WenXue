@@ -6,6 +6,7 @@ import {
 	type UpdateReleaseView,
 	type UpdateState,
 } from '@wenxue/client-operations'
+import type { CancellationToken } from 'electron-updater'
 import { createHash, createPublicKey, randomUUID, verify as verifySignature } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
@@ -19,6 +20,7 @@ const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
 const REQUEST_TIMEOUT_MS = 15_000
 const DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000
 const DOWNLOAD_PROGRESS_INTERVAL_MS = 150
+const MAX_UPDATE_METADATA_BYTES = 64 * 1024
 const INSTALLER_DIRECTORY = 'update-installers'
 const MANDATORY_POLICY_FILE = 'update-mandatory-policy.json'
 const DEVELOPMENT_UPDATE_MESSAGE = '开发模式不支持桌面更新，请安装桌面版本后检查。'
@@ -32,6 +34,33 @@ const REQUIRED_RELEASE_TEST_EVIDENCE = new Set([
 ])
 
 export type UpdateCheckReason = 'startup' | 'timer' | 'manual' | 'signal'
+export type InstallIntent = 'open-dmg' | 'restart' | 'quit'
+
+export interface NsisUpdaterPort {
+	autoDownload: boolean
+	autoInstallOnAppQuit: boolean
+	disableDifferentialDownload: boolean
+	disableWebInstaller: boolean
+	allowDowngrade: boolean
+	setFeedURL(options: { provider: 'generic'; url: string; channel: string }): void
+	checkForUpdates(): Promise<{ isUpdateAvailable: boolean; updateInfo: unknown } | null>
+	downloadUpdate(cancellationToken?: CancellationToken): Promise<string[]>
+	quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
+	on(event: 'error', listener: (error: Error) => void): unknown
+	on(event: 'download-progress', listener: (progress: NsisDownloadProgress) => void): unknown
+	removeListener(event: 'error', listener: (error: Error) => void): unknown
+	removeListener(
+		event: 'download-progress',
+		listener: (progress: NsisDownloadProgress) => void,
+	): unknown
+}
+
+interface NsisDownloadProgress {
+	percent: number
+	transferred: number
+	total: number
+	bytesPerSecond: number
+}
 
 export interface DesktopUpdateServiceOptions {
 	paths: Pick<AppPaths, 'dataFile'>
@@ -53,6 +82,11 @@ export interface DesktopUpdateServiceOptions {
 	clearIntervalImpl?: typeof clearInterval
 	onStateChange?: (state: UpdateState) => void
 	onError?: (message: string) => void
+	createNsisUpdater?: () => Promise<NsisUpdaterPort>
+	withInstallGuard?: (
+		intent: InstallIntent,
+		operation: (canInstall: () => Promise<boolean>) => Promise<void>,
+	) => Promise<boolean>
 }
 
 interface VerifiedPolicy {
@@ -65,6 +99,7 @@ interface VerifiedPolicy {
 	manifestSignature: string
 	packageArtifact: CandidateArtifact
 	manifest: CandidateManifest
+	metadataArtifact?: CandidateArtifact
 	eventToken: string
 	eventInstallIdHash: string
 	verifiedAt: number
@@ -81,7 +116,7 @@ interface CandidateArtifact {
 }
 
 interface CandidateManifest {
-	schemaVersion: 1
+	schemaVersion: 1 | 2
 	releaseId: string
 	runtime: 'electron'
 	channel: 'dev' | 'beta' | 'stable'
@@ -101,10 +136,11 @@ interface CandidateManifest {
 		url: string
 	}>
 	artifacts: CandidateArtifact[]
-	distribution: { mode: 'manual-unsigned' }
+	distribution: { mode: 'manual-unsigned' | 'platform-unsigned' }
 }
 
 interface NormalizedPolicy {
+	schemaVersion: 1 | 2
 	id: string
 	runtime: 'electron' | 'chromium'
 	channel: 'dev' | 'beta' | 'stable'
@@ -118,6 +154,7 @@ interface NormalizedPolicy {
 	manifestUrl: string
 	manifestSignature: string
 	artifacts: CandidateArtifact[]
+	distribution?: { mode: 'manual-unsigned' | 'platform-unsigned' }
 	publishedAt: string
 	checkedAt: string
 	validUntil: string
@@ -129,6 +166,13 @@ interface DownloadedInstaller {
 	path: string
 	sha512: string
 	size: number
+}
+
+interface DownloadedNsisInstaller extends DownloadedInstaller {
+	updater: NsisUpdaterPort
+	detachListeners: () => void
+	error: Error | null
+	handoffFailureRecorded: boolean
 }
 
 type UpdateOperation = 'check' | 'download' | 'openInstaller'
@@ -166,8 +210,12 @@ export class DesktopUpdateService {
 	private installIdPromise: Promise<string> | null = null
 	private operation: UpdateOperation | null = null
 	private pendingCheckReason: Exclude<UpdateCheckReason, 'manual'> | null = null
+	private pendingAutomaticDownload = false
 	private downloadedInstaller: DownloadedInstaller | null = null
+	private downloadedNsisInstaller: DownloadedNsisInstaller | null = null
 	private activeDownloadController: AbortController | null = null
+	private activeNsisCancellationToken: CancellationToken | null = null
+	private stopEpoch = 0
 	private started = false
 
 	constructor(private readonly options: DesktopUpdateServiceOptions) {
@@ -213,8 +261,12 @@ export class DesktopUpdateService {
 
 	stop(): void {
 		this.started = false
+		this.stopEpoch += 1
+		this.pendingAutomaticDownload = false
+		this.pendingCheckReason = null
 		this.activeDownloadController?.abort()
 		this.activeDownloadController = null
+		this.activeNsisCancellationToken?.cancel()
 		if (this.startupTimer) {
 			this.clearTimeoutImpl(this.startupTimer)
 			this.startupTimer = null
@@ -264,6 +316,10 @@ export class DesktopUpdateService {
 			.finally(() => {
 				if (this.operation === 'check') this.operation = null
 				this.checkPromise = null
+				if (this.pendingAutomaticDownload) {
+					this.pendingAutomaticDownload = false
+					void this.download().catch(() => undefined)
+				}
 				this.runPendingCheck()
 			})
 		return this.checkPromise
@@ -271,14 +327,17 @@ export class DesktopUpdateService {
 
 	async download(): Promise<UpdateState> {
 		this.beginExclusiveOperation('download')
+		const downloadEpoch = this.stopEpoch
 		let downloadReleaseId: string | null = null
 		try {
 			await this.waitForRestore()
+			this.assertDownloadNotStopped(downloadEpoch)
 			const current = this.verifiedPolicy
 			if (!current || this.updateState.phase !== 'available') {
 				throw new Error('当前没有可下载的更新，请先检查更新。')
 			}
 			const verified = await this.revalidateCurrentPolicy(current, 'download')
+			this.assertDownloadNotStopped(downloadEpoch)
 			await this.rememberVerifiedPolicy(verified)
 			this.setState({
 				phase: 'downloading',
@@ -292,11 +351,26 @@ export class DesktopUpdateService {
 			})
 			downloadReleaseId = verified.releaseId
 			this.recordEvent('download', 'start', downloadReleaseId)
-			this.downloadedInstaller = await this.downloadInstaller(verified)
-			this.setState({ phase: 'ready', release: verified.release })
+			if (verified.manifest.schemaVersion === 2 && this.options.platform === 'win32') {
+				this.downloadedNsisInstaller = await this.downloadNsisInstaller(verified, downloadEpoch)
+				this.downloadedInstaller = this.downloadedNsisInstaller
+			} else {
+				this.downloadedInstaller = await this.downloadInstaller(verified)
+			}
+			this.assertDownloadNotStopped(downloadEpoch)
+			const finalPolicy =
+				verified.manifest.schemaVersion === 2
+					? await this.revalidateCurrentPolicy(verified, 'download')
+					: verified
+			if (finalPolicy !== verified) await this.rememberVerifiedPolicy(finalPolicy)
+			this.assertDownloadNotStopped(downloadEpoch)
+			this.setState({ phase: 'ready', release: finalPolicy.release })
 			this.recordEvent('download', 'success', downloadReleaseId)
 			return this.updateState
 		} catch (error) {
+			if (downloadEpoch !== this.stopEpoch && this.downloadedInstaller) {
+				await this.invalidateDownloadedInstaller()
+			}
 			this.recordEvent('download', 'failure', downloadReleaseId ?? undefined)
 			if (this.updateState.phase !== 'idle' && this.updateState.phase !== 'error') {
 				this.fail(error, '更新下载失败，请检查网络后重试。', true)
@@ -307,7 +381,14 @@ export class DesktopUpdateService {
 		}
 	}
 
+	private assertDownloadNotStopped(epoch: number): void {
+		if (epoch !== this.stopEpoch) throw new Error('更新下载已取消。')
+	}
+
 	async openInstaller(): Promise<UpdateState> {
+		if (this.options.platform === 'win32' && this.verifiedPolicy?.manifest.schemaVersion === 2) {
+			throw new Error('Windows 更新请使用重启更新或退出时安装。')
+		}
 		this.beginExclusiveOperation('openInstaller')
 		let handoffReleaseId: string | undefined
 		let handoffAccepted = false
@@ -343,8 +424,15 @@ export class DesktopUpdateService {
 			this.setState({ phase: 'opening', release: verified.release })
 			handoffReleaseId = verified.releaseId
 			this.recordEvent('handoff', 'start', handoffReleaseId)
-			const openError = await this.options.openPath(downloaded.path)
-			if (openError.length > 0) throw new Error(openError)
+			if (verified.manifest.schemaVersion === 2) {
+				await this.guardedHandoff('open-dmg', current, async () => {
+					const openError = await this.options.openPath(downloaded.path)
+					if (openError.length > 0) throw new Error(openError)
+				})
+			} else {
+				const openError = await this.options.openPath(downloaded.path)
+				if (openError.length > 0) throw new Error(openError)
+			}
 			handoffAccepted = true
 			this.recordEvent('handoff', 'success', handoffReleaseId)
 			this.setState({ phase: 'handedOff', release: verified.release })
@@ -353,12 +441,33 @@ export class DesktopUpdateService {
 			if (handoffReleaseId && !handoffAccepted) {
 				this.recordEvent('handoff', 'failure', handoffReleaseId)
 			}
-			if (this.updateState.phase === 'opening') {
+			if (error instanceof UpdateHandoffCancelledError && this.updateState.phase === 'opening') {
+				if (this.verifiedPolicy)
+					this.setState({ phase: 'ready', release: this.verifiedPolicy.release })
+			} else if (this.updateState.phase === 'opening') {
 				this.fail(error, '无法打开安装包，请稍后重试。', true)
 			}
 			throw error
 		} finally {
 			this.endExclusiveOperation('openInstaller')
+		}
+	}
+
+	async restartInstall(): Promise<UpdateState> {
+		await this.handoffNsis('restart')
+		return this.updateState
+	}
+
+	async installOnQuit(): Promise<boolean> {
+		if (this.options.platform !== 'win32' || this.verifiedPolicy?.manifest.schemaVersion !== 2) {
+			return false
+		}
+		try {
+			await this.handoffNsis('quit')
+			return true
+		} catch (error) {
+			this.options.onError?.(toMessage(error, '退出时更新失败'))
+			return false
 		}
 	}
 
@@ -387,13 +496,33 @@ export class DesktopUpdateService {
 
 			let keepDownloaded =
 				this.verifiedPolicy?.releaseId === policy.releaseId &&
+				this.verifiedPolicy.manifestSignature === policy.manifestSignature &&
+				this.verifiedPolicy.metadataArtifact?.sha512 === policy.metadataArtifact?.sha512 &&
 				this.downloadedInstaller?.releaseId === policy.releaseId &&
 				this.downloadedInstaller.sha512 === policy.packageArtifact.sha512 &&
 				this.downloadedInstaller.size === policy.packageArtifact.size
 			await this.rememberVerifiedPolicy(policy)
-			if (!keepDownloaded) {
+			if (policy.manifest.schemaVersion === 2 && this.options.platform === 'win32') {
+				keepDownloaded = Boolean(
+					this.downloadedNsisInstaller &&
+					this.downloadedNsisInstaller.error === null &&
+					keepDownloaded,
+				)
+				if (!keepDownloaded && this.downloadedNsisInstaller) {
+					await this.invalidateDownloadedInstaller()
+				}
+			} else if (!keepDownloaded) {
 				this.downloadedInstaller = await this.restoreDownloadedInstaller(policy)
 				keepDownloaded = this.downloadedInstaller !== null
+			}
+			if (keepDownloaded && policy.manifest.schemaVersion === 2 && this.downloadedInstaller) {
+				try {
+					await verifyLocalInstaller(this.downloadedInstaller, policy.packageArtifact)
+				} catch (error) {
+					this.options.onError?.(toMessage(error, '已缓存更新安装包无效，需重新下载'))
+					await this.invalidateDownloadedInstaller()
+					keepDownloaded = false
+				}
 			}
 			await this.cleanupOrphanedInstallers(this.downloadedInstaller?.path).catch((error) => {
 				this.options.onError?.(toMessage(error, '无法清理旧版更新安装包'))
@@ -407,6 +536,9 @@ export class DesktopUpdateService {
 					: { phase: 'available', release: policy.release },
 			)
 			this.recordEvent('check', 'success', policy.releaseId)
+			if (policy.manifest.schemaVersion === 2 && !keepDownloaded && this.started) {
+				this.pendingAutomaticDownload = true
+			}
 			return this.updateState
 		} catch (error) {
 			if (error instanceof UpdateRateLimitError) this.scheduleRateLimitRetry(error.retryAfterMs)
@@ -442,6 +574,7 @@ export class DesktopUpdateService {
 		url.searchParams.set('arch', arch)
 		url.searchParams.set('channel', this.options.channel)
 		url.searchParams.set('version', this.options.currentVersion)
+		url.searchParams.set('protocolVersion', '2')
 		const eventInstallIdHash = await this.eventInstallIdHash(this.options.currentVersion)
 		url.searchParams.set('installIdHash', eventInstallIdHash)
 
@@ -467,6 +600,9 @@ export class DesktopUpdateService {
 			throw new Error('更新策略与当前运行通道不匹配。')
 		}
 		if (compareSemver(normalized.version, this.options.currentVersion) <= 0) return null
+		if (normalized.schemaVersion === 2 && normalized.mode !== 'optional') {
+			throw new Error('新更新协议只允许可选更新。')
+		}
 		if (normalized.mode === 'mandatory' && normalized.percentage !== 100) {
 			throw new Error('强制更新策略必须全量发布。')
 		}
@@ -491,17 +627,33 @@ export class DesktopUpdateService {
 		}
 		const expectedKind = platform === 'darwin' ? 'dmg' : 'nsis'
 		const packageArtifacts = targetArtifacts.filter((artifact) => artifact.kind === expectedKind)
-		if (packageArtifacts.length !== 1 || targetArtifacts.length !== 1) {
-			throw new Error('签名候选必须且只能包含当前平台的手动安装包。')
+		const expectedCount = normalized.schemaVersion === 2 && platform === 'win32' ? 2 : 1
+		if (packageArtifacts.length !== 1 || targetArtifacts.length !== expectedCount) {
+			throw new Error('签名候选当前平台产物集合无效。')
 		}
 		const packageArtifact = packageArtifacts[0]
+		const metadataArtifact = targetArtifacts.find((artifact) => artifact.kind === 'nsis-yaml')
+		if (normalized.schemaVersion === 2) {
+			if (manifest.schemaVersion !== 2 || manifest.distribution.mode !== 'platform-unsigned') {
+				throw new Error('新策略与签名候选模式不一致。')
+			}
+			if (platform === 'win32' && !metadataArtifact) throw new Error('缺少 Windows 更新元数据。')
+		} else if (manifest.schemaVersion !== 1) {
+			throw new Error('旧策略与签名候选模式不一致。')
+		}
 		return {
 			release: {
 				releaseId: normalized.releaseId,
 				version: normalized.version,
 				channel: normalized.channel,
 				mode: normalized.mode,
-				distribution: { mode: 'manual-unsigned' },
+				distribution: manifest.distribution,
+				installAction:
+					manifest.schemaVersion === 1
+						? 'open-installer'
+						: platform === 'darwin'
+							? 'open-dmg'
+							: 'restart',
 				title: normalized.title,
 				notes: normalized.notes,
 				size: packageArtifact.size,
@@ -513,6 +665,7 @@ export class DesktopUpdateService {
 			manifestUrl: normalized.manifestUrl,
 			manifestSignature: normalized.manifestSignature,
 			packageArtifact,
+			metadataArtifact,
 			manifest,
 			eventToken: normalized.eventToken,
 			eventInstallIdHash,
@@ -526,7 +679,14 @@ export class DesktopUpdateService {
 	): Promise<VerifiedPolicy> {
 		try {
 			const next = await this.fetchAndVerifyPolicy()
-			if (!next || next.releaseId !== current.releaseId) {
+			if (
+				!next ||
+				next.releaseId !== current.releaseId ||
+				next.manifestSignature !== current.manifestSignature ||
+				next.packageArtifact.sha512 !== current.packageArtifact.sha512 ||
+				next.packageArtifact.size !== current.packageArtifact.size ||
+				next.metadataArtifact?.sha512 !== current.metadataArtifact?.sha512
+			) {
 				await this.rememberVerifiedPolicy(null)
 				this.setState({ phase: 'idle' })
 				throw new Error(
@@ -745,9 +905,203 @@ export class DesktopUpdateService {
 		}
 	}
 
+	private async downloadNsisInstaller(
+		policy: VerifiedPolicy,
+		downloadEpoch: number,
+	): Promise<DownloadedNsisInstaller> {
+		const metadata = policy.metadataArtifact
+		if (!metadata) throw new Error('缺少 Windows 更新元数据。')
+		const metadataUrl = requireImmutableHttpsUrl(metadata.url, 'Windows 更新元数据地址')
+		const installerUrl = requireImmutableHttpsUrl(policy.packageArtifact.url, 'Windows 安装包地址')
+		if (
+			metadataUrl.href.slice(0, metadataUrl.href.lastIndexOf('/') + 1) !==
+			installerUrl.href.slice(0, installerUrl.href.lastIndexOf('/') + 1)
+		) {
+			throw new Error('Windows 更新元数据与安装包不在同一候选目录。')
+		}
+		const response = await this.fetchWithTimeout(metadataUrl, undefined, MAX_UPDATE_METADATA_BYTES)
+		if (!response.ok) throw new Error(`Windows 更新元数据请求失败 (${response.status})`)
+		const bytes = Buffer.from(await response.arrayBuffer())
+		if (
+			bytes.byteLength > MAX_UPDATE_METADATA_BYTES ||
+			bytes.byteLength !== metadata.size ||
+			createHash('sha512').update(bytes).digest('base64') !== metadata.sha512
+		) {
+			throw new Error('Windows 更新元数据哈希或大小校验失败。')
+		}
+		const raw = JSON.parse(bytes.toString('utf8')) as unknown
+		assertNsisMetadata(raw, policy, metadataUrl, installerUrl)
+		this.assertDownloadNotStopped(downloadEpoch)
+		const { CancellationToken } = await import('electron-updater')
+		this.assertDownloadNotStopped(downloadEpoch)
+		const cancellationToken = new CancellationToken()
+		this.activeNsisCancellationToken = cancellationToken
+		try {
+			const updater = await (this.options.createNsisUpdater?.() ?? this.defaultNsisUpdater())
+			this.assertDownloadNotStopped(downloadEpoch)
+			updater.autoDownload = false
+			updater.autoInstallOnAppQuit = false
+			updater.disableDifferentialDownload = true
+			updater.disableWebInstaller = true
+			updater.allowDowngrade = false
+			let observedError: Error | null = null
+			const onError = (error: Error) => {
+				observedError = error
+				const active = this.downloadedNsisInstaller
+				if (active?.updater === updater) {
+					active.error = error
+					if (this.updateState.phase === 'handedOff' && !active.handoffFailureRecorded) {
+						active.handoffFailureRecorded = true
+						this.recordEvent('handoff', 'failure', active.releaseId)
+					}
+					if (this.updateState.phase === 'ready' || this.updateState.phase === 'handedOff') {
+						this.fail(error, 'Windows 更新器发生错误。', true)
+					}
+				}
+			}
+			const onProgress = (progress: NsisDownloadProgress) => {
+				if (this.updateState.phase === 'downloading') {
+					this.setState({
+						phase: 'downloading',
+						release: policy.release,
+						progress: {
+							percent: Math.min(100, Math.max(0, progress.percent)),
+							transferred: progress.transferred,
+							total: progress.total,
+							bytesPerSecond: progress.bytesPerSecond,
+						},
+					})
+				}
+			}
+			updater.on('error', onError)
+			updater.on('download-progress', onProgress)
+			const detachListeners = () => {
+				updater.removeListener('error', onError)
+				updater.removeListener('download-progress', onProgress)
+			}
+			try {
+				updater.setFeedURL({
+					provider: 'generic',
+					url: new URL('.', metadataUrl).href,
+					channel: metadata.fileName.slice(0, -'.yml'.length),
+				})
+				const result = await updater.checkForUpdates()
+				this.assertDownloadNotStopped(downloadEpoch)
+				if (observedError) throw observedError
+				if (!result?.isUpdateAvailable) throw new Error('Windows 更新器未找到签名候选版本。')
+				assertNsisMetadata(result.updateInfo, policy, metadataUrl, installerUrl)
+				const paths = await updater.downloadUpdate(cancellationToken)
+				this.assertDownloadNotStopped(downloadEpoch)
+				if (cancellationToken.cancelled) throw new Error('更新下载已取消。')
+				if (observedError) throw observedError
+				if (paths.length !== 1) throw new Error('Windows 更新器下载路径数量无效。')
+				const downloaded: DownloadedNsisInstaller = {
+					releaseId: policy.releaseId,
+					path: paths[0],
+					sha512: policy.packageArtifact.sha512,
+					size: policy.packageArtifact.size,
+					updater,
+					detachListeners,
+					error: null,
+					handoffFailureRecorded: false,
+				}
+				await verifyLocalInstaller(downloaded, policy.packageArtifact)
+				this.assertDownloadNotStopped(downloadEpoch)
+				return downloaded
+			} catch (error) {
+				detachListeners()
+				throw error
+			}
+		} finally {
+			if (this.activeNsisCancellationToken === cancellationToken) {
+				this.activeNsisCancellationToken = null
+			}
+		}
+	}
+
+	private async defaultNsisUpdater(): Promise<NsisUpdaterPort> {
+		const { NsisUpdater } = await import('electron-updater')
+		return new NsisUpdater() as NsisUpdaterPort
+	}
+
+	private async guardedHandoff(
+		intent: InstallIntent,
+		current: VerifiedPolicy,
+		handoff: () => Promise<void>,
+	): Promise<void> {
+		const guard = this.options.withInstallGuard
+		if (!guard) throw new Error('安全退出协调不可用，无法交接更新。')
+		let handedOff = false
+		const accepted = await guard(intent, async (canInstall) => {
+			const verified = await this.revalidateCurrentPolicy(current, 'openInstaller')
+			await this.rememberVerifiedPolicy(verified)
+			const downloaded = this.downloadedInstaller
+			if (
+				!downloaded ||
+				downloaded.releaseId !== verified.releaseId ||
+				downloaded.sha512 !== verified.packageArtifact.sha512 ||
+				downloaded.size !== verified.packageArtifact.size
+			) {
+				throw new Error('安装包与当前策略不一致。')
+			}
+			await verifyLocalInstaller(downloaded, verified.packageArtifact)
+			if (!(await canInstall())) throw new UpdateHandoffCancelledError()
+			await handoff()
+			handedOff = true
+		})
+		if (!accepted || !handedOff) throw new UpdateHandoffCancelledError()
+	}
+
+	private async handoffNsis(intent: 'restart' | 'quit'): Promise<void> {
+		this.beginExclusiveOperation('openInstaller')
+		let handoffStarted = false
+		let handoffDownload: DownloadedNsisInstaller | null = null
+		try {
+			const current = this.verifiedPolicy
+			if (
+				!current ||
+				current.manifest.schemaVersion !== 2 ||
+				this.options.platform !== 'win32' ||
+				this.updateState.phase !== 'ready' ||
+				!this.downloadedNsisInstaller
+			) {
+				throw new Error('Windows 更新尚未下载完成。')
+			}
+			const downloaded = this.downloadedNsisInstaller
+			handoffDownload = downloaded
+			const updater = downloaded.updater
+			await this.guardedHandoff(intent, current, async () => {
+				if (downloaded.error) throw downloaded.error
+				handoffStarted = true
+				this.recordEvent('handoff', 'start', current.releaseId)
+				updater.quitAndInstall(true, intent === 'restart')
+				if (downloaded.error) throw downloaded.error
+			})
+			this.recordEvent('handoff', 'success', current.releaseId)
+			this.setState({ phase: 'handedOff', release: current.release })
+		} catch (error) {
+			if (
+				handoffStarted &&
+				!(error instanceof UpdateHandoffCancelledError) &&
+				!handoffDownload?.handoffFailureRecorded
+			) {
+				handoffDownload!.handoffFailureRecorded = true
+				this.recordEvent('handoff', 'failure', handoffDownload!.releaseId)
+			}
+			if (!(error instanceof UpdateHandoffCancelledError) && this.updateState.phase !== 'idle') {
+				this.fail(error, 'Windows 更新交接失败。', true)
+			}
+			throw error
+		} finally {
+			this.endExclusiveOperation('openInstaller')
+		}
+	}
+
 	private async invalidateDownloadedInstaller(): Promise<void> {
 		const downloaded = this.downloadedInstaller
 		this.downloadedInstaller = null
+		this.downloadedNsisInstaller?.detachListeners()
+		this.downloadedNsisInstaller = null
 		if (!downloaded) return
 		try {
 			await unlinkIfExists(downloaded.path)
@@ -822,7 +1176,11 @@ export class DesktopUpdateService {
 		return response.json() as Promise<unknown>
 	}
 
-	private async fetchWithTimeout(url: URL, init?: RequestInit): Promise<Response> {
+	private async fetchWithTimeout(
+		url: URL,
+		init?: RequestInit,
+		maxBytes?: number,
+	): Promise<Response> {
 		const controller = new AbortController()
 		const timeout = this.setTimeoutImpl(() => controller.abort(), REQUEST_TIMEOUT_MS)
 		try {
@@ -831,7 +1189,29 @@ export class DesktopUpdateService {
 				redirect: 'error',
 				signal: controller.signal,
 			})
-			const body = await response.arrayBuffer()
+			if (maxBytes && Number(response.headers.get('content-length')) > maxBytes) {
+				throw new Error('更新元数据超过大小上限。')
+			}
+			let body: ArrayBuffer
+			if (maxBytes && response.body) {
+				const reader = response.body.getReader()
+				const chunks: Buffer[] = []
+				let total = 0
+				try {
+					while (true) {
+						const { done, value } = await reader.read()
+						if (done) break
+						total += value.byteLength
+						if (total > maxBytes) throw new Error('更新元数据超过大小上限。')
+						chunks.push(Buffer.from(value))
+					}
+				} finally {
+					await reader.cancel().catch(() => undefined)
+				}
+				body = Uint8Array.from(Buffer.concat(chunks)).buffer
+			} else {
+				body = await response.arrayBuffer()
+			}
 			return new Response(body.byteLength > 0 ? body : null, {
 				status: response.status,
 				statusText: response.statusText,
@@ -974,6 +1354,13 @@ class UpdateRateLimitError extends Error {
 	}
 }
 
+class UpdateHandoffCancelledError extends Error {
+	constructor() {
+		super('更新交接已取消。')
+		this.name = 'UpdateHandoffCancelledError'
+	}
+}
+
 function verifyPersistedMandatoryPolicy(
 	value: unknown,
 	input: {
@@ -1002,6 +1389,7 @@ function verifyPersistedMandatoryPolicy(
 		channel: requireChannel(releaseRecord.channel),
 		mode: 'mandatory',
 		distribution: normalizeDistribution(releaseRecord.distribution),
+		installAction: 'open-installer',
 		title: requireString(releaseRecord.title, '更新标题'),
 		notes: requireString(releaseRecord.notes, '更新说明'),
 		size: requirePositiveNumber(releaseRecord.size, '更新大小'),
@@ -1123,7 +1511,11 @@ function requireInstallerFileName(value: string, kind: string): string {
 		throw new Error('安装包文件名无效。')
 	}
 	const extension = path.extname(value).toLowerCase()
-	if ((kind === 'dmg' && extension === '.dmg') || (kind === 'nsis' && extension === '.exe')) {
+	if (
+		(kind === 'dmg' && extension === '.dmg') ||
+		(kind === 'nsis' && extension === '.exe') ||
+		(kind === 'nsis-yaml' && extension === '.yml')
+	) {
 		return value
 	}
 	throw new Error('安装包类型或扩展名无效。')
@@ -1157,11 +1549,27 @@ async function readOrCreateInstallId(filePath: string, randomId: () => string): 
 }
 
 function normalizePolicy(value: Record<string, unknown>): NormalizedPolicy {
+	const schemaVersion = value.schemaVersion === 2 ? 2 : 1
+	if (value.schemaVersion !== undefined && value.schemaVersion !== 2) {
+		throw new Error('更新策略 schema 无效。')
+	}
+	const distribution =
+		value.distribution === undefined ? undefined : normalizeDistribution(value.distribution)
+	if (schemaVersion === 2 && distribution?.mode !== 'platform-unsigned') {
+		throw new Error('新策略分发模式无效。')
+	}
+	if (schemaVersion === 1 && distribution && distribution.mode !== 'manual-unsigned') {
+		throw new Error('旧策略分发模式无效。')
+	}
+	if (schemaVersion === 2) {
+		requireImmutableHttpsUrl(requireString(value.manifestUrl, '候选清单地址'), '候选清单地址')
+	}
 	const checkedAt = requireIsoDate(value.checkedAt, '策略检查时间')
 	const validUntil = requireIsoDate(value.validUntil, '策略有效期')
 	if (Date.parse(validUntil) < Date.parse(checkedAt)) throw new Error('更新策略有效期无效。')
 	if (!Array.isArray(value.artifacts)) throw new Error('更新策略缺少产物。')
 	return {
+		schemaVersion,
 		id: requireString(value.id, '策略 ID'),
 		runtime: requireRuntime(value.runtime),
 		channel: requireChannel(value.channel),
@@ -1177,6 +1585,7 @@ function normalizePolicy(value: Record<string, unknown>): NormalizedPolicy {
 		manifestUrl: requireHttpsUrl(requireString(value.manifestUrl, '候选清单地址'), '候选清单地址'),
 		manifestSignature: requireString(value.manifestSignature, '候选清单签名'),
 		artifacts: value.artifacts.map(normalizeArtifact),
+		distribution,
 		publishedAt: requireIsoDate(value.publishedAt, '发布时间'),
 		checkedAt,
 		validUntil,
@@ -1186,13 +1595,49 @@ function normalizePolicy(value: Record<string, unknown>): NormalizedPolicy {
 
 function normalizeManifest(value: unknown): CandidateManifest {
 	const manifest = requireRecord(value, '候选清单')
-	if (manifest.schemaVersion !== 1 || manifest.runtime !== 'electron') {
+	if (
+		(manifest.schemaVersion !== 1 && manifest.schemaVersion !== 2) ||
+		manifest.runtime !== 'electron'
+	) {
 		throw new Error('候选清单 schema 或运行时无效。')
 	}
 	const distribution = normalizeDistribution(manifest.distribution)
+	if (
+		(manifest.schemaVersion === 1 && distribution.mode !== 'manual-unsigned') ||
+		(manifest.schemaVersion === 2 && distribution.mode !== 'platform-unsigned')
+	) {
+		throw new Error('候选清单 schema 与分发模式不一致。')
+	}
 	if (!Array.isArray(manifest.artifacts)) throw new Error('候选清单缺少产物。')
+	const artifacts = manifest.artifacts.map(normalizeArtifact)
+	if (
+		manifest.schemaVersion === 2 &&
+		(artifacts.length !== 3 ||
+			artifacts.filter(
+				(item) => item.platform === 'darwin' && item.arch === 'arm64' && item.kind === 'dmg',
+			).length !== 1 ||
+			artifacts.filter(
+				(item) => item.platform === 'win32' && item.arch === 'x64' && item.kind === 'nsis',
+			).length !== 1 ||
+			artifacts.filter(
+				(item) => item.platform === 'win32' && item.arch === 'x64' && item.kind === 'nsis-yaml',
+			).length !== 1)
+	)
+		throw new Error('新候选产物集合必须恰好包含三个目标。')
+	if (manifest.schemaVersion === 2) {
+		requireImmutableHttpsUrl(requireString(manifest.manifestUrl, '候选清单地址'), '候选清单地址')
+		artifacts.forEach((item) => requireImmutableHttpsUrl(item.url, '新候选产物地址'))
+		const metadata = artifacts.find((item) => item.kind === 'nsis-yaml')!
+		if (metadata.fileName !== updateMetadataFileName(requireChannel(manifest.channel))) {
+			throw new Error('Windows 更新元数据文件名与通道不一致。')
+		}
+	}
+	const sourceCoordinates = normalizeSourceCoordinates(manifest.sourceCoordinates)
+	if (manifest.schemaVersion === 2 && !sourceCoordinates.releasePublicKeyFingerprint) {
+		throw new Error('新候选缺少发布公钥指纹。')
+	}
 	return {
-		schemaVersion: 1,
+		schemaVersion: manifest.schemaVersion,
 		releaseId: requireString(manifest.releaseId, '候选 ID'),
 		runtime: 'electron',
 		channel: requireChannel(manifest.channel),
@@ -1202,9 +1647,9 @@ function normalizeManifest(value: unknown): CandidateManifest {
 			requireString(manifest.manifestUrl, '候选清单地址'),
 			'候选清单地址',
 		),
-		sourceCoordinates: normalizeSourceCoordinates(manifest.sourceCoordinates),
+		sourceCoordinates,
 		tests: normalizeTestEvidence(manifest.tests),
-		artifacts: manifest.artifacts.map(normalizeArtifact),
+		artifacts,
 		distribution,
 	}
 }
@@ -1261,6 +1706,52 @@ function requireHttpsUrl(value: string, label: string): string {
 		throw new Error(`${label}必须使用无凭据的 HTTPS 地址。`)
 	}
 	return parsed.toString()
+}
+
+function requireImmutableHttpsUrl(value: string, label: string): URL {
+	const parsed = new URL(requireHttpsUrl(value, label))
+	if (parsed.href.includes('?') || parsed.href.includes('#')) {
+		throw new Error(`${label}不得包含查询或片段。`)
+	}
+	return parsed
+}
+
+function updateMetadataFileName(channel: 'dev' | 'beta' | 'stable'): string {
+	return channel === 'stable' ? 'latest.yml' : `${channel}.yml`
+}
+
+function assertNsisMetadata(
+	value: unknown,
+	policy: VerifiedPolicy,
+	metadataUrl: URL,
+	installerUrl: URL,
+): void {
+	const metadata = requireRecord(value, 'Windows 更新元数据')
+	const keys = Object.keys(metadata)
+	if (
+		keys.length !== 4 ||
+		!['version', 'files', 'path', 'sha512'].every((key) => hasOwn(metadata, key)) ||
+		metadata.version !== policy.version ||
+		!Array.isArray(metadata.files) ||
+		metadata.files.length !== 1
+	) {
+		throw new Error('Windows 更新元数据字段无效。')
+	}
+	const file = requireRecord(metadata.files[0], 'Windows 安装包元数据')
+	const fileKeys = Object.keys(file)
+	const relativeName = encodeURIComponent(policy.packageArtifact.fileName)
+	if (
+		fileKeys.length !== 3 ||
+		!['url', 'sha512', 'size'].every((key) => hasOwn(file, key)) ||
+		file.url !== relativeName ||
+		metadata.path !== relativeName ||
+		new URL(relativeName, metadataUrl).href !== installerUrl.href ||
+		file.sha512 !== policy.packageArtifact.sha512 ||
+		metadata.sha512 !== policy.packageArtifact.sha512 ||
+		file.size !== policy.packageArtifact.size
+	) {
+		throw new Error('Windows 更新元数据与签名安装包不一致。')
+	}
 }
 
 function readRetryAfterMs(value: string | null, now: number): number {
@@ -1372,12 +1863,15 @@ function normalizeTestEvidence(value: unknown) {
 	return tests
 }
 
-function normalizeDistribution(value: unknown): { mode: 'manual-unsigned' } {
+function normalizeDistribution(value: unknown): { mode: 'manual-unsigned' | 'platform-unsigned' } {
 	const distribution = requireRecord(value, '候选分发模式')
-	if (distribution.mode !== 'manual-unsigned' || Object.keys(distribution).length !== 1) {
+	if (
+		(distribution.mode !== 'manual-unsigned' && distribution.mode !== 'platform-unsigned') ||
+		Object.keys(distribution).length !== 1
+	) {
 		throw new Error('候选清单不是受支持的 manual-unsigned 分发模式。')
 	}
-	return { mode: 'manual-unsigned' }
+	return { mode: distribution.mode }
 }
 
 function requirePositiveNumber(value: unknown, label: string): number {

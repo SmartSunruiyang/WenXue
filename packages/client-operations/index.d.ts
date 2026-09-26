@@ -215,6 +215,7 @@ export interface UpdateReleaseView {
 	notes: string
 	mode: UpdateMode
 	distribution: ReleaseDistribution | PlatformReleaseDistribution
+	installAction?: 'open-installer' | 'open-dmg' | 'restart'
 	size: number
 }
 

@@ -1,3 +1,4 @@
+import type { UpdateState } from '@wenxue/client-operations'
 import type {
 	BrowserWindow,
 	BrowserWindowConstructorOptions,
@@ -15,6 +16,7 @@ import {
 	registerDesktopBridge,
 	type WindowCloseChoice,
 	type WindowClosePromptState,
+	type WindowClosePurpose,
 } from './DesktopBridge'
 import { DesktopUpdateService } from './DesktopUpdateService'
 import { LauncherLogStore } from './LauncherLogStore'
@@ -85,6 +87,7 @@ export function createWindowClosePrompt(
 ) {
 	let state: WindowClosePromptState = null
 	let pending: {
+		purpose: WindowClosePurpose
 		promise: Promise<Exclude<WindowCloseChoice, 'dismiss'>>
 		resolve: (choice: Exclude<WindowCloseChoice, 'dismiss'>) => void
 	} | null = null
@@ -98,15 +101,18 @@ export function createWindowClosePrompt(
 
 	return {
 		getState: (): WindowClosePromptState => state,
-		requestConfirmation: (): Promise<Exclude<WindowCloseChoice, 'dismiss'>> => {
+		requestConfirmation: (
+			purpose: WindowClosePurpose = 'close',
+		): Promise<Exclude<WindowCloseChoice, 'dismiss'>> => {
 			if (!isAvailable()) return Promise.resolve('cancel')
-			if (pending) return pending.promise
+			if (pending) return pending.purpose === purpose ? pending.promise : Promise.resolve('cancel')
+			if (state) return Promise.resolve('cancel')
 			let resolve!: (choice: Exclude<WindowCloseChoice, 'dismiss'>) => void
 			const promise = new Promise<Exclude<WindowCloseChoice, 'dismiss'>>((done) => {
 				resolve = done
 			})
-			pending = { promise, resolve }
-			state = { requestId: randomUUID(), kind: 'confirm' }
+			pending = { purpose, promise, resolve }
+			state = { requestId: randomUUID(), kind: 'confirm', purpose }
 			try {
 				sendState(state)
 			} catch {
@@ -138,6 +144,137 @@ export function createWindowClosePrompt(
 		},
 		cancel,
 	}
+}
+
+export function createInstallQuitCoordinator(deps: {
+	installOnQuit: () => Promise<boolean>
+	quit: () => void
+	stopUpdates: () => void
+	onError: (error: unknown) => void
+	isWindowsUpdateReady: () => boolean
+}) {
+	let allowQuit = false
+	let skipInstall = false
+	let systemShutdown = false
+	let pending = false
+	let skipClosePrompt = false
+	let stopped = false
+	return {
+		markWindowClose: () => {
+			skipInstall = true
+		},
+		resetWindowClose: () => {
+			skipInstall = false
+		},
+		markSystemShutdown: () => {
+			systemShutdown = true
+		},
+		canInstall: () => !systemShutdown && !skipInstall,
+		skipClosePrompt: () => skipClosePrompt,
+		allowInstallerQuit: () => {
+			allowQuit = true
+		},
+		resetInstallerQuit: () => {
+			allowQuit = false
+		},
+		beforeQuit: (event: ElectronEvent) => {
+			if (allowQuit || skipInstall || systemShutdown || !deps.isWindowsUpdateReady()) return
+			event.preventDefault()
+			if (pending) return
+			pending = true
+			skipClosePrompt = true
+			void deps
+				.installOnQuit()
+				.then((installed) => {
+					if (!installed) {
+						allowQuit = true
+						deps.quit()
+					}
+				})
+				.catch((error: unknown) => {
+					deps.onError(error)
+					allowQuit = true
+					deps.quit()
+				})
+				.finally(() => {
+					pending = false
+				})
+		},
+		willQuit: () => {
+			if (stopped) return
+			stopped = true
+			deps.stopUpdates()
+		},
+	}
+}
+
+export type InstallGuardIntent = 'open-dmg' | 'restart' | 'quit'
+
+export async function coordinateInstallGuard(
+	intent: InstallGuardIntent,
+	operation: (canInstall: () => Promise<boolean>) => Promise<void>,
+	deps: {
+		supervisor: Pick<
+			BrowserSupervisor,
+			'withInstallLaunchLock' | 'allProfilesIdleForInstall' | 'closeTrackedBrowsersForInstall'
+		>
+		platform: NodeJS.Platform
+		confirmRestart: () => Promise<boolean>
+		confirmQuitBrowserClose: () => Promise<boolean>
+		canContinue: () => boolean
+		allowInstallerQuit: () => void
+		resetInstallerQuit: () => void
+	},
+): Promise<boolean> {
+	return deps.supervisor.withInstallLaunchLock(
+		async () => {
+			if (!deps.canContinue()) return false
+			if (intent === 'restart' && !(await deps.confirmRestart())) return false
+			if (!(await deps.supervisor.allProfilesIdleForInstall())) {
+				if (intent === 'open-dmg') {
+					throw new Error('请先手动关闭问学浏览器后重试。')
+				}
+				if (deps.platform !== 'win32') return false
+				if (intent === 'quit' && !(await deps.confirmQuitBrowserClose())) return false
+				if (!(await deps.supervisor.closeTrackedBrowsersForInstall())) return false
+			}
+			if (!deps.canContinue() || !(await deps.supervisor.allProfilesIdleForInstall())) return false
+			try {
+				await operation(async () => {
+					if (
+						!deps.canContinue() ||
+						!(await deps.supervisor.allProfilesIdleForInstall()) ||
+						!deps.canContinue()
+					)
+						return false
+					if (intent !== 'open-dmg') deps.allowInstallerQuit()
+					return true
+				})
+			} catch (error) {
+				deps.resetInstallerQuit()
+				throw error
+			}
+			return true
+		},
+		(accepted) => accepted && deps.platform === 'win32' && intent !== 'open-dmg',
+	)
+}
+
+export async function requestAppQuit(deps: {
+	updateState: UpdateState
+	requestShutdown: () => Promise<void>
+	quit: () => void
+}): Promise<void> {
+	if (
+		deps.updateState.phase === 'ready' &&
+		'installAction' in deps.updateState.release &&
+		deps.updateState.release.installAction === 'restart'
+	) {
+		deps.quit()
+		return
+	}
+	await deps.requestShutdown()
+	deps.quit()
 }
 
 export async function startMainBootstrap(): Promise<void> {
@@ -198,7 +335,38 @@ export async function startMainBootstrap(): Promise<void> {
 		channel: updateChannel(__WENXUE_UPDATE_CHANNEL__),
 		policyBaseUrl: WENXUE_GATEWAY_BASE_URL,
 		manifestPublicKey: __WENXUE_RELEASE_ED25519_PUBLIC_KEY__,
+		withInstallGuard: (intent, operation) =>
+			coordinateInstallGuard(intent, operation, {
+				supervisor,
+				platform: process.platform,
+				canContinue: quitCoordinator.canInstall,
+				allowInstallerQuit: quitCoordinator.allowInstallerQuit,
+				resetInstallerQuit: quitCoordinator.resetInstallerQuit,
+				confirmRestart: async () => {
+					return (await closePrompt?.requestConfirmation('update-restart')) === 'closeBrowsers'
+				},
+				confirmQuitBrowserClose: async () => {
+					const behavior = (await settingsStore.get()).behavior.exitWithBrowsers
+					if (behavior === 'launcherOnly') return false
+					if (behavior === 'closeBrowsers') return true
+					return (await closePrompt?.requestConfirmation('update-quit')) === 'closeBrowsers'
+				},
+			}),
 		onError: (message) => logger.log('DesktopUpdateService', 'warn', message),
+	})
+	const quitCoordinator = createInstallQuitCoordinator({
+		installOnQuit: () => updateService.installOnQuit(),
+		quit: () => electron.app.quit(),
+		stopUpdates: () => updateService.stop(),
+		onError: (error) => logger.log('MainBootstrap', 'warn', errorMessage(error)),
+		isWindowsUpdateReady: () => {
+			const state = updateService.state()
+			return (
+				state.phase === 'ready' &&
+				'installAction' in state.release &&
+				state.release.installAction === 'restart'
+			)
+		},
 	})
 
 	registerDesktopBridge({
@@ -232,8 +400,11 @@ export async function startMainBootstrap(): Promise<void> {
 		},
 		openPath: (targetPath) => electron.shell.openPath(targetPath),
 		quitApp: async () => {
-			await supervisor.requestShutdown()
-			electron.app.quit()
+			await requestAppQuit({
+				updateState: updateService.state(),
+				requestShutdown: () => supervisor.requestShutdown(),
+				quit: () => electron.app.quit(),
+			})
 		},
 		minimizeWindow: () => currentWindow?.minimize(),
 		toggleMaximizeWindow: () => {
@@ -256,8 +427,20 @@ export async function startMainBootstrap(): Promise<void> {
 	})
 
 	const createWindow = () => {
-		const controlWindow = createControlWindow(electron, supervisor, settingsStore, logger, iconPath)
+		quitCoordinator.resetWindowClose()
+		const controlWindow = createControlWindow(
+			electron,
+			supervisor,
+			settingsStore,
+			logger,
+			iconPath,
+			{
+				onAcceptedClose: quitCoordinator.markWindowClose,
+				skipClosePrompt: quitCoordinator.skipClosePrompt,
+			},
+		)
 		currentWindow = controlWindow.window
+		currentWindow.on('session-end', quitCoordinator.markSystemShutdown)
 		closePrompt = controlWindow.closePrompt
 		currentWindow.on('closed', () => {
 			if (currentWindow?.isDestroyed()) {
@@ -269,7 +452,9 @@ export async function startMainBootstrap(): Promise<void> {
 
 	createWindow()
 	updateService.start()
-	electron.app.on('before-quit', () => updateService.stop())
+	electron.app.on('before-quit', quitCoordinator.beforeQuit)
+	electron.app.on('will-quit', quitCoordinator.willQuit)
+	electron.powerMonitor.on('shutdown', quitCoordinator.markSystemShutdown)
 
 	electron.app.on('window-all-closed', () => {
 		if (process.platform !== 'darwin') {
@@ -305,6 +490,7 @@ export function createControlWindow(
 	settingsStore: LauncherSettingsStore,
 	logger: AppLogger,
 	iconPath: string | undefined,
+	installExit?: { onAcceptedClose: () => void; skipClosePrompt: () => boolean },
 ): { window: BrowserWindow; closePrompt: ReturnType<typeof createWindowClosePrompt> } {
 	const win = new electron.BrowserWindow(
 		buildControlWindowOptions({
@@ -337,7 +523,8 @@ export function createControlWindow(
 	win.on('closed', cancelClose)
 
 	win.on('close', (event: ElectronEvent) => {
-		if (allowClose || !supervisor.hasActiveProfiles()) {
+		if (allowClose || installExit?.skipClosePrompt() || !supervisor.hasActiveProfiles()) {
+			installExit?.onAcceptedClose()
 			return
 		}
 
@@ -367,6 +554,7 @@ export function createControlWindow(
 			.then((decision) => {
 				if (decision === 'allow' && closeGeneration === generation && !win.isDestroyed()) {
 					allowClose = true
+					installExit?.onAcceptedClose()
 					win.close()
 				}
 			})

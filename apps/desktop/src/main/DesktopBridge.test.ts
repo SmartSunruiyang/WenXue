@@ -87,6 +87,7 @@ function createBridgeHarness() {
 	const updateCheck = vi.fn(async () => updateState)
 	const updateDownload = vi.fn(async () => updateState)
 	const updateOpenInstaller = vi.fn(async () => updateState)
+	const updateRestartInstall = vi.fn(async () => updateState)
 	const unsubscribeUpdate = vi.fn()
 	const assertWorkspaceAllowed = vi.fn(async () => {
 		if ('release' in updateState && updateState.release?.mode === 'mandatory') {
@@ -99,6 +100,7 @@ function createBridgeHarness() {
 		check: updateCheck,
 		download: updateDownload,
 		openInstaller: updateOpenInstaller,
+		restartInstall: updateRestartInstall,
 		subscribe: (listener: (state: UpdateState) => void) => {
 			updateStateListener = listener
 			listener(updateState)
@@ -308,6 +310,7 @@ function createBridgeHarness() {
 		updateCheck,
 		updateDownload,
 		updateOpenInstaller,
+		updateRestartInstall,
 		sendStatus,
 		sendProfileStatus,
 		sendUpdateState,
@@ -370,6 +373,7 @@ describe('registerDesktopBridge', () => {
 				'updates:download',
 				'updates:getState',
 				'updates:openInstaller',
+				'updates:restartInstall',
 			].sort(),
 		)
 	})
@@ -959,7 +963,8 @@ describe('registerDesktopBridge', () => {
 	})
 
 	it('translates update state checks downloads and explicit installer handoff', async () => {
-		const { ipcMain, updateCheck, updateDownload, updateOpenInstaller } = createBridgeHarness()
+		const { ipcMain, updateCheck, updateDownload, updateOpenInstaller, updateRestartInstall } =
+			createBridgeHarness()
 
 		await expect(ipcMain.handlers.get('updates:getState')?.()).resolves.toEqual({ phase: 'idle' })
 		await expect(ipcMain.handlers.get('updates:check')?.({}, 'signal')).resolves.toEqual({
@@ -974,9 +979,14 @@ describe('registerDesktopBridge', () => {
 			ok: true,
 			state: { phase: 'idle' },
 		})
+		await expect(ipcMain.handlers.get('updates:restartInstall')?.()).resolves.toEqual({
+			ok: true,
+			state: { phase: 'idle' },
+		})
 		expect(updateCheck).toHaveBeenCalledWith('signal')
 		expect(updateDownload).toHaveBeenCalledOnce()
 		expect(updateOpenInstaller).toHaveBeenCalledOnce()
+		expect(updateRestartInstall).toHaveBeenCalledOnce()
 	})
 
 	it('returns manual update unavailability without replacing the current update state', async () => {

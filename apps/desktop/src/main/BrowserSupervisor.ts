@@ -1,5 +1,7 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import path from 'node:path'
 import type { Readable } from 'node:stream'
+import { promisify } from 'node:util'
 import type { AppLogger } from './AppLogger'
 import type { BrowserResources } from './BrowserResources'
 import { buildArgv } from './launchConfig'
@@ -8,12 +10,14 @@ import type { ProfileStore } from './ProfileStore'
 export type BrowserStatus = 'idle' | 'launching' | 'running' | 'error'
 
 export interface BrowserProcessLike {
+	pid?: number
 	stdout?: Readable | null
 	stderr?: Readable | null
 	kill(signal?: NodeJS.Signals): boolean
 	on(event: 'spawn', listener: () => void): this
 	on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
 	on(event: 'error', listener: (error: Error) => void): this
+	off(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this
 }
 
 export interface BrowserSupervisorDeps {
@@ -22,6 +26,8 @@ export interface BrowserSupervisorDeps {
 	logger: AppLogger
 	spawnBrowser?: (binary: string, argv: string[]) => BrowserProcessLike
 	focusExisting?: (binary: string, argv: string[]) => void | Promise<void>
+	requestWindowClose?: (pid: number, binary: string) => Promise<boolean>
+	platform?: NodeJS.Platform
 }
 
 export interface BrowserLaunchOptions {
@@ -33,6 +39,7 @@ type ProfileStatusListener = (profileId: string, status: BrowserStatus) => void
 const GRACEFUL_SHUTDOWN_MS = 2000
 const FORCE_SHUTDOWN_MS = 5000
 const UNTRACKED_SHUTDOWN_POLL_MS = 100
+const INSTALL_BROWSER_CLOSE_TIMEOUT_MS = 30_000
 
 interface BrowserInstance {
 	child: BrowserProcessLike
@@ -45,6 +52,9 @@ interface BrowserInstance {
 export class BrowserSupervisor {
 	private readonly spawnBrowser: (binary: string, argv: string[]) => BrowserProcessLike
 	private readonly focusExisting: (binary: string, argv: string[]) => void | Promise<void>
+	private readonly requestWindowClose: (pid: number, binary: string) => Promise<boolean>
+	private readonly platform: NodeJS.Platform
+	private installLaunchLocked = false
 	private readonly listeners = new Set<StatusListener>()
 	private readonly profileListeners = new Set<ProfileStatusListener>()
 	private readonly instances = new Map<string, BrowserInstance>()
@@ -55,9 +65,12 @@ export class BrowserSupervisor {
 	constructor(private readonly deps: BrowserSupervisorDeps) {
 		this.spawnBrowser = deps.spawnBrowser ?? defaultSpawnBrowser
 		this.focusExisting = deps.focusExisting ?? defaultFocusExisting
+		this.requestWindowClose = deps.requestWindowClose ?? defaultRequestWindowClose
+		this.platform = deps.platform ?? process.platform
 	}
 
 	async launch(profileId = 'default', options: BrowserLaunchOptions = {}): Promise<void> {
+		this.assertLaunchAllowed()
 		const pendingMarkerCleanup = this.launchMarkerCleanups.get(profileId)
 		if (pendingMarkerCleanup) await pendingMarkerCleanup
 
@@ -76,6 +89,7 @@ export class BrowserSupervisor {
 						startUrls: options.startUrls,
 					})
 				: current.argv
+			this.assertLaunchAllowed()
 			await this.focusExisting(current.binary, focusArgv)
 			return
 		}
@@ -95,10 +109,12 @@ export class BrowserSupervisor {
 		let launchMarkerWritten = false
 		try {
 			userDataDir = await this.deps.profiles.prepareForUnpackedExtension(profileId)
+			this.assertLaunchAllowed()
 			if (this.pendingLaunches.get(profileId) !== launchToken) return
 			if (await this.deps.profiles.isProfileInUse(profileId)) {
 				throw new Error(`浏览器配置 ${profileId} 已被其他进程占用，请关闭浏览器后重试。`)
 			}
+			this.assertLaunchAllowed()
 			if (this.pendingLaunches.get(profileId) !== launchToken) return
 			await this.deps.profiles.markProfileLaunching(profileId)
 			launchMarkerWritten = true
@@ -106,6 +122,7 @@ export class BrowserSupervisor {
 				await this.clearLaunchMarker(profileId)
 				return
 			}
+			this.assertLaunchAllowed()
 			binary = this.deps.resources.browserBinary()
 			argv = buildArgv({
 				userDataDir,
@@ -222,6 +239,78 @@ export class BrowserSupervisor {
 
 	hasActiveProfiles(): boolean {
 		return this.instances.size > 0 || this.pendingLaunches.size > 0
+	}
+
+	async withInstallLaunchLock<T>(
+		operation: () => Promise<T>,
+		retainAfterSuccess: (result: T) => boolean = () => false,
+	): Promise<T> {
+		if (this.installLaunchLocked) throw new Error('Update installation is already in progress')
+		this.installLaunchLocked = true
+		let retainLock = false
+		try {
+			const result = await operation()
+			retainLock = retainAfterSuccess(result)
+			return result
+		} finally {
+			if (!retainLock) this.installLaunchLocked = false
+		}
+	}
+
+	async allProfilesIdleForInstall(): Promise<boolean> {
+		try {
+			if (this.hasActiveProfiles()) return false
+			for (const profileId of this.deps.profiles.listProfiles()) {
+				if (await this.deps.profiles.isProfileInUse(profileId)) return false
+			}
+			return !this.hasActiveProfiles()
+		} catch {
+			return false
+		}
+	}
+
+	async closeTrackedBrowsersForInstall(): Promise<boolean> {
+		if (!this.installLaunchLocked || this.platform !== 'win32' || this.pendingLaunches.size > 0) {
+			return false
+		}
+		const instances = Array.from(this.instances.entries())
+		for (const [profileId, instance] of instances) {
+			const pid = instance.child.pid
+			if (!instance.spawned || !Number.isSafeInteger(pid) || !pid || pid <= 0) return false
+			let exited = false
+			let timeout: ReturnType<typeof setTimeout> | undefined
+			let resolveExit!: (value: boolean) => void
+			const exit = new Promise<boolean>((resolve) => {
+				resolveExit = resolve
+			})
+			const onExit = () => {
+				exited = true
+				resolveExit(true)
+			}
+			instance.child.on('exit', onExit)
+			try {
+				if (!(await this.requestWindowClose(pid, instance.binary))) return false
+				const didExit =
+					exited ||
+					(await Promise.race([
+						exit,
+						new Promise<boolean>((resolve) => {
+							timeout = setTimeout(() => resolve(false), INSTALL_BROWSER_CLOSE_TIMEOUT_MS)
+						}),
+					]))
+				if (!didExit || this.instances.get(profileId) === instance) return false
+			} catch {
+				return false
+			} finally {
+				if (timeout) clearTimeout(timeout)
+				instance.child.off('exit', onExit)
+			}
+		}
+		return this.allProfilesIdleForInstall()
+	}
+
+	private assertLaunchAllowed(): void {
+		if (this.installLaunchLocked) throw new Error('更新安装检查期间暂不能启动浏览器，请稍后重试。')
 	}
 
 	onStatusChange(cb: StatusListener): () => void {
@@ -364,4 +453,83 @@ function defaultSpawnBrowser(binary: string, argv: string[]): BrowserProcessLike
 function defaultFocusExisting(binary: string, argv: string[]): void {
 	const process = spawn(binary, argv, { detached: true, stdio: 'ignore' })
 	process.unref()
+}
+
+const WINDOWS_CLOSE_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$processIdValue = [uint32]::Parse($env:WENXUE_CLOSE_PID)
+$expectedPath = [System.IO.Path]::GetFullPath($env:WENXUE_CLOSE_BINARY)
+$processInfo = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = ' + $processIdValue)
+if ($null -eq $processInfo -or [string]::IsNullOrWhiteSpace($processInfo.ExecutablePath)) { exit 2 }
+if ([uint32]$processInfo.ParentProcessId -ne [uint32]::Parse($env:WENXUE_CLOSE_PARENT_PID)) { exit 2 }
+$actualPath = [System.IO.Path]::GetFullPath($processInfo.ExecutablePath)
+if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($actualPath, $expectedPath)) { exit 3 }
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class WenXueWindowClose {
+    public delegate bool EnumWindowsProc(IntPtr handle, IntPtr context);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr context);
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
+    public static int Close(uint expectedPid) {
+        int sent = 0;
+        bool failed = false;
+        bool enumerated = EnumWindows((handle, context) => {
+            uint ownerPid;
+            GetWindowThreadProcessId(handle, out ownerPid);
+            if (ownerPid == expectedPid) {
+                if (PostMessage(handle, 0x0010, IntPtr.Zero, IntPtr.Zero)) sent++;
+                else failed = true;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return !enumerated || failed ? -1 : sent;
+    }
+}
+'@
+if ([WenXueWindowClose]::Close($processIdValue) -le 0) { exit 4 }
+`
+
+async function defaultRequestWindowClose(pid: number, binary: string): Promise<boolean> {
+	if (process.platform !== 'win32') return false
+	const systemRoot = process.env.SystemRoot
+	if (!systemRoot || !path.win32.isAbsolute(systemRoot)) return false
+	const powershellPath = path.win32.join(
+		systemRoot,
+		'System32',
+		'WindowsPowerShell',
+		'v1.0',
+		'powershell.exe',
+	)
+	try {
+		await promisify(execFile)(
+			powershellPath,
+			[
+				'-NoProfile',
+				'-NonInteractive',
+				'-EncodedCommand',
+				Buffer.from(WINDOWS_CLOSE_SCRIPT, 'utf16le').toString('base64'),
+			],
+			{
+				env: {
+					...process.env,
+					WENXUE_CLOSE_PID: String(pid),
+					WENXUE_CLOSE_PARENT_PID: String(process.pid),
+					WENXUE_CLOSE_BINARY: binary,
+				},
+				timeout: 10_000,
+				windowsHide: true,
+				maxBuffer: 1024,
+			},
+		)
+		return true
+	} catch {
+		return false
+	}
 }

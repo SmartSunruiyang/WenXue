@@ -363,6 +363,7 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 
 	useEffect(() => {
 		const resume = () => {
+			releaseSignalServiceRef.current?.resume()
 			void announcementServiceRef.current
 				?.resume()
 				.catch((error: unknown) =>
@@ -945,6 +946,17 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 		}
 	}, [])
 
+	const restartUpdateInstaller = useCallback(async () => {
+		setMessage(null)
+		try {
+			const result = await window.wenxue.updates.restartInstall()
+			if (!result.ok) throw new Error(result.error ?? strings.update.installError)
+			setUpdateState(result.state)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.update.installError))
+		}
+	}, [])
+
 	const exitForUpdate = useCallback(async () => {
 		const result = await window.wenxue.app.quit()
 		if (!result.ok) setMessage(result.error ?? strings.error.closeWindow)
@@ -968,6 +980,7 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 			onDownload={() => void downloadUpdate()}
 			onExit={() => void exitForUpdate()}
 			onOpenInstaller={() => void openUpdateInstaller()}
+			onRestartInstall={() => void restartUpdateInstaller()}
 			onOpenDetail={(url) => void openAnnouncementDetail(url)}
 			onRetry={() => void checkForUpdates()}
 			updateState={updateState}
@@ -1252,6 +1265,7 @@ function DesktopInterruptionLayer({
 	onDownload,
 	onExit,
 	onOpenInstaller,
+	onRestartInstall,
 	onOpenDetail,
 	onRetry,
 	updateState,
@@ -1263,6 +1277,7 @@ function DesktopInterruptionLayer({
 	onDownload: () => void
 	onExit: () => void
 	onOpenInstaller: () => void
+	onRestartInstall: () => void
 	onOpenDetail: (url: string) => void
 	onRetry: () => void
 	updateState: UpdateState
@@ -1279,6 +1294,7 @@ function DesktopInterruptionLayer({
 				onDownload={onDownload}
 				onExit={onExit}
 				onOpenInstaller={onOpenInstaller}
+				onRestartInstall={onRestartInstall}
 				onRetry={onRetry}
 				state={updateState}
 			/>
@@ -1301,6 +1317,7 @@ function DesktopInterruptionLayer({
 				onDownload={onDownload}
 				onExit={onExit}
 				onOpenInstaller={onOpenInstaller}
+				onRestartInstall={onRestartInstall}
 				onRetry={onRetry}
 				state={updateState}
 			/>

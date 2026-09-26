@@ -57,6 +57,8 @@ export function ReleasePage({
 	const [submitting, setSubmitting] = useState(false)
 	const [pageError, setPageError] = useState<string | null>(null)
 	const [notice, setNotice] = useState<string | null>(null)
+	const [previewPlatform, setPreviewPlatform] = useState<'darwin' | 'win32'>('darwin')
+	const [previewPhase, setPreviewPhase] = useState<'available' | 'ready'>('available')
 
 	const loadReleases = useCallback(async () => {
 		setLoading(true)
@@ -69,10 +71,13 @@ export function ReleasePage({
 			setCandidates(nextCandidates)
 			setReleases(nextReleases)
 			setDraft((current) => {
-				if (nextCandidates.some((candidate) => candidate.releaseId === current.candidateId)) {
-					return current
+				const candidate =
+					nextCandidates.find((item) => item.releaseId === current.candidateId) ?? nextCandidates[0]
+				return {
+					...current,
+					candidateId: candidate?.releaseId ?? '',
+					mode: candidate?.schemaVersion === 2 ? 'optional' : current.mode,
 				}
-				return { ...current, candidateId: nextCandidates[0]?.releaseId ?? '' }
 			})
 		} catch (error) {
 			setPageError(error instanceof Error ? error.message : '版本数据加载失败')
@@ -103,19 +108,25 @@ export function ReleasePage({
 	const previewState = useMemo<UpdateState | null>(() => {
 		if (!selectedCandidate) return null
 		return {
-			phase: 'available',
+			phase: previewPhase,
 			release: {
 				releaseId: selectedCandidate.releaseId,
 				version: selectedCandidate.version,
 				channel: selectedCandidate.channel,
 				title: draft.title.trim() || `问学 ${selectedCandidate.version} 可用`,
 				notes: draft.notes.trim() || '在这里预览用户将看到的更新说明。',
-				mode: draft.mode,
+				mode: selectedCandidate.schemaVersion === 2 ? 'optional' : draft.mode,
 				distribution: selectedCandidate.distribution,
-				size: previewArtifactSize(selectedCandidate),
+				installAction:
+					selectedCandidate.schemaVersion === 2
+						? previewPlatform === 'darwin'
+							? 'open-dmg'
+							: 'restart'
+						: 'open-installer',
+				size: previewArtifactSize(selectedCandidate, previewPlatform),
 			},
 		}
-	}, [draft.mode, draft.notes, draft.title, selectedCandidate])
+	}, [draft.mode, draft.notes, draft.title, previewPhase, previewPlatform, selectedCandidate])
 
 	const updateDraft = <Key extends keyof ReleaseDraft>(key: Key, value: ReleaseDraft[Key]) => {
 		setDraft((current) => ({ ...current, [key]: value }))
@@ -124,6 +135,7 @@ export function ReleasePage({
 	}
 
 	const handleModeChange = (mode: UpdateMode) => {
+		if (selectedCandidate?.schemaVersion === 2 && mode === 'mandatory') return
 		setDraft((current) => ({
 			...current,
 			mode,
@@ -137,6 +149,10 @@ export function ReleasePage({
 	const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault()
 		setNotice(null)
+		if (selectedCandidate?.schemaVersion === 2 && draft.mode !== 'optional') {
+			setIssues([{ field: 'mode', message: '平台更新当前仅支持可选发布。' }])
+			return
+		}
 		const result = validateReleasePublishInput(input)
 		if (!result.ok) {
 			setIssues(result.issues)
@@ -207,7 +223,18 @@ export function ReleasePage({
 									value={draft.candidateId}
 									aria-invalid={hasFieldIssue(issues, 'candidateId')}
 									aria-describedby={fieldDescriptionId(issues, 'candidateId')}
-									onChange={(event) => updateDraft('candidateId', event.target.value)}
+									onChange={(event) => {
+										const candidate = candidates.find(
+											(item) => item.releaseId === event.target.value,
+										)
+										setDraft((current) => ({
+											...current,
+											candidateId: event.target.value,
+											mode: candidate?.schemaVersion === 2 ? 'optional' : current.mode,
+										}))
+										setIssues([])
+										setNotice(null)
+									}}
 								>
 									{candidates.length === 0 && <option value="">暂无 verified 候选</option>}
 									{candidates.map((candidate) => (
@@ -234,6 +261,7 @@ export function ReleasePage({
 											type="button"
 											className={draft.mode === mode ? 'selected' : ''}
 											aria-pressed={draft.mode === mode}
+											disabled={mode === 'mandatory' && selectedCandidate?.schemaVersion === 2}
 											onClick={() => handleModeChange(mode)}
 										>
 											{mode === 'optional' ? '可选更新' : '强制更新'}
@@ -241,6 +269,9 @@ export function ReleasePage({
 									))}
 								</div>
 								<FieldError issues={issues} field="mode" />
+								{selectedCandidate?.schemaVersion === 2 && (
+									<small className="field-hint">平台更新当前仅支持可选发布。</small>
+								)}
 							</div>
 
 							<div className="field-block">
@@ -327,9 +358,53 @@ export function ReleasePage({
 						<div className="panel-header">
 							<div>
 								<h2>客户端预览</h2>
-								<p>用户主动下载并打开未签名安装包，安装过程由操作系统接管。</p>
+								<p>
+									{selectedCandidate?.schemaVersion === 2
+										? 'macOS 打开 DMG 后手动覆盖；Windows 可在退出时安装或立即重启更新。'
+										: '用户主动下载并打开未签名安装包，安装过程由操作系统接管。'}
+								</p>
 							</div>
 						</div>
+						{selectedCandidate?.schemaVersion === 2 && (
+							<div className="segmented wide" role="group" aria-label="预览平台">
+								<button
+									type="button"
+									className={previewPlatform === 'darwin' ? 'selected' : ''}
+									aria-pressed={previewPlatform === 'darwin'}
+									onClick={() => setPreviewPlatform('darwin')}
+								>
+									macOS
+								</button>
+								<button
+									type="button"
+									className={previewPlatform === 'win32' ? 'selected' : ''}
+									aria-pressed={previewPlatform === 'win32'}
+									onClick={() => setPreviewPlatform('win32')}
+								>
+									Windows
+								</button>
+							</div>
+						)}
+						{previewState && (
+							<div className="segmented wide" role="group" aria-label="预览阶段">
+								<button
+									type="button"
+									className={previewPhase === 'available' ? 'selected' : ''}
+									aria-pressed={previewPhase === 'available'}
+									onClick={() => setPreviewPhase('available')}
+								>
+									发现更新
+								</button>
+								<button
+									type="button"
+									className={previewPhase === 'ready' ? 'selected' : ''}
+									aria-pressed={previewPhase === 'ready'}
+									onClick={() => setPreviewPhase('ready')}
+								>
+									下载完成
+								</button>
+							</div>
+						)}
 						{previewState ? (
 							<UpdateDialog
 								state={previewState}
@@ -337,6 +412,8 @@ export function ReleasePage({
 								onDismiss={() => undefined}
 								onDownload={() => undefined}
 								onExit={() => undefined}
+								onOpenInstaller={() => undefined}
+								onRestartInstall={() => undefined}
 							/>
 						) : (
 							<div className="empty-state">等待 CI 注册 verified 候选</div>
@@ -422,7 +499,7 @@ function CandidateEvidence({ candidate }: { candidate?: ReleaseCandidate }) {
 					<div className="manual-distribution-warning" role="note">
 						<TriangleAlert size={17} aria-hidden="true" />
 						<div>
-							<strong>未签名手动安装</strong>
+							<strong>{candidate.schemaVersion === 2 ? '未签名平台分发' : '未签名手动安装'}</strong>
 							<span>
 								安装包未经过 Apple Developer ID 或 Windows Authenticode
 								签名，Gatekeeper／SmartScreen 可能显示安全警告。Ed25519
@@ -430,6 +507,9 @@ function CandidateEvidence({ candidate }: { candidate?: ReleaseCandidate }) {
 							</span>
 						</div>
 					</div>
+					{candidate.schemaVersion === 2 && (
+						<p className="muted">2 个平台 · 3 份文件（Windows 安装包附带 NSIS 元数据）</p>
+					)}
 					<div className="artifact-list">
 						{candidate.artifacts.map((artifact) => (
 							<div
@@ -656,9 +736,12 @@ function shortHash(value: string) {
 	return value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value
 }
 
-function previewArtifactSize(candidate: ReleaseCandidate) {
+function previewArtifactSize(candidate: ReleaseCandidate, platform: 'darwin' | 'win32') {
 	const installableSizes = candidate.artifacts
-		.filter((artifact) => artifact.kind === 'dmg' || artifact.kind === 'nsis')
+		.filter(
+			(artifact) =>
+				artifact.platform === platform && (artifact.kind === 'dmg' || artifact.kind === 'nsis'),
+		)
 		.map((artifact) => artifact.size)
 	return installableSizes.length ? Math.max(...installableSizes) : 0
 }

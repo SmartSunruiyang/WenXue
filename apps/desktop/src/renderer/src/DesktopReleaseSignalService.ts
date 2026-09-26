@@ -27,6 +27,8 @@ export class DesktopReleaseSignalService {
 	private watcher: DesktopSignalWatcher | null = null
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null
 	private signalCheckTimer: ReturnType<typeof setTimeout> | null = null
+	private checkInFlight = false
+	private trailingCheck = false
 	private documentId: string | null = null
 	private lastRevision: number | null = null
 	private reconnectDelay = INITIAL_RECONNECT_MS
@@ -52,6 +54,8 @@ export class DesktopReleaseSignalService {
 
 	stop(): void {
 		this.generation += 1
+		this.checkInFlight = false
+		this.trailingCheck = false
 		this.documentId = null
 		this.lastRevision = null
 		this.reconnectDelay = INITIAL_RECONNECT_MS
@@ -64,6 +68,11 @@ export class DesktopReleaseSignalService {
 			this.clearTimeoutImpl(this.signalCheckTimer)
 			this.signalCheckTimer = null
 		}
+	}
+
+	resume(): void {
+		if (!this.documentId) return
+		this.scheduleCheck(0)
 	}
 
 	private openWatcher(): void {
@@ -91,16 +100,37 @@ export class DesktopReleaseSignalService {
 		}
 		if (revision === this.lastRevision) return
 		this.lastRevision = revision
-		if (this.signalCheckTimer) return
 		const random = Math.max(0, Math.min(0.999_999, this.random()))
-		this.signalCheckTimer = this.setTimeoutImpl(
-			() => {
-				this.signalCheckTimer = null
-				if (generation !== this.generation || documentId !== this.documentId) return
-				void this.checkForUpdates('signal').catch(() => undefined)
-			},
-			Math.floor(random * SIGNAL_JITTER_MAX_MS),
-		)
+		this.scheduleCheck(Math.floor(random * SIGNAL_JITTER_MAX_MS))
+	}
+
+	private scheduleCheck(delayMs: number): void {
+		if (this.checkInFlight) {
+			this.trailingCheck = true
+			return
+		}
+		if (this.signalCheckTimer) {
+			if (delayMs !== 0) return
+			this.clearTimeoutImpl(this.signalCheckTimer)
+			this.signalCheckTimer = null
+		}
+		const generation = this.generation
+		const documentId = this.documentId
+		this.signalCheckTimer = this.setTimeoutImpl(() => {
+			this.signalCheckTimer = null
+			if (generation !== this.generation || documentId !== this.documentId) return
+			this.checkInFlight = true
+			void this.checkForUpdates('signal')
+				.catch(() => undefined)
+				.finally(() => {
+					if (generation !== this.generation) return
+					this.checkInFlight = false
+					if (this.trailingCheck) {
+						this.trailingCheck = false
+						this.scheduleCheck(0)
+					}
+				})
+		}, delayMs)
 	}
 
 	private handleWatchError(generation: number, documentId: string): void {

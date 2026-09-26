@@ -6,7 +6,7 @@ asar: true
 forceCodeSigning: false
 publish:
   provider: generic
-  url: https://wenxue-desktop-releases-1427406869.cos.ap-shanghai.myqcloud.com/
+  url: https://askwenxue.com/desktop-releases/
 
 directories:
   output: release

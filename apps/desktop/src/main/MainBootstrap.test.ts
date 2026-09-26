@@ -2,12 +2,184 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import {
 	buildControlWindowOptions,
+	coordinateInstallGuard,
 	createControlWindow,
+	createInstallQuitCoordinator,
 	createWindowClosePrompt,
 	desktopIconFile,
 	handleBrowserRunningClose,
+	requestAppQuit,
 	updateChannel,
 } from './MainBootstrap'
+
+describe('install quit coordination', () => {
+	it('routes a ready restart through before-quit without the force shutdown path', async () => {
+		const requestShutdown = vi.fn(async () => undefined)
+		const quit = vi.fn()
+		await requestAppQuit({
+			updateState: { phase: 'ready', release: { installAction: 'restart' } } as never,
+			requestShutdown,
+			quit,
+		})
+		expect(quit).toHaveBeenCalledOnce()
+		expect(requestShutdown).not.toHaveBeenCalled()
+	})
+	it('deduplicates before-quit and lets a failed install fall through to ordinary exit', async () => {
+		let finish!: (installed: boolean) => void
+		const installOnQuit = vi.fn(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finish = resolve
+				}),
+		)
+		const quit = vi.fn()
+		const stopUpdates = vi.fn()
+		const coordinator = createInstallQuitCoordinator({
+			installOnQuit,
+			quit,
+			stopUpdates,
+			onError: vi.fn(),
+			isWindowsUpdateReady: () => true,
+		})
+		const event = { preventDefault: vi.fn() }
+		coordinator.beforeQuit(event as never)
+		coordinator.beforeQuit(event as never)
+		expect(event.preventDefault).toHaveBeenCalledTimes(2)
+		expect(installOnQuit).toHaveBeenCalledOnce()
+		finish(false)
+		await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
+		expect(coordinator.skipClosePrompt()).toBe(true)
+		coordinator.beforeQuit(event as never)
+		expect(stopUpdates).not.toHaveBeenCalled()
+		coordinator.willQuit()
+		coordinator.willQuit()
+		expect(stopUpdates).toHaveBeenCalledOnce()
+		expect(installOnQuit).toHaveBeenCalledOnce()
+	})
+
+	it('keeps update checks alive when an ordinary close is cancelled, then accepts a later ready update', async () => {
+		let ready = false
+		const installOnQuit = vi.fn(async () => false)
+		const quit = vi.fn()
+		const stopUpdates = vi.fn()
+		const coordinator = createInstallQuitCoordinator({
+			installOnQuit,
+			quit,
+			stopUpdates,
+			onError: vi.fn(),
+			isWindowsUpdateReady: () => ready,
+		})
+		const event = { preventDefault: vi.fn() }
+		coordinator.beforeQuit(event as never)
+		expect(event.preventDefault).not.toHaveBeenCalled()
+		expect(installOnQuit).not.toHaveBeenCalled()
+		expect(stopUpdates).not.toHaveBeenCalled()
+		ready = true
+		coordinator.beforeQuit(event as never)
+		expect(event.preventDefault).toHaveBeenCalledOnce()
+		await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce())
+		expect(installOnQuit).toHaveBeenCalledOnce()
+		expect(stopUpdates).not.toHaveBeenCalled()
+		coordinator.willQuit()
+		expect(stopUpdates).toHaveBeenCalledOnce()
+	})
+
+	it('skips installation for a window close or system shutdown', () => {
+		const installOnQuit = vi.fn(async () => true)
+		const coordinator = createInstallQuitCoordinator({
+			installOnQuit,
+			quit: vi.fn(),
+			stopUpdates: vi.fn(),
+			onError: vi.fn(),
+			isWindowsUpdateReady: () => true,
+		})
+		const event = { preventDefault: vi.fn() }
+		coordinator.markWindowClose()
+		coordinator.beforeQuit(event as never)
+		coordinator.resetWindowClose()
+		coordinator.markSystemShutdown()
+		coordinator.beforeQuit(event as never)
+		expect(event.preventDefault).not.toHaveBeenCalled()
+		expect(installOnQuit).not.toHaveBeenCalled()
+		expect(coordinator.canInstall()).toBe(false)
+	})
+
+	it('rejects restart cancellation and failed browser close without running the installer', async () => {
+		const closeTrackedBrowsersForInstall = vi.fn(async () => false)
+		const supervisor = {
+			withInstallLaunchLock: async <T>(operation: () => Promise<T>) => operation(),
+			allProfilesIdleForInstall: vi.fn(async () => false),
+			closeTrackedBrowsersForInstall,
+		}
+		const operation = vi.fn(async () => undefined)
+		const deps = {
+			supervisor,
+			platform: 'win32' as const,
+			confirmRestart: vi.fn(async () => false),
+			confirmQuitBrowserClose: vi.fn(async () => true),
+			canContinue: () => true,
+			allowInstallerQuit: vi.fn(),
+			resetInstallerQuit: vi.fn(),
+		}
+		await expect(coordinateInstallGuard('restart', operation, deps)).resolves.toBe(false)
+		expect(closeTrackedBrowsersForInstall).not.toHaveBeenCalled()
+		await expect(coordinateInstallGuard('quit', operation, deps)).resolves.toBe(false)
+		expect(closeTrackedBrowsersForInstall).toHaveBeenCalledOnce()
+		expect(operation).not.toHaveBeenCalled()
+	})
+
+	it('rechecks shutdown at the final handoff boundary', async () => {
+		let canContinue = true
+		let idleChecks = 0
+		const supervisor = {
+			withInstallLaunchLock: async <T>(operation: () => Promise<T>) => operation(),
+			allProfilesIdleForInstall: vi.fn(async () => {
+				idleChecks += 1
+				if (idleChecks === 3) canContinue = false
+				return true
+			}),
+			closeTrackedBrowsersForInstall: vi.fn(async () => true),
+		}
+		const operation = vi.fn(async (canInstall: () => Promise<boolean>) => {
+			if (!(await canInstall())) throw new Error('cancelled')
+		})
+		const resetInstallerQuit = vi.fn()
+		await expect(
+			coordinateInstallGuard('quit', operation, {
+				supervisor,
+				platform: 'win32',
+				confirmRestart: async () => true,
+				confirmQuitBrowserClose: async () => true,
+				canContinue: () => canContinue,
+				allowInstallerQuit: vi.fn(),
+				resetInstallerQuit,
+			}),
+		).rejects.toThrow('cancelled')
+		expect(resetInstallerQuit).toHaveBeenCalledOnce()
+	})
+
+	it('asks for manual browser close before opening a Mac DMG', async () => {
+		const supervisor = {
+			withInstallLaunchLock: async <T>(operation: () => Promise<T>) => operation(),
+			allProfilesIdleForInstall: vi.fn(async () => false),
+			closeTrackedBrowsersForInstall: vi.fn(async () => true),
+		}
+		const operation = vi.fn(async () => undefined)
+		await expect(
+			coordinateInstallGuard('open-dmg', operation, {
+				supervisor,
+				platform: 'darwin',
+				confirmRestart: async () => true,
+				confirmQuitBrowserClose: async () => true,
+				canContinue: () => true,
+				allowInstallerQuit: vi.fn(),
+				resetInstallerQuit: vi.fn(),
+			}),
+		).rejects.toThrow('请先手动关闭问学浏览器')
+		expect(operation).not.toHaveBeenCalled()
+		expect(supervisor.closeTrackedBrowsersForInstall).not.toHaveBeenCalled()
+	})
+})
 
 describe('desktopIconFile', () => {
 	it('selects native icon assets for macOS and Windows', () => {
@@ -246,6 +418,21 @@ describe('window close confirmation', () => {
 		expect(sendState).toHaveBeenLastCalledWith(null)
 	})
 
+	it('never shares a pending close decision with a different update purpose', async () => {
+		const prompt = createWindowClosePrompt(vi.fn(), () => true)
+		const close = prompt.requestConfirmation('close')
+		await expect(prompt.requestConfirmation('update-restart')).resolves.toBe('cancel')
+		const closeId = prompt.getState()!.requestId
+		expect(prompt.getState()).toMatchObject({ purpose: 'close' })
+		prompt.respond(closeId, 'launcherOnly')
+		await expect(close).resolves.toBe('launcherOnly')
+		const restart = prompt.requestConfirmation('update-restart')
+		expect(prompt.getState()).toMatchObject({ purpose: 'update-restart' })
+		await expect(prompt.requestConfirmation('update-quit')).resolves.toBe('cancel')
+		prompt.respond(prompt.getState()!.requestId, 'closeBrowsers')
+		await expect(restart).resolves.toBe('closeBrowsers')
+	})
+
 	it('cancels suspended requests and invalidates their ids', async () => {
 		const prompt = createWindowClosePrompt(vi.fn(), () => true)
 		const pending = prompt.requestConfirmation()
@@ -295,7 +482,10 @@ class FakeControlWindow extends EventEmitter {
 	close = vi.fn(() => this.emit('close', { preventDefault: vi.fn() }))
 }
 
-function createControlWindowHarness() {
+function createControlWindowHarness(installExit?: {
+	onAcceptedClose: () => void
+	skipClosePrompt: () => boolean
+}) {
 	const requestShutdown = vi.fn(async () => undefined)
 	const result = createControlWindow(
 		{ BrowserWindow: FakeControlWindow } as unknown as Parameters<typeof createControlWindow>[0],
@@ -307,6 +497,7 @@ function createControlWindowHarness() {
 		>[2],
 		{ log: vi.fn() } as unknown as Parameters<typeof createControlWindow>[3],
 		undefined,
+		installExit,
 	)
 	const window = result.window as unknown as FakeControlWindow
 	window.webContents.emit('did-finish-load')
@@ -314,6 +505,16 @@ function createControlWindowHarness() {
 }
 
 describe('control window close lifecycle', () => {
+	it('does not force browser shutdown after an update quit was allowed', () => {
+		const onAcceptedClose = vi.fn()
+		const { window, requestShutdown } = createControlWindowHarness({
+			onAcceptedClose,
+			skipClosePrompt: () => true,
+		})
+		window.close()
+		expect(requestShutdown).not.toHaveBeenCalled()
+		expect(onAcceptedClose).toHaveBeenCalledOnce()
+	})
 	it.each(['navigation', 'render-process-gone', 'destroyed', 'closed'])(
 		'cancels pending confirmation on %s and prevents a stale response from exiting',
 		async (event) => {

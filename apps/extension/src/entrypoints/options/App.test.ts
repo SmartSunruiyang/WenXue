@@ -109,7 +109,7 @@ describe('options navigation', () => {
 	})
 
 	it('shows the requested public version', () => {
-		expect(SETTINGS_PAGE_VERSION).toBe('v0.0.1beta')
+		expect(SETTINGS_PAGE_VERSION).toBe('v0.1.1beta.1')
 	})
 
 	it('recognizes external model settings updates for live synchronization', () => {

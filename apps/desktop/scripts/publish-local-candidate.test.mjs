@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict'
 import { execFile as execFileCallback } from 'node:child_process'
-import { generateKeyPairSync } from 'node:crypto'
+import { generateKeyPairSync, sign } from 'node:crypto'
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
+
+import { canonicalJson } from '@wenxue/client-operations'
 
 import { runLocalCandidate } from './publish-local-candidate.mjs'
 import { generateWindowsUpdateMetadata } from './release-artifact-set.mjs'
@@ -535,6 +537,252 @@ test('malformed register URL cannot leak its input in an error', async () => {
 				return true
 			},
 		)
+	} finally {
+		for (const [name, previous] of Object.entries(prior)) {
+			if (previous === undefined) delete process.env[name]
+			else process.env[name] = previous
+		}
+	}
+})
+
+test('prepare-upload lists five exact CloudBase hosting paths and resumes matching partial uploads', async () => {
+	const value = await fixture()
+	const prior = {
+		publicKey: process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY,
+		privateKey: process.env.WENXUE_RELEASE_ED25519_PRIVATE_KEY,
+	}
+	process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY = value.publicDer
+	process.env.WENXUE_RELEASE_ED25519_PRIVATE_KEY = value.privateKey
+		.export({ type: 'pkcs8', format: 'der' })
+		.toString('base64')
+	const remote = new Map()
+	const fetchImpl = async (url) => {
+		const bytes = remote.get(String(url))
+		return bytes ? new Response(bytes) : new Response('', { status: 404 })
+	}
+	const options = { ...value.options, artifactSetSha512: value.seal.artifactSetSha512 }
+	try {
+		await runLocalCandidate('prepare', value.options, { exec: value.fakeExec })
+		await assert.rejects(
+			runLocalCandidate(
+				'prepare-upload',
+				{
+					...options,
+					artifactSetSha512: Buffer.alloc(64).toString('base64'),
+				},
+				{ exec: value.fakeExec, fetchImpl },
+			),
+			/Confirmed artifact set/i,
+		)
+		assert.equal(
+			value.calls.some(([, args]) => args[0]?.endsWith('create-release-candidate.mjs')),
+			false,
+		)
+		const plan = await runLocalCandidate('prepare-upload', options, {
+			exec: value.fakeExec,
+			fetchImpl,
+		})
+		assert.equal(plan.length, 5)
+		assert.deepEqual(
+			plan.map((item) => path.basename(item.localPath)).sort(),
+			[
+				'beta.yml',
+				'candidate-manifest.json',
+				'candidate-manifest.sig',
+				`WenXue-${version}-win-x64.exe`,
+				'WenXue.dmg',
+			].sort(),
+		)
+		assert.ok(
+			plan.every((item) => item.cloudPath.startsWith(`desktop-releases/electron/beta/${version}/`)),
+		)
+		assert.ok(
+			plan.every((item) => item.publicUrl.startsWith('https://askwenxue.com/desktop-releases/')),
+		)
+		assert.deepEqual(
+			JSON.parse(await readFile(path.join(value.releaseDir, 'hosting-upload.json'))),
+			plan,
+		)
+		assert.ok(plan.every((item) => item.disposition === 'upload'))
+		assert.equal(JSON.stringify(plan).includes('PRIVATE KEY'), false)
+		assert.equal(
+			value.calls.some(([file]) => file === 'coscli'),
+			false,
+		)
+		remote.set(plan[0].publicUrl, await readFile(plan[0].localPath))
+		const resumed = await runLocalCandidate('prepare-upload', options, {
+			exec: value.fakeExec,
+			fetchImpl,
+		})
+		assert.equal(resumed[0].disposition, 'reuse')
+		assert.ok(resumed.slice(1).every((item) => item.disposition === 'upload'))
+		remote.set(plan[1].publicUrl, Buffer.from('wrong existing bytes'))
+		await assert.rejects(
+			runLocalCandidate('prepare-upload', options, {
+				exec: value.fakeExec,
+				fetchImpl,
+			}),
+			/differs from local candidate bytes/i,
+		)
+	} finally {
+		for (const [name, previous] of Object.entries({
+			WENXUE_RELEASE_ED25519_PUBLIC_KEY: prior.publicKey,
+			WENXUE_RELEASE_ED25519_PRIVATE_KEY: prior.privateKey,
+		})) {
+			if (previous === undefined) delete process.env[name]
+			else process.env[name] = previous
+		}
+	}
+})
+
+test('register-upload requires all five public bytes and does not need signing or COS credentials', async () => {
+	const value = await fixture()
+	const names = [
+		'WENXUE_RELEASE_ED25519_PUBLIC_KEY',
+		'WENXUE_RELEASE_ED25519_PRIVATE_KEY',
+		'WENXUE_RELEASE_REGISTER_URL',
+		'WENXUE_RELEASE_CI_TOKEN',
+	]
+	const prior = Object.fromEntries(names.map((name) => [name, process.env[name]]))
+	Object.assign(process.env, {
+		WENXUE_RELEASE_ED25519_PUBLIC_KEY: value.publicDer,
+		WENXUE_RELEASE_ED25519_PRIVATE_KEY: value.privateKey
+			.export({ type: 'pkcs8', format: 'der' })
+			.toString('base64'),
+		WENXUE_RELEASE_REGISTER_URL: 'https://example.com/api/internal/v1/release-candidates/register',
+		WENXUE_RELEASE_CI_TOKEN: 'top-secret-token',
+	})
+	const remote = new Map()
+	const options = { ...value.options, artifactSetSha512: value.seal.artifactSetSha512 }
+	let registrationCalls = 0
+	const publicReads = new Map()
+	try {
+		await runLocalCandidate('prepare', value.options, { exec: value.fakeExec })
+		const plan = await runLocalCandidate('prepare-upload', options, {
+			exec: value.fakeExec,
+			fetchImpl: async () => new Response('', { status: 404 }),
+		})
+		delete process.env.WENXUE_RELEASE_ED25519_PRIVATE_KEY
+		for (const entry of plan.slice(0, 4))
+			remote.set(entry.publicUrl, await readFile(entry.localPath))
+		const fetchImpl = async (url, request) => {
+			if (request?.method === 'POST') {
+				registrationCalls += 1
+				return new Response(
+					JSON.stringify({
+						candidate: {
+							releaseId: `electron:beta:${version}`,
+							manifestUrl: `https://askwenxue.com/desktop-releases/electron/beta/${version}/candidate-manifest.json`,
+							status: 'verified',
+						},
+					}),
+					{ headers: { 'Content-Type': 'application/json' } },
+				)
+			}
+			const bytes = remote.get(String(url))
+			publicReads.set(String(url), (publicReads.get(String(url)) ?? 0) + 1)
+			return bytes ? new Response(bytes) : new Response('', { status: 404 })
+		}
+		const exec = async (file, args, settings) => {
+			if (
+				file === process.execPath &&
+				path.basename(args[0]) === 'verify-published-candidate.mjs'
+			) {
+				const manifest = JSON.parse(
+					await readFile(path.join(value.releaseDir, 'candidate-manifest.json')),
+				)
+				const manifestSignature = (
+					await readFile(path.join(value.releaseDir, 'candidate-manifest.sig'), 'utf8')
+				).trim()
+				await writeFile(
+					args[args.indexOf('--registration-output') + 1],
+					JSON.stringify({
+						manifestUrl: manifest.manifestUrl,
+						manifest,
+						manifestSignature,
+						publicKeyFingerprint: manifest.sourceCoordinates.releasePublicKeyFingerprint,
+					}),
+				)
+				assert.equal(settings.env.WENXUE_RELEASE_ED25519_PRIVATE_KEY, undefined)
+			}
+			return value.fakeExec(file, args, settings)
+		}
+		await assert.rejects(
+			runLocalCandidate('register-upload', options, { exec, fetchImpl }),
+			/missing or unreadable/i,
+		)
+		assert.equal(registrationCalls, 0)
+		remote.set(plan[4].publicUrl, await readFile(plan[4].localPath))
+		const result = await runLocalCandidate('register-upload', options, { exec, fetchImpl })
+		assert.equal(result.status, 'verified')
+		assert.equal(registrationCalls, 1)
+		const manifestPath = path.join(value.releaseDir, 'candidate-manifest.json')
+		const signaturePath = path.join(value.releaseDir, 'candidate-manifest.sig')
+		const approvedManifestBytes = await readFile(manifestPath)
+		const approvedSignatureBytes = await readFile(signaturePath)
+		for (const mutation of [
+			(manifest) => {
+				manifest.tests[0].url = `${runUrl}/other-run`
+			},
+			(manifest) => {
+				manifest.artifacts[0].sha512 = Buffer.alloc(64, 9).toString('base64')
+			},
+		]) {
+			const different = JSON.parse(approvedManifestBytes)
+			mutation(different)
+			const signedBytes = Buffer.from(`${canonicalJson(different)}\n`)
+			const signatureBytes = Buffer.from(
+				`${sign(null, Buffer.from(canonicalJson(different)), value.privateKey).toString(
+					'base64',
+				)}\n`,
+			)
+			await writeFile(manifestPath, signedBytes)
+			await writeFile(signaturePath, signatureBytes)
+			remote.set(plan[3].publicUrl, signatureBytes)
+			remote.set(plan[4].publicUrl, signedBytes)
+			await assert.rejects(
+				runLocalCandidate('register-upload', options, { exec, fetchImpl }),
+				/approved build seal and source run/i,
+			)
+			assert.equal(registrationCalls, 1)
+		}
+		await writeFile(manifestPath, approvedManifestBytes)
+		await writeFile(signaturePath, approvedSignatureBytes)
+		remote.set(plan[3].publicUrl, approvedSignatureBytes)
+		remote.set(plan[4].publicUrl, approvedManifestBytes)
+		const divergentExec = async (file, args, settings) => {
+			const result = await exec(file, args, settings)
+			if (
+				file === process.execPath &&
+				path.basename(args[0]) === 'verify-published-candidate.mjs'
+			) {
+				const output = args[args.indexOf('--registration-output') + 1]
+				const registration = JSON.parse(await readFile(output))
+				registration.manifest.tests[0].url = `${runUrl}/different-output`
+				await writeFile(output, JSON.stringify(registration))
+			}
+			return result
+		}
+		await assert.rejects(
+			runLocalCandidate('register-upload', options, {
+				exec: divergentExec,
+				fetchImpl,
+			}),
+			/verification output differs from the approved local candidate/i,
+		)
+		assert.equal(registrationCalls, 1)
+		assert.ok(plan.slice(0, 3).every((entry) => !publicReads.has(entry.publicUrl)))
+		assert.ok(value.calls.some(([, args]) => args[0]?.endsWith('verify-published-candidate.mjs')))
+		assert.equal(
+			value.calls.some(([file]) => file === 'coscli'),
+			false,
+		)
+		remote.set(plan[4].publicUrl, Buffer.from('changed signed manifest bytes'))
+		await assert.rejects(
+			runLocalCandidate('register-upload', options, { exec, fetchImpl }),
+			/differs from local candidate bytes/i,
+		)
+		assert.equal(registrationCalls, 1)
 	} finally {
 		for (const [name, previous] of Object.entries(prior)) {
 			if (previous === undefined) delete process.env[name]

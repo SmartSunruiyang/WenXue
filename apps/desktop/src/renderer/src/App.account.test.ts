@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 	announcementOptions: vi.fn(),
 	releaseStart: vi.fn(),
 	releaseStop: vi.fn(),
+	releaseResume: vi.fn(),
 	fetch: vi.fn(),
 }))
 
@@ -46,6 +47,7 @@ vi.mock('./DesktopAnnouncementService', () => ({
 		}
 		start = mocks.announcementStart
 		stop = mocks.announcementStop
+		resume = async () => undefined
 		current = () => null
 		subscribe(listener: (snapshot: DesktopAnnouncementSnapshot) => void) {
 			listener({ current: null, queueLength: 0 })
@@ -58,6 +60,7 @@ vi.mock('./DesktopReleaseSignalService', () => ({
 	DesktopReleaseSignalService: class {
 		start = mocks.releaseStart
 		stop = mocks.releaseStop
+		resume = mocks.releaseResume
 	},
 }))
 
@@ -157,6 +160,7 @@ function bridgeFixture(): Window['wenxue'] {
 			check: async () => ({ ok: true, state: { phase: 'idle' } }),
 			download: async () => ({ ok: true, state: { phase: 'idle' } }),
 			openInstaller: async () => ({ ok: true, state: { phase: 'idle' } }),
+			restartInstall: async () => ({ ok: true, state: { phase: 'idle' } }),
 			onStateChange: unsubscribe,
 		},
 		app: {
@@ -270,6 +274,18 @@ afterEach(async () => {
 })
 
 describe('App account integration', () => {
+	it('checks release policy when the launcher regains connectivity or focus without registering again', async () => {
+		await render()
+		const starts = mocks.releaseStart.mock.calls.length
+		await act(async () => {
+			window.dispatchEvent(new Event('online'))
+			window.dispatchEvent(new Event('focus'))
+			document.dispatchEvent(new Event('visibilitychange'))
+		})
+		expect(mocks.releaseResume).toHaveBeenCalledTimes(3)
+		expect(mocks.releaseStart).toHaveBeenCalledTimes(starts)
+	})
+
 	it('keeps a fresh account usable and hides tutorial replay when recordings are missing', async () => {
 		vi.stubGlobal('localStorage', { getItem: vi.fn().mockReturnValue(null), setItem: vi.fn() })
 		await render()

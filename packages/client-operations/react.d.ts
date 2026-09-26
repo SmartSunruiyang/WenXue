@@ -22,6 +22,7 @@ export interface UpdateDialogProps {
 	onDismiss?: () => void
 	onDownload?: () => void
 	onOpenInstaller?: () => void
+	onRestartInstall?: () => void
 	onRetry?: () => void
 	onExit?: () => void
 }

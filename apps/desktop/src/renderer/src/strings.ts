@@ -25,6 +25,18 @@ export const strings = {
 		errorDescription: '仍有浏览器未能安全关闭，请稍后重试。',
 		dismiss: '知道了',
 		communicationError: '暂时无法处理关闭请求，请重试。',
+		updateRestart: {
+			title: '关闭浏览器并重启更新？',
+			description:
+				'立即更新会先关闭正在运行的问学浏览器并退出工作台。请先保存浏览器中未保存的内容。',
+			confirm: '关闭浏览器并重启更新',
+		},
+		updateQuit: {
+			title: '退出并安装更新？',
+			description: '安装前需要关闭正在运行的问学浏览器。请先保存浏览器中未保存的内容。',
+			skip: '跳过安装并退出',
+			confirm: '关闭浏览器并安装',
+		},
 	},
 	brand: '问学 WenXue',
 	brandShort: '问学',

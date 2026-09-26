@@ -97,7 +97,7 @@ WenXue/
 | 云端网关 | CloudBase Run 容器 + Functions Framework 多 target + CloudBase Auth HTTP / Tencent Cloud TCB API                  | 注册在桌面通过 CloudBase 邮箱验证后 `signUp`；激活与所有受保护请求读取 `/auth/v1/user/me`，不以 NoSQL 记录作为账号授权条件                    |
 | 后台管理 | `apps/admin` Vite + React + CloudBase Web Auth；`apps/admin-api` CloudBase Run Function mode + CloudBase HTTP API | 管理员用邮箱密码或内置管理员账号密码；管理 API PUBLIC 但服务端强制 CloudBase Auth + `admin_users` 角色                                        |
 | 实时信号 | CloudBase NoSQL `watch()` revision 文档                                                                           | 消息 signal 仅登录只读，更新 signal 公开只读；正文/目标/候选不进入 signal                                                                     |
-| 更新存储 | 独立 Tencent COS bucket + 可选 CDN                                                                                | 对象公开读/禁止列目录、CI-only write、版本路径不可变；不复用现有私有 CloudBase 桶                                                             |
+| 更新存储 | CloudBase 静态托管的独立版本路径                                                                                  | 无查询参数的 HTTPS 匿名读；本机签名后由受权操作者通过 managed upload 上传，公开回读逐字节核验后注册；现有私有业务存储桶不改 ACL               |
 | 测试     | vitest（沿用上游各包测试）+ 桌面端 CDP 冒烟脚本                                                                   | CI 必跑                                                                                                                                       |
 
 ## 4. 桌面端（Electron）设计
@@ -428,12 +428,23 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   不把可修改的 review 文件当授权。构建证据仍绑定同一 run；本机工具不会执行下载目录中的代码。
 - 验证全部通过后，本机 publish 才生成确定性 Ed25519 候选清单，验证 COS versioning 为
   `Closed`，通过 `--forbid-overwrite` 上传，再从公开 COS origin 逐字节复核并注册。
+- 本轮选用 `prepare-upload` / `register-upload` 分段：前者在同样的源码、run、seal v3、公钥和操作者
+  `artifactSetSha512` 门禁后签名，生成恰好五项 `hosting-upload.json`（DMG、EXE、channel YAML、manifest、
+  signature）的本地路径、`desktop-releases/electron/<channel>/<version>/...` 托管路径、
+  `https://askwenxue.com/` 公网 URL、SHA-512 和尺寸；不调用 COSCLI 或注册。打包内的 generic
+  默认根仅用于形成更新器配置和缓存目录，没有可自主发现版本的全局 `latest.yml`；运行时必须由
+  经签名校验的候选策略设置到该版本自己的元数据目录。受权操作者通过现有
+  CloudBase managed upload 逐项上传，既有同路径对象只有原字节一致才可复用，不同则停止，部分上传可按
+  同一清单恢复。`register-upload` 重新执行本机门禁，验证五个公网对象均与本机原字节一致，并运行
+  签名清单与三项产物的公开验证；仅全部通过才使用注册 token 登记候选，不需要私钥或 COS 写入凭据。
+  这是工具和操作层的不可覆盖约束，不是存储桶 WORM 保证。现有 `publish` 自动 COS 路径保留兼容，
+  本轮不选用。
 - 本机工具只注册 candidate，不自动发布 rollout；发布比例和 optional/mandatory 只能在后台“版本更新”发起。
 - GitHub 只配置公开的网关 origin 与 Ed25519 公钥变量，不配置签名私钥、COS 写入或候选注册 secrets。
-  私钥和专用最小权限 COSCLI 配置保存在可信本机仓库外，注册 token 仅在 publish 进程中使用；
-  COSCLI 固定 1.0.8，注册请求仅允许 HTTPS 且禁止重定向，不回显凭据或原始错误响应。
-  私有仓库的免费额度不等于无限构建；不自动购买额度、升级套餐或改为公开仓库。本轮按用户选择由主账号
-  通过腾讯云控制台手动上传，不新建 CAM 上传子账号；该上传尚未执行。本机按具体 commit 审阅并签名，
+  私钥留在可信本机，仅 `prepare-upload` 签名时使用；注册 token 仅在 `register-upload` 进程中使用。
+  managed upload 使用当前已授权 CloudBase 工具，不提取 MCP 会话凭据、不创建 CAM 上传子账号；
+  注册请求仅允许 HTTPS 且禁止重定向，不回显凭据或原始错误响应。私有仓库的免费额度不等于无限构建；
+  不自动购买额度、升级套餐或改为公开仓库。上传及注册尚未执行；本机按具体 commit 审阅并签名，
   不冒称 GitHub 分支保护已生效。
 - 2026-09-26 发布密钥自检：可信本机 Keychain 中的 Ed25519 签名材料已通过进程内挑战签名验证；派生
   SPKI SHA-256 指纹 `bbacf14f6a6de5f743cf499bd85ccad61434d83f8f110ae4119b2b02eb01c336` 与 Keychain
@@ -469,23 +480,37 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 4. 审阅 `release-review.json` 的源码 commit、构建链接、版本、两个安装包及其 hash、公钥指纹，
    保存确认过的 `artifactSetSha512`。prepare 不需要发布私钥、COS 写入配置或注册 token。
-5. 确认双目标服务端契约已部署、专用 COS 发布身份权限正确。通过本机安全配置向发布进程提供
-   `WENXUE_RELEASE_ED25519_PRIVATE_KEY`、`WENXUE_RELEASE_CI_TOKEN`、
-   `WENXUE_UPDATE_COS_BUCKET`、`WENXUE_UPDATE_COS_REGION`、`WENXUE_UPDATE_COS_BASE_URL`、
-   `WENXUE_RELEASE_REGISTER_URL`；不要把值写入仓库、命令参数或日志。`COS_CONFIG_PATH` 指向仓库外的
-   COSCLI 1.0.8 配置，`CONFIRMED_ARTIFACT_SET_SHA512` 是上一步已确认的 hash，不自动读取 review 代签：
+5. 确认双目标服务端契约已部署。通过可信本机进程环境提供
+   `WENXUE_RELEASE_ED25519_PRIVATE_KEY`；`CONFIRMED_ARTIFACT_SET_SHA512` 是上一步已审阅确认的 hash，
+   不自动从 review 读取代签。下列命令只签名并列出五个待上传文件，不上传或注册：
 
    ```sh
-   node apps/desktop/scripts/publish-local-candidate.mjs publish \
+   node apps/desktop/scripts/publish-local-candidate.mjs prepare-upload \
      --repository SmartSunruiyang/WenXue \
      --run-id "$RELEASE_RUN_ID" --commit "$REVIEWED_COMMIT" \
      --version "$RELEASE_VERSION" --channel beta \
      --release-dir "$CANDIDATE_DIR" \
-     --artifact-set-sha512 "$CONFIRMED_ARTIFACT_SET_SHA512" \
-     --cos-config "$COS_CONFIG_PATH"
+     --artifact-set-sha512 "$CONFIRMED_ARTIFACT_SET_SHA512"
    ```
 
-6. 注册成功应返回同一 `releaseId`、清单 URL 和 `status=verified`。最后进入后台“版本更新”确认候选，
+6. 审阅 `hosting-upload.json` 的五项 `localPath/cloudPath/publicUrl/sha512/size/disposition`，仅对
+   `disposition=upload` 的项目由受权操作者通过 CloudBase managed upload 将原字节写到清单指定路径；
+   `disposition=reuse` 表示公网现有对象与本机原字节一致，无需再上传。上传前工具对公开对象执行只读完整性
+   检查：不存在可继续；已存在且原字节一致可复用；已存在但不同则停止，不覆盖。任何部分上传都保留
+   同一候选目录及清单，重新执行 `prepare-upload` 后继续。业务 CloudBase 私有存储桶 ACL 不变。
+7. 五项上传后，移除签名私钥的进程环境，仅提供 `WENXUE_RELEASE_REGISTER_URL` 与
+   `WENXUE_RELEASE_CI_TOKEN`，执行只读公开回验并注册：
+
+   ```sh
+   node apps/desktop/scripts/publish-local-candidate.mjs register-upload \
+     --repository SmartSunruiyang/WenXue \
+     --run-id "$RELEASE_RUN_ID" --commit "$REVIEWED_COMMIT" \
+     --version "$RELEASE_VERSION" --channel beta \
+     --release-dir "$CANDIDATE_DIR" \
+     --artifact-set-sha512 "$CONFIRMED_ARTIFACT_SET_SHA512"
+   ```
+
+   注册成功应返回同一 `releaseId`、清单 URL 和 `status=verified`。最后进入后台“版本更新”确认候选，
    再按验收计划开启灰度；上述命令不会触发客户端更新。产物过期且未下载时重新发起新的首轮构建，
    不使用 rerun 绕过来源校验。
 
@@ -495,13 +520,16 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ### 8.4 更新源、完整性与 rollout
 
-- 新建独立 COS bucket，COSCLI `bucket-versioning --method get` 必须证明状态为 `Closed`；“已暂停版本控制”不满足要求。对象路径至少包含
-  `runtime/channel/version/platform/arch`，写入后不可变，同版本禁止覆盖。
-- bucket 对象公开读、禁止列目录，只有专用发布身份可写；候选发布身份无一般删除/覆盖权限；不修改现有私有
-  CloudBase storage bucket。每个对象上传必须使用 COSCLI `--forbid-overwrite`；已有对象只有在公开源哈希/尺寸
-  与本次原字节完全相同时才可幂等复用。
+- 本轮目标为 CloudBase 静态托管 `desktop-releases/electron/<channel>/<version>/` 独立路径，
+  `https://askwenxue.com/` 提供无查询参数的长期匿名 HTTPS 读；业务 CloudBase 私有存储桶不改 ACL。
+  受权操作者通过 managed upload 按五项签名候选清单逐项写入。工具在上传前后均从公网完整读取，
+  同路径只有原字节一致才可幂等复用，不同则停止；这属于应用层和操作层不可覆盖纪律，不宣称
+  CloudBase 静态托管提供 WORM。现有独立 COS bucket 和自动 COSCLI 发布路径保留，但本轮不使用。
+- 2026-09-26 托管探针以 managed upload 上传 300 MiB 测试对象，匿名 HTTPS 全量读取的
+  Content-Length、实际字节数和 SHA-256 一致；探针对象已核验后删除。两个测试域名对 Range 请求
+  均返回 200 全文，本轮 `disableDifferentialDownload=true` 走全量下载，不宣称断点续传已验收。
 - 候选 manifest 固定包含 schema、releaseId/version/channel/runtime、源码 commit、CfT/扩展版本、
-  artifact URL/SHA-512/size、`distribution.mode=manual-unsigned`、`releasePublicKeyFingerprint` 和测试证据；Ed25519
+  artifact URL/SHA-512/size、schema 2 的 `distribution.mode=platform-unsigned`、`releasePublicKeyFingerprint` 和测试证据；Ed25519
   公钥固定在 App，私钥仅保存在可信本机发布环境。Ed25519 证明清单与产物字节来源，不改变安装包在操作系统中的
   未签名状态。
 - 打包运行时的 DesktopUpdateService 在启动 30 秒、每 4 小时、release revision 和“关于问学”手动
@@ -564,15 +592,15 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ## 11. 测试策略
 
-| 层         | 手段                                              | 范围                                                              |
-| ---------- | ------------------------------------------------- | ----------------------------------------------------------------- |
-| vendor 库  | 上游 vitest 套件原样保留                          | core 的 Agent 循环、llms 客户端、page-controller DOM 处理         |
-| 插件 UI    | Demo 期手动验收（PRD F2–F4 验收标准）             | 侧边栏、配置面板、历史                                            |
-| 桌面端     | 单测（状态机、参数组装、路径解析）+ CDP 冒烟      | F1 验收标准自动化覆盖核心段                                       |
-| 分发协议   | vitest + 组件测试                                 | 消息校验/匹配/回执、候选签名、灰度分桶、固定弹窗可访问性          |
-| 分发服务   | AdminApi/Gateway 集成 + watch 故障注入            | 发布/撤回/signal/pending/ack、rollout/policy/event token/TTL      |
-| 更新 E2E   | macOS arm64 / Windows x64 安装包（Intel 暂缓）    | 当前版到更高 SemVer 版、篡改拒绝、系统警告、画像无损、暂停与前向 hotfix  |
-| 端到端演示 | 演示脚本（research + 多平台答题 fixture）人工演练 | PRD 第 9 节成功指标；adapter 在真实 smoke 前仅 `fixture_verified` |
+| 层         | 手段                                              | 范围                                                                    |
+| ---------- | ------------------------------------------------- | ----------------------------------------------------------------------- |
+| vendor 库  | 上游 vitest 套件原样保留                          | core 的 Agent 循环、llms 客户端、page-controller DOM 处理               |
+| 插件 UI    | Demo 期手动验收（PRD F2–F4 验收标准）             | 侧边栏、配置面板、历史                                                  |
+| 桌面端     | 单测（状态机、参数组装、路径解析）+ CDP 冒烟      | F1 验收标准自动化覆盖核心段                                             |
+| 分发协议   | vitest + 组件测试                                 | 消息校验/匹配/回执、候选签名、灰度分桶、固定弹窗可访问性                |
+| 分发服务   | AdminApi/Gateway 集成 + watch 故障注入            | 发布/撤回/signal/pending/ack、rollout/policy/event token/TTL            |
+| 更新 E2E   | macOS arm64 / Windows x64 安装包（Intel 暂缓）    | 当前版到更高 SemVer 版、篡改拒绝、系统警告、画像无损、暂停与前向 hotfix |
+| 端到端演示 | 演示脚本（research + 多平台答题 fixture）人工演练 | PRD 第 9 节成功指标；adapter 在真实 smoke 前仅 `fixture_verified`       |
 
 ## 12. 关键决策记录（ADR 摘要）
 
@@ -585,7 +613,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 | 4   | 单 pnpm monorepo，vendor 上游                                                                                                                          | 双仓库 fork 跟踪：小团队跨仓成本高于上游同步收益                                                                                  |
 | 5   | 浏览器进程不内嵌 Electron                                                                                                                              | Electron 扩展 API 子集跑不动 MV3 sidePanel 插件                                                                                   |
 | 6   | App 退出不强杀浏览器                                                                                                                                   | 保护用户未保存的页面工作                                                                                                          |
-| 8   | 更新发布 = 无发布凭据 CI 构建、可信本机验证签名并注册不可变候选，后台“版本更新”控制通道/灰度/模式                                                       | 免费私有仓库不依赖付费保护功能；后台上传二进制会扩大密钥与误操作面，自动全量发布无法安全暂停和运营灰度                              |
+| 8   | 更新发布 = 无发布凭据 CI 构建、可信本机验证签名并注册不可变候选，后台“版本更新”控制通道/灰度/模式                                                      | 免费私有仓库不依赖付费保护功能；后台上传二进制会扩大密钥与误操作面，自动全量发布无法安全暂停和运营灰度                            |
 | 9   | 实时推送 = CloudBase watch 仅监听 revision，再由鉴权 HTTPS 拉取正文/策略                                                                               | watch 全量消息集合：会暴露其他账号正文和 UID；自建 WebSocket：当前规模增加不必要的常驻基础设施                                    |
 
 ## 13. 里程碑对应的 Infra 演进

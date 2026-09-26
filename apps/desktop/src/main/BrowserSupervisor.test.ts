@@ -7,6 +7,7 @@ import { BrowserSupervisor, type BrowserStatus } from './BrowserSupervisor'
 import type { ProfileStore } from './ProfileStore'
 
 class FakeBrowserProcess extends EventEmitter {
+	pid = 1234
 	stdout = new PassThrough()
 	stderr = new PassThrough()
 	killCalls = 0
@@ -34,6 +35,8 @@ class FakeBrowserProcess extends EventEmitter {
 function createSupervisorHarness(
 	options: {
 		child?: FakeBrowserProcess
+		platform?: NodeJS.Platform
+		requestWindowClose?: (pid: number, binary: string) => Promise<boolean>
 	} = {},
 ) {
 	const firstChild = options.child ?? new FakeBrowserProcess()
@@ -64,6 +67,8 @@ function createSupervisorHarness(
 		resources,
 		profiles,
 		logger,
+		platform: options.platform,
+		requestWindowClose: options.requestWindowClose,
 		spawnBrowser: (binary, argv) => {
 			spawns.push({ binary, argv })
 			return queuedChildren.shift() ?? new FakeBrowserProcess()
@@ -93,6 +98,73 @@ function createSupervisorHarness(
 }
 
 describe('BrowserSupervisor', () => {
+	it('locks launches through the install handoff and releases the lock afterward', async () => {
+		const { supervisor, spawns } = createSupervisorHarness()
+		await supervisor.withInstallLaunchLock(async () => {
+			await expect(supervisor.launch()).rejects.toThrow('暂不能启动浏览器')
+			expect(spawns).toHaveLength(0)
+		})
+		await supervisor.launch()
+		expect(spawns).toHaveLength(1)
+	})
+
+	it('keeps launches locked after an accepted Windows installation handoff', async () => {
+		const { supervisor, spawns } = createSupervisorHarness()
+		await supervisor.withInstallLaunchLock(
+			async () => true,
+			(accepted) => accepted,
+		)
+		await expect(supervisor.launch()).rejects.toThrow('暂不能启动浏览器')
+		expect(spawns).toHaveLength(0)
+	})
+
+	it('closes only a verified tracked Windows process without kill and checks all stored profiles', async () => {
+		const child = new FakeBrowserProcess()
+		const closeWindow = vi.fn(async () => {
+			child.emit('exit', 0, null)
+			return true
+		})
+		const { supervisor, profiles } = createSupervisorHarness({
+			child,
+			platform: 'win32',
+			requestWindowClose: closeWindow,
+		})
+		await supervisor.launch()
+		child.emit('spawn')
+		vi.mocked(profiles.listProfiles).mockReturnValue(['default', 'other-account'])
+		const result = await supervisor.withInstallLaunchLock(() =>
+			supervisor.closeTrackedBrowsersForInstall(),
+		)
+		expect(result).toBe(true)
+		expect(closeWindow).toHaveBeenCalledWith(1234, '/browsers/cft')
+		expect(child.killCalls).toBe(0)
+		expect(profiles.isProfileInUse).toHaveBeenCalledWith('other-account')
+	})
+
+	it('defers installation when a stored orphan profile remains in use', async () => {
+		const { supervisor, profiles } = createSupervisorHarness({ platform: 'win32' })
+		vi.mocked(profiles.listProfiles).mockReturnValue(['other-account'])
+		vi.mocked(profiles.isProfileInUse).mockResolvedValue(true)
+		await expect(
+			supervisor.withInstallLaunchLock(() => supervisor.allProfilesIdleForInstall()),
+		).resolves.toBe(false)
+	})
+
+	it('never kills a tracked browser when Windows close cannot verify its identity', async () => {
+		const child = new FakeBrowserProcess()
+		const closeWindow = vi.fn(async () => false)
+		const { supervisor } = createSupervisorHarness({
+			child,
+			platform: 'win32',
+			requestWindowClose: closeWindow,
+		})
+		await supervisor.launch()
+		child.emit('spawn')
+		await expect(
+			supervisor.withInstallLaunchLock(() => supervisor.closeTrackedBrowsersForInstall()),
+		).resolves.toBe(false)
+		expect(child.killCalls).toBe(0)
+	})
 	it('starts idle and emits launching then running during launch', async () => {
 		const { supervisor, child, events, profiles, spawns } = createSupervisorHarness()
 

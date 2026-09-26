@@ -140,4 +140,91 @@ describe('DesktopReleaseSignalService', () => {
 		expect(checkForUpdates).toHaveBeenCalledOnce()
 		service.stop()
 	})
+
+	it('coalesces online, focus, and visibility resume events with a queued signal', async () => {
+		vi.useFakeTimers()
+		const checkForUpdates = vi.fn(async () => undefined)
+		let callbacks:
+			| { onChange: (snapshot: unknown) => void; onError: (error: unknown) => void }
+			| undefined
+		const service = new DesktopReleaseSignalService({
+			checkForUpdates,
+			random: () => 0.5,
+			watchSignal: (_documentId, nextCallbacks) => {
+				callbacks = nextCallbacks
+				return { close: vi.fn() }
+			},
+		})
+
+		service.resume()
+		service.start('electron', 'stable')
+		callbacks?.onChange({ docs: [{ revision: 1 }] })
+		callbacks?.onChange({ docs: [{ revision: 2 }] })
+		service.resume()
+		service.resume()
+		service.resume()
+		await vi.advanceTimersByTimeAsync(0)
+		expect(checkForUpdates).toHaveBeenCalledOnce()
+		await vi.advanceTimersByTimeAsync(60_000)
+		expect(checkForUpdates).toHaveBeenCalledOnce()
+		service.stop()
+	})
+
+	it('runs one trailing check when newer revisions arrive during an in-flight check', async () => {
+		vi.useFakeTimers()
+		const resolvers: Array<() => void> = []
+		const checkForUpdates = vi.fn(() => new Promise<void>((resolve) => resolvers.push(resolve)))
+		let callbacks:
+			| { onChange: (snapshot: unknown) => void; onError: (error: unknown) => void }
+			| undefined
+		const service = new DesktopReleaseSignalService({
+			checkForUpdates,
+			random: () => 0,
+			watchSignal: (_documentId, nextCallbacks) => {
+				callbacks = nextCallbacks
+				return { close: vi.fn() }
+			},
+		})
+		service.start('electron', 'stable')
+		callbacks?.onChange({ docs: [{ revision: 1 }] })
+		callbacks?.onChange({ docs: [{ revision: 2 }] })
+		await vi.advanceTimersByTimeAsync(0)
+		expect(checkForUpdates).toHaveBeenCalledOnce()
+		callbacks?.onChange({ docs: [{ revision: 3 }] })
+		callbacks?.onChange({ docs: [{ revision: 4 }] })
+		service.resume()
+		expect(checkForUpdates).toHaveBeenCalledOnce()
+		resolvers[0]()
+		await vi.advanceTimersByTimeAsync(0)
+		expect(checkForUpdates).toHaveBeenCalledTimes(2)
+		resolvers[1]()
+		await vi.advanceTimersByTimeAsync(0)
+		expect(checkForUpdates).toHaveBeenCalledTimes(2)
+		service.stop()
+	})
+
+	it('does not let an old channel check suppress or unlock the new channel check', async () => {
+		vi.useFakeTimers()
+		const resolvers: Array<() => void> = []
+		const checkForUpdates = vi.fn(() => new Promise<void>((resolve) => resolvers.push(resolve)))
+		const service = new DesktopReleaseSignalService({
+			checkForUpdates,
+			watchSignal: () => ({ close: vi.fn() }),
+		})
+		service.start('electron', 'stable')
+		service.resume()
+		await vi.advanceTimersByTimeAsync(0)
+		service.resume()
+		service.start('electron', 'beta')
+		service.resume()
+		await vi.advanceTimersByTimeAsync(0)
+		expect(checkForUpdates).toHaveBeenCalledTimes(2)
+		resolvers[0]()
+		await vi.advanceTimersByTimeAsync(0)
+		service.resume()
+		await vi.advanceTimersByTimeAsync(0)
+		expect(checkForUpdates).toHaveBeenCalledTimes(2)
+		resolvers[1]()
+		service.stop()
+	})
 })
