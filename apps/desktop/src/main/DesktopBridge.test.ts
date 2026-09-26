@@ -87,6 +87,7 @@ function createBridgeHarness() {
 	const updateCheck = vi.fn(async () => updateState)
 	const updateDownload = vi.fn(async () => updateState)
 	const updateOpenInstaller = vi.fn(async () => updateState)
+	const updateOpenManualDownload = vi.fn(async () => updateState)
 	const updateRestartInstall = vi.fn(async () => updateState)
 	const unsubscribeUpdate = vi.fn()
 	const assertWorkspaceAllowed = vi.fn(async () => {
@@ -100,6 +101,7 @@ function createBridgeHarness() {
 		check: updateCheck,
 		download: updateDownload,
 		openInstaller: updateOpenInstaller,
+		openManualDownload: updateOpenManualDownload,
 		restartInstall: updateRestartInstall,
 		subscribe: (listener: (state: UpdateState) => void) => {
 			updateStateListener = listener
@@ -310,6 +312,7 @@ function createBridgeHarness() {
 		updateCheck,
 		updateDownload,
 		updateOpenInstaller,
+		updateOpenManualDownload,
 		updateRestartInstall,
 		sendStatus,
 		sendProfileStatus,
@@ -373,6 +376,7 @@ describe('registerDesktopBridge', () => {
 				'updates:download',
 				'updates:getState',
 				'updates:openInstaller',
+				'updates:openManualDownload',
 				'updates:restartInstall',
 			].sort(),
 		)
@@ -963,8 +967,14 @@ describe('registerDesktopBridge', () => {
 	})
 
 	it('translates update state checks downloads and explicit installer handoff', async () => {
-		const { ipcMain, updateCheck, updateDownload, updateOpenInstaller, updateRestartInstall } =
-			createBridgeHarness()
+		const {
+			ipcMain,
+			updateCheck,
+			updateDownload,
+			updateOpenInstaller,
+			updateOpenManualDownload,
+			updateRestartInstall,
+		} = createBridgeHarness()
 
 		await expect(ipcMain.handlers.get('updates:getState')?.()).resolves.toEqual({ phase: 'idle' })
 		await expect(ipcMain.handlers.get('updates:check')?.({}, 'signal')).resolves.toEqual({
@@ -979,6 +989,10 @@ describe('registerDesktopBridge', () => {
 			ok: true,
 			state: { phase: 'idle' },
 		})
+		await expect(ipcMain.handlers.get('updates:openManualDownload')?.()).resolves.toEqual({
+			ok: true,
+			state: { phase: 'idle' },
+		})
 		await expect(ipcMain.handlers.get('updates:restartInstall')?.()).resolves.toEqual({
 			ok: true,
 			state: { phase: 'idle' },
@@ -986,6 +1000,7 @@ describe('registerDesktopBridge', () => {
 		expect(updateCheck).toHaveBeenCalledWith('signal')
 		expect(updateDownload).toHaveBeenCalledOnce()
 		expect(updateOpenInstaller).toHaveBeenCalledOnce()
+		expect(updateOpenManualDownload).toHaveBeenCalledOnce()
 		expect(updateRestartInstall).toHaveBeenCalledOnce()
 	})
 
@@ -997,6 +1012,16 @@ describe('registerDesktopBridge', () => {
 			ok: false,
 			state: { phase: 'idle' },
 			error: '开发模式不支持桌面更新，请安装桌面版本后检查。',
+		})
+	})
+
+	it('keeps the current state when the manual download handoff is rejected', async () => {
+		const { ipcMain, updateOpenManualDownload } = createBridgeHarness()
+		updateOpenManualDownload.mockRejectedValueOnce(new Error('当前更新无法手动下载。'))
+		await expect(ipcMain.handlers.get('updates:openManualDownload')?.()).resolves.toEqual({
+			ok: false,
+			state: { phase: 'idle' },
+			error: '当前更新无法手动下载。',
 		})
 	})
 

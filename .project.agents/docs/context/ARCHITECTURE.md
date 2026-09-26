@@ -2,7 +2,7 @@
 
 > 模块、依赖、契约、目录布局的**唯一权威**。新增/重命名/移动模块或调整依赖方向，必须先改本文，再改代码（同一个 commit）。
 > 上游：`PRD.md`（行为）。本文不重复需求，只回答"怎么拆"。
-> 2026-09-26 状态校准：本文继续描述现有 Electron + CfT 实现，Chromium 重构域已废弃。P2 AdminApi schema 2、CI seal v3 与本机发布脚本已本地实现并验证；新构建尚未运行、服务端尚未部署。P5 更新与安装协调本地实现已通过 service 34/34、桌面 443/443、signal 尾随修正 7/7、shared React 16/16 及相关 typecheck。全仓测试首次运行因一条 extension 旧版本断言失败；修复后 extension 全套与受影响定向测试通过，未重跑全仓。候选注册工具换包绑定已实现并以 scripts 33/33 验证。升级结果/启动回报、Windows 用户实机和 macOS 安装验收仍待完成，不代表生产可用。
+> 2026-09-26 状态校准：本文继续描述现有 Electron + CfT 实现，Chromium 重构域已废弃。P2 AdminApi schema 2 与后台部署 038 已上线（BuildId `2607440724`，100% 流量）；P5.5/P5.7 本地实现与定向验收通过：admin-api 146/146、Bridge/App 58/58、DesktopUpdateService 42/42、shared client-operations 17/17，desktop typecheck、lint:desktop-release、desktop build 与 verify-embedded-release-key 通过；代码待提交/部署，新安装包设备验收仍待。全仓测试首次运行因一条 extension 旧版本断言失败；修复后 extension 全套与受影响定向测试通过，未重跑全仓。候选注册工具换包绑定已实现并以 scripts 33/33 验证。Windows 用户实机和 macOS 安装验收仍待完成，不代表整条发布链路生产验收完成。
 
 ## 0. 阅读指引
 
@@ -34,6 +34,7 @@
 | ReleaseCandidate         | \_id、schemaVersion、runtime、version、channel、manifestUrl/signature、artifacts、sourceCoordinates（含 releasePublicKeyFingerprint）、distribution.mode（schema 1=`manual-unsigned`；schema 2=`platform-unsigned`）、tests、status | 由可信发布工具注册；1:N → ReleaseRollout                                                                               | 是：CloudBase NoSQL `desktop_release_candidates`；ADMINONLY；版本候选不可覆盖                                                                                           |
 | ReleaseRollout           | \_id、runtime、channel、releaseId、status、percentage、mode、minSupportedVersion?、title、notes、publishedAt                                                                                             | N:1 → ReleaseCandidate；同 runtime/channel 仅一个 active                                                       | 是：CloudBase NoSQL `desktop_release_rollouts`；ADMINONLY；策略变化增加公开 release signal revision                                                                     |
 | ReleaseChannelSlot       | \_id=`release-slot:<runtime>:<channel>`、recordType=`release-slot`、currentRolloutId?、activeRolloutId?、highestVersion?、updatedAt                                                                      | 每 runtime/channel 一个；与 rollout/signal/audit 在同一交易内变更                                              | 是：与 rollout 共用 `desktop_release_rollouts`；内部保留文档，API/后台历史必须过滤；原子维护活动互斥与版本单调门禁                                                      |
+| UpdateInstallAttempt    | schema、attemptId（本地唯一，不上传）、签名 manifest 与 signature、fromVersion、targetVersion、releaseId、channel/platform/arch、eventInstallIdHash、eventToken、attemptedAt、expiresAt、handoff（`prepared`/`accepted`/`failed`） | DesktopUpdateService 写入，打包版下次启动读取；不关联账号 | `<userData>/update-install-attempt.json`；原子写，文件 mode `0600`；写入/删除经 DesktopUpdateService 串行队列；最多保留 7 天；不含 uid、硬件 ID 或安装路径 |
 
 扩展侧 `WenXueUserSession` 另保存可选 `browserId`，由启动器在校验账号与画像归属后交接；
 刷新登录凭据保留此 ID。内置模型的 `customFetch` 将其作为网关统计维度，普通 Agent 创建时
@@ -49,7 +50,9 @@
   `manifest.version_name` 供界面显示，缺失时回退数值 `version`。
 - **AnnouncementQueue**：当前账号待展示消息的内存队列；重要消息优先，同级按发布时间从旧到新；登出即清空。
 - **UpdateState 状态机**：`idle | checking | available | downloading | ready | opening | handedOff | error`，由
-  DesktopUpdateService 持有，经 DesktopBridge 单向推送 ConsoleUI。
+  DesktopUpdateService 持有，经 DesktopBridge 单向推送 ConsoleUI；可选 `lastInstallAttempt: { targetVersion,
+  status: 'unconfirmed' | 'confirmed' | 'failed' }` 仅供如实展示，不含 manifest、token 或其他凭据；
+  `manualDownloadAvailable` 仅在 Windows schema 2 error 且存在匹配的已验签候选时为 true。
 
 ### 1.3 不变量（任何模块都必须维护）
 
@@ -287,21 +290,30 @@
 - 不负责：不构建/签署清单/上传候选；不渲染更新 UI；不因关闭窗口安装；不杀 CfT；不在 OS session-end 或
   shutdown 中安装；不把 Mac DMG 覆盖误报为安装成功；不执行降级
 - 输入：AppPaths、本地随机 installId、DesktopBridge typed intents、CloudBaseLlmGateway update-policy/events、
-  系统 HTTPS 下载与 shell open 能力、DispatchContracts
+  系统 HTTPS 下载与 shell open 能力、由 MainBootstrap 注入的 `options.openExternal(url)`、DispatchContracts
 - 输出：UpdateState → DesktopBridge（安装动作由 `state.release.installAction` 表示）；`openInstaller()` 执行
   `open-installer` / `open-dmg`，立即重启经独立 `restartInstall()` IPC；匿名更新事件
-- 关键类型/接口：start() · stop() · state() · check(reason) · download() · openInstaller() · restartInstall() ·
+- 关键类型/接口：start() · stop() · state() · check(reason) · download() · openInstaller() · openManualDownload(): Promise<UpdateState> · restartInstall() ·
   installOnQuit() · withInstallGuard(intent: 'open-dmg' | 'restart' | 'quit', operation(canInstall))
-- 持有状态：UpdateState、当前已验证策略/候选、检查 timer、下载状态；mandatory 策略最多 24 小时可继续展示
-  离线门禁，但不能授权 schema 2 更新下载或打开安装包；不加载 CloudBase Web SDK，不保存 uid
+- 持有状态：UpdateState、当前已验证策略/候选、检查 timer、下载状态与 `<userData>/update-install-attempt.json`；
+  mandatory 策略最多 24 小时可继续展示离线门禁，但不能授权 schema 2 更新下载或打开安装包；不加载
+  CloudBase Web SDK，不保存 uid
 ```
 
-P2 协议状态：AdminApi schema 2 与 schema 1 兼容、CI seal v3 及本机候选发布脚本已在本地实现并通过
-对应验证（Admin API 141/141；发布脚本 31/31）。新的 GitHub 构建尚未运行，服务端尚未部署；不能据此
-宣称发布或 Windows 更新已上线。此服务的打包产物链路与 P5 安装交接仍须完成构建、验收。
+`manualDownloadAvailable` 仅表示 Windows schema 2 当前处于 `error` 且仍有对应已验签候选。每次点击由
+`openManualDownload()` 独占执行在线策略、签名和对应平台 packageArtifact/artifactSha512 与候选匹配复核；撤回、离线或任一字段不匹配时拒绝打开。
+点击复核成功时 main 只将已签名 manifest 中的安装器 HTTPS URL 交给 `options.openExternal(url)` 打开系统浏览器。
+该兜底不操作更新缓存、不自动退出、不创建安装尝试，也不表示已经安装；UAC、SmartScreen 或组织策略仍可能阻止
+用户后续手动安装。typed IPC `updates:openManualDownload` 返回 `UpdateMutationResult`。
 
-P5 本地实现状态（service 34/34、根 Agent 独立桌面 443/443 与 typecheck、signal 尾随修正 7/7、
-shared React 16/16）：所有安装交接经
+P2 协议状态：AdminApi schema 2 与 schema 1 兼容、CI seal v3 及本机候选发布脚本已实现；后台部署 038
+已上线，BuildId `2607440724`，100% 流量处于 normal。根 Agent 实际核验 CloudRun health 为 200，legacy/v2
+policy 均为 200/null，非法 protocol `999` 为 400；`askwenxue.com/admin` 提供新 bundle `5hb6vin4`，
+`/api/admin/v1/me` 未认证返回 401。既有官网 `/v1/client` 与 `/healthz` 路由仍返回 404；桌面客户端固定使用
+CloudRun 域名，不为此变更增加域名路由。部署保留原 CPU、内存、实例数、环境变量、VPC、ingress 与端口设置。
+P5.5/P5.7 客户端实现尚未部署；后台上线不等于客户端升级或全链路发布完成。
+
+P5.5/P5.7 本地实现与定向验收状态（admin-api 146/146，Bridge/App 58/58，DesktopUpdateService 42/42，shared client-operations 17/17；desktop typecheck、lint:desktop-release、desktop build 与 verify-embedded-release-key 通过）：所有安装交接经
 `withInstallGuard(intent, operation(canInstall))`，每次在系统交接前再次确认 `canInstall`。正常退出只有真正
 `will-quit` 才停止 updater；窗口关闭不安装。Windows 由现有 BrowserSupervisor 在安装 guard 中按受管 child
 的 EXE 路径和 parent PID 核实自身 CfT，发 `WM_CLOSE` 后等待 exit；不调用 kill。安装事务持有
@@ -310,7 +322,26 @@ shared React 16/16）：所有安装交接经
 `powerMonitor.shutdown` 禁止安装；`quitAndInstall(true, false)` 用于不自动重启的正常退出，只有明确重启意图
 使用 `quitAndInstall(true, true)`。事务经异步 `allProfilesIdleForInstall()` 检查所有 profile（包含未跟踪实例）的锁，
 确认全空闲后完成交接。macOS 若 CfT 占用，要求用户先手动关闭再打开 DMG。更新结果事件中的成功表示
-系统安装器交接成功；重启后目标版本启动确认与幂等结果契约仍待完成。真实安装包和实机验证未完成，不表示生产可用。
+系统安装器交接成功；重启后目标版本启动确认与幂等结果已本地实现并定向验收，真实安装包与设备升级仍待验证，不表示已部署或生产端到端验收完成。
+
+P5.7 启动确认（本地已实现并定向验收，待提交/部署）：仅在最终在线策略、签名候选及 CfT 空闲均复核通过后、真正调用安装器前，
+原子写入 `update-install-attempt.json` 的 `prepared` 记录；若写入失败则取消本次安装交接，但正常退出仍可继续。
+交接成功改为 `accepted`，交接明确失败改为 `failed`。
+交接后进程退出或重启中断时保留 `prepared`，使下一次打包版启动可继续核对。记录包含本地唯一 `attemptId`，最多 7 天；文件权限为
+`0600`。文件写入/删除均经 DesktopUpdateService 串行队列，以 attemptId 防止旧异步失败或回报清理覆盖新记录；不含账号、硬件标识或安装路径。
+
+打包版下次启动先验签记录中的 manifest/signature，并严格核对本机当前版本、releaseId、通道、平台及架构。
+只有 `app.getVersion() === targetVersion`，才不依赖当前 active policy，使用原有效 token 让 API 按历史 verified candidate 核验版本与 manifest 对应平台的 `artifactSha512`，再使用原 `fromVersion`、`eventInstallIdHash`、`eventToken` 与 manifest 对应 artifact SHA-512 幂等上报
+`stage='target-started', result='success'`。Mac 的 `accepted` 只代表 DMG 已打开。回到 `fromVersion` 时仅显示本地
+未确认线索，不报告失败；版本跳转、记录过期或损坏都不得报告成功。明确交接失败可本地标记 failed。
+
+`prepared` 和 `accepted` 均映射为 `lastInstallAttempt.status='unconfirmed'`，UI 显示“更新尝试已记录，等待新版启动确认”；`accepted` 只表示交接成功（Mac 为 DMG 已打开），不能据此宣称安装完成。该事件是版本启动与签名候选的关联回报，不是可信遥测或对运行中安装目录的逐字节验证。缺少旧服务端
+`stages.targetStarted` 字段时后台显示“未知”；字段存在且值为 0 表示尚未收到确认，不能把缺失或未知计为失败。
+token 格式错误不得将原始错误内容写入日志。
+
+回报网络错误或 5xx 时退避重试且不阻断应用启动；401、400 或 token/记录过期时终止该回报。服务停止后不得留 timer
+或造成重复上报。主进程通过 DesktopBridge 暴露的 `UpdateState.lastInstallAttempt` 只含 targetVersion 与
+`unconfirmed | confirmed | failed` 状态，不暴露 token 或签名资料；`prepared` 与 `accepted` 均显示为 unconfirmed，accepted 只代表交接成功。
 
 #### Layer 4 — 桥接
 
@@ -599,6 +630,7 @@ fork 应用层（apps/extension）：
 - 输入：无；由 desktop/admin/admin-api/llm-gateway 以公开导出消费
 - 输出：`@wenxue/client-operations` 一方包
 - 关键类型/接口：AnnouncementInput/View · ReleaseCandidate(schema 1|2) · ReleaseRollout · UpdatePolicy · UpdateState · validate* · matchesAudience · rolloutBucket · AnnouncementDialog · UpdateDialog
+- 更新展示状态：`UpdateState.lastInstallAttempt?: { targetVersion: string; status: 'unconfirmed' | 'confirmed' | 'failed' }`；不含本地 attempt 内容或凭据
 - 持有状态：无；React 组件只消费 props、发送 intent
 ```
 
@@ -806,9 +838,11 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 //   updates:check          invoke (reason?: 'manual' | 'signal') => Promise<{ ok: boolean; state: UpdateState; error?: string }>
 //   updates:download       invoke () => Promise<{ ok: boolean; state: UpdateState; error?: string }>
 //   updates:openInstaller  invoke () => Promise<UpdateMutationResult>
+//   updates:openManualDownload invoke () => Promise<UpdateMutationResult>
 //   updates:restartInstall invoke () => Promise<UpdateMutationResult>
 //   updates:state-changed  event  (state: UpdateState)                           // main → renderer
 //                            // UpdateMutationResult = { ok: boolean; state: UpdateState; error?: string }
+//                            // lastInstallAttempt 仅供 UI 如实显示，不含 manifest / signature / eventToken
 
 // module: BrowserSupervisor
 //   launch(profileId = 'default', opts?: { startUrls?: string[] }): Promise<void>
@@ -967,6 +1001,9 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 //     response = { candidates: ReleaseCandidate[] }；只返回 status=verified
 //   GET /api/admin/v1/releases
 //     response = { releases: ReleaseRollout[] }
+//   管理端发布 health 汇总
+//     按事件阶段分别统计；response.stages.targetStarted = { success: number }
+//     targetStarted 不与 installer-handoff 样本混算成功率；旧服务端缺字段时显示未知，值为 0 表示未收到确认；未知不推定为失败
 //   POST /api/admin/v1/release-publish
 //     body = { candidateId, title, notes, percentage, mode, minSupportedVersion? }
 //   POST /api/admin/v1/release-state
@@ -985,8 +1022,9 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 //     不要求登录；限流；只返回适用 active rollout 和已验证候选的安全字段
 //     response 含短期 event token，HMAC 绑定 releaseId/installIdHash/runtime/platform/arch/fromVersion/expiresAt
 //   POST /v1/client/update-events
-//     不要求登录；必须验证 event token 且限流；禁止 uid/正文/session/硬件指纹
-//     token 只防止未取得策略的随意写入，不证明真实下载/安装；健康统计仅作 advisory
+//     不要求登录；必须验证仍有效的 7 天 HMAC event token 且限流；禁止 uid/正文/session/硬件指纹
+//     target-started success 还须按 releaseId/channel/platform/arch/fromVersion 严格匹配已签候选的版本与实际安装器哈希
+//     保留现有幂等键、全局配额和事件 30 天 TTL；回报是 advisory，不视为可信证明或自动放量依据
 //   POST /api/internal/v1/release-candidates/register
 //     Authorization = Bearer <CI token>；body = signed ReleaseCandidate manifest
 //     相同 candidate 内容幂等；相同版本不同内容拒绝；不接受管理员 session 代替 CI token
@@ -1025,7 +1063,8 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
 | 消息 revision                                           | CloudBase NoSQL `desktop_announcement_signal/global` 与 `user:<sha256(uid)>`                                                              | AdminApi                                                                 | 服务端写；global 只因发布/撤回递增，账号文档只因该账号确认递增且带 uid；读规则仅允许登录用户读 global 或 `doc.uid == auth.uid`；仅 revision/updatedAt/uid，不含消息正文或目标                                                                                                                                                                                                                    |
 | 更新候选与 rollout                                      | CloudBase NoSQL `desktop_release_candidates` / `desktop_release_rollouts`                                                                 | 本机发布工具 → 注册 target / AdminApi                                                | ADMINONLY；候选不可变；后台只能选择 verified 候选并改变动态策略；rollouts 集合内以 `recordType=release-slot` 保留文档维护 active/current/highestVersion，列表过滤该文档；`runtime_channel_published` 支持发布历史                                                                                                                                                                                |
 | 更新 revision                                           | CloudBase NoSQL `desktop_release_signal/<runtime>:<channel>`                                                                              | AdminApi                                                                 | 公开只读、服务端写；仅 revision/updatedAt，不含私有候选元数据                                                                                                                                                                                                                                                                                                                                    |
-| 匿名更新事件                                            | CloudBase NoSQL `desktop_release_events`                                                                                                  | AdminApi                                                                 | 不含 uid/session/硬件指纹；保存 installId hash、阶段结果与 `expiresAt` BSON Date；`expiresAt` 上 `expireAfterSeconds=0` TTL 在 30 天后清理；同集合事务维护最多 32 shard 的全局 UTC 日共享配额，冲突指数退避，重复结果不重复计数；`release_created_cursor` 支持稳定健康游标；仅对最多 6 个活动/暂停 rollout 各读取最多 2,000 条，未覆盖项返回原因；event token 只防随意写入，健康统计不是可信遥测 |
+| 匿名更新事件                                            | CloudBase NoSQL `desktop_release_events`                                                                                                  | AdminApi                                                                 | 不含 uid/session/硬件指纹；保存 installId hash、阶段结果与 `expiresAt` BSON Date；`expiresAt` 上 `expireAfterSeconds=0` TTL 在 30 天后清理；同集合事务维护最多 32 shard 的全局 UTC 日共享配额，冲突指数退避，重复结果不重复计数；`release_created_cursor` 支持稳定健康游标；仅对最多 6 个活动/暂停 rollout 各读取最多 2,000 条，未覆盖项返回原因；7 天 HMAC event token 绑定原候选与 fromVersion；阶段健康统计分开呈现且不作为可信遥测 |
+| 更新安装尝试                                          | `<userData>/update-install-attempt.json`                                                                                                 | DesktopUpdateService                                                     | 原子写、mode `0600`、最多 7 天；保存签名 manifest/signature、版本/候选坐标、匿名 eventInstallIdHash 与受限 eventToken；不含 uid、硬件 ID、安装路径或会话凭据 |
 | 分发审计                                                | CloudBase NoSQL `admin_dispatch_audit`                                                                                                    | AdminApi                                                                 | ADMINONLY、纯审计、只追加；记录发布/撤回/暂停/恢复的管理员与前后摘要；不保存 release slot，不参与互斥或版本门禁                                                                                                                                                                                                                                                                                  |
 | 更新 installId                                          | `<userData>/update-install-id`                                                                                                            | DesktopUpdateService                                                     | 随机 UUID；不从账号、硬件或画像派生；只用于本机稳定灰度分桶                                                                                                                                                                                                                                                                                                                                      |
 | Electron 安装包缓存                                     | `<userData>/update-downloads/`                                                                                                            | DesktopUpdateService                                                     | 只保存 SHA-512/size 校验通过的 schema 1 `manual-unsigned` 或 schema 2 `platform-unsigned` 候选；pause/withdraw 或候选变化后不得打开；不保存 uid 或消息数据                                                                                                                                                                                                                              |
@@ -1061,7 +1100,9 @@ DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后
   watch 更新/错误/退避与轮询、消息排序/撤回/确认、更新状态机、dev 启动保持 idle 且仅手动检查返回说明、策略 freshness、
   下载/打开前实时复核、离线缓存不得授权打开、IPC、SHA-512 拒绝与系统安装器交接。发布前必须用
   `manual-unsigned` 的 macOS arm64 DMG 与 Windows x64 NSIS 完成当前版本到更高 SemVer 版本的手动安装交接 E2E，
-  包括系统未签名警告与用户明确继续；开发预览不构成验收。
+  包括系统未签名警告与用户明确继续；另覆盖更新 attempt 原子权限/过期/损坏、prepared→accepted/failed 恢复、
+  fromVersion 未确认、严格目标版本与平台哈希确认、event token 失效/幂等/网络及 5xx 退避、401/400 终止、stop 清 timer，
+  以及 targetStarted health 与 installer-handoff 分项计数；开发预览不构成验收。
 - **LogViewer legacy**：不再作为活跃入口；后续删除组件文件时需确保启动器日志页与 telemetry ingest 已覆盖查看/导出/清空链路。
 - **集成/真环境**：打包产物的"启动 + 注入"CDP 冒烟（TECH-INFRA §8.3）；双平台干净机器安装验收；真实 LLM 调用（演示前人工走查）。
 - **桌面资料与自绘弹层**：资料保存前后 UID 一致、头像上传失败重试、公开返回值无凭据；App 恢复/注册/设置保存后头像与菜单同步；菜单/选择器键盘与焦点恢复、取消确认无副作用；窗口关闭的一次性应答、来源校验、取消、失败及 renderer 失效保持打开。

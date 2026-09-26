@@ -328,6 +328,7 @@ export async function startMainBootstrap(): Promise<void> {
 	const updateService = new DesktopUpdateService({
 		paths,
 		openPath: (targetPath) => electron.shell.openPath(targetPath),
+		openExternal: (url) => electron.shell.openExternal(url),
 		isPackaged: electron.app.isPackaged,
 		currentVersion: electron.app.getVersion(),
 		platform: process.platform,

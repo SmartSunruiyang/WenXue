@@ -23,6 +23,10 @@ const DOWNLOAD_PROGRESS_INTERVAL_MS = 150
 const MAX_UPDATE_METADATA_BYTES = 64 * 1024
 const INSTALLER_DIRECTORY = 'update-installers'
 const MANDATORY_POLICY_FILE = 'update-mandatory-policy.json'
+const INSTALL_ATTEMPT_FILE = 'update-install-attempt.json'
+const MAX_INSTALL_ATTEMPT_BYTES = 256 * 1024
+const MAX_INSTALL_ATTEMPT_AGE_MS = 7 * 24 * 60 * 60 * 1000
+const INSTALL_CONFIRM_RETRY_MS = 60 * 1000
 const DEVELOPMENT_UPDATE_MESSAGE = '开发模式不支持桌面更新，请安装桌面版本后检查。'
 const STALE_MANDATORY_MESSAGE =
 	'强制更新策略已超过 24 小时且更新服务暂不可达，已解除工作区限制；联网后请重新检查。'
@@ -65,6 +69,7 @@ interface NsisDownloadProgress {
 export interface DesktopUpdateServiceOptions {
 	paths: Pick<AppPaths, 'dataFile'>
 	openPath: (targetPath: string) => Promise<string>
+	openExternal?: (url: string) => Promise<void>
 	isPackaged: boolean
 	currentVersion: string
 	platform: NodeJS.Platform
@@ -173,9 +178,10 @@ interface DownloadedNsisInstaller extends DownloadedInstaller {
 	detachListeners: () => void
 	error: Error | null
 	handoffFailureRecorded: boolean
+	attemptId?: string
 }
 
-type UpdateOperation = 'check' | 'download' | 'openInstaller'
+type UpdateOperation = 'check' | 'download' | 'openInstaller' | 'manualDownload'
 
 interface PersistedMandatoryPolicy {
 	schemaVersion: 1
@@ -186,6 +192,27 @@ interface PersistedMandatoryPolicy {
 	manifest: CandidateManifest
 	eventToken: string
 	eventInstallIdHash: string
+}
+
+type InstallAttemptStatus = 'unconfirmed' | 'confirmed' | 'failed'
+
+interface PersistedInstallAttempt {
+	schemaVersion: 1
+	attemptId: string
+	manifest: CandidateManifest
+	manifestSignature: string
+	fromVersion: string
+	targetVersion: string
+	releaseId: string
+	channel: 'dev' | 'beta' | 'stable'
+	platform: 'darwin' | 'win32'
+	arch: 'arm64' | 'x64'
+	artifactSha512: string
+	eventInstallIdHash: string
+	eventToken: string
+	attemptedAt: number
+	expiresAt: number
+	handoff: 'prepared' | 'accepted' | 'failed'
 }
 
 export class DesktopUpdateService {
@@ -217,6 +244,12 @@ export class DesktopUpdateService {
 	private activeNsisCancellationToken: CancellationToken | null = null
 	private stopEpoch = 0
 	private started = false
+	private stopped = false
+	private installAttempt: PersistedInstallAttempt | null = null
+	private lastInstallAttempt: { targetVersion: string; status: InstallAttemptStatus } | null = null
+	private installConfirmationPromise: Promise<void> | null = null
+	private installConfirmationTimer: ReturnType<typeof setTimeout> | null = null
+	private installAttemptWrite: Promise<void> = Promise.resolve()
 
 	constructor(private readonly options: DesktopUpdateServiceOptions) {
 		this.fetchImpl = options.fetchImpl ?? fetch
@@ -232,6 +265,7 @@ export class DesktopUpdateService {
 	start(): void {
 		if (this.started) return
 		this.started = true
+		this.stopped = false
 
 		if (!this.options.isPackaged) {
 			return
@@ -250,6 +284,12 @@ export class DesktopUpdateService {
 			.catch((error) => {
 				this.options.onError?.(toMessage(error, '更新恢复状态失败'))
 			})
+		const epoch = this.stopEpoch
+		void this.restoreInstallAttempt(epoch)
+			.then(() => this.retryInstallConfirmation(epoch))
+			.catch((error) => {
+				this.options.onError?.(toMessage(error, '更新安装尝试恢复失败'))
+			})
 
 		this.startupTimer = this.setTimeoutImpl(() => {
 			void this.check('startup').catch(() => undefined)
@@ -261,6 +301,7 @@ export class DesktopUpdateService {
 
 	stop(): void {
 		this.started = false
+		this.stopped = true
 		this.stopEpoch += 1
 		this.pendingAutomaticDownload = false
 		this.pendingCheckReason = null
@@ -277,6 +318,10 @@ export class DesktopUpdateService {
 		}
 		this.clearMandatoryFreshnessTimer()
 		this.clearRetryTimer()
+		if (this.installConfirmationTimer) {
+			this.clearTimeoutImpl(this.installConfirmationTimer)
+			this.installConfirmationTimer = null
+		}
 	}
 
 	state(): UpdateState {
@@ -321,6 +366,7 @@ export class DesktopUpdateService {
 					void this.download().catch(() => undefined)
 				}
 				this.runPendingCheck()
+				if (this.started) void this.retryInstallConfirmation(this.stopEpoch)
 			})
 		return this.checkPromise
 	}
@@ -456,6 +502,32 @@ export class DesktopUpdateService {
 	async restartInstall(): Promise<UpdateState> {
 		await this.handoffNsis('restart')
 		return this.updateState
+	}
+
+	async openManualDownload(): Promise<UpdateState> {
+		this.beginExclusiveOperation('manualDownload')
+		const epoch = this.stopEpoch
+		try {
+			await this.waitForRestore()
+			const current = this.verifiedPolicy
+			if (
+				!this.manualDownloadAvailable(this.updateState, current) ||
+				!current ||
+				!this.options.openExternal
+			)
+				throw new Error('当前没有可用的手动下载安装包。')
+			const verified = await this.revalidateCurrentPolicy(current, 'openInstaller')
+			if (epoch !== this.stopEpoch || this.stopped) throw new UpdateHandoffCancelledError()
+			if (verified.manifest.schemaVersion !== 2 || verified.packageArtifact.kind !== 'nsis') {
+				throw new Error('手动下载安装包与签名候选不匹配。')
+			}
+			await this.options.openExternal(
+				requireImmutableHttpsUrl(verified.packageArtifact.url, 'Windows 安装包地址').toString(),
+			)
+			return this.updateState
+		} finally {
+			this.endExclusiveOperation('manualDownload')
+		}
 	}
 
 	async installOnQuit(): Promise<boolean> {
@@ -768,7 +840,7 @@ export class DesktopUpdateService {
 		} catch (error) {
 			if (isMissingFile(error)) return
 			await unlinkIfExists(filePath)
-			this.options.onError?.(toMessage(error, '无法恢复强制更新状态'))
+			this.options.onError?.('无法恢复强制更新状态，已忽略无效缓存。')
 			return
 		}
 
@@ -797,10 +869,10 @@ export class DesktopUpdateService {
 			this.staleMandatoryPolicy = null
 			this.scheduleMandatoryFreshnessCheck(restored)
 			this.setState({ phase: 'available', release: restored.release })
-		} catch (error) {
+		} catch {
 			this.staleMandatoryPolicy = null
 			await unlinkIfExists(filePath)
-			this.options.onError?.(toMessage(error, '强制更新缓存无效，已忽略'))
+			this.options.onError?.('强制更新缓存无效，已忽略。')
 		}
 	}
 
@@ -950,6 +1022,15 @@ export class DesktopUpdateService {
 				const active = this.downloadedNsisInstaller
 				if (active?.updater === updater) {
 					active.error = error
+					if (
+						active.attemptId &&
+						this.installAttempt?.attemptId === active.attemptId &&
+						this.installAttempt.handoff !== 'failed'
+					) {
+						void this.markInstallAttempt(this.installAttempt, 'failed').catch(() => {
+							this.options.onError?.('无法保存更新交接失败状态。')
+						})
+					}
 					if (this.updateState.phase === 'handedOff' && !active.handoffFailureRecorded) {
 						active.handoffFailureRecorded = true
 						this.recordEvent('handoff', 'failure', active.releaseId)
@@ -1027,10 +1108,11 @@ export class DesktopUpdateService {
 	private async guardedHandoff(
 		intent: InstallIntent,
 		current: VerifiedPolicy,
-		handoff: () => Promise<void>,
+		handoff: (attempt: PersistedInstallAttempt) => Promise<void>,
 	): Promise<void> {
 		const guard = this.options.withInstallGuard
 		if (!guard) throw new Error('安全退出协调不可用，无法交接更新。')
+		const guardEpoch = this.stopEpoch
 		let handedOff = false
 		const accepted = await guard(intent, async (canInstall) => {
 			const verified = await this.revalidateCurrentPolicy(current, 'openInstaller')
@@ -1046,10 +1128,340 @@ export class DesktopUpdateService {
 			}
 			await verifyLocalInstaller(downloaded, verified.packageArtifact)
 			if (!(await canInstall())) throw new UpdateHandoffCancelledError()
-			await handoff()
+			const attempt = await this.prepareInstallAttempt(verified)
+			if (guardEpoch !== this.stopEpoch) {
+				await this.discardPreparedInstallAttempt(attempt)
+				throw new UpdateHandoffCancelledError()
+			}
+			let installAllowed = false
+			try {
+				installAllowed = await canInstall()
+			} catch (error) {
+				await this.discardPreparedInstallAttempt(attempt)
+				throw error
+			}
+			if (!installAllowed || guardEpoch !== this.stopEpoch) {
+				await this.discardPreparedInstallAttempt(attempt)
+				throw new UpdateHandoffCancelledError()
+			}
+			try {
+				await handoff(attempt)
+			} catch (error) {
+				await this.markInstallAttempt(attempt, 'failed')
+				throw error
+			}
+			await this.markInstallAttempt(attempt, 'accepted').catch(() => {
+				// The durable prepared record remains valid if the app exits before this write.
+				this.options.onError?.('更新已交接，但安装尝试状态未能持久化。')
+			})
 			handedOff = true
 		})
 		if (!accepted || !handedOff) throw new UpdateHandoffCancelledError()
+	}
+
+	private installAttemptPath(): string {
+		return this.options.paths.dataFile(INSTALL_ATTEMPT_FILE)
+	}
+
+	private async prepareInstallAttempt(policy: VerifiedPolicy): Promise<PersistedInstallAttempt> {
+		const epoch = this.stopEpoch
+		const attemptedAt = this.now()
+		const tokenExpiresAt = eventTokenExpiry(policy.eventToken, {
+			releaseId: policy.releaseId,
+			installIdHash: policy.eventInstallIdHash,
+			platform: normalizePlatform(this.options.platform),
+			arch: normalizeArch(this.options.arch),
+			fromVersion: this.options.currentVersion,
+		})
+		const expiresAt = Math.min(attemptedAt + MAX_INSTALL_ATTEMPT_AGE_MS, tokenExpiresAt)
+		if (expiresAt <= attemptedAt) throw new Error('更新事件凭证已过期，请重新检查更新。')
+		const attempt: PersistedInstallAttempt = {
+			schemaVersion: 1,
+			attemptId: randomUUID(),
+			manifest: policy.manifest,
+			manifestSignature: policy.manifestSignature,
+			fromVersion: this.options.currentVersion,
+			targetVersion: policy.version,
+			releaseId: policy.releaseId,
+			channel: this.options.channel,
+			platform: normalizePlatform(this.options.platform),
+			arch: normalizeArch(this.options.arch),
+			artifactSha512: policy.packageArtifact.sha512,
+			eventInstallIdHash: policy.eventInstallIdHash,
+			eventToken: policy.eventToken,
+			attemptedAt,
+			expiresAt,
+			handoff: 'prepared',
+		}
+		await this.queueInstallAttemptWrite(async () => {
+			await writeFileAtomically(this.installAttemptPath(), JSON.stringify(attempt), this.randomId)
+			this.installAttempt = attempt
+			this.publishInstallAttempt(
+				{ targetVersion: attempt.targetVersion, status: 'unconfirmed' },
+				epoch,
+			)
+		})
+		return attempt
+	}
+
+	private queueInstallAttemptWrite(operation: () => Promise<void>): Promise<void> {
+		const write = this.installAttemptWrite.catch(() => undefined).then(operation)
+		this.installAttemptWrite = write
+		return write
+	}
+
+	private async markInstallAttempt(
+		attempt: PersistedInstallAttempt,
+		handoff: 'accepted' | 'failed',
+	): Promise<void> {
+		const epoch = this.stopEpoch
+		await this.queueInstallAttemptWrite(async () => {
+			if (
+				this.installAttempt?.attemptId !== attempt.attemptId ||
+				(this.installAttempt.handoff === 'failed' && handoff === 'accepted')
+			)
+				return
+			const next = { ...attempt, handoff }
+			await writeFileAtomically(this.installAttemptPath(), JSON.stringify(next), this.randomId)
+			this.installAttempt = next
+			this.publishInstallAttempt(
+				{
+					targetVersion: next.targetVersion,
+					status: handoff === 'failed' ? 'failed' : 'unconfirmed',
+				},
+				epoch,
+			)
+		})
+	}
+
+	private async discardPreparedInstallAttempt(attempt: PersistedInstallAttempt): Promise<void> {
+		const epoch = this.stopEpoch
+		await this.queueInstallAttemptWrite(async () => {
+			if (this.installAttempt?.attemptId !== attempt.attemptId) return
+			await unlinkIfExists(this.installAttemptPath())
+			this.installAttempt = null
+			this.publishInstallAttempt(null, epoch)
+		})
+	}
+
+	private publishInstallAttempt(
+		status: { targetVersion: string; status: InstallAttemptStatus } | null,
+		epoch: number,
+	): void {
+		if (epoch !== this.stopEpoch || this.stopped) return
+		this.lastInstallAttempt = status
+		this.setState(this.updateState)
+	}
+
+	private async restoreInstallAttempt(epoch: number): Promise<void> {
+		let contents: string
+		try {
+			const filePath = this.installAttemptPath()
+			const fileStat = await stat(filePath)
+			if (!fileStat.isFile() || fileStat.size > MAX_INSTALL_ATTEMPT_BYTES) {
+				throw new Error('安装尝试记录无效。')
+			}
+			contents = await readFile(filePath, 'utf8')
+			if (Buffer.byteLength(contents) > MAX_INSTALL_ATTEMPT_BYTES) {
+				throw new Error('安装尝试记录过大。')
+			}
+		} catch (error) {
+			if (isMissingFile(error)) return
+			await this.queueInstallAttemptWrite(async () => {
+				if (!this.installAttempt) await unlinkIfExists(this.installAttemptPath())
+			}).catch(() => undefined)
+			return
+		}
+		try {
+			const attempt = await this.verifyInstallAttempt(JSON.parse(contents))
+			if (epoch !== this.stopEpoch || !this.started) return
+			await this.queueInstallAttemptWrite(async () => {
+				if (this.installAttempt || epoch !== this.stopEpoch || !this.started) return
+				this.installAttempt = attempt
+				this.publishInstallAttempt(
+					{
+						targetVersion: attempt.targetVersion,
+						status: attempt.handoff === 'failed' ? 'failed' : 'unconfirmed',
+					},
+					epoch,
+				)
+			})
+		} catch {
+			await this.queueInstallAttemptWrite(async () => {
+				if (!this.installAttempt) await unlinkIfExists(this.installAttemptPath())
+			}).catch(() => undefined)
+		}
+	}
+
+	private async verifyInstallAttempt(value: unknown): Promise<PersistedInstallAttempt> {
+		const record = requireRecord(value, '安装尝试记录')
+		const expectedKeys = [
+			'schemaVersion',
+			'attemptId',
+			'manifest',
+			'manifestSignature',
+			'fromVersion',
+			'targetVersion',
+			'releaseId',
+			'channel',
+			'platform',
+			'arch',
+			'artifactSha512',
+			'eventInstallIdHash',
+			'eventToken',
+			'attemptedAt',
+			'expiresAt',
+			'handoff',
+		]
+		if (
+			record.schemaVersion !== 1 ||
+			Object.keys(record).length !== expectedKeys.length ||
+			!expectedKeys.every((key) => hasOwn(record, key))
+		)
+			throw new Error('安装尝试记录 schema 无效。')
+		const signature = requireString(record.manifestSignature, '安装尝试签名')
+		if (!hasValidManifestSignature(record.manifest, signature, this.options.manifestPublicKey)) {
+			throw new Error('安装尝试签名无效。')
+		}
+		const manifest = normalizeManifest(record.manifest)
+		const platform = normalizePlatform(this.options.platform)
+		const arch = normalizeArch(this.options.arch)
+		const fromVersion = requireSemverString(record.fromVersion, '原版本')
+		const targetVersion = requireSemverString(record.targetVersion, '目标版本')
+		const attemptedAt = requirePositiveNumber(record.attemptedAt, '尝试时间')
+		const expiresAt = requirePositiveNumber(record.expiresAt, '到期时间')
+		const eventToken = requireString(record.eventToken, '事件凭证')
+		const attemptId = requireString(record.attemptId, '尝试 ID')
+		const artifactSha512 = requireSha512(record.artifactSha512, '安装包哈希')
+		const packageArtifact = manifest.artifacts.find(
+			(artifact) =>
+				artifact.platform === platform &&
+				artifact.arch === arch &&
+				artifact.kind === (platform === 'darwin' ? 'dmg' : 'nsis'),
+		)
+		if (
+			!INSTALL_ID_PATTERN.test(attemptId) ||
+			manifest.schemaVersion !== 2 ||
+			manifest.channel !== this.options.channel ||
+			manifest.releaseId !== record.releaseId ||
+			manifest.version !== targetVersion ||
+			record.channel !== this.options.channel ||
+			record.platform !== platform ||
+			record.arch !== arch ||
+			!packageArtifact ||
+			packageArtifact.sha512 !== artifactSha512 ||
+			compareSemver(targetVersion, fromVersion) <= 0 ||
+			(record.handoff !== 'prepared' &&
+				record.handoff !== 'accepted' &&
+				record.handoff !== 'failed') ||
+			attemptedAt > this.now() + MAX_CLOCK_SKEW_MS ||
+			expiresAt <= this.now() ||
+			expiresAt > attemptedAt + MAX_INSTALL_ATTEMPT_AGE_MS ||
+			expiresAt >
+				eventTokenExpiry(eventToken, {
+					releaseId: manifest.releaseId,
+					installIdHash: requireSha256(record.eventInstallIdHash, '安装标识摘要'),
+					platform,
+					arch,
+					fromVersion,
+				}) ||
+			record.eventInstallIdHash !== (await this.eventInstallIdHash(fromVersion)) ||
+			(this.options.currentVersion !== fromVersion && this.options.currentVersion !== targetVersion)
+		) {
+			throw new Error('安装尝试记录与本机或签名候选不匹配。')
+		}
+		return {
+			schemaVersion: 1,
+			attemptId,
+			manifest,
+			manifestSignature: signature,
+			fromVersion,
+			targetVersion,
+			releaseId: manifest.releaseId,
+			channel: manifest.channel,
+			platform,
+			arch,
+			artifactSha512,
+			eventInstallIdHash: requireSha256(record.eventInstallIdHash, '安装标识摘要'),
+			eventToken,
+			attemptedAt,
+			expiresAt,
+			handoff: record.handoff,
+		}
+	}
+
+	private retryInstallConfirmation(epoch: number): Promise<void> {
+		if (this.installConfirmationPromise) return this.installConfirmationPromise
+		const attempt = this.installAttempt
+		if (
+			!this.started ||
+			epoch !== this.stopEpoch ||
+			!attempt ||
+			attempt.handoff === 'failed' ||
+			this.options.currentVersion !== attempt.targetVersion
+		) {
+			return Promise.resolve()
+		}
+		this.installConfirmationPromise = this.confirmInstallAttempt(attempt, epoch).finally(() => {
+			this.installConfirmationPromise = null
+		})
+		return this.installConfirmationPromise
+	}
+
+	private async confirmInstallAttempt(
+		attempt: PersistedInstallAttempt,
+		epoch: number,
+	): Promise<void> {
+		try {
+			if (attempt.expiresAt <= this.now()) {
+				await this.clearInstallAttempt(attempt, undefined, epoch)
+				return
+			}
+			if (!this.started || epoch !== this.stopEpoch || this.installAttempt !== attempt) return
+			const response = await this.sendEvent(
+				'target-started',
+				'success',
+				attempt.releaseId,
+				attempt.fromVersion,
+				attempt.eventToken,
+				attempt.eventInstallIdHash,
+				{ targetVersion: attempt.targetVersion, artifactSha512: attempt.artifactSha512 },
+			)
+			if (!this.started || epoch !== this.stopEpoch || this.installAttempt !== attempt) return
+			if (response === 400 || response === 401) {
+				await this.clearInstallAttempt(attempt, undefined, epoch)
+				return
+			}
+			await this.clearInstallAttempt(attempt, 'confirmed', epoch)
+		} catch {
+			if (
+				this.started &&
+				epoch === this.stopEpoch &&
+				this.installAttempt === attempt &&
+				!this.installConfirmationTimer
+			) {
+				this.installConfirmationTimer = this.setTimeoutImpl(() => {
+					this.installConfirmationTimer = null
+					void this.retryInstallConfirmation(epoch)
+				}, INSTALL_CONFIRM_RETRY_MS)
+			}
+		}
+	}
+
+	private async clearInstallAttempt(
+		attempt: PersistedInstallAttempt,
+		status?: InstallAttemptStatus,
+		epoch = this.stopEpoch,
+	): Promise<void> {
+		await this.queueInstallAttemptWrite(async () => {
+			if (this.installAttempt?.attemptId !== attempt.attemptId || epoch !== this.stopEpoch) return
+			await unlinkIfExists(this.installAttemptPath())
+			this.installAttempt = null
+			this.publishInstallAttempt(
+				status ? { targetVersion: attempt.targetVersion, status } : null,
+				epoch,
+			)
+		})
 	}
 
 	private async handoffNsis(intent: 'restart' | 'quit'): Promise<void> {
@@ -1070,7 +1482,8 @@ export class DesktopUpdateService {
 			const downloaded = this.downloadedNsisInstaller
 			handoffDownload = downloaded
 			const updater = downloaded.updater
-			await this.guardedHandoff(intent, current, async () => {
+			await this.guardedHandoff(intent, current, async (attempt) => {
+				downloaded.attemptId = attempt.attemptId
 				if (downloaded.error) throw downloaded.error
 				handoffStarted = true
 				this.recordEvent('handoff', 'start', current.releaseId)
@@ -1255,7 +1668,8 @@ export class DesktopUpdateService {
 		fromVersion: string,
 		eventToken: string,
 		installIdHash: string,
-	): Promise<void> {
+		confirmation?: { targetVersion: string; artifactSha512: string },
+	): Promise<number> {
 		const url = new URL('/v1/client/update-events', requireHttpsBaseUrl(this.options.policyBaseUrl))
 		const response = await this.fetchWithTimeout(url, {
 			method: 'POST',
@@ -1270,9 +1684,12 @@ export class DesktopUpdateService {
 				stage,
 				result,
 				eventToken,
+				...confirmation,
 			}),
 		})
+		if (confirmation && (response.status === 400 || response.status === 401)) return response.status
 		if (!response.ok) throw new Error(`更新事件上报失败 (${response.status})`)
+		return response.status
 	}
 
 	private async eventInstallIdHash(fromVersion: string): Promise<string> {
@@ -1298,9 +1715,28 @@ export class DesktopUpdateService {
 	}
 
 	private setState(state: UpdateState): void {
-		this.updateState = state
-		this.options.onStateChange?.(state)
-		this.listeners.forEach((listener) => listener(state))
+		const base = { ...state }
+		delete base.lastInstallAttempt
+		delete base.manualDownloadAvailable
+		this.updateState = {
+			...base,
+			...(this.lastInstallAttempt ? { lastInstallAttempt: this.lastInstallAttempt } : {}),
+			...(this.manualDownloadAvailable(base as UpdateState, this.verifiedPolicy)
+				? { manualDownloadAvailable: true }
+				: {}),
+		} as UpdateState
+		this.options.onStateChange?.(this.updateState)
+		this.listeners.forEach((listener) => listener(this.updateState))
+	}
+
+	private manualDownloadAvailable(state: UpdateState, policy: VerifiedPolicy | null): boolean {
+		return (
+			state.phase === 'error' &&
+			this.options.platform === 'win32' &&
+			policy?.manifest.schemaVersion === 2 &&
+			policy.packageArtifact.kind === 'nsis' &&
+			Boolean(this.options.openExternal)
+		)
 	}
 
 	private rememberPendingCheck(reason: UpdateCheckReason): void {
@@ -1440,6 +1876,40 @@ function hasValidManifestSignature(
 		)
 	} catch {
 		return false
+	}
+}
+
+function eventTokenExpiry(
+	token: string,
+	expected: {
+		releaseId: string
+		installIdHash: string
+		platform: 'darwin' | 'win32'
+		arch: 'arm64' | 'x64'
+		fromVersion: string
+	},
+): number {
+	try {
+		if (token.length > 4_096) throw new Error()
+		const parts = token.split('.')
+		if (parts.length !== 2 || !parts[0] || !parts[1]) throw new Error()
+		const payload: unknown = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'))
+		const record = requireRecord(payload, '事件凭证')
+		if (
+			record.schemaVersion !== 1 ||
+			record.releaseId !== expected.releaseId ||
+			record.installIdHash !== expected.installIdHash ||
+			record.runtime !== 'electron' ||
+			record.platform !== expected.platform ||
+			record.arch !== expected.arch ||
+			record.fromVersion !== expected.fromVersion
+		)
+			throw new Error()
+		const expiresAt = requirePositiveNumber(record.expiresAt, '事件凭证到期时间')
+		if (!Number.isSafeInteger(expiresAt)) throw new Error()
+		return expiresAt
+	} catch {
+		throw new Error('更新事件凭证无效，请重新检查更新。')
 	}
 }
 

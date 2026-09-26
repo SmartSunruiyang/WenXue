@@ -142,6 +142,8 @@ export interface ReleaseHealth {
 		check: ReleaseStageHealth
 		download: ReleaseStageHealth
 		handoff: ReleaseStageHealth
+		/** Absent from older servers; missing confirmations are unknown, not failures. */
+		targetStarted?: { success: number }
 	}
 	handoffFailureRate: number | null
 }
@@ -226,7 +228,7 @@ export interface DownloadProgress {
 	bytesPerSecond: number
 }
 
-export type UpdateState =
+export type UpdateState = (
 	| { phase: 'idle' | 'checking' }
 	| { phase: 'available'; release: UpdateReleaseView }
 	| { phase: 'downloading'; release: UpdateReleaseView; progress: DownloadProgress }
@@ -234,6 +236,10 @@ export type UpdateState =
 	| { phase: 'opening'; release: UpdateReleaseView }
 	| { phase: 'handedOff'; release: UpdateReleaseView }
 	| { phase: 'error'; message: string; retryable: boolean; release?: UpdateReleaseView }
+) & {
+	lastInstallAttempt?: { targetVersion: string; status: 'unconfirmed' | 'confirmed' | 'failed' }
+	manualDownloadAvailable?: boolean
+}
 
 export interface ValidationIssue {
 	field: string

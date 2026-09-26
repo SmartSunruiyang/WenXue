@@ -81,6 +81,7 @@ export interface DesktopBridgeOptions {
 		| 'check'
 		| 'download'
 		| 'openInstaller'
+		| 'openManualDownload'
 		| 'restartInstall'
 		| 'subscribe'
 		| 'assertWorkspaceAllowed'
@@ -675,6 +676,18 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	options.ipcMain.handle('updates:openInstaller', async (): Promise<UpdateMutationResult> => {
 		try {
 			return { ok: true, state: await options.updateService.openInstaller() }
+		} catch (error) {
+			return {
+				ok: false,
+				state: options.updateService.state(),
+				error: toUserSafeMessage(error),
+			}
+		}
+	})
+
+	options.ipcMain.handle('updates:openManualDownload', async (): Promise<UpdateMutationResult> => {
+		try {
+			return { ok: true, state: await options.updateService.openManualDownload() }
 		} catch (error) {
 			return {
 				ok: false,

@@ -2031,7 +2031,40 @@ describe('AdminApi release dispatch', () => {
 				check: { success: 1, failure: 0 },
 				download: { success: 1, failure: 0 },
 				handoff: { success: 1, failure: 1 },
+				targetStarted: { success: 0 },
 			},
+			handoffFailureRate: 0.5,
+		})
+	})
+
+	it('counts target startup separately without treating missing reports as installation failures', async () => {
+		const state = createState({
+			releases: [rolloutRecord()],
+			releaseEvents: [
+				{
+					releaseId: 'electron-stable-0.1.1',
+					stage: 'handoff',
+					result: 'success',
+					createdAt: '2026-06-20T00:00:00.000Z',
+				},
+				{
+					releaseId: 'electron-stable-0.1.1',
+					stage: 'handoff',
+					result: 'failure',
+					createdAt: '2026-06-21T00:00:00.000Z',
+				},
+				{
+					releaseId: 'electron-stable-0.1.1',
+					stage: 'target-started',
+					result: 'success',
+					createdAt: '2026-06-22T00:00:00.000Z',
+				},
+			],
+		})
+		const response = await request('/admin/v1/releases', state)
+		expect(parseBody(response).releases[0].health).toMatchObject({
+			sampleCount: 3,
+			stages: { handoff: { success: 1, failure: 1 }, targetStarted: { success: 1 } },
 			handoffFailureRate: 0.5,
 		})
 	})
@@ -2342,6 +2375,144 @@ describe('AdminApi release dispatch', () => {
 		expect(tampered.statusCode).toBe(401)
 		expect(mismatched.statusCode).toBe(401)
 		expect(state.releaseEvents).toEqual([])
+	})
+
+	it('accepts only verified target startup and keeps duplicate reports idempotent', async () => {
+		const candidate = candidateRecord()
+		const state = createState({ candidates: [candidate] })
+		const installIdHash = 'a'.repeat(64)
+		const body = {
+			releaseId: candidate._id,
+			installIdHash,
+			eventToken: releaseEventToken(installIdHash),
+			runtime: 'electron',
+			platform: 'darwin',
+			arch: 'arm64',
+			fromVersion: '0.1.0',
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: '0.1.1',
+			artifactSha512: (candidate.artifacts as Array<{ sha512: string }>)[0].sha512,
+		}
+		const accepted = await request('/v1/client/update-events', state, { method: 'POST', body })
+		const duplicate = await request('/v1/client/update-events', state, { method: 'POST', body })
+		expect(accepted.statusCode).toBe(202)
+		expect(duplicate.statusCode).toBe(202)
+		expect(state.releaseEvents).toHaveLength(1)
+		expect(state.releaseEvents[0]).toMatchObject({
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: '0.1.1',
+			artifactSha512: body.artifactSha512,
+		})
+		expect(state.releaseEvents[0]).not.toHaveProperty('eventToken')
+	})
+
+	it('rejects false target startup claims and target fields on older event stages', async () => {
+		const candidate = candidateRecord()
+		const state = createState({ candidates: [candidate] })
+		const installIdHash = 'b'.repeat(64)
+		const body = {
+			releaseId: candidate._id,
+			installIdHash,
+			eventToken: releaseEventToken(installIdHash),
+			runtime: 'electron',
+			platform: 'darwin',
+			arch: 'arm64',
+			fromVersion: '0.1.0',
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: '0.1.1',
+			artifactSha512: (candidate.artifacts as Array<{ sha512: string }>)[0].sha512,
+		}
+		const invalidBodies = [
+			{ ...body, targetVersion: '0.1.2' },
+			{ ...body, artifactSha512: Buffer.alloc(64, 8).toString('base64') },
+			{ ...body, targetVersion: undefined },
+			{ ...body, artifactSha512: undefined },
+			{ ...body, result: 'failure' },
+			{ ...body, errorCode: 'FAILED' },
+			{
+				...body,
+				fromVersion: '0.1.1',
+				eventToken: releaseEventToken(installIdHash, { fromVersion: '0.1.1' }),
+			},
+			{ ...body, stage: 'handoff' },
+			{ ...body, stage: 'check' },
+		]
+		for (const invalidBody of invalidBodies) {
+			const response = await request('/v1/client/update-events', state, {
+				method: 'POST',
+				body: invalidBody,
+			})
+			expect(response.statusCode).toBe(400)
+		}
+		expect(state.releaseEvents).toEqual([])
+	})
+
+	it('keeps target startup bound to the original short-lived event token', async () => {
+		const candidate = candidateRecord()
+		const state = createState({ candidates: [candidate] })
+		const installIdHash = 'c'.repeat(64)
+		const body = {
+			releaseId: candidate._id,
+			installIdHash,
+			eventToken: releaseEventToken(installIdHash),
+			runtime: 'electron',
+			platform: 'darwin',
+			arch: 'arm64',
+			fromVersion: '0.1.0',
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: '0.1.1',
+			artifactSha512: (candidate.artifacts as Array<{ sha512: string }>)[0].sha512,
+		}
+		for (const overrides of [
+			{ eventToken: releaseEventToken(installIdHash, { expiresAt: TEST_NOW - 1 }) },
+			{ eventToken: releaseEventToken('d'.repeat(64)) },
+			{ eventToken: releaseEventToken(installIdHash, { platform: 'win32' }) },
+			{ eventToken: releaseEventToken(installIdHash, { fromVersion: '0.0.1' }) },
+		]) {
+			const response = await request('/v1/client/update-events', state, {
+				method: 'POST',
+				body: { ...body, ...overrides },
+			})
+			expect(response.statusCode).toBe(401)
+		}
+		expect(state.releaseEvents).toEqual([])
+	})
+
+	it('binds Windows target startup to the NSIS package rather than its YAML metadata', async () => {
+		const { manifest } = signedPlatformRegistration()
+		manifest.artifacts.find((artifact) => artifact.kind === 'nsis-yaml')!.sha512 = Buffer.alloc(
+			64,
+			8,
+		).toString('base64')
+		const state = createState({ candidates: [candidateRecord(manifest)] })
+		const installIdHash = 'e'.repeat(64)
+		const body = {
+			releaseId: manifest.releaseId,
+			installIdHash,
+			eventToken: releaseEventToken(installIdHash, { platform: 'win32', arch: 'x64' }),
+			runtime: 'electron',
+			platform: 'win32',
+			arch: 'x64',
+			fromVersion: '0.1.0',
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: manifest.version,
+			artifactSha512: manifest.artifacts.find((artifact) => artifact.kind === 'nsis-yaml')!.sha512,
+		}
+		const yamlHash = await request('/v1/client/update-events', state, { method: 'POST', body })
+		expect(yamlHash.statusCode).toBe(400)
+		const nsisHash = await request('/v1/client/update-events', state, {
+			method: 'POST',
+			body: {
+				...body,
+				artifactSha512: manifest.artifacts.find((artifact) => artifact.kind === 'nsis')!.sha512,
+			},
+		})
+		expect(nsisHash.statusCode).toBe(202)
 	})
 
 	it('deduplicates conflicting final outcomes for one handoff and stage', async () => {

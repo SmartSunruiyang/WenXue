@@ -112,6 +112,7 @@ export function UpdateDialog({
 	onDownload,
 	onOpenInstaller,
 	onRestartInstall,
+	onManualDownload,
 	onRetry,
 	onExit,
 }) {
@@ -225,6 +226,16 @@ export function UpdateDialog({
 					'安装包已在后台下载并校验。可正常退出时安装，或现在确认关闭问学浏览器并重启更新。',
 				),
 			state.phase === 'downloading' && h(DownloadProgressView, { progress: state.progress }),
+			state.lastInstallAttempt &&
+				h(
+					'p',
+					{ className: 'wx-ops-body', role: 'status' },
+					state.lastInstallAttempt.status === 'confirmed'
+						? `已确认 v${state.lastInstallAttempt.targetVersion} 启动。`
+						: state.lastInstallAttempt.status === 'failed'
+							? `v${state.lastInstallAttempt.targetVersion} 的安装器交接失败，可重试。`
+							: `v${state.lastInstallAttempt.targetVersion} 的更新尝试已记录，等待新版启动确认。`,
+				),
 			h(
 				'div',
 				{ className: 'wx-ops-actions' },
@@ -235,6 +246,7 @@ export function UpdateDialog({
 					onDownload,
 					onOpenInstaller,
 					onRestartInstall,
+					onManualDownload,
 					onRetry,
 					onExit,
 				}),
@@ -277,6 +289,7 @@ function renderUpdateActions({
 	onDownload,
 	onOpenInstaller,
 	onRestartInstall,
+	onManualDownload,
 	onRetry,
 	onExit,
 }) {
@@ -370,20 +383,35 @@ function renderUpdateActions({
 							: '打开安装包',
 				),
 			)
-	} else if (state.phase === 'error' && state.retryable) {
-		actions.push(
-			h(
-				'button',
-				{
-					key: 'retry',
-					className: 'wx-ops-button wx-ops-button--primary',
-					type: 'button',
-					onClick: onRetry,
-				},
-				h(RefreshCw, { size: 15, 'aria-hidden': true }),
-				'重试',
-			),
-		)
+	} else if (state.phase === 'error') {
+		if (state.retryable)
+			actions.push(
+				h(
+					'button',
+					{
+						key: 'retry',
+						className: 'wx-ops-button wx-ops-button--primary',
+						type: 'button',
+						onClick: onRetry,
+					},
+					h(RefreshCw, { size: 15, 'aria-hidden': true }),
+					'重试',
+				),
+			)
+		if (state.manualDownloadAvailable && onManualDownload) {
+			actions.push(
+				h(
+					'button',
+					{
+						key: 'manual-download',
+						className: 'wx-ops-button wx-ops-button--secondary',
+						type: 'button',
+						onClick: onManualDownload,
+					},
+					'手动下载安装包',
+				),
+			)
+		}
 	} else if (
 		state.phase === 'downloading' ||
 		state.phase === 'opening' ||

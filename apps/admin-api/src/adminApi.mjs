@@ -46,6 +46,7 @@ const UPDATE_EVENT_RESULTS = {
 	check: new Set(['success', 'failure']),
 	download: new Set(['start', 'success', 'failure']),
 	handoff: new Set(['start', 'success', 'failure']),
+	'target-started': new Set(['success']),
 }
 const REQUIRED_RELEASE_TEST_EVIDENCE = new Set([
 	'quality',
@@ -60,7 +61,7 @@ const REQUIRED_RELEASE_TEST_EVIDENCE = new Set([
 /** @typedef {'dev' | 'beta' | 'stable'} ReleaseChannel */
 /** @typedef {'optional' | 'mandatory'} UpdateMode */
 /** @typedef {'active' | 'paused' | 'withdrawn' | 'superseded'} ReleaseStatus */
-/** @typedef {'check' | 'download' | 'handoff'} UpdateEventStage */
+/** @typedef {'check' | 'download' | 'handoff' | 'target-started'} UpdateEventStage */
 /** @typedef {'start' | 'success' | 'failure'} UpdateEventResult */
 /** @typedef {{ platforms?: DesktopPlatform[], minVersion?: string, maxVersion?: string, userIds?: string[] }} AnnouncementAudience */
 /** @typedef {{ importance: AnnouncementImportance, title: string, body: string, detailUrl?: string, audience: AnnouncementAudience, expiresAt: string }} NormalizedAnnouncementInput */
@@ -1211,6 +1212,8 @@ async function recordReleaseEvent(input) {
 		'result',
 		'errorCode',
 		'eventToken',
+		'targetVersion',
+		'artifactSha512',
 	])
 	for (const key of Object.keys(body)) {
 		if (!allowedKeys.has(key) || (key !== 'eventToken' && EVENT_SENSITIVE_PATTERN.test(key))) {
@@ -1228,6 +1231,21 @@ async function recordReleaseEvent(input) {
 	const result = readUpdateEventResult(stage, body.result)
 	const errorCode =
 		body.errorCode === undefined ? undefined : readIdentifier(body.errorCode, 'errorCode', 64)
+	if (
+		stage !== 'target-started' &&
+		(body.targetVersion !== undefined || body.artifactSha512 !== undefined)
+	) {
+		throw new AdminApiError('Target start fields are only allowed for target-started events', 400)
+	}
+	if (stage === 'target-started' && errorCode !== undefined) {
+		throw new AdminApiError('Target start confirmation cannot include an error code', 400)
+	}
+	const targetVersion =
+		stage === 'target-started' ? readSemver(body.targetVersion, 'targetVersion') : undefined
+	const artifactSha512 =
+		stage === 'target-started'
+			? readRequiredText(body.artifactSha512, 'artifactSha512', 128)
+			: undefined
 	verifyReleaseEventToken(
 		readRequiredText(body.eventToken, 'eventToken', 4_096),
 		{
@@ -1258,6 +1276,19 @@ async function recordReleaseEvent(input) {
 	) {
 		throw new AdminApiError('Verified release candidate does not match update event', 400)
 	}
+	if (stage === 'target-started') {
+		const installerKind = platform === 'darwin' ? 'dmg' : 'nsis'
+		const installer = candidate.artifacts.find(
+			(artifact) =>
+				artifact.platform === platform && artifact.arch === arch && artifact.kind === installerKind,
+		)
+		if (targetVersion !== candidate.version || artifactSha512 !== installer?.sha512) {
+			throw new AdminApiError(
+				'Target version or installer digest does not match verified candidate',
+				400,
+			)
+		}
+	}
 	const createdAtMs = input.now()
 	const event = {
 		_id: dispatchDocumentId(
@@ -1274,6 +1305,7 @@ async function recordReleaseEvent(input) {
 		stage,
 		result,
 		errorCode,
+		...(stage === 'target-started' ? { targetVersion, artifactSha512 } : {}),
 		createdAt: new Date(createdAtMs).toISOString(),
 		expiresAt: new Date(createdAtMs + UPDATE_EVENT_RETENTION_MS).toISOString(),
 	}
@@ -1327,6 +1359,7 @@ function buildReleaseHealth(releaseId, values, windowStartedAt, truncated = fals
 		check: { success: 0, failure: 0 },
 		download: { success: 0, failure: 0 },
 		handoff: { success: 0, failure: 0 },
+		targetStarted: { success: 0 },
 	}
 	let updatedAt
 	let sampleCount = 0
@@ -1336,7 +1369,11 @@ function buildReleaseHealth(releaseId, values, windowStartedAt, truncated = fals
 		if (!updatedAt || Date.parse(event.createdAt) > Date.parse(updatedAt)) {
 			updatedAt = event.createdAt
 		}
-		if (event.result === 'success' || event.result === 'failure') {
+		if (event.stage === 'target-started') {
+			// A start confirmation is one reported sample; absence is unknown, never a failure.
+			sampleCount += 1
+			stages.targetStarted.success += 1
+		} else if (event.result === 'success' || event.result === 'failure') {
 			sampleCount += 1
 			stages[event.stage][event.result] += 1
 		}
@@ -2376,7 +2413,8 @@ function releaseEventTokenSecret(value) {
  */
 function readUpdateEventStage(value) {
 	const stage = readUpdateEventStageOrNull(value)
-	if (!stage) throw new AdminApiError('stage must be check, download, or handoff', 400)
+	if (!stage)
+		throw new AdminApiError('stage must be check, download, handoff, or target-started', 400)
 	return stage
 }
 
@@ -2384,7 +2422,12 @@ function readUpdateEventStage(value) {
  * @param {unknown} value
  */
 function readUpdateEventStageOrNull(value) {
-	return value === 'check' || value === 'download' || value === 'handoff' ? value : null
+	return value === 'check' ||
+		value === 'download' ||
+		value === 'handoff' ||
+		value === 'target-started'
+		? value
+		: null
 }
 
 /**

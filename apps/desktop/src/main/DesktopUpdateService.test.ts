@@ -1,5 +1,6 @@
 import { canonicalJson, type ReleaseArtifact } from '@wenxue/client-operations'
 import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -686,6 +687,20 @@ function createV2Fixture(platform: 'darwin' | 'win32') {
 	fixture.manifest.distribution = { mode: 'platform-unsigned' }
 	fixture.manifest.artifacts = [mac, exe, yaml]
 	fixture.policy.schemaVersion = 2
+	fixture.policy.eventToken = `${Buffer.from(
+		JSON.stringify({
+			schemaVersion: 1,
+			releaseId: fixture.manifest.releaseId,
+			installIdHash: createHash('sha256')
+				.update(['wenxue-update-event-v1', 'electron', 'stable', '0.1.0', INSTALL_ID].join('\0'))
+				.digest('hex'),
+			runtime: 'electron',
+			platform,
+			arch: platform === 'darwin' ? 'arm64' : 'x64',
+			fromVersion: '0.1.0',
+			expiresAt: NOW + 6 * 24 * 60 * 60 * 1000,
+		}),
+	).toString('base64url')}.fixture-signature`
 	fixture.policy.distribution = { mode: 'platform-unsigned' }
 	fixture.policy.artifacts = platform === 'darwin' ? [mac] : [exe, yaml]
 	fixture.policy.manifestSignature = signManifest(fixture.manifest, fixture.privateKey)
@@ -726,6 +741,259 @@ function createNsisPort(info: unknown, installerPath: string): NsisUpdaterPort {
 }
 
 describe('DesktopUpdateService platform-unsigned flow', () => {
+	it('opens only a fresh signed Windows installer URL for manual fallback', async () => {
+		const { fixture, exe, setMetadataBytes } = createV2Fixture('win32')
+		const openExternal = vi.fn(async () => undefined)
+		const { service } = createService(fixture, {
+			platform: 'win32',
+			arch: 'x64',
+			openExternal,
+		})
+		await service.check('manual')
+		setMetadataBytes(Buffer.from('tampered metadata'))
+		await expect(service.download()).rejects.toThrow()
+		expect(service.state()).toMatchObject({ phase: 'error', manualDownloadAvailable: true })
+		await service.openManualDownload()
+		expect(openExternal).toHaveBeenCalledWith(exe.url)
+		expect(openExternal).toHaveBeenCalledTimes(1)
+		expect(service.state().phase).toBe('error')
+		fixture.setPolicyMode('withdrawn')
+		await expect(service.openManualDownload()).rejects.toThrow('暂停、撤回或替换')
+		expect(openExternal).toHaveBeenCalledTimes(1)
+	})
+
+	it('does not open a manual Windows download after stop during policy revalidation', async () => {
+		const { fixture, setMetadataBytes } = createV2Fixture('win32')
+		const openExternal = vi.fn(async () => undefined)
+		let holdPolicy = false
+		let releasePolicy: (() => void) | undefined
+		const originalFetch = fixture.fetchImpl
+		const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+			if (holdPolicy && new URL(String(input)).pathname === '/v1/client/update-policy') {
+				await new Promise<void>((resolve) => {
+					releasePolicy = resolve
+				})
+			}
+			return originalFetch(input, init)
+		})
+		const { service } = createService(fixture, {
+			platform: 'win32',
+			arch: 'x64',
+			openExternal,
+			fetchImpl,
+		})
+		await service.check('manual')
+		setMetadataBytes(Buffer.from('tampered metadata'))
+		await expect(service.download()).rejects.toThrow()
+		holdPolicy = true
+		const pending = service.openManualDownload()
+		await vi.waitFor(() => expect(releasePolicy).toBeDefined())
+		service.stop()
+		releasePolicy?.()
+		await expect(pending).rejects.toThrow('已取消')
+		expect(openExternal).not.toHaveBeenCalled()
+	})
+	it('records a guarded Mac handoff before opening and confirms only when the signed target starts', async () => {
+		const { fixture } = createV2Fixture('darwin')
+		const attemptPath = path.join(tempDir, 'update-install-attempt.json')
+		const { service } = createService(fixture, {
+			withInstallGuard: async (_intent, operation) => {
+				await operation(async () => true)
+				return true
+			},
+			openPath: async () => {
+				const stored = JSON.parse(await readFile(attemptPath, 'utf8')) as Record<string, unknown>
+				expect(stored.handoff).toBe('prepared')
+				return ''
+			},
+		})
+		await service.check('manual')
+		await service.download()
+		await service.openInstaller()
+		const stored = JSON.parse(await readFile(attemptPath, 'utf8')) as Record<string, unknown>
+		expect(stored).toMatchObject({
+			fromVersion: '0.1.0',
+			targetVersion: '0.1.1',
+			handoff: 'accepted',
+		})
+		expect(stored).not.toHaveProperty('path')
+		const old = createService(fixture).service
+		old.start()
+		await vi.waitFor(() => expect(old.state().lastInstallAttempt?.status).toBe('unconfirmed'))
+		expect(fixture.events.filter((event) => event.stage === 'target-started')).toHaveLength(0)
+		old.stop()
+		fixture.setPolicyMode('offline')
+		const target = createService(fixture, { currentVersion: '0.1.1' }).service
+		target.start()
+		await vi.waitFor(() => expect(target.state().lastInstallAttempt?.status).toBe('confirmed'))
+		expect(fixture.events.filter((event) => event.stage === 'target-started')).toMatchObject([
+			{
+				result: 'success',
+				fromVersion: '0.1.0',
+				targetVersion: '0.1.1',
+				artifactSha512: expect.any(String),
+			},
+		])
+		await expect(readFile(attemptPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+		target.stop()
+	})
+
+	it('discards a prepared attempt when the final guard declines after persistence', async () => {
+		const { fixture } = createV2Fixture('darwin')
+		let checks = 0
+		const { service, openPath } = createService(fixture, {
+			withInstallGuard: async (_intent, operation) => {
+				await operation(async () => ++checks === 1)
+				return true
+			},
+		})
+		await service.check('manual')
+		await service.download()
+		await expect(service.openInstaller()).rejects.toThrow('已取消')
+		expect(openPath).not.toHaveBeenCalled()
+		expect(service.state().lastInstallAttempt).toBeUndefined()
+		await expect(
+			readFile(path.join(tempDir, 'update-install-attempt.json'), 'utf8'),
+		).rejects.toMatchObject({ code: 'ENOENT' })
+	})
+
+	it('rejects altered or expired attempts and never confirms a third version', async () => {
+		const { fixture } = createV2Fixture('darwin')
+		const attemptPath = path.join(tempDir, 'update-install-attempt.json')
+		const { service } = createService(fixture, {
+			withInstallGuard: async (_intent, operation) => {
+				await operation(async () => true)
+				return true
+			},
+		})
+		await service.check('manual')
+		await service.download()
+		await service.openInstaller()
+		const original = await readFile(attemptPath, 'utf8')
+		for (const mutated of [
+			{ ...(JSON.parse(original) as Record<string, unknown>), artifactSha512: sha512('wrong') },
+			{ ...(JSON.parse(original) as Record<string, unknown>), expiresAt: NOW - 1 },
+			{ ...(JSON.parse(original) as Record<string, unknown>), eventToken: 'x'.repeat(4_097) },
+		]) {
+			await writeFile(attemptPath, JSON.stringify(mutated))
+			const target = createService(fixture, { currentVersion: '0.1.1' }).service
+			target.start()
+			await vi.waitFor(async () =>
+				expect(await readdir(tempDir)).not.toContain('update-install-attempt.json'),
+			)
+			expect(target.state().lastInstallAttempt).toBeUndefined()
+			target.stop()
+		}
+		await writeFile(attemptPath, original)
+		const third = createService(fixture, { currentVersion: '0.1.2' }).service
+		third.start()
+		await vi.waitFor(async () =>
+			expect(await readdir(tempDir)).not.toContain('update-install-attempt.json'),
+		)
+		expect(fixture.events.filter((event) => event.stage === 'target-started')).toHaveLength(0)
+		third.stop()
+	})
+
+	it('retries a target-started event after network failure, then clears the local secret', async () => {
+		const { fixture } = createV2Fixture('darwin')
+		const { service } = createService(fixture, {
+			withInstallGuard: async (_intent, operation) => {
+				await operation(async () => true)
+				return true
+			},
+		})
+		await service.check('manual')
+		await service.download()
+		await service.openInstaller()
+		let offline = true
+		const originalFetch = fixture.fetchImpl
+		const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+			if (
+				new URL(String(input)).pathname === '/v1/client/update-events' &&
+				JSON.parse(String(init?.body)).stage === 'target-started' &&
+				offline
+			) {
+				throw new TypeError('offline')
+			}
+			return originalFetch(input, init)
+		})
+		const target = createService(fixture, { currentVersion: '0.1.1', fetchImpl }).service
+		target.start()
+		await vi.waitFor(() => expect(target.state().lastInstallAttempt?.status).toBe('unconfirmed'))
+		offline = false
+		await target.check('manual')
+		await vi.waitFor(() => expect(target.state().lastInstallAttempt?.status).toBe('confirmed'))
+		expect(fixture.events.filter((event) => event.stage === 'target-started')).toHaveLength(1)
+		target.stop()
+	})
+
+	it('ends confirmation on HTTP 401 without claiming an installed target', async () => {
+		const { fixture } = createV2Fixture('darwin')
+		const { service } = createService(fixture, {
+			withInstallGuard: async (_intent, operation) => {
+				await operation(async () => true)
+				return true
+			},
+		})
+		await service.check('manual')
+		await service.download()
+		await service.openInstaller()
+		const originalFetch = fixture.fetchImpl
+		const fetchImpl = vi.fn<typeof fetch>(async (input, init) =>
+			new URL(String(input)).pathname === '/v1/client/update-events' &&
+			JSON.parse(String(init?.body)).stage === 'target-started'
+				? new Response(null, { status: 401 })
+				: originalFetch(input, init),
+		)
+		const target = createService(fixture, { currentVersion: '0.1.1', fetchImpl }).service
+		target.start()
+		await vi.waitFor(async () =>
+			expect(await readdir(tempDir)).not.toContain('update-install-attempt.json'),
+		)
+		expect(target.state().lastInstallAttempt?.status).not.toBe('confirmed')
+		target.stop()
+	})
+
+	it('does not publish confirmation after stop while the event request is pending', async () => {
+		const { fixture } = createV2Fixture('darwin')
+		const { service } = createService(fixture, {
+			withInstallGuard: async (_intent, operation) => {
+				await operation(async () => true)
+				return true
+			},
+		})
+		await service.check('manual')
+		await service.download()
+		await service.openInstaller()
+		let finishEvent: (() => void) | undefined
+		const originalFetch = fixture.fetchImpl
+		const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+			if (
+				new URL(String(input)).pathname === '/v1/client/update-events' &&
+				JSON.parse(String(init?.body)).stage === 'target-started'
+			) {
+				return new Promise<Response>((resolve) => {
+					finishEvent = () => resolve(new Response(null, { status: 202 }))
+				})
+			}
+			return originalFetch(input, init)
+		})
+		const onStateChange = vi.fn()
+		const target = createService(fixture, {
+			currentVersion: '0.1.1',
+			fetchImpl,
+			onStateChange,
+		}).service
+		target.start()
+		await vi.waitFor(() => expect(finishEvent).toBeDefined())
+		const stateCount = onStateChange.mock.calls.length
+		target.stop()
+		finishEvent?.()
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(onStateChange).toHaveBeenCalledTimes(stateCount)
+		expect(target.state().lastInstallAttempt?.status).toBe('unconfirmed')
+		expect(await readdir(tempDir)).toContain('update-install-attempt.json')
+	})
 	it('keeps workspace access available for schema 2 optional policy and rejects mandatory', async () => {
 		const { fixture } = createV2Fixture('darwin')
 		const { service } = createService(fixture)
@@ -876,6 +1144,12 @@ describe('DesktopUpdateService platform-unsigned flow', () => {
 		const installerPath = path.join(tempDir, 'download.exe')
 		await writeFile(installerPath, Buffer.from('manual-unsigned-windows-installer'))
 		const updater = createNsisPort(metadata, installerPath)
+		updater.quitAndInstall = vi.fn(() => {
+			const stored = JSON.parse(
+				readFileSync(path.join(tempDir, 'update-install-attempt.json'), 'utf8'),
+			) as Record<string, unknown>
+			expect(stored.handoff).toBe('prepared')
+		})
 		const withInstallGuard = vi.fn(
 			async (
 				_intent: 'open-dmg' | 'restart' | 'quit',
@@ -981,6 +1255,11 @@ describe('DesktopUpdateService platform-unsigned flow', () => {
 		await pending
 		await expect(service.restartInstall()).rejects.toThrow('spawn failed')
 		expect(service.state().phase).toBe('error')
+		await vi.waitFor(async () =>
+			expect(
+				JSON.parse(await readFile(path.join(tempDir, 'update-install-attempt.json'), 'utf8')),
+			).toMatchObject({ handoff: 'failed' }),
+		)
 		await vi.waitFor(() =>
 			expect(
 				fixture.events.filter((event) => event.stage === 'handoff').map((event) => event.result),
@@ -988,6 +1267,15 @@ describe('DesktopUpdateService platform-unsigned flow', () => {
 		)
 		await expect(service.check('manual')).resolves.toMatchObject({ phase: 'available' })
 		expect(updater.removeListener).toHaveBeenCalledWith('error', expect.any(Function))
+		const target = createService(fixture, {
+			currentVersion: '0.1.1',
+			platform: 'win32',
+			arch: 'x64',
+		}).service
+		target.start()
+		await vi.waitFor(() => expect(target.state().lastInstallAttempt?.status).toBe('failed'))
+		expect(fixture.events.filter((event) => event.stage === 'target-started')).toHaveLength(0)
+		target.stop()
 	})
 
 	it('reports an asynchronous NSIS handoff error after updater accepts the request', async () => {
@@ -995,6 +1283,8 @@ describe('DesktopUpdateService platform-unsigned flow', () => {
 		const installerPath = path.join(tempDir, 'download.exe')
 		await writeFile(installerPath, Buffer.from('manual-unsigned-windows-installer'))
 		const updater = createNsisPort(metadata, installerPath)
+		const nextUpdater = createNsisPort(metadata, installerPath)
+		let updaterCreates = 0
 		let onError: ((error: Error) => void) | undefined
 		updater.on = vi.fn((event, listener) => {
 			if (event === 'error') onError = listener
@@ -1002,7 +1292,7 @@ describe('DesktopUpdateService platform-unsigned flow', () => {
 		const { service } = createService(fixture, {
 			platform: 'win32',
 			arch: 'x64',
-			createNsisUpdater: async () => updater,
+			createNsisUpdater: async () => (++updaterCreates === 1 ? updater : nextUpdater),
 			withInstallGuard: async (_intent, operation) => {
 				await operation(async () => true)
 				return true
@@ -1013,11 +1303,32 @@ describe('DesktopUpdateService platform-unsigned flow', () => {
 		await service.restartInstall()
 		onError?.(new Error('installer spawn failed'))
 		expect(service.state()).toMatchObject({ phase: 'error', message: 'installer spawn failed' })
+		await vi.waitFor(async () =>
+			expect(
+				JSON.parse(await readFile(path.join(tempDir, 'update-install-attempt.json'), 'utf8')),
+			).toMatchObject({ handoff: 'failed' }),
+		)
 		await vi.waitFor(() =>
 			expect(
 				fixture.events.filter((event) => event.stage === 'handoff').map((event) => event.result),
 			).toEqual(['start', 'success', 'failure']),
 		)
+		await service.check('manual')
+		await writeFile(installerPath, Buffer.from('manual-unsigned-windows-installer'))
+		await service.download()
+		await service.restartInstall()
+		const nextAttempt = JSON.parse(
+			await readFile(path.join(tempDir, 'update-install-attempt.json'), 'utf8'),
+		) as Record<string, unknown>
+		expect(nextAttempt.handoff).toBe('accepted')
+		onError?.(new Error('late error from the previous updater'))
+		await new Promise((resolve) => setTimeout(resolve, 0))
+		expect(
+			JSON.parse(await readFile(path.join(tempDir, 'update-install-attempt.json'), 'utf8')),
+		).toMatchObject({
+			attemptId: nextAttempt.attemptId,
+			handoff: 'accepted',
+		})
 	})
 
 	it('does not mark a download ready when policy is withdrawn during transfer', async () => {

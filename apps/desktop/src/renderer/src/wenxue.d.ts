@@ -204,6 +204,7 @@ declare global {
 				check(reason?: 'manual' | 'signal'): Promise<UpdateMutationResult>
 				download(): Promise<UpdateMutationResult>
 				openInstaller(): Promise<UpdateMutationResult>
+				openManualDownload(): Promise<UpdateMutationResult>
 				restartInstall(): Promise<UpdateMutationResult>
 				onStateChange(cb: (state: UpdateState) => void): () => void
 			}

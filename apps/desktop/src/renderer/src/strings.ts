@@ -486,6 +486,12 @@ export const strings = {
 		checkError: '更新检查失败，请检查网络后重试。',
 		downloadError: '更新下载失败，请检查网络后重试。',
 		installError: '无法打开安装包，请稍后重试。',
+		manualDownloadError: '无法打开手动下载页面，请稍后重试。',
+		lastInstallAttempt: {
+			unconfirmed: '尚未确认目标版本启动，不能据此判断安装成功或失败。',
+			confirmed: '目标版本已启动。',
+			failed: '上次更新交接失败，可重新检查更新。',
+		},
 		checkAction: '检查更新',
 		checkingAction: '正在检查',
 		dismissWarning: '关闭更新提示',

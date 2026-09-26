@@ -361,7 +361,9 @@ export function ReleasePage({
 								<p>
 									{selectedCandidate?.schemaVersion === 2
 										? 'macOS 打开 DMG 后手动覆盖；Windows 可在退出时安装或立即重启更新。'
-										: '用户主动下载并打开未签名安装包，安装过程由操作系统接管。'}
+										: selectedCandidate
+											? '用户下载并打开未签名安装包，后续安装由操作系统接管。'
+											: '选择已验证候选后预览各平台的更新操作。'}
 								</p>
 							</div>
 						</div>
@@ -429,7 +431,7 @@ export function ReleasePage({
 					<div>
 						<h2>发布记录</h2>
 						<p>
-							暂停和撤回会立即阻止客户端开始新的下载或打开安装包；匿名健康事件仅反映交接结果，供人工参考。
+							暂停和撤回会阻止新的下载或安装交接；目标版本启动反馈单独显示，未收到反馈不代表安装失败。
 						</p>
 					</div>
 					<button
@@ -664,11 +666,20 @@ function ReleaseHealthCell({
 				<HealthStage label="检查" health={health.stages.check} />
 				<HealthStage label="下载" health={health.stages.download} />
 				<HealthStage label="安装包交接" health={health.stages.handoff} />
+				<span title="仅统计已收到的启动确认；未反馈不代表失败。">
+					<strong>目标版本已启动</strong>{' '}
+					{health.stages.targetStarted
+						? health.stages.targetStarted.success === 0
+							? '0（未收到）'
+							: health.stages.targetStarted.success
+						: '未知'}
+				</span>
 			</div>
 			<span>
 				{failureRate === null
 					? '尚无安装包交接结果'
-					: `安装包打开失败率 ${formatPercent(failureRate)}`}
+					: `安装包交接失败率 ${formatPercent(failureRate)}`}
+				{failureRate !== null ? ' · 交接成功不代表安装完成' : ''}
 				{aboveThreshold ? ' · 超过 2%' : ''}
 				{health.truncated ? ' · 数据已截断，不用于自动判断' : ''}
 				{!health.truncated && handoffSamples > 0 && handoffSamples < 50

@@ -115,6 +115,27 @@ test('ready manual downloads hand off to the operating-system installer without 
 	assert.doesNotMatch(markup, /重启并安装|安装成功/)
 })
 
+test('shows manual Windows fallback even when retry is unavailable, and describes only local attempt status', () => {
+	const markup = renderToStaticMarkup(
+		h(UpdateDialog, {
+			presentation: 'preview',
+			state: {
+				phase: 'error',
+				message: '后台下载失败',
+				retryable: false,
+				manualDownloadAvailable: true,
+				lastInstallAttempt: { targetVersion: '1.1.0', status: 'unconfirmed' },
+			},
+			onManualDownload: () => undefined,
+		}),
+	)
+	assert.match(markup, /手动下载安装包/)
+	assert.match(markup, /更新尝试已记录，等待新版启动确认/)
+	assert.doesNotMatch(markup, /已交接/)
+	assert.doesNotMatch(markup, />重试</)
+	assert.doesNotMatch(markup, /安装成功/)
+})
+
 test('platform Windows update offers background download and both safe install intents', () => {
 	const release = {
 		releaseId: 'release-2',
