@@ -111,6 +111,8 @@ export function UpdateDialog({
 	onDismiss,
 	onDownload,
 	onOpenInstaller,
+	onRestartInstall,
+	onManualDownload,
 	onRetry,
 	onExit,
 }) {
@@ -119,7 +121,10 @@ export function UpdateDialog({
 	const bodyId = useId()
 	const release = 'release' in state ? state.release : undefined
 	const mandatory = release?.mode === 'mandatory'
-	const manualUnsigned = release?.distribution.mode === 'manual-unsigned'
+	const unsigned =
+		release?.distribution.mode === 'manual-unsigned' ||
+		release?.distribution.mode === 'platform-unsigned'
+	const installAction = release?.installAction ?? 'open-installer'
 	const dismissible = !mandatory
 	const phaseOwnsCopy =
 		state.phase === 'checking' || state.phase === 'opening' || state.phase === 'handedOff'
@@ -194,7 +199,7 @@ export function UpdateDialog({
 					h('span', null, formatBytes(release.size)),
 					mandatory && h('span', { className: 'wx-ops-required' }, '强制更新'),
 				),
-			manualUnsigned &&
+			unsigned &&
 				h(
 					'div',
 					{ className: 'wx-ops-unsigned-notice', role: 'note' },
@@ -206,7 +211,31 @@ export function UpdateDialog({
 						' macOS Gatekeeper 或 Windows SmartScreen 可能显示安全警告；Ed25519 仅校验来源和文件完整性。',
 					),
 				),
+			state.phase === 'ready' &&
+				installAction === 'open-dmg' &&
+				h(
+					'p',
+					{ className: 'wx-ops-body' },
+					'打开 DMG 后，请手动覆盖问学应用；重新启动新版后才能确认更新完成。',
+				),
+			state.phase === 'ready' &&
+				installAction === 'restart' &&
+				h(
+					'p',
+					{ className: 'wx-ops-body' },
+					'安装包已在后台下载并校验。可正常退出时安装，或现在确认关闭问学浏览器并重启更新。',
+				),
 			state.phase === 'downloading' && h(DownloadProgressView, { progress: state.progress }),
+			state.lastInstallAttempt &&
+				h(
+					'p',
+					{ className: 'wx-ops-body', role: 'status' },
+					state.lastInstallAttempt.status === 'confirmed'
+						? `已确认 v${state.lastInstallAttempt.targetVersion} 启动。`
+						: state.lastInstallAttempt.status === 'failed'
+							? `v${state.lastInstallAttempt.targetVersion} 的安装器交接失败，可重试。`
+							: `v${state.lastInstallAttempt.targetVersion} 的更新尝试已记录，等待新版启动确认。`,
+				),
 			h(
 				'div',
 				{ className: 'wx-ops-actions' },
@@ -216,6 +245,8 @@ export function UpdateDialog({
 					onDismiss,
 					onDownload,
 					onOpenInstaller,
+					onRestartInstall,
+					onManualDownload,
 					onRetry,
 					onExit,
 				}),
@@ -257,10 +288,14 @@ function renderUpdateActions({
 	onDismiss,
 	onDownload,
 	onOpenInstaller,
+	onRestartInstall,
+	onManualDownload,
 	onRetry,
 	onExit,
 }) {
 	const actions = []
+	const installAction =
+		'release' in state ? (state.release.installAction ?? 'open-installer') : 'open-installer'
 	if (!mandatory && onDismiss && state.phase !== 'opening') {
 		actions.push(
 			h(
@@ -300,36 +335,83 @@ function renderUpdateActions({
 					type: 'button',
 					onClick: onDownload,
 				},
-				'下载更新',
+				installAction === 'open-installer' ? '下载更新' : '后台下载更新',
 			),
 		)
 	} else if (state.phase === 'ready' || state.phase === 'handedOff') {
-		actions.push(
-			h(
-				'button',
-				{
-					key: 'open-installer',
-					className: 'wx-ops-button wx-ops-button--primary',
-					type: 'button',
-					onClick: onOpenInstaller,
-				},
-				state.phase === 'handedOff' ? '再次打开安装包' : '打开安装包',
-			),
-		)
-	} else if (state.phase === 'error' && state.retryable) {
-		actions.push(
-			h(
-				'button',
-				{
-					key: 'retry',
-					className: 'wx-ops-button wx-ops-button--primary',
-					type: 'button',
-					onClick: onRetry,
-				},
-				h(RefreshCw, { size: 15, 'aria-hidden': true }),
-				'重试',
-			),
-		)
+		if (installAction === 'restart') {
+			if (state.phase === 'ready') {
+				actions.push(
+					h(
+						'button',
+						{
+							key: 'install-on-quit',
+							className: 'wx-ops-button wx-ops-button--secondary',
+							type: 'button',
+							onClick: onExit,
+						},
+						'退出并安装',
+					),
+					h(
+						'button',
+						{
+							key: 'restart-install',
+							className: 'wx-ops-button wx-ops-button--primary',
+							type: 'button',
+							onClick: onRestartInstall,
+						},
+						'立即重启更新',
+					),
+				)
+			}
+		} else
+			actions.push(
+				h(
+					'button',
+					{
+						key: 'open-installer',
+						className: 'wx-ops-button wx-ops-button--primary',
+						type: 'button',
+						onClick: onOpenInstaller,
+					},
+					installAction === 'open-dmg'
+						? state.phase === 'handedOff'
+							? '再次打开 DMG'
+							: '打开 DMG'
+						: state.phase === 'handedOff'
+							? '再次打开安装包'
+							: '打开安装包',
+				),
+			)
+	} else if (state.phase === 'error') {
+		if (state.retryable)
+			actions.push(
+				h(
+					'button',
+					{
+						key: 'retry',
+						className: 'wx-ops-button wx-ops-button--primary',
+						type: 'button',
+						onClick: onRetry,
+					},
+					h(RefreshCw, { size: 15, 'aria-hidden': true }),
+					'重试',
+				),
+			)
+		if (state.manualDownloadAvailable && onManualDownload) {
+			actions.push(
+				h(
+					'button',
+					{
+						key: 'manual-download',
+						className: 'wx-ops-button wx-ops-button--secondary',
+						type: 'button',
+						onClick: onManualDownload,
+					},
+					'手动下载安装包',
+				),
+			)
+		}
 	} else if (
 		state.phase === 'downloading' ||
 		state.phase === 'opening' ||

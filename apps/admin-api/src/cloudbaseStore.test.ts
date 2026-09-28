@@ -919,3 +919,264 @@ describe('createCloudBaseAdminStore', () => {
 		expect(url.searchParams.has('skip')).toBe(false)
 	})
 })
+
+describe('transactional public download pointers', () => {
+	const slotKey = 'desktop_release_rollouts/release-slot:electron:stable'
+	function fixture() {
+		const transaction = createTransactionDatabase()
+		const store = createCloudBaseAdminStore({
+			envId: ENV_ID,
+			apiKey: API_KEY,
+			fetchImpl: createFetch([]).fetchImpl,
+			transactionDatabase: transaction.transactionDatabase,
+		})
+		function candidate(version: string, overrides: Record<string, unknown> = {}) {
+			const record = {
+				_id: `candidate:${version}`,
+				version,
+				runtime: 'electron',
+				channel: 'stable',
+				status: 'verified',
+				artifacts: [
+					{
+						platform: 'darwin',
+						arch: 'arm64',
+						kind: 'dmg',
+						url: 'https://example.test/app.dmg',
+						sha512: Buffer.alloc(64, 1).toString('base64'),
+						size: 1024,
+					},
+					{
+						platform: 'win32',
+						arch: 'x64',
+						kind: 'nsis',
+						url: 'https://example.test/app.exe',
+						sha512: Buffer.alloc(64, 1).toString('base64'),
+						size: 1024,
+					},
+				],
+				...overrides,
+			}
+			transaction.documents.set(`desktop_release_candidates/${record._id}`, record)
+			return record
+		}
+		async function publish(version: string, percentage = 100, eligible = true) {
+			const record = {
+				_id: `rollout:${version}`,
+				releaseId: `candidate:${version}`,
+				runtime: 'electron',
+				channel: 'stable',
+				status: 'active',
+				percentage,
+				publishedAt: '2026-09-29T00:00:00.000Z',
+				publishedBy: 'admin',
+			}
+			return store.commitReleasePublication(record, { _id: `audit:${version}` }, [], {
+				candidateVersion: version,
+				publicDownloadEligible: eligible,
+			})
+		}
+		async function transition(version: string, status: string) {
+			const current = transaction.documents.get(`desktop_release_rollouts/rollout:${version}`)!
+			return store.commitReleaseState(
+				{ ...current, status, updatedAt: '2026-09-29T01:00:00.000Z' },
+				{ _id: `audit:${version}:${status}` },
+				String(current.status),
+			)
+		}
+		return {
+			...transaction,
+			store,
+			candidate,
+			publish,
+			transition,
+			slot: () => transaction.documents.get(slotKey)!,
+		}
+	}
+
+	it('preserves a prior full download during gray publication and switches atomically at full', async () => {
+		const f = fixture()
+		f.candidate('1.0.0')
+		await f.publish('1.0.0')
+		expect(f.slot()).toMatchObject({
+			publicDownloadRolloutId: 'rollout:1.0.0',
+			publicDownloadHistoryIds: ['rollout:1.0.0'],
+		})
+		f.candidate('1.1.0')
+		await f.publish('1.1.0', 25)
+		expect(f.slot().publicDownloadRolloutId).toBe('rollout:1.0.0')
+		expect(f.documents.get('desktop_release_rollouts/rollout:1.0.0')?.status).toBe('superseded')
+		f.candidate('1.2.0')
+		await f.publish('1.2.0')
+		expect(f.slot()).toMatchObject({
+			publicDownloadRolloutId: 'rollout:1.2.0',
+			publicDownloadHistoryIds: ['rollout:1.2.0', 'rollout:1.0.0'],
+		})
+		expect(f.documents.get('desktop_release_rollouts/rollout:1.2.0')?.publicDownloadEligible).toBe(
+			true,
+		)
+		expect(f.documents.get('desktop_release_signal/electron:stable')?.revision).toBe(3)
+		expect(f.documents.has('admin_dispatch_audit/audit:1.2.0')).toBe(true)
+		await f.transition('1.2.0', 'paused')
+		expect(f.slot().publicDownloadRolloutId).toBe('rollout:1.0.0')
+		await f.transition('1.2.0', 'active')
+		expect(f.slot().publicDownloadRolloutId).toBe('rollout:1.2.0')
+		await f.transition('1.2.0', 'withdrawn')
+		expect(f.slot().publicDownloadRolloutId).toBe('rollout:1.0.0')
+	})
+
+	it('does not revive a paused older release after it becomes superseded', async () => {
+		const f = fixture()
+		f.candidate('1.0.0')
+		await f.publish('1.0.0')
+		await f.transition('1.0.0', 'paused')
+		expect(f.slot().publicDownloadHistoryIds).toEqual([])
+		f.candidate('1.1.0')
+		await f.publish('1.1.0')
+		expect(f.documents.get('desktop_release_rollouts/rollout:1.0.0')?.status).toBe('superseded')
+		await f.transition('1.1.0', 'withdrawn')
+		expect(f.slot().publicDownloadRolloutId).toBeNull()
+		expect(f.slot().publicDownloadHistoryIds).toEqual([])
+	})
+
+	it.each([
+		['unverified', { status: 'pending' }],
+		['beta', { channel: 'beta' }],
+		['prerelease', { version: '1.0.0-beta.4' }],
+		['other runtime', { runtime: 'chromium' }],
+		['missing target', { artifacts: [] }],
+		['mismatched identity', { _id: 'different' }],
+	])('does not enroll %s candidates in a full transaction', async (_name, overrides) => {
+		const f = fixture()
+		f.candidate('1.0.0', overrides)
+		await f.publish('1.0.0')
+		expect(f.slot().publicDownloadRolloutId).toBeNull()
+		expect(f.slot().publicDownloadHistoryIds).toEqual([])
+		expect(
+			f.documents.get('desktop_release_rollouts/rollout:1.0.0')?.publicDownloadEligible,
+		).toBeUndefined()
+	})
+
+	it('does not migrate legacy records when they resume', async () => {
+		const f = fixture()
+		f.candidate('1.0.0')
+		await f.publish('1.0.0', 100, false)
+		await f.transition('1.0.0', 'paused')
+		await f.transition('1.0.0', 'active')
+		expect(f.slot().publicDownloadRolloutId).toBeNull()
+	})
+
+	it('checks the candidate again before resume or historical fallback', async () => {
+		const f = fixture()
+		f.candidate('1.0.0')
+		await f.publish('1.0.0')
+		f.candidate('1.1.0')
+		await f.publish('1.1.0')
+		f.candidate('1.0.0', { status: 'pending' })
+		await f.transition('1.1.0', 'paused')
+		expect(f.slot().publicDownloadRolloutId).toBeNull()
+		f.candidate('1.1.0', { artifacts: [] })
+		await f.transition('1.1.0', 'active')
+		expect(f.slot().publicDownloadRolloutId).toBeNull()
+	})
+
+	it('retains at most 20 explicit full releases without guessing older history', async () => {
+		const f = fixture()
+		for (let index = 0; index < 22; index++) {
+			f.candidate(`1.0.${index}`)
+			await f.publish(`1.0.${index}`)
+		}
+		expect(f.slot().publicDownloadHistoryIds).toHaveLength(20)
+		expect(f.slot().publicDownloadHistoryIds).not.toContain('rollout:1.0.0')
+		const writes = f.writes.length
+		await f.publish('1.0.21')
+		expect(f.writes).toHaveLength(writes)
+	})
+
+	it('withdraws a retained superseded public download without disturbing the active gray rollout', async () => {
+		const f = fixture()
+		for (const version of ['1.0.0', '1.1.0', '1.2.0']) {
+			f.candidate(version)
+			await f.publish(version, version === '1.2.0' ? 25 : 100)
+		}
+		expect(f.slot().publicDownloadRolloutId).toBe('rollout:1.1.0')
+		await f.transition('1.1.0', 'withdrawn')
+		expect(f.slot()).toMatchObject({
+			publicDownloadRolloutId: 'rollout:1.0.0',
+			publicDownloadHistoryIds: ['rollout:1.0.0'],
+			currentRolloutId: 'rollout:1.2.0',
+			activeRolloutId: 'rollout:1.2.0',
+			highestVersion: '1.2.0',
+		})
+		expect(f.documents.get('desktop_release_rollouts/rollout:1.2.0')?.status).toBe('active')
+		expect(f.documents.get('desktop_release_signal/electron:stable')?.revision).toBe(4)
+		const writes = f.writes.length
+		await f.transition('1.1.0', 'withdrawn')
+		expect(f.writes).toHaveLength(writes)
+		await f.transition('1.0.0', 'withdrawn')
+		expect(f.slot().publicDownloadRolloutId).toBeNull()
+		expect(f.slot().activeRolloutId).toBe('rollout:1.2.0')
+	})
+
+	it('keeps a valid current full download when withdrawing an older retained rollout', async () => {
+		const f = fixture()
+		f.candidate('1.0.0')
+		await f.publish('1.0.0')
+		f.candidate('1.1.0')
+		await f.publish('1.1.0')
+		await f.transition('1.0.0', 'withdrawn')
+		expect(f.slot()).toMatchObject({
+			publicDownloadRolloutId: 'rollout:1.1.0',
+			publicDownloadHistoryIds: ['rollout:1.1.0'],
+			currentRolloutId: 'rollout:1.1.0',
+			activeRolloutId: 'rollout:1.1.0',
+			highestVersion: '1.1.0',
+		})
+	})
+
+	it('withdraws superseded records that were never retained and forbids resuming history', async () => {
+		const f = fixture()
+		f.candidate('1.0.0')
+		await f.publish('1.0.0', 25)
+		f.candidate('1.1.0')
+		await f.publish('1.1.0')
+		await f.transition('1.0.0', 'withdrawn')
+		expect(f.slot()).toMatchObject({
+			publicDownloadRolloutId: 'rollout:1.1.0',
+			currentRolloutId: 'rollout:1.1.0',
+			activeRolloutId: 'rollout:1.1.0',
+			highestVersion: '1.1.0',
+		})
+		f.candidate('1.2.0')
+		await f.publish('1.2.0')
+		await expect(f.transition('1.1.0', 'active')).rejects.toThrow('can only be withdrawn')
+		expect(f.slot().publicDownloadRolloutId).toBe('rollout:1.2.0')
+	})
+
+	it.each([false, true])(
+		'preserves legacy active pointer absence when withdrawing history (hasSlot=%s)',
+		async (hasSlot) => {
+			const f = fixture()
+			f.documents.set('desktop_release_rollouts/rollout:legacy', {
+				_id: 'rollout:legacy',
+				runtime: 'electron',
+				channel: 'stable',
+				status: 'superseded',
+				releaseId: 'candidate:legacy',
+				percentage: 100,
+			})
+			if (hasSlot)
+				f.documents.set(slotKey, { _id: 'release-slot:electron:stable', highestVersion: '1.2.0' })
+			await f.transition('legacy', 'withdrawn')
+			if (hasSlot) {
+				expect(f.slot()).not.toHaveProperty('activeRolloutId')
+				expect(f.slot()).not.toHaveProperty('currentRolloutId')
+				expect(f.slot().highestVersion).toBe('1.2.0')
+			} else {
+				expect(f.documents.has(slotKey)).toBe(false)
+			}
+			expect(f.documents.get('desktop_release_rollouts/rollout:legacy')?.status).toBe('withdrawn')
+			expect(f.documents.get('desktop_release_signal/electron:stable')?.revision).toBe(1)
+		},
+	)
+})

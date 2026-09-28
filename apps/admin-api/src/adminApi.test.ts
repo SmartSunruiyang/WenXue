@@ -289,7 +289,11 @@ function createStore(state: StoreState) {
 			record: Record<string, unknown>,
 			audit: Record<string, unknown>,
 			legacyRolloutIds: string[] = [],
-			versionGuard?: { candidateVersion: string; highestPublishedVersion?: string },
+			versionGuard?: {
+				candidateVersion: string
+				highestPublishedVersion?: string
+				publicDownloadEligible?: boolean
+			},
 		) {
 			const existing = state.releases.find((release) => release._id === record._id)
 			if (existing) return { created: false, record: existing }
@@ -563,6 +567,28 @@ function createArtifact(platform: string, arch: string, kind: string) {
 	}
 }
 
+function createPlatformManifest(fingerprint: string, overrides: Record<string, unknown> = {}) {
+	const nsis = createArtifact('win32', 'x64', 'nsis')
+	return createReleaseManifest({
+		schemaVersion: 2,
+		sourceCoordinates: {
+			...createReleaseManifest().sourceCoordinates,
+			releasePublicKeyFingerprint: fingerprint,
+		},
+		distribution: { mode: 'platform-unsigned' },
+		artifacts: [
+			createArtifact('darwin', 'arm64', 'dmg'),
+			nsis,
+			{
+				...createArtifact('win32', 'x64', 'nsis-yaml'),
+				fileName: 'latest.yml',
+				url: 'https://updates.example.test/artifacts/latest.yml',
+			},
+		],
+		...overrides,
+	})
+}
+
 function candidateRecord(manifest = createReleaseManifest()) {
 	return {
 		...manifest,
@@ -597,6 +623,33 @@ function signedReleaseRegistration(manifest: ReturnType<typeof createReleaseMani
 				privateKey,
 			).toString('base64'),
 			publicKeyFingerprint: keyFingerprint(publicKey),
+		},
+	}
+}
+
+function signedPlatformRegistration(overrides: Record<string, unknown> = {}) {
+	const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+	const manifest = createPlatformManifest(keyFingerprint(publicKey), overrides)
+	return {
+		manifest,
+		privateKey,
+		request: {
+			method: 'POST',
+			headers: { authorization: 'Bearer ci-token' },
+			env: {
+				releaseCiToken: 'ci-token',
+				releaseManifestPublicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+			},
+			body: {
+				manifestUrl: manifest.manifestUrl,
+				manifest,
+				manifestSignature: sign(
+					null,
+					Buffer.from(sharedCanonicalJson(manifest)),
+					privateKey,
+				).toString('base64'),
+				publicKeyFingerprint: keyFingerprint(publicKey),
+			},
 		},
 	}
 }
@@ -1354,6 +1407,198 @@ describe('AdminApi announcement dispatch', () => {
 })
 
 describe('AdminApi release dispatch', () => {
+	it('registers and reads a signed platform release, gates old clients, and keeps Windows metadata paired', async () => {
+		const { manifest, request: registration } = signedPlatformRegistration()
+		const state = createState()
+		const registered = await request(
+			'/internal/v1/release-candidates/register',
+			state,
+			registration,
+		)
+		const replay = await request('/internal/v1/release-candidates/register', state, registration)
+		const listed = await request('/admin/v1/release-candidates', state)
+		expect(registered.statusCode).toBe(200)
+		expect(parseBody(replay)).toEqual(parseBody(registered))
+		expect(parseBody(registered).candidate).toMatchObject({
+			schemaVersion: 2,
+			distribution: { mode: 'platform-unsigned' },
+			artifacts: manifest.artifacts,
+		})
+		expect(parseBody(listed).candidates[0]).toEqual(parseBody(registered).candidate)
+		const mandatory = await request('/admin/v1/release-publish', state, {
+			method: 'POST',
+			body: {
+				candidateId: manifest.releaseId,
+				title: '更新',
+				notes: '说明',
+				percentage: 100,
+				mode: 'mandatory',
+			},
+		})
+		expect(mandatory.statusCode).toBe(400)
+		const published = await request('/admin/v1/release-publish', state, {
+			method: 'POST',
+			body: {
+				candidateId: manifest.releaseId,
+				title: '更新',
+				notes: '说明',
+				percentage: 100,
+				mode: 'optional',
+			},
+		})
+		expect(published.statusCode).toBe(201)
+		const baseQuery = {
+			runtime: 'electron',
+			platform: 'win32',
+			arch: 'x64',
+			channel: 'stable',
+			version: '0.1.0',
+			installIdHash: 'a'.repeat(64),
+		}
+		const oldPolicy = await request('/v1/client/update-policy', state, { query: baseQuery })
+		const newPolicy = await request('/v1/client/update-policy', state, {
+			query: { ...baseQuery, protocolVersion: '2' },
+		})
+		const unknownProtocol = await request('/v1/client/update-policy', state, {
+			query: { ...baseQuery, protocolVersion: '1' },
+		})
+		expect(parseBody(oldPolicy)).toEqual({ policy: null })
+		expect(unknownProtocol.statusCode).toBe(400)
+		expect(parseBody(newPolicy).policy).toMatchObject({
+			schemaVersion: 2,
+			distribution: { mode: 'platform-unsigned' },
+			mode: 'optional',
+		})
+		expect(
+			parseBody(newPolicy).policy.artifacts.map((artifact: { kind: string }) => artifact.kind),
+		).toEqual(['nsis', 'nsis-yaml'])
+		state.releases[0].mode = 'mandatory'
+		const staleMandatory = await request('/v1/client/update-policy', state, {
+			query: { ...baseQuery, protocolVersion: '2' },
+		})
+		expect(parseBody(staleMandatory)).toEqual({ policy: null })
+	})
+
+	it.each([
+		[
+			'unknown schema',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({ ...manifest, schemaVersion: 3 }),
+		],
+		[
+			'missing metadata',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: manifest.artifacts.slice(0, 2),
+			}),
+		],
+		[
+			'extra metadata',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [...manifest.artifacts, manifest.artifacts[2]],
+			}),
+		],
+		[
+			'missing metadata size',
+			(manifest: ReturnType<typeof createReleaseManifest>) => {
+				const metadata = Object.fromEntries(
+					Object.entries(manifest.artifacts[2]).filter(([key]) => key !== 'size'),
+				)
+				return { ...manifest, artifacts: [...manifest.artifacts.slice(0, 2), metadata] }
+			},
+		],
+		[
+			'extra metadata field',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [
+					...manifest.artifacts.slice(0, 2),
+					{ ...manifest.artifacts[2], blockmap: 'unexpected' },
+				],
+			}),
+		],
+		[
+			'wrong target',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [...manifest.artifacts.slice(0, 2), { ...manifest.artifacts[2], arch: 'arm64' }],
+			}),
+		],
+		[
+			'wrong YAML name',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [
+					...manifest.artifacts.slice(0, 2),
+					{ ...manifest.artifacts[2], fileName: 'dev.yml' },
+				],
+			}),
+		],
+		[
+			'different YAML directory',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [
+					...manifest.artifacts.slice(0, 2),
+					{ ...manifest.artifacts[2], url: 'https://updates.example.test/other/latest.yml' },
+				],
+			}),
+		],
+		[
+			'artifact query',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				artifacts: [
+					{ ...manifest.artifacts[0], url: `${manifest.artifacts[0].url}?token=x` },
+					...manifest.artifacts.slice(1),
+				],
+			}),
+		],
+		[
+			'test evidence query',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				tests: [
+					{ ...manifest.tests[0], url: `${manifest.tests[0].url}?token=x` },
+					...manifest.tests.slice(1),
+				],
+			}),
+		],
+		[
+			'missing fingerprint',
+			(manifest: ReturnType<typeof createReleaseManifest>) => ({
+				...manifest,
+				sourceCoordinates: createReleaseManifest().sourceCoordinates,
+			}),
+		],
+	] as const)('rejects signed platform manifest with %s', async (_reason, mutate) => {
+		const { request: registration, privateKey } = signedPlatformRegistration()
+		const manifest = mutate(registration.body.manifest)
+		const response = await request('/internal/v1/release-candidates/register', createState(), {
+			...registration,
+			body: {
+				...registration.body,
+				manifest,
+				manifestSignature: sign(
+					null,
+					Buffer.from(sharedCanonicalJson(manifest)),
+					privateKey,
+				).toString('base64'),
+			},
+		})
+		expect(response.statusCode).toBe(400)
+	})
+
+	it('rejects a tampered platform release signature', async () => {
+		const { request: registration } = signedPlatformRegistration()
+		const state = createState()
+		const response = await request('/internal/v1/release-candidates/register', state, {
+			...registration,
+			body: { ...registration.body, manifest: { ...registration.body.manifest, version: '0.1.2' } },
+		})
+		expect(response.statusCode).toBe(400)
+		expect(state.candidates).toHaveLength(0)
+	})
 	it('registers, rereads, and publishes a signed two-target candidate', async () => {
 		const manifest = createReleaseManifest({
 			artifacts: [createArtifact('darwin', 'arm64', 'dmg'), createArtifact('win32', 'x64', 'nsis')],
@@ -1401,7 +1646,20 @@ describe('AdminApi release dispatch', () => {
 			expect(parseBody(policy).policy.artifacts).toEqual([
 				expect.objectContaining({ platform, arch, kind }),
 			])
+			expect(parseBody(policy).policy).not.toHaveProperty('schemaVersion')
 		}
+		const modernClient = await request('/v1/client/update-policy', state, {
+			query: {
+				runtime: 'electron',
+				platform: 'win32',
+				arch: 'x64',
+				channel: 'stable',
+				version: '0.1.0',
+				installIdHash: 'a'.repeat(64),
+				protocolVersion: '2',
+			},
+		})
+		expect(parseBody(modernClient).policy).not.toHaveProperty('schemaVersion')
 	})
 
 	it.each([
@@ -1777,7 +2035,40 @@ describe('AdminApi release dispatch', () => {
 				check: { success: 1, failure: 0 },
 				download: { success: 1, failure: 0 },
 				handoff: { success: 1, failure: 1 },
+				targetStarted: { success: 0 },
 			},
+			handoffFailureRate: 0.5,
+		})
+	})
+
+	it('counts target startup separately without treating missing reports as installation failures', async () => {
+		const state = createState({
+			releases: [rolloutRecord()],
+			releaseEvents: [
+				{
+					releaseId: 'electron-stable-0.1.1',
+					stage: 'handoff',
+					result: 'success',
+					createdAt: '2026-06-20T00:00:00.000Z',
+				},
+				{
+					releaseId: 'electron-stable-0.1.1',
+					stage: 'handoff',
+					result: 'failure',
+					createdAt: '2026-06-21T00:00:00.000Z',
+				},
+				{
+					releaseId: 'electron-stable-0.1.1',
+					stage: 'target-started',
+					result: 'success',
+					createdAt: '2026-06-22T00:00:00.000Z',
+				},
+			],
+		})
+		const response = await request('/admin/v1/releases', state)
+		expect(parseBody(response).releases[0].health).toMatchObject({
+			sampleCount: 3,
+			stages: { handoff: { success: 1, failure: 1 }, targetStarted: { success: 1 } },
 			handoffFailureRate: 0.5,
 		})
 	})
@@ -2090,6 +2381,144 @@ describe('AdminApi release dispatch', () => {
 		expect(state.releaseEvents).toEqual([])
 	})
 
+	it('accepts only verified target startup and keeps duplicate reports idempotent', async () => {
+		const candidate = candidateRecord()
+		const state = createState({ candidates: [candidate] })
+		const installIdHash = 'a'.repeat(64)
+		const body = {
+			releaseId: candidate._id,
+			installIdHash,
+			eventToken: releaseEventToken(installIdHash),
+			runtime: 'electron',
+			platform: 'darwin',
+			arch: 'arm64',
+			fromVersion: '0.1.0',
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: '0.1.1',
+			artifactSha512: (candidate.artifacts as Array<{ sha512: string }>)[0].sha512,
+		}
+		const accepted = await request('/v1/client/update-events', state, { method: 'POST', body })
+		const duplicate = await request('/v1/client/update-events', state, { method: 'POST', body })
+		expect(accepted.statusCode).toBe(202)
+		expect(duplicate.statusCode).toBe(202)
+		expect(state.releaseEvents).toHaveLength(1)
+		expect(state.releaseEvents[0]).toMatchObject({
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: '0.1.1',
+			artifactSha512: body.artifactSha512,
+		})
+		expect(state.releaseEvents[0]).not.toHaveProperty('eventToken')
+	})
+
+	it('rejects false target startup claims and target fields on older event stages', async () => {
+		const candidate = candidateRecord()
+		const state = createState({ candidates: [candidate] })
+		const installIdHash = 'b'.repeat(64)
+		const body = {
+			releaseId: candidate._id,
+			installIdHash,
+			eventToken: releaseEventToken(installIdHash),
+			runtime: 'electron',
+			platform: 'darwin',
+			arch: 'arm64',
+			fromVersion: '0.1.0',
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: '0.1.1',
+			artifactSha512: (candidate.artifacts as Array<{ sha512: string }>)[0].sha512,
+		}
+		const invalidBodies = [
+			{ ...body, targetVersion: '0.1.2' },
+			{ ...body, artifactSha512: Buffer.alloc(64, 8).toString('base64') },
+			{ ...body, targetVersion: undefined },
+			{ ...body, artifactSha512: undefined },
+			{ ...body, result: 'failure' },
+			{ ...body, errorCode: 'FAILED' },
+			{
+				...body,
+				fromVersion: '0.1.1',
+				eventToken: releaseEventToken(installIdHash, { fromVersion: '0.1.1' }),
+			},
+			{ ...body, stage: 'handoff' },
+			{ ...body, stage: 'check' },
+		]
+		for (const invalidBody of invalidBodies) {
+			const response = await request('/v1/client/update-events', state, {
+				method: 'POST',
+				body: invalidBody,
+			})
+			expect(response.statusCode).toBe(400)
+		}
+		expect(state.releaseEvents).toEqual([])
+	})
+
+	it('keeps target startup bound to the original short-lived event token', async () => {
+		const candidate = candidateRecord()
+		const state = createState({ candidates: [candidate] })
+		const installIdHash = 'c'.repeat(64)
+		const body = {
+			releaseId: candidate._id,
+			installIdHash,
+			eventToken: releaseEventToken(installIdHash),
+			runtime: 'electron',
+			platform: 'darwin',
+			arch: 'arm64',
+			fromVersion: '0.1.0',
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: '0.1.1',
+			artifactSha512: (candidate.artifacts as Array<{ sha512: string }>)[0].sha512,
+		}
+		for (const overrides of [
+			{ eventToken: releaseEventToken(installIdHash, { expiresAt: TEST_NOW - 1 }) },
+			{ eventToken: releaseEventToken('d'.repeat(64)) },
+			{ eventToken: releaseEventToken(installIdHash, { platform: 'win32' }) },
+			{ eventToken: releaseEventToken(installIdHash, { fromVersion: '0.0.1' }) },
+		]) {
+			const response = await request('/v1/client/update-events', state, {
+				method: 'POST',
+				body: { ...body, ...overrides },
+			})
+			expect(response.statusCode).toBe(401)
+		}
+		expect(state.releaseEvents).toEqual([])
+	})
+
+	it('binds Windows target startup to the NSIS package rather than its YAML metadata', async () => {
+		const { manifest } = signedPlatformRegistration()
+		manifest.artifacts.find((artifact) => artifact.kind === 'nsis-yaml')!.sha512 = Buffer.alloc(
+			64,
+			8,
+		).toString('base64')
+		const state = createState({ candidates: [candidateRecord(manifest)] })
+		const installIdHash = 'e'.repeat(64)
+		const body = {
+			releaseId: manifest.releaseId,
+			installIdHash,
+			eventToken: releaseEventToken(installIdHash, { platform: 'win32', arch: 'x64' }),
+			runtime: 'electron',
+			platform: 'win32',
+			arch: 'x64',
+			fromVersion: '0.1.0',
+			stage: 'target-started',
+			result: 'success',
+			targetVersion: manifest.version,
+			artifactSha512: manifest.artifacts.find((artifact) => artifact.kind === 'nsis-yaml')!.sha512,
+		}
+		const yamlHash = await request('/v1/client/update-events', state, { method: 'POST', body })
+		expect(yamlHash.statusCode).toBe(400)
+		const nsisHash = await request('/v1/client/update-events', state, {
+			method: 'POST',
+			body: {
+				...body,
+				artifactSha512: manifest.artifacts.find((artifact) => artifact.kind === 'nsis')!.sha512,
+			},
+		})
+		expect(nsisHash.statusCode).toBe(202)
+	})
+
 	it('deduplicates conflicting final outcomes for one handoff and stage', async () => {
 		const state = createState({ candidates: [candidateRecord()] })
 		const installIdHash = '9'.repeat(64)
@@ -2367,4 +2796,282 @@ describe('Dispatch contract compatibility', () => {
 			)
 		}
 	})
+})
+
+describe('public desktop downloads', () => {
+	function stateWithDownload() {
+		return createState({
+			candidates: [candidateRecord()],
+			releases: [rolloutRecord({ percentage: 100, publicDownloadEligible: true })],
+			releaseSignals: {
+				'electron:stable': {
+					recordType: 'release-slot',
+					runtime: 'electron',
+					channel: 'stable',
+					publicDownloadRolloutId: 'rollout-1',
+					publicDownloadHistoryIds: ['rollout-1'],
+				},
+			},
+		})
+	}
+
+	it('returns just two installers anonymously and strips all release internals', async () => {
+		const state = stateWithDownload()
+		const fetchImpl = vi.fn<typeof fetch>()
+		const response = await request('/v1/public/desktop-downloads', state, {
+			headers: {},
+			fetchImpl,
+		})
+		expect(response.statusCode).toBe(200)
+		expect(response.headers['cache-control']).toBe('no-store')
+		expect(fetchImpl).not.toHaveBeenCalled()
+		expect(parseBody(response)).toEqual({
+			release: {
+				version: '0.1.1',
+				publishedAt: '2026-07-01T01:00:00.000Z',
+				artifacts: [
+					createArtifact('darwin', 'arm64', 'dmg'),
+					createArtifact('win32', 'x64', 'nsis'),
+				].map(({ platform, arch, kind, url, sha512, size }) => ({
+					platform,
+					arch,
+					kind,
+					url,
+					sha512,
+					size,
+				})),
+			},
+		})
+	})
+
+	it('normalizes hex SHA-512 in the public projection without mutating the candidate', async () => {
+		const state = stateWithDownload()
+		const artifacts = state.candidates[0].artifacts as Record<string, unknown>[]
+		artifacts[0].sha512 = 'a'.repeat(128)
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(parseBody(response).release.artifacts[0].sha512).toBe(
+			Buffer.from('a'.repeat(128), 'hex').toString('base64'),
+		)
+		expect(artifacts[0].sha512).toBe('a'.repeat(128))
+	})
+
+	it.each([
+		[
+			'missing slot',
+			(state: StoreState) => {
+				state.releaseSignals = {}
+			},
+		],
+		[
+			'legacy slot',
+			(state: StoreState) => {
+				delete state.releaseSignals['electron:stable'].publicDownloadRolloutId
+			},
+		],
+		[
+			'missing history',
+			(state: StoreState) => {
+				delete state.releaseSignals['electron:stable'].publicDownloadHistoryIds
+			},
+		],
+		[
+			'dangling pointer',
+			(state: StoreState) => {
+				state.releaseSignals['electron:stable'].publicDownloadRolloutId = 'missing'
+			},
+		],
+		[
+			'pointer outside explicit history',
+			(state: StoreState) => {
+				state.releaseSignals['electron:stable'].publicDownloadHistoryIds = []
+			},
+		],
+		[
+			'missing release',
+			(state: StoreState) => {
+				state.releases = []
+			},
+		],
+		[
+			'missing candidate',
+			(state: StoreState) => {
+				state.candidates = []
+			},
+		],
+		[
+			'unverified candidate',
+			(state: StoreState) => {
+				state.candidates[0].status = 'pending'
+			},
+		],
+		[
+			'beta candidate',
+			(state: StoreState) => {
+				state.candidates[0].channel = 'beta'
+			},
+		],
+		[
+			'prerelease version',
+			(state: StoreState) => {
+				state.candidates[0].version = '0.1.1-beta.4'
+			},
+		],
+		[
+			'other runtime',
+			(state: StoreState) => {
+				state.candidates[0].runtime = 'chromium'
+			},
+		],
+		[
+			'gray release',
+			(state: StoreState) => {
+				state.releases[0].percentage = 25
+			},
+		],
+		[
+			'paused release',
+			(state: StoreState) => {
+				state.releases[0].status = 'paused'
+			},
+		],
+		[
+			'withdrawn release',
+			(state: StoreState) => {
+				state.releases[0].status = 'withdrawn'
+			},
+		],
+		[
+			'never explicitly enrolled',
+			(state: StoreState) => {
+				delete state.releases[0].publicDownloadEligible
+			},
+		],
+		[
+			'bad timestamp',
+			(state: StoreState) => {
+				state.releases[0].publishedAt = 'yesterday'
+			},
+		],
+		[
+			'bad hash',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].sha512 = 'bad'
+			},
+		],
+		[
+			'token URL',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].url += '?token=private'
+			},
+		],
+		[
+			'non-HTTPS URL',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].url =
+					'http://example.test/a.dmg'
+			},
+		],
+		[
+			'non-target installer',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].arch = 'x64'
+			},
+		],
+	] as const)('fails closed for %s', async (_name, change) => {
+		const state = stateWithDownload()
+		change(state)
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(response.statusCode).toBe(200)
+		expect(parseBody(response)).toEqual({ release: null })
+	})
+
+	it('allows a retained superseded full release', async () => {
+		const state = stateWithDownload()
+		state.releases[0].status = 'superseded'
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(parseBody(response).release.version).toBe('0.1.1')
+	})
+
+	it('applies a separate anonymous read rate limit and no-store to errors', async () => {
+		const state = createState()
+		const init = { headers: { 'x-forwarded-for': '192.0.2.12' } }
+		for (let index = 0; index < 120; index++) {
+			expect((await request('/v1/public/desktop-downloads', state, init)).statusCode).toBe(200)
+		}
+		const response = await request('/v1/public/desktop-downloads', state, init)
+		expect(response.statusCode).toBe(429)
+		expect(response.headers['cache-control']).toBe('no-store')
+		expect(response.headers['retry-after']).toBe('60')
+		const wrongMethod = await request('/v1/public/desktop-downloads', state, {
+			method: 'POST',
+			headers: {},
+		})
+		expect(wrongMethod.statusCode).toBe(405)
+		expect(wrongMethod.headers['cache-control']).toBe('no-store')
+	})
+})
+
+it('allows withdrawal of superseded releases through the admin boundary, but forbids their resume', async () => {
+	const state = createState({
+		releases: [
+			rolloutRecord({ status: 'superseded', percentage: 100, publicDownloadEligible: true }),
+		],
+	})
+	const resumed = await request('/admin/v1/release-state', state, {
+		method: 'POST',
+		body: { releaseId: 'rollout-1', action: 'resume' },
+	})
+	expect(resumed.statusCode).toBe(409)
+	const response = await request('/admin/v1/release-state', state, {
+		method: 'POST',
+		body: { releaseId: 'rollout-1', action: 'withdraw' },
+	})
+	expect(response.statusCode).toBe(200)
+	expect(parseBody(response).release.status).toBe('withdrawn')
+	expect(parseBody(response).release).not.toHaveProperty('publicDownloadEligible')
+})
+
+it.each([
+	['stable full', 'stable', '1.0.0', 100, true],
+	['stable gray', 'stable', '1.0.0', 25, false],
+	['beta full', 'beta', '1.0.0-beta.4', 100, false],
+	['prerelease stable', 'stable', '1.0.0-beta.4', 100, false],
+] as const)(
+	'marks only eligible full publications at the API boundary: %s',
+	async (_name, channel, version, percentage, eligible) => {
+		const candidate = candidateRecord(createReleaseManifest({ channel, version }))
+		const state = createState({ candidates: [candidate] })
+		const store = createStore(state)
+		const commitReleasePublication = vi.fn(store.commitReleasePublication)
+		const response = await request('/admin/v1/release-publish', state, {
+			method: 'POST',
+			body: {
+				candidateId: candidate._id,
+				title: 'Release',
+				notes: 'Notes',
+				mode: 'optional',
+				percentage,
+			},
+			store: { commitReleasePublication },
+		})
+		expect(response.statusCode).toBe(201)
+		expect(commitReleasePublication.mock.calls[0][3]).toMatchObject({
+			candidateVersion: version,
+			publicDownloadEligible: eligible,
+		})
+	},
+)
+
+it('sets no-store when the public download store fails without leaking details', async () => {
+	const response = await request('/v1/public/desktop-downloads', createState(), {
+		headers: {},
+		store: {
+			getReleaseActiveSlot: async () => {
+				throw new Error('secret database detail')
+			},
+		},
+	})
+	expect(response.statusCode).toBe(500)
+	expect(response.headers['cache-control']).toBe('no-store')
+	expect(response.body).not.toContain('secret')
 })

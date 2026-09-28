@@ -1,10 +1,12 @@
 # 问学 WenXue — 技术基础设施文档（Tech Infra）
 
-> 2026-09-25：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。本文现有手动分发协议与带日期的资源快照保留为实现/历史依据；[PRD §6](PRD.md#6-本轮正式发布公告和更新需求) 的新发布目标按[实现计划](../superpowers/plans/2026-09-25-desktop-release-notifications-updates.md)推进，P1 复核资源现状、P2 更新协议，不能据本轮文档校准推断生产已可用。
+> 当前状态（2026-09-29）：稳定下载指针与官网入口已上线，CloudRun `wenxue-llm-gateway` BuildId `2607759180` / RunId `1xBGo9gKZohPJr` normal 100%；源站及两个正式域名对公开下载 GET 返回 200、`{release:null}` 并禁用缓存，官网资源公网字节与构建一致。尚无 stable 正式版本。beta.4 仍为 beta/optional/100%、状态发布中；只读策略回归与原基线一致。没有新 CI、没有改 beta.4 rollout，也未增加计算规格；Env、VPC、访问类型保持。P6.3 已验收，P6.4/P6.6、完整后台操作和首个 stable 发布仍待。详细证据见[2026-09-29 公开下载日志](../../log/2026-09-29-public-desktop-downloads.md)。
 
-> P1 历史核验见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。2026-09-26 组合服务已升级至 037，后台定向公告创建成功，已观察到 Mac 测试 A 弹窗；在线时延、确认和跨设备去重仍待验收，候选与 rollout 尚未登记。正式域名不能直接替代客户端的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
+> 历史快照（2026-09-27）：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。P2 的 AdminApi schema 2、CI seal v3 与本机发布脚本已实现；桌面候选 `0.1.1-beta.1` 已由 GitHub Actions run `36260499160` 构建并成功登记为 verified candidate，尚未创建 rollout 或完成安装/升级验收。P5 两端实机验收仍待完成。
 
-> 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；§8.2 已同步本地双目标 CI 与 v1 服务端兼容要求。GitHub 与测试账号的新证据见[本次执行日志](../../log/2026-09-26-release-two-targets.md)，尚未完成远端构建或生产部署。
+> 历史快照（2026-09-26 及 P1 核验）：见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。组合服务 039 已上线；后台定向公告创建成功，Mac 测试 A 已由用户目视看到弹窗并点击确认。服务端回执独立核验、公告在线时延和跨设备去重仍待验收。`0.1.1-beta.1` 候选已登记并在后台显示 Ed25519 verified；尚无 rollout。正式域名不能直接替代客户端的完整网关 origin。下列带日期内容均保留为历史记录，不作为当前就绪证明。
+
+> 历史快照（2026-09-26）：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；P2 本地验证与构建/部署状态见[本次执行日志](../../log/2026-09-26-release-key-and-protocol.md)。2026-09-27 新候选 CI、公开托管回读和候选登记结果见[候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。
 
 | 项       | 内容               |
 | -------- | ------------------ |
@@ -97,7 +99,7 @@ WenXue/
 | 云端网关 | CloudBase Run 容器 + Functions Framework 多 target + CloudBase Auth HTTP / Tencent Cloud TCB API                  | 注册在桌面通过 CloudBase 邮箱验证后 `signUp`；激活与所有受保护请求读取 `/auth/v1/user/me`，不以 NoSQL 记录作为账号授权条件                    |
 | 后台管理 | `apps/admin` Vite + React + CloudBase Web Auth；`apps/admin-api` CloudBase Run Function mode + CloudBase HTTP API | 管理员用邮箱密码或内置管理员账号密码；管理 API PUBLIC 但服务端强制 CloudBase Auth + `admin_users` 角色                                        |
 | 实时信号 | CloudBase NoSQL `watch()` revision 文档                                                                           | 消息 signal 仅登录只读，更新 signal 公开只读；正文/目标/候选不进入 signal                                                                     |
-| 更新存储 | 独立 Tencent COS bucket + 可选 CDN                                                                                | 对象公开读/禁止列目录、CI-only write、版本路径不可变；不复用现有私有 CloudBase 桶                                                             |
+| 更新存储 | CloudBase 静态托管的独立版本路径                                                                                  | 无查询参数的 HTTPS 匿名读；本机签名后由受权操作者通过 managed upload 上传，公开回读逐字节核验后注册；现有私有业务存储桶不改 ACL               |
 | 测试     | vitest（沿用上游各包测试）+ 桌面端 CDP 冒烟脚本                                                                   | CI 必跑                                                                                                                                       |
 
 ## 4. 桌面端（Electron）设计
@@ -326,7 +328,7 @@ extraResources:
 - **版本信号**：未登录 renderer 可只读 `desktop_release_signal/<runtime>:<channel>` revision；
   DesktopReleaseSignalService 变化后经 typed IPC 发送 `updates:check(reason='signal')`，再由 main 经 HTTPS
   获取 update policy。signal 不含候选 URL、签名或发布说明，main 不加载 CloudBase Web SDK。
-- **候选密钥绑定**：build seal v2 要求 macOS arm64 与 Windows x64 的最终 `app.asar` 都内嵌
+- **候选密钥绑定**：当前 build seal v3 要求 macOS arm64 与 Windows x64 的最终 `app.asar` 都内嵌
   与发布配置相同的 Ed25519 公钥；两份 SPKI SHA-256 指纹必须一致，并继续绑定到 candidate manifest。
   这项清单完整性校验不依赖 Apple Developer ID/notarization 或 Windows Authenticode 平台证书。
 - **管理路由**：新增 `/api/admin/v1/announcements`、`/api/admin/v1/announcement-withdraw`、
@@ -379,8 +381,7 @@ extraResources:
 
 ## 8. 构建、CI 与分发
 
-本次产品 beta 包在桌面、插件、官网的包版本均为合法 SemVer `0.0.1-beta`，用户界面统一显示
-`0.0.1beta`。Chrome 插件清单的 `version` 为数值 `0.0.1`，`version_name` 为 `0.0.1beta`；
+最近登记的桌面候选版本为合法 SemVer `0.1.1-beta.4`，通道为 `beta`；CI、本机最终 DMG 严格签名验证、五对象公网回读与候选登记均通过。真实托管的部分上传恢复和全部对象复用验证通过。用户确认后，root 于 2026-09-28 21:20 CST 提交 beta/optional/100% rollout，覆盖所有符合资格的 beta 用户，当前发布中。Mac beta.4 自动发现、后台下载、DMG 手动覆盖及目标版本启动路径已实测；应用与插件 About 均显示 beta.4。升级前 beta.3 的 CfT 账号交接曾有一次 15 秒超时，随后 warm 和两次 cold 成功，原因未复现；beta.4 此次交接 2.052 秒成功。Profile 前后均有两项、原 Profile 和已开标签仍在，但未逐项核对历史、书签和站点登录。Windows 用户从 beta.1 或 beta.2 下载时曾报告约 50 KB/s，随后恢复；用户已确认正常退出、再次打开后为 beta.4，浏览器和资料正常。精确起始版本与 Windows build 未提供，不将此算为两个起始版本均验收。桌面包、插件包与官网包需分别读取各自 package metadata，不能由桌面版本推断三者统一。Chrome 插件清单的 `version` 为数值 `0.1.1`，`version_name` 使用其品牌版本字符串；
 CfT 与 vendor 库保留各自独立版本。桌面构建未显式提供 `WENXUE_UPDATE_CHANNEL` 时，从包版本的
 `-beta` 标识选择 beta 更新通道；CI 显式通道优先。
 
@@ -399,10 +400,26 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 - 发布构建门禁：lint + typecheck + `pnpm -r test`；当前仅配置手动发布构建，不把它表述为已启用的 PR 门禁。
 - `desktop-release-candidate.yml` 是免费私有仓库的无发布凭据构建段：仅允许 main 上的手动首轮运行，
-  操作者输入的完整 `expected_commit` 必须等于实际构建 SHA，再运行质量门禁；
-  生成 macOS arm64 未签名 DMG 与 Windows x64 未签名 NSIS。双目标产物与 `release-build.json`
-  seal 都以 Actions artifacts 保留 1 天。仅手动触发，不开启每次 push 的多平台打包；运行前确认 Actions 额度与阻止超额消费的预算设置。
-- seal v2 锁定 repository、commit、version、channel、`buildRunUrl`、`artifactSetSha512`、逐产物哈希/尺寸
+  操作者输入的完整 `expected_commit` 必须等于实际构建 SHA，再运行质量门禁；当前构建配置生成
+  macOS arm64 未签名 DMG、Windows x64 未签名 NSIS 与对应 update YAML；`release-build.json` 当前使用
+  seal v3，并与三项产物一同作为 Actions artifacts 保留 1 天。2026-09-27 run `36260499160` 在 commit `6fb2731a9e303e2ead81567b78d06c69b42e9a0c`、version `0.1.1-beta.1`、channel `beta` 上以 attempt 1 成功；quality、macOS arm64、Windows x64、seal-artifacts 四个 job 全通过。仅手动触发，不开启每次 push 的多平台打包；运行前确认 Actions 额度与阻止超额消费的预算设置。
+- P2 协议实现状态：AdminApi schema 2/兼容逻辑、CI seal v3 与本机发布脚本已在本地实现并验证
+  （Admin API 141/141；发布脚本 31/31）。新配置已通过上述 CI；schema 1 候选及其原始
+  清单字节/Ed25519 签名保持不变；AdminApi 登记、读取兼容 schema 1 双目标和旧完整三目标，不裁剪或重签。
+  schema 2 只允许 Electron 候选，产物集合必须且只能为 `darwin/arm64:dmg`、
+  `win32/x64:nsis`、`win32/x64:nsis-yaml`，分发模式为 `platform-unsigned`。Windows NSIS 成功产出后，
+  受控发布脚本生成合法 YAML（可用 JSON 序列化，因其是合法 YAML），含 `version`、恰好一个 EXE 的
+  `files` 项（含 `url`、`sha512`、`size`）、顶层 `sha512`（须与 EXE 一致）及安装器 `path`；元数据不超过
+  64 KiB。按通道生成 `dev.yml`、`beta.yml` 或 `latest.yml`，与 EXE 同目录。候选中的 URL 必须是无 userinfo、
+  query、fragment 的 HTTPS URL；元数据文件字节和安装器字节均由候选签名绑定。版本、文件名 URL、size、
+  文件内与候选中的 SHA-512 均须一致。CI seal v3 固定封存上述三项。seal v2 仅作为历史版本供验签，
+  新构建与本机发布流程只生成并接受 seal v3。
+- 客户端请求带 `protocolVersion=2` 时可接收 schema 1 或 schema 2 候选；参数缺省时只协商 schema 1，
+  未知协议版本返回 HTTP 400。只有 schema 2 候选响应显式携带 `policy.schemaVersion: 2`，schema 1
+  响应字段保持原样。旧客户端由用户从官网或测试分发手动覆盖安装过渡包；P2 禁止向旧协议客户端下发
+  schema 2，也不允许 v2 策略设为 mandatory。P2 协议与脚本已通过本地验证；P5 安装协调和实机验收仍在
+  进行；新 CI 构建及网关 039 部署已完成，设备安装/升级仍待验收。
+- 历史 seal v2 锁定 repository、commit、version、channel、`buildRunUrl`、`artifactSetSha512`、逐产物哈希/尺寸
   与 Ed25519 SPKI SHA-256 公钥指纹；两个最终 `app.asar` 的指纹证明必须一致且等于发布时配置。
   tests 必须且只能是 `quality`、`manual-installer-integrity`、`manifest-tamper-rejection` 三项 passed 记录，
   三者 URL 均等于该成功首轮 `buildRunUrl`。
@@ -421,20 +438,42 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   不把可修改的 review 文件当授权。构建证据仍绑定同一 run；本机工具不会执行下载目录中的代码。
 - 验证全部通过后，本机 publish 才生成确定性 Ed25519 候选清单，验证 COS versioning 为
   `Closed`，通过 `--forbid-overwrite` 上传，再从公开 COS origin 逐字节复核并注册。
-- 本机工具只注册 candidate，不自动发布 rollout；发布比例和 optional/mandatory 只能在后台“版本更新”发起。
+- 本轮选用 `prepare-upload` / `register-upload` 分段：前者在同样的源码、run、seal v3、公钥和操作者
+  `artifactSetSha512` 门禁后签名，生成恰好五项 `hosting-upload.json`（DMG、EXE、channel YAML、manifest、
+  signature）的本地路径、`desktop-releases/electron/<channel>/<version>/...` 托管路径、
+  `https://askwenxue.com/` 公网 URL、SHA-512 和尺寸；不调用 COSCLI 或注册。打包内的 generic
+  默认根仅用于形成更新器配置和缓存目录，没有可自主发现版本的全局 `latest.yml`；运行时必须由
+  经签名校验的候选策略设置到该版本自己的元数据目录。受权操作者通过现有
+  CloudBase managed upload 逐项上传，既有同路径对象只有原字节一致才可复用，不同则停止，部分上传可按
+  同一清单恢复。`register-upload` 重新执行本机门禁，验证五个公网对象均与本机原字节一致，并运行
+  签名清单与三项产物的公开验证；仅全部通过才使用注册 token 登记候选，不需要私钥或 COS 写入凭据。
+  这是工具和操作层的不可覆盖约束，不是存储桶 WORM 保证。现有 `publish` 自动 COS 路径保留兼容，
+  本轮不选用。
+- 本机工具只注册 candidate，不自动发布 rollout；发布比例和 optional/mandatory 只能在后台“版本更新”发起。候选 `electron:beta:0.1.1-beta.1` 已登记为 verified；后台核对显示强制更新 disabled，发布记录尚未发起版本发布。
 - GitHub 只配置公开的网关 origin 与 Ed25519 公钥变量，不配置签名私钥、COS 写入或候选注册 secrets。
-  私钥和专用最小权限 COSCLI 配置保存在可信本机仓库外，注册 token 仅在 publish 进程中使用；
-  COSCLI 固定 1.0.8，注册请求仅允许 HTTPS 且禁止重定向，不回显凭据或原始错误响应。
-  私有仓库的免费额度不等于无限构建；不自动购买额度、升级套餐或改为公开仓库。专用 CAM 发布身份
-  仍需核验，不能复用 Gateway 高权限身份。本机按具体 commit 审阅并签名，不冒称 GitHub 分支保护已生效。
+  私钥留在可信本机，仅 `prepare-upload` 签名时使用；注册 token 仅在 `register-upload` 进程中使用。
+  managed upload 使用当前已授权 CloudBase 工具，不提取 MCP 会话凭据、不创建 CAM 上传子账号；
+  注册请求仅允许 HTTPS 且禁止重定向，不回显凭据或原始错误响应。私有仓库的免费额度不等于无限构建；
+  不自动购买额度、升级套餐或改为公开仓库。候选已上传并登记；本机按具体 commit 审阅并签名，
+  不冒称 GitHub 分支保护已生效。
+- 2026-09-26 发布密钥自检：可信本机 Keychain 中的 Ed25519 签名材料已通过进程内挑战签名验证；派生
+  SPKI SHA-256 指纹 `bbacf14f6a6de5f743cf499bd85ccad61434d83f8f110ae4119b2b02eb01c336` 与 Keychain
+  公钥、GitHub 公钥变量及已安装客户端内嵌公钥一致。私钥值未导出到文件或写入仓库。本项只证明密钥可用
+  及公钥匹配，不代表 schema 2 实现、Windows 更新验收或发布门禁通过。
 - 2026-09-26 构建配置核验：两个公开 repository variables 已配置并逐值回读一致；公钥取自当前
   Gateway 036 配置，Ed25519 SPKI SHA-256 为 `bbacf14f6a6de5f743cf499bd85ccad61434d83f8f110ae4119b2b02eb01c336`。
   用同一公开配置进行本地 desktop build 与内嵌公钥验证通过。用户登录后，账单页已核实 GitHub Free、
-  构建前 Actions 0/2,000 分钟与 0/0.5 GB，账号 Actions 预算为 $0 且 Stop usage=Yes，详见
-  [CI 预检记录](../../log/2026-09-26-ci-preflight.md)。随后首轮 run `36188670852` 的 quality、macos、
-  windows、seal-artifacts 全部成功；本机在同一源码提交执行 prepare，下载并复核两份安装包和 seal
-  通过。此轮版本 `0.0.1-beta` 仅验证构建链路，尚未签名上传 COS、注册候选或进行实机升级，详见
-  [首次 CI 验收记录](../../log/2026-09-26-first-ci-build.md)。
+  首轮构建前 Actions 0/2,000 分钟与 0/0.5 GB，账号 Actions 预算为 $0 且 Stop usage=Yes；2026-09-27 本轮构建前账单页显示 35.7/2,000 分钟、存储显示 0 GB/0.5 GB（页面取整）、当前应付 $0 且 Actions 预算 $0 / Stop usage=Yes。详见
+  [CI 预检记录](../../log/2026-09-26-ci-preflight.md)及[本轮候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。随后首轮 run `36188670852` 的 quality、macos、
+  windows、seal-artifacts 全部成功；此首轮版本 `0.0.1-beta` 仅为构建试跑，详见
+  [首次 CI 验收记录](../../log/2026-09-26-first-ci-build.md)。随后 run `36260499160` 四个 job 全部成功，本机 `prepare` 与 `prepare-upload` 通过；manageHosting 先上传 DMG，再批量上传 `beta.yml`、EXE 和 signature，最后上传 manifest，共五对象。`register-upload` 从公开 URL 验证签名和每个对象原字节、大小及 SHA-512 后返回 `candidateId=electron:beta:0.1.1-beta.1`、`status=verified`。该 verified candidate 尚未创建 rollout，未完成实际安装或升级验收；旧 run 三个 artifact 已删除，新 run artifacts 保留。详见[本轮候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。
+- 2026-09-28 后续 beta.2 run `36271403682`（commit `1534b7c18a16ba7b92735a10cdd346c8ee3f8677`）的 quality、macOS、Windows、seal-artifacts 四个 job 全成功；本机 `prepare`、`prepare-upload`、五对象 hosting 上传与 `register-upload` 公网全量回读成功，候选登记为 verified。事后用户报告 beta.1 App 拖入 Applications 后打开提示“已损坏”。beta.1/beta.2 DMG 的 SHA-512/尺寸都与发布记录一致，`hdiutil verify` 均为 VALID；只读挂载后两版 DMG 内 App 的 `codesign --verify --deep --strict` 均失败，beta.1 `spctl` 也失败。beta.1 为 `Identifier=Electron`、adhoc/linker-signed，Info.plist 未绑定且无 sealed resources。由此确认阻塞在 App bundle 签名结构，不是候选清单或 DMG 字节完整性；verified 不证明 macOS 安装可用。beta.1/beta.2 保持未发布，不再用于安装/升级验收。独立旧 App 副本经 builder 26.15.3 的 `MacPackager.sign` identity `'-'` 流程重签后，根 Agent 的 `codesign --verify --deep --strict --verbose=2` exit 0，显示 ad-hoc 签名、Info.plist entries 31、Sealed Resources v2 files 391；`spctl assess` exit 3/rejected，因未提供 Developer ID/公证信任，属预期。该实证未启动 GUI，也不代表最终 DMG 或首次启动验收通过。修复配置已落地；最终 DMG 的版本、应用标识和严格 codesign 门禁已接入 CI，macOS job 同时运行该门禁的正反例回归。根 Agent 独立通过相关 7 项测试及 release lint；当时 beta.3 完整 CI 尚待验证，结果见下条。见[macOS 包签名故障日志](../../log/2026-09-28-macos-bundle-signature.md)。
+- 2026-09-28 beta.3 run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）的 `quality`、`windows`、`macos`、`seal-artifacts` 四个 job 全成功；macOS 最终 DMG 回归、ad-hoc sealed DMG 打包、最终 DMG 版本/应用标识/严格签名门禁通过。本机 `verifyMacDmg` exit 0；prepare、prepare-upload、MCP 五对象上传和 register-upload 完整公网回读/签名校验成功，`electron:beta:0.1.1-beta.3` 登记为 `verified`，manifest URL 为 `https://askwenxue.com/desktop-releases/electron/beta/0.1.1-beta.3/candidate-manifest.json`。2026-09-28 20:43 CST，在本机备份哈希复核且确认候选 verified 后，根 Agent 按用户持续授权删除该 run 三项 GitHub artifacts，API 回查 `remainingCount=0`，释放 498346326 bytes；本机备份及 CloudBase 五对象保留，删除证据位于 `/Users/outas/Downloads/WenXue-CI-36383077750/github-artifact-cleanup.json`。没有 rollout；用户首次打开反馈尚未收到，不代表实机安装/升级验收完成。发布证据位于 `/Users/outas/Downloads/WenXue-CI-36383077750/`。
+- 用户随后确认 beta.3 在 Mac 上“正常打开了”；此反馈仅证明首次打开成功，CfT 启动、资料/Profile 保留和自动升级均未由此验证。接续准备 beta.3→beta.4 N+1 演练，起始工作树提交 `3b04bce`。beta.4 仅三包版本同步及必要测试，root 候选测试 2/2、Sol extension 11/11 与 website 6/6 及 frozen-lock/format/lint 通过；尚未触发 CI或产出候选。Windows 当前版本反馈为 beta.1 或 beta.2，具体版本未精确，但可作为验收起点，无需先手动装 beta.3。GitHub 当前无 artifact、无运行中任务；构建前账单：Free Product Actions 139/2000 分钟，storage UI 0/0.5 GB（页面取整），gross `$0.84`、discount `$0.84`、billable `$0`；Actions budget `$0`、spent `$0`、Stop usage=Yes，设置未改。具体发布范围、beta.4 CI/注册及实机升级仍待完成。详见[beta.4 升级演练日志](../../log/2026-09-28-beta4-upgrade-rehearsal.md)。
+- 2026-09-28 21:20 CST root 已按用户确认提交 beta/optional/100% rollout，覆盖所有符合资格的 beta 用户，当前发布中。公开策略探测：Win x64 beta.1/beta.2 与 Mac arm64 beta.3 均返回 schema 2 optional、100%、beta.4；same-version、stable、Intel Mac 返回 null；显式 protocol 1 返回 HTTP 400 `Unsupported update protocol version`，省略协议的旧版请求返回 null。
+- Mac 实测：未手动触发检查，客户端自动弹出更新并后台下载，随后下载完成；本机缓存 DMG SHA-512/size 与 candidate 一致。客户端打开 DMG 后 attempt handoff 为 accepted、旧版主进程正常退出；Finder 自动控制不可用，用户完成手动覆盖后，本机 Info.plist 及 About 显示应用和插件均为 beta.4。原 Profile 数量前后均为 2、原 Profile 可启动、原已打开标签仍在，新标签与侧边栏可见；account handoff 21:28:36.400→38.452，约 2.052 秒。未发出 LLM 请求，未全面检查历史/书签/站点登录，故不宣称完整资料保留。最终后台检查 2/0、下载 2/0、交接 1/0、目标启动聚合计数 2；聚合计数不提供设备归因。
+- Windows 用户报告从 beta.1 或 beta.2 下载约 50 KB/s 后恢复，随后明确确认正常退出再打开已到 beta.4，浏览器和资料正常（U4）。针对相同 EXE 的 4 MiB 本机 HTTP probe 耗时 0.654 秒、约 6260 KiB/s，HTTP 200 且 Range 未返回 206；该 probe 不定位用户实际网络原因。Sol 只读检查未发现代码限速；下载速度是 updater 从首块起的平均值，未改代码或配置。Windows 的正常退出升级路径已由用户确认；立即重启、浏览器占用和其他异常路径仍待实测。
+- 证据：`/Users/outas/Downloads/WenXue-CI-36424859967/rollout-policy-verification.json`、`rollout-runtime-evidence.json`、`windows-download-probe.json`；rollout验收日志见[beta.4 rollout 验收日志](../../log/2026-09-28-beta4-rollout-verification.md)。本次未触发新 CI、后端部署或购买额度。
 
 #### 8.2.1 免费私有仓库的操作顺序
 
@@ -457,25 +496,52 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 4. 审阅 `release-review.json` 的源码 commit、构建链接、版本、两个安装包及其 hash、公钥指纹，
    保存确认过的 `artifactSetSha512`。prepare 不需要发布私钥、COS 写入配置或注册 token。
-5. 确认双目标服务端契约已部署、专用 COS 发布身份权限正确。通过本机安全配置向发布进程提供
-   `WENXUE_RELEASE_ED25519_PRIVATE_KEY`、`WENXUE_RELEASE_CI_TOKEN`、
-   `WENXUE_UPDATE_COS_BUCKET`、`WENXUE_UPDATE_COS_REGION`、`WENXUE_UPDATE_COS_BASE_URL`、
-   `WENXUE_RELEASE_REGISTER_URL`；不要把值写入仓库、命令参数或日志。`COS_CONFIG_PATH` 指向仓库外的
-   COSCLI 1.0.8 配置，`CONFIRMED_ARTIFACT_SET_SHA512` 是上一步已确认的 hash，不自动读取 review 代签：
+5. 确认双目标服务端契约已部署。通过可信本机进程环境提供
+   `WENXUE_RELEASE_ED25519_PRIVATE_KEY`；`CONFIRMED_ARTIFACT_SET_SHA512` 是上一步已审阅确认的 hash，
+   不自动从 review 读取代签。下列命令只签名并列出五个待上传文件，不上传或注册：
 
    ```sh
-   node apps/desktop/scripts/publish-local-candidate.mjs publish \
+   node apps/desktop/scripts/publish-local-candidate.mjs prepare-upload \
      --repository SmartSunruiyang/WenXue \
      --run-id "$RELEASE_RUN_ID" --commit "$REVIEWED_COMMIT" \
      --version "$RELEASE_VERSION" --channel beta \
      --release-dir "$CANDIDATE_DIR" \
-     --artifact-set-sha512 "$CONFIRMED_ARTIFACT_SET_SHA512" \
-     --cos-config "$COS_CONFIG_PATH"
+     --artifact-set-sha512 "$CONFIRMED_ARTIFACT_SET_SHA512"
    ```
 
-6. 注册成功应返回同一 `releaseId`、清单 URL 和 `status=verified`。最后进入后台“版本更新”确认候选，
+6. 审阅 `hosting-upload.json` 的五项 `localPath/cloudPath/publicUrl/sha512/size/disposition`，仅对
+   `disposition=upload` 的项目由受权操作者通过 CloudBase managed upload 将原字节写到清单指定路径；
+   `disposition=reuse` 表示公网现有对象与本机原字节一致，无需再上传。上传前工具对公开对象执行只读完整性
+   检查：不存在可继续；已存在且原字节一致可复用；已存在但不同则停止，不覆盖。任何部分上传都保留
+   同一候选目录及清单，重新执行 `prepare-upload` 后继续。业务 CloudBase 私有存储桶 ACL 不变。
+7. 五项上传后，移除签名私钥的进程环境，仅提供 `WENXUE_RELEASE_REGISTER_URL` 与
+   `WENXUE_RELEASE_CI_TOKEN`，执行只读公开回验并注册：
+
+   ```sh
+   node apps/desktop/scripts/publish-local-candidate.mjs register-upload \
+     --repository SmartSunruiyang/WenXue \
+     --run-id "$RELEASE_RUN_ID" --commit "$REVIEWED_COMMIT" \
+     --version "$RELEASE_VERSION" --channel beta \
+     --release-dir "$CANDIDATE_DIR" \
+     --artifact-set-sha512 "$CONFIRMED_ARTIFACT_SET_SHA512"
+   ```
+
+   注册成功应返回同一 `releaseId`、清单 URL 和 `status=verified`。最后进入后台“版本更新”确认候选，
    再按验收计划开启灰度；上述命令不会触发客户端更新。产物过期且未下载时重新发起新的首轮构建，
    不使用 rerun 绕过来源校验。
+
+### 8.2.2 每次发版与故障恢复
+
+1. 同步 desktop/extension/website 版本元数据，完成受影响测试、typecheck、lint 和 build，提交后冻结完整 SHA。版本必须高于该通道已发布历史，不能覆盖已有候选。
+2. 确认 GitHub 免费额度与 `$0` 超额停止配置，按 §8.2.1 构建、封存、签名、上传与注册；不将发布私钥放进 CI。`verified` 仅代表候选注册门禁通过，不等于双平台安装验收。
+3. 保存源码 SHA、run、候选 ID、清单哈希和每台设备的起始/目标精确版本。分别记录 Windows 正常退出安装、立即重启更新，以及 Mac 下载 DMG 后手动覆盖；核对浏览器、插件和资料。缺少证据标为待验收。
+4. 后台选候选并核对通道、范围、比例、optional 模式和说明。beta 只用于测试通道，正式官网仅接受无预发布后缀的 stable 全量版本。首次 stable 未通过门禁前，官网可保持无可用正式版本。
+5. 发布后回查状态与时间，分别查看检查、下载、安装交接、目标版本启动。匿名计数不是设备清单，交接计数不代表安装成功，不依据遥测自动放量。当前后台尚缺同一候选灰度扩大操作，不能重新发布同版本规避版本单调门禁；灰度→全量操作须待 P6.2 完成后纳入正式流程。
+6. 异常时先暂停当前发布并回查；明确不可继续使用时撤回。暂停/撤回使客户端安装前复核拒绝继续，官网沿明确保留的有效稳定记录回退；无记录则暂不可下载。仍用于官网下载的旧 superseded 发布可单独撤回，保留当前客户端策略。已交接系统安装器的包不能召回，已安装用户用更高版本修复包恢复，不自动降级。
+7. 正式下载 JSON 与错误响应使用 `Cache-Control: no-store`；官网点击前重新拉取。安装包按候选不可变路径保存。每次上线核对默认源站与 `askwenxue.com/v1/public/desktop-downloads` 同源契约，并检查官网加载、无版本、失败重试、平台选择与下载前复核。
+8. 保存完整本机产物与校验记录，确认签名/注册/恢复不再依赖 CI artifact 后，按用户长期授权清理旧 CI 临时产物；保留 CloudBase 对象与本机备份。操作结果、未验收项与回滚版本写入执行日志。
+
+本手册描述已批准流程与现有边界；P6.2 灰度扩大、P4.4 验收证据模型及 P7 完整实机演练仍为正式发布出口条件。
 
 ### 8.3 冒烟测试（发布门禁）
 
@@ -483,13 +549,16 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ### 8.4 更新源、完整性与 rollout
 
-- 新建独立 COS bucket，COSCLI `bucket-versioning --method get` 必须证明状态为 `Closed`；“已暂停版本控制”不满足要求。对象路径至少包含
-  `runtime/channel/version/platform/arch`，写入后不可变，同版本禁止覆盖。
-- bucket 对象公开读、禁止列目录，只有专用发布身份可写；候选发布身份无一般删除/覆盖权限；不修改现有私有
-  CloudBase storage bucket。每个对象上传必须使用 COSCLI `--forbid-overwrite`；已有对象只有在公开源哈希/尺寸
-  与本次原字节完全相同时才可幂等复用。
+- 本轮目标为 CloudBase 静态托管 `desktop-releases/electron/<channel>/<version>/` 独立路径，
+  `https://askwenxue.com/` 提供无查询参数的长期匿名 HTTPS 读；业务 CloudBase 私有存储桶不改 ACL。
+  受权操作者通过 managed upload 按五项签名候选清单逐项写入。工具在上传前后均从公网完整读取，
+  同路径只有原字节一致才可幂等复用，不同则停止；这属于应用层和操作层不可覆盖纪律，不宣称
+  CloudBase 静态托管提供 WORM。现有独立 COS bucket 和自动 COSCLI 发布路径保留，但本轮不使用。
+- 2026-09-26 托管探针以 managed upload 上传 300 MiB 测试对象，匿名 HTTPS 全量读取的
+  Content-Length、实际字节数和 SHA-256 一致；探针对象已核验后删除。两个测试域名对 Range 请求
+  均返回 200 全文，本轮 `disableDifferentialDownload=true` 走全量下载，不宣称断点续传已验收。
 - 候选 manifest 固定包含 schema、releaseId/version/channel/runtime、源码 commit、CfT/扩展版本、
-  artifact URL/SHA-512/size、`distribution.mode=manual-unsigned`、`releasePublicKeyFingerprint` 和测试证据；Ed25519
+  artifact URL/SHA-512/size、schema 2 的 `distribution.mode=platform-unsigned`、`releasePublicKeyFingerprint` 和测试证据；Ed25519
   公钥固定在 App，私钥仅保存在可信本机发布环境。Ed25519 证明清单与产物字节来源，不改变安装包在操作系统中的
   未签名状态。
 - 打包运行时的 DesktopUpdateService 在启动 30 秒、每 4 小时、release revision 和“关于问学”手动
@@ -502,6 +571,12 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   不降级。
 - mandatory 只在最近验证策略不超过 24 小时时阻断工作区；超过 24 小时且服务不可达时降级为持续
   警告与重试，用户始终可以退出 App。
+- P5 安装协调目标（实现与实机验收进行中）：DesktopUpdateService 增加 `restartInstall()`、
+  `installOnQuit()` 与 `withInstallGuard(intent, operation(canInstall))`，其中 intent 为 `open-dmg`、
+  `restart` 或 `quit`；在每种安装器交接前通过 guard 实时确认 `canInstall`。Windows 由现有
+  BrowserSupervisor 在本模块内按受管子进程 PID 与 binary 精确定位并发送 `WM_CLOSE`，等待 child exit
+  且全部 profile 空闲，禁止 kill；`withInstallLaunchLock` 在安装事务期间阻止任何新 launch。macOS 若仍有
+  受管 CfT 占用，需用户手动关闭后重试。该设计待代码与实机验收，当前不能描述为已上线或可完成自动安装。
 
 ## 9. 错误处理与可观测性
 
@@ -546,15 +621,15 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 
 ## 11. 测试策略
 
-| 层         | 手段                                              | 范围                                                              |
-| ---------- | ------------------------------------------------- | ----------------------------------------------------------------- |
-| vendor 库  | 上游 vitest 套件原样保留                          | core 的 Agent 循环、llms 客户端、page-controller DOM 处理         |
-| 插件 UI    | Demo 期手动验收（PRD F2–F4 验收标准）             | 侧边栏、配置面板、历史                                            |
-| 桌面端     | 单测（状态机、参数组装、路径解析）+ CDP 冒烟      | F1 验收标准自动化覆盖核心段                                       |
-| 分发协议   | vitest + 组件测试                                 | 消息校验/匹配/回执、候选签名、灰度分桶、固定弹窗可访问性          |
-| 分发服务   | AdminApi/Gateway 集成 + watch 故障注入            | 发布/撤回/signal/pending/ack、rollout/policy/event token/TTL      |
-| 更新 E2E   | macOS arm64 / Windows x64 安装包（Intel 暂缓）    | 当前版到更高 SemVer 版、篡改拒绝、系统警告、画像无损、暂停与前向 hotfix  |
-| 端到端演示 | 演示脚本（research + 多平台答题 fixture）人工演练 | PRD 第 9 节成功指标；adapter 在真实 smoke 前仅 `fixture_verified` |
+| 层         | 手段                                              | 范围                                                                    |
+| ---------- | ------------------------------------------------- | ----------------------------------------------------------------------- |
+| vendor 库  | 上游 vitest 套件原样保留                          | core 的 Agent 循环、llms 客户端、page-controller DOM 处理               |
+| 插件 UI    | Demo 期手动验收（PRD F2–F4 验收标准）             | 侧边栏、配置面板、历史                                                  |
+| 桌面端     | 单测（状态机、参数组装、路径解析）+ CDP 冒烟      | F1 验收标准自动化覆盖核心段                                             |
+| 分发协议   | vitest + 组件测试                                 | 消息校验/匹配/回执、候选签名、灰度分桶、固定弹窗可访问性                |
+| 分发服务   | AdminApi/Gateway 集成 + watch 故障注入            | 发布/撤回/signal/pending/ack、rollout/policy/event token/TTL            |
+| 更新 E2E   | macOS arm64 / Windows x64 安装包（Intel 暂缓）    | 当前版到更高 SemVer 版、篡改拒绝、系统警告、画像无损、暂停与前向 hotfix |
+| 端到端演示 | 演示脚本（research + 多平台答题 fixture）人工演练 | PRD 第 9 节成功指标；adapter 在真实 smoke 前仅 `fixture_verified`       |
 
 ## 12. 关键决策记录（ADR 摘要）
 
@@ -567,7 +642,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 | 4   | 单 pnpm monorepo，vendor 上游                                                                                                                          | 双仓库 fork 跟踪：小团队跨仓成本高于上游同步收益                                                                                  |
 | 5   | 浏览器进程不内嵌 Electron                                                                                                                              | Electron 扩展 API 子集跑不动 MV3 sidePanel 插件                                                                                   |
 | 6   | App 退出不强杀浏览器                                                                                                                                   | 保护用户未保存的页面工作                                                                                                          |
-| 8   | 更新发布 = 无发布凭据 CI 构建、可信本机验证签名并注册不可变候选，后台“版本更新”控制通道/灰度/模式                                                       | 免费私有仓库不依赖付费保护功能；后台上传二进制会扩大密钥与误操作面，自动全量发布无法安全暂停和运营灰度                              |
+| 8   | 更新发布 = 无发布凭据 CI 构建、可信本机验证签名并注册不可变候选，后台“版本更新”控制通道/灰度/模式                                                      | 免费私有仓库不依赖付费保护功能；后台上传二进制会扩大密钥与误操作面，自动全量发布无法安全暂停和运营灰度                            |
 | 9   | 实时推送 = CloudBase watch 仅监听 revision，再由鉴权 HTTPS 拉取正文/策略                                                                               | watch 全量消息集合：会暴露其他账号正文和 UID；自建 WebSocket：当前规模增加不必要的常驻基础设施                                    |
 
 ## 13. 里程碑对应的 Infra 演进

@@ -27,6 +27,7 @@ const DISPATCH_PATHS = [
 	'/v1/client/announcement-ack',
 	'/v1/client/update-policy',
 	'/v1/client/update-events',
+	'/v1/public/desktop-downloads',
 ] as const
 
 describe('combined dispatch targets', () => {
@@ -36,6 +37,7 @@ describe('combined dispatch targets', () => {
 		['adminReleasePublish', 'releasePublish'],
 		['clientUpdatePolicy', 'clientUpdatePolicy'],
 		['clientUpdateEvents', 'clientUpdateEvents'],
+		['publicDesktopDownloads', 'publicDesktopDownloads'],
 		['releaseCandidateRegister', 'releaseCandidateRegister'],
 	] as const)(
 		'reuses the standalone %s implementation without schema drift',
@@ -56,6 +58,7 @@ describe('combined dispatch targets', () => {
 		['clientAnnouncementAck', targets.clientAnnouncementAck],
 		['clientUpdatePolicy', targets.clientUpdatePolicy],
 		['clientUpdateEvents', targets.clientUpdateEvents],
+		['publicDesktopDownloads', targets.publicDesktopDownloads],
 	])('exposes %s through the same AdminApi implementation', async (_name, target) => {
 		const response = await target(
 			{},

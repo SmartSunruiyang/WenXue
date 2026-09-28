@@ -15,6 +15,17 @@ const copy: WindowCloseDialogCopy = {
 	errorDescription: 'The launcher remains open. Try again.',
 	dismiss: 'Got it',
 	communicationError: 'Unable to process the request. Try again.',
+	updateRestart: {
+		title: 'Restart with update?',
+		description: 'Save work first.',
+		confirm: 'Close browsers and restart',
+	},
+	updateQuit: {
+		title: 'Exit with update?',
+		description: 'Save work first.',
+		skip: 'Exit without installing',
+		confirm: 'Close browsers and install',
+	},
 }
 let container: HTMLDivElement
 let root: Root
@@ -61,6 +72,29 @@ function button(text: string): HTMLButtonElement {
 }
 
 describe('WindowCloseDialog', () => {
+	it('shows only cancel and confirmed restart actions for an update restart', async () => {
+		await render()
+		await act(async () =>
+			listener({ requestId: 'restart', kind: 'confirm', purpose: 'update-restart' }),
+		)
+		expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+			copy.updateRestart.title,
+		)
+		expect(document.querySelectorAll('[role="dialog"] button')).toHaveLength(2)
+		expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain(copy.launcherOnly)
+		await act(async () => button(copy.updateRestart.confirm).click())
+		expect(respondToClosePrompt).toHaveBeenCalledWith('restart', 'closeBrowsers')
+	})
+
+	it('shows skip and install choices without a duplicate cancel action for update quit', async () => {
+		await render()
+		await act(async () => listener({ requestId: 'quit', kind: 'confirm', purpose: 'update-quit' }))
+		expect(document.querySelector('[role="dialog"]')?.textContent).toContain(copy.updateQuit.title)
+		expect(document.querySelectorAll('[role="dialog"] button')).toHaveLength(2)
+		await act(async () => button(copy.updateQuit.skip).click())
+		expect(respondToClosePrompt).toHaveBeenCalledWith('quit', 'launcherOnly')
+	})
+
 	it('recovers an existing request when mounted after the main-process event', async () => {
 		getClosePrompt.mockResolvedValue({ requestId: 'existing', kind: 'confirm' })
 		await render()

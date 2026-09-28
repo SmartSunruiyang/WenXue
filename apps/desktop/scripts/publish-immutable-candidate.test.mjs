@@ -5,6 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { publishImmutableCandidate } from './publish-immutable-candidate.mjs'
+import { generateWindowsUpdateMetadata } from './release-artifact-set.mjs'
 
 test('publishes marker last and safely repairs every partial publication state', async () => {
 	const releaseDir = await createReleaseDirectory()
@@ -86,10 +87,11 @@ async function createReleaseDirectory() {
 	const root = await mkdtemp(path.join(tmpdir(), 'wenxue-publish-candidate-'))
 	await Promise.all([
 		writeArtifact(root, 'darwin/arm64/WenXue.dmg', 'mac-arm64-dmg'),
-		writeArtifact(root, 'win32/x64/WenXue.exe', 'win-installer'),
+		writeArtifact(root, 'win32/x64/WenXue-0.1.1-win-x64.exe', 'win-installer'),
 		writeArtifact(root, 'candidate-manifest.sig', 'signature'),
 		writeArtifact(root, 'candidate-manifest.json', 'manifest'),
 	])
+	await generateWindowsUpdateMetadata(path.join(root, 'win32/x64'), '0.1.1', 'beta')
 	return root
 }
 

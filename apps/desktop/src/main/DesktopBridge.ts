@@ -37,9 +37,12 @@ export interface LaunchResult {
 
 export type WindowCloseChoice = 'cancel' | 'launcherOnly' | 'closeBrowsers' | 'dismiss'
 
+export type WindowClosePurpose = 'close' | 'update-restart' | 'update-quit'
+
 export type WindowClosePromptState = {
 	requestId: string
 	kind: 'confirm' | 'error'
+	purpose?: WindowClosePurpose
 } | null
 
 export type OpenLogsResult = LaunchResult
@@ -74,7 +77,14 @@ export interface DesktopBridgeOptions {
 	userSessionHandoff: Pick<UserSessionHandoff, 'run'>
 	updateService: Pick<
 		DesktopUpdateService,
-		'state' | 'check' | 'download' | 'openInstaller' | 'subscribe' | 'assertWorkspaceAllowed'
+		| 'state'
+		| 'check'
+		| 'download'
+		| 'openInstaller'
+		| 'openManualDownload'
+		| 'restartInstall'
+		| 'subscribe'
+		| 'assertWorkspaceAllowed'
 	>
 	resources: BrowserResources
 	getAppVersion: () => string
@@ -666,6 +676,30 @@ export function registerDesktopBridge(options: DesktopBridgeOptions): () => void
 	options.ipcMain.handle('updates:openInstaller', async (): Promise<UpdateMutationResult> => {
 		try {
 			return { ok: true, state: await options.updateService.openInstaller() }
+		} catch (error) {
+			return {
+				ok: false,
+				state: options.updateService.state(),
+				error: toUserSafeMessage(error),
+			}
+		}
+	})
+
+	options.ipcMain.handle('updates:openManualDownload', async (): Promise<UpdateMutationResult> => {
+		try {
+			return { ok: true, state: await options.updateService.openManualDownload() }
+		} catch (error) {
+			return {
+				ok: false,
+				state: options.updateService.state(),
+				error: toUserSafeMessage(error),
+			}
+		}
+	})
+
+	options.ipcMain.handle('updates:restartInstall', async (): Promise<UpdateMutationResult> => {
+		try {
+			return { ok: true, state: await options.updateService.restartInstall() }
 		} catch (error) {
 			return {
 				ok: false,

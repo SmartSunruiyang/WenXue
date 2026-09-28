@@ -7,14 +7,15 @@ import {
 	type MouseEvent,
 	type ReactNode,
 } from 'react'
-import websitePackage from '../package.json'
 import DocsPage from './DocsPage'
 import DotField from './DotField'
 import PrivacyPage from './PrivacyPage'
 import SiteNavbar, { websiteSloganSrc } from './SiteNavbar'
 import TiltHover from './TiltHover'
 import VariableProximity from './VariableProximity'
+import { formatPackageSize, selectedArtifact } from './desktopDownloads'
 import { parseSiteRoute } from './siteRoute'
+import { useDesktopDownloads } from './useDesktopDownloads'
 
 const githubUrl = 'https://github.com/SmartSunruiyang/WenXue'
 const teachingDemoVideoSrc = '/assets/wenxue-teaching-demo.mov'
@@ -27,7 +28,6 @@ const copy = {
 	},
 	hero: {
 		brand: '问学 WenXue',
-		version: `v${websitePackage.version.replace(/-beta(?=\.|$)/i, 'beta')}`,
 		titleFirst: 'Agent，',
 		titleSecond: '直接操作浏览器',
 		description:
@@ -197,6 +197,7 @@ function TiltButton({
 }
 
 function HomePage() {
+	const { state: downloadState, downloads } = useDesktopDownloads()
 	const homeRef = useRef<HTMLDivElement>(null)
 	const heroTitleRef = useRef<HTMLHeadingElement>(null)
 	useEffect(() => {
@@ -293,7 +294,15 @@ function HomePage() {
 				<div className="hero-center">
 					<div className="hero-brand">
 						<img src="/assets/wenxue-logo.png" alt="" aria-hidden="true" />
-						<span>{copy.hero.version}</span>
+						<span>
+							{downloadState.release
+								? `v${downloadState.release.version}`
+								: downloadState.phase === 'error'
+									? '版本信息暂不可用'
+									: downloadState.phase === 'loading' || downloadState.phase === 'checking'
+										? '正在获取正式版本'
+										: '正式版本准备中'}
+						</span>
 					</div>
 					<h1 className="hero-title-proximity reveal-title" ref={heroTitleRef}>
 						<span>
@@ -368,29 +377,92 @@ function HomePage() {
 			<section className="final-cta" id="download" aria-label={copy.hero.download}>
 				<img src="/assets/wenxue-logo.png" alt="" aria-hidden="true" />
 				<h2 className="reveal-title">{copy.finalCta.title}</h2>
-				<div className="hero-actions">
-					<TiltButton
-						className="button button-primary"
-						onClick={() => {
-							window.location.hash = 'docs/customer-start'
-						}}
-						tiltClassName="tilt-action tilt-action-primary"
-						type="button"
-					>
-						<Download size={18} />
-						阅读使用指南
-					</TiltButton>
-					<TiltButton
-						className="button button-secondary"
-						onClick={scrollToDemo}
-						tiltClassName="tilt-action"
-						type="button"
-					>
-						<Play size={18} />
-						{copy.hero.demo}
-					</TiltButton>
+				<div className="download-panel">
+					<fieldset className="download-targets" disabled={downloadState.phase === 'checking'}>
+						<legend>选择安装平台</legend>
+						<label>
+							<input
+								type="radio"
+								name="download-target"
+								checked={downloadState.target === 'mac'}
+								onChange={() => downloads.select('mac')}
+							/>{' '}
+							macOS · Apple Silicon
+						</label>
+						<label>
+							<input
+								type="radio"
+								name="download-target"
+								checked={downloadState.target === 'windows'}
+								onChange={() => downloads.select('windows')}
+							/>{' '}
+							Windows · x64
+						</label>
+					</fieldset>
+					<p className="download-note">
+						按系统推荐平台，请手动确认设备类型。macOS 仅支持 Apple Silicon（M 系列），Intel Mac
+						暂不适配。
+					</p>
+					<div className="download-status" role="status" aria-live="polite">
+						{downloadState.release ? (
+							<p>
+								正式版 v{downloadState.release.version} ·{' '}
+								{formatPackageSize(
+									selectedArtifact(downloadState.release, downloadState.target).size,
+								)}{' '}
+								· {downloadState.target === 'mac' ? 'DMG' : 'EXE'}
+							</p>
+						) : (
+							<p>
+								{downloadState.phase === 'error'
+									? downloadState.message
+									: downloadState.phase === 'empty'
+										? '正式版本准备中，暂不可下载。'
+										: downloadState.phase === 'checking'
+											? '正在重新验证当前安装包…'
+											: '正在获取正式下载信息…'}
+							</p>
+						)}
+						{downloadState.release && downloadState.message && <p>{downloadState.message}</p>}
+					</div>
+					<div className="hero-actions">
+						<TiltButton
+							className="button button-primary"
+							tiltClassName="tilt-action tilt-action-primary"
+							type="button"
+							disabled={downloadState.phase !== 'ready'}
+							onClick={() => {
+								void downloads.download((url) => window.location.assign(url))
+							}}
+						>
+							<Download size={18} />
+							{downloadState.phase === 'checking'
+								? '正在验证…'
+								: downloadState.target === 'mac'
+									? '下载 macOS 安装包'
+									: '下载 Windows 安装包'}
+						</TiltButton>
+						<TiltButton
+							className="button button-secondary"
+							tiltClassName="tilt-action"
+							type="button"
+							disabled={downloadState.phase === 'loading' || downloadState.phase === 'checking'}
+							onClick={() => {
+								void downloads.refresh()
+							}}
+						>
+							重新获取下载信息
+						</TiltButton>
+					</div>
+					<p className="download-note">
+						安装包未签名。macOS 可能提示无法验证开发者，Windows 可能显示 SmartScreen
+						提醒；安装前请确认来源。Mac
+						更新请退出问学及其浏览器后，将新版本拖入“应用程序”并手动覆盖原应用，保留本机资料。
+					</p>
+					<a className="download-guide" href="#docs/customer-start">
+						阅读安装与使用指南
+					</a>
 				</div>
-				<p className="platforms">下载入口准备中 · {copy.finalCta.platforms}</p>
 			</section>
 		</div>
 	)

@@ -24,9 +24,12 @@ export interface ProfileMutationResult extends LaunchResult {
 
 export type WindowCloseChoice = 'cancel' | 'launcherOnly' | 'closeBrowsers' | 'dismiss'
 
+export type WindowClosePurpose = 'close' | 'update-restart' | 'update-quit'
+
 export type WindowClosePromptState = {
 	requestId: string
 	kind: 'confirm' | 'error'
+	purpose?: WindowClosePurpose
 } | null
 
 export type OpenLogsResult = LaunchResult
@@ -201,6 +204,8 @@ declare global {
 				check(reason?: 'manual' | 'signal'): Promise<UpdateMutationResult>
 				download(): Promise<UpdateMutationResult>
 				openInstaller(): Promise<UpdateMutationResult>
+				openManualDownload(): Promise<UpdateMutationResult>
+				restartInstall(): Promise<UpdateMutationResult>
 				onStateChange(cb: (state: UpdateState) => void): () => void
 			}
 			app: {

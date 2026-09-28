@@ -1,9 +1,11 @@
 appId: com.wenxue.launcher
 productName: 问学
 asar: true
-# v1 ships manual installers. Authenticity comes from the embedded Ed25519 release key,
-# while platform code signing/notarization remains deliberately disabled.
+# Ed25519 binds release artifacts; ad-hoc macOS sealing does not provide platform trust.
 forceCodeSigning: false
+publish:
+  provider: generic
+  url: https://askwenxue.com/desktop-releases/
 
 directories:
   output: release
@@ -19,7 +21,7 @@ extraResources:
 mac:
   icon: resources/app-icon-macos.icns
   category: public.app-category.productivity
-  identity: null
+  identity: '-'
   hardenedRuntime: false
   notarize: false
   target: dmg

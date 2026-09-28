@@ -21,6 +21,7 @@ export {
 	clientAnnouncementsPending,
 	clientUpdateEvents,
 	clientUpdatePolicy,
+	publicDesktopDownloads,
 	releaseCandidateRegister,
 } from '../../admin-api/src/index.mjs'
 export { adminConsole } from './adminConsole.mjs'

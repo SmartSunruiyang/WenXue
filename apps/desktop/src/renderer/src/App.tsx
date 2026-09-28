@@ -363,6 +363,7 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 
 	useEffect(() => {
 		const resume = () => {
+			releaseSignalServiceRef.current?.resume()
 			void announcementServiceRef.current
 				?.resume()
 				.catch((error: unknown) =>
@@ -945,6 +946,28 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 		}
 	}, [])
 
+	const restartUpdateInstaller = useCallback(async () => {
+		setMessage(null)
+		try {
+			const result = await window.wenxue.updates.restartInstall()
+			if (!result.ok) throw new Error(result.error ?? strings.update.installError)
+			setUpdateState(result.state)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.update.installError))
+		}
+	}, [])
+
+	const openManualUpdateDownload = useCallback(async () => {
+		setMessage(null)
+		try {
+			const result = await window.wenxue.updates.openManualDownload()
+			if (!result.ok) throw new Error(result.error ?? strings.update.manualDownloadError)
+			setUpdateState(result.state)
+		} catch (error) {
+			setMessage(readCloudBaseErrorMessage(error, strings.update.manualDownloadError))
+		}
+	}, [])
+
 	const exitForUpdate = useCallback(async () => {
 		const result = await window.wenxue.app.quit()
 		if (!result.ok) setMessage(result.error ?? strings.error.closeWindow)
@@ -968,6 +991,8 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 			onDownload={() => void downloadUpdate()}
 			onExit={() => void exitForUpdate()}
 			onOpenInstaller={() => void openUpdateInstaller()}
+			onManualDownload={() => void openManualUpdateDownload()}
+			onRestartInstall={() => void restartUpdateInstaller()}
 			onOpenDetail={(url) => void openAnnouncementDetail(url)}
 			onRetry={() => void checkForUpdates()}
 			updateState={updateState}
@@ -1252,6 +1277,8 @@ function DesktopInterruptionLayer({
 	onDownload,
 	onExit,
 	onOpenInstaller,
+	onManualDownload,
+	onRestartInstall,
 	onOpenDetail,
 	onRetry,
 	updateState,
@@ -1263,6 +1290,8 @@ function DesktopInterruptionLayer({
 	onDownload: () => void
 	onExit: () => void
 	onOpenInstaller: () => void
+	onManualDownload: () => void
+	onRestartInstall: () => void
 	onOpenDetail: (url: string) => void
 	onRetry: () => void
 	updateState: UpdateState
@@ -1279,6 +1308,8 @@ function DesktopInterruptionLayer({
 				onDownload={onDownload}
 				onExit={onExit}
 				onOpenInstaller={onOpenInstaller}
+				onManualDownload={onManualDownload}
+				onRestartInstall={onRestartInstall}
 				onRetry={onRetry}
 				state={updateState}
 			/>
@@ -1301,6 +1332,8 @@ function DesktopInterruptionLayer({
 				onDownload={onDownload}
 				onExit={onExit}
 				onOpenInstaller={onOpenInstaller}
+				onManualDownload={onManualDownload}
+				onRestartInstall={onRestartInstall}
 				onRetry={onRetry}
 				state={updateState}
 			/>
@@ -2637,6 +2670,12 @@ function SettingsPage({
 									<Info size={15} />
 									{updateCheckNotice ?? describeUpdateState(updateState)}
 								</p>
+								{updateState.lastInstallAttempt && (
+									<p aria-live="polite" className="settings-panel__note">
+										<Info size={15} />
+										{`上次目标版本 v${formatPublicVersion(updateState.lastInstallAttempt.targetVersion)}：${strings.update.lastInstallAttempt[updateState.lastInstallAttempt.status]}`}
+									</p>
+								)}
 								<div className="settings-panel__actions">
 									<button
 										className="primary-button"

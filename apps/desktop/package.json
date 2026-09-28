@@ -1,7 +1,7 @@
 {
 	"name": "desktop",
 	"private": true,
-	"version": "0.0.1-beta",
+	"version": "0.1.1-beta.4",
 	"main": "./out/main/index.js",
 	"scripts": {
 		"dev": "electron-vite dev",
@@ -16,10 +16,11 @@
 		"generate-icons": "swift scripts/generate-app-icons.swift"
 	},
 	"dependencies": {
-		"@puppeteer/browsers": "^3.0.4",
 		"@cloudbase/js-sdk": "^2.30.0",
+		"@puppeteer/browsers": "^3.0.4",
 		"@wenxue/client-operations": "workspace:*",
-		"electron-log": "^5.2.0"
+		"electron-log": "^5.2.0",
+		"electron-updater": "6.8.9"
 	},
 	"devDependencies": {
 		"@tailwindcss/vite": "^4.0.0",

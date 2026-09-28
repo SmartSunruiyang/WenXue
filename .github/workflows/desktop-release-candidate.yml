@@ -97,6 +97,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Test final DMG verification on macOS
+        run: node --test apps/desktop/scripts/verify-packaged-version.test.mjs
       - name: Fetch managed browser
         run: pnpm -F desktop fetch-browser -- --platform mac-arm64
       - run: pnpm -F extension build
@@ -113,16 +115,17 @@ jobs:
         env:
           WENXUE_RELEASE_ED25519_PUBLIC_KEY: ${{ vars.WENXUE_RELEASE_ED25519_PUBLIC_KEY }}
           WENXUE_UPDATE_CHANNEL: ${{ inputs.channel }}
-      - name: Package unsigned DMG
+      - name: Package ad-hoc sealed DMG
         run: pnpm -F desktop exec electron-builder --mac dmg --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Verify packaged version
+      - name: Verify final DMG version and app signature
         run: >-
           node apps/desktop/scripts/verify-packaged-version.mjs
           --release-dir apps/desktop/release
           --expected-version "$RELEASE_VERSION"
           --platform darwin
+          --verify-mac-signature
         env:
           RELEASE_VERSION: ${{ inputs.version }}
       - name: Bind the packaged app release key to the installer artifact
@@ -190,6 +193,15 @@ jobs:
           --platform win32
         env:
           RELEASE_VERSION: ${{ inputs.version }}
+      - name: Generate Windows updater metadata from the packaged NSIS bytes
+        shell: pwsh
+        run: >-
+          node apps/desktop/scripts/release-artifact-set.mjs
+          create-windows-metadata apps/desktop/release
+          "$env:RELEASE_VERSION" "$env:RELEASE_CHANNEL"
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
       - name: Bind the packaged app release key to the installer artifact
         shell: pwsh
         run: |
@@ -207,6 +219,7 @@ jobs:
           name: desktop-win32-x64
           path: |
             apps/desktop/release/*.exe
+            apps/desktop/release/${{ inputs.channel == 'stable' && 'latest' || inputs.channel }}.yml
             apps/desktop/release/release-public-key-fingerprint.txt
           if-no-files-found: error
           retention-days: 1

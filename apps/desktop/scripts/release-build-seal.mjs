@@ -19,7 +19,9 @@ async function main() {
 
 async function createBuildSeal(options) {
 	const releaseDir = requireOption(options, 'release-dir')
-	const artifactSet = await readReleaseArtifactSet(releaseDir)
+	const version = requireSemver(process.env.RELEASE_VERSION, 'RELEASE_VERSION')
+	const channel = requireChannel(process.env.RELEASE_CHANNEL, 'RELEASE_CHANNEL')
+	const artifactSet = await readReleaseArtifactSet(releaseDir, { version, channel })
 	const embeddedReleasePublicKeyFingerprint = await readEmbeddedReleaseKeyFingerprint(releaseDir)
 	const configuredReleasePublicKeyFingerprint = releasePublicKeyFingerprint(
 		process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY,
@@ -29,12 +31,12 @@ async function createBuildSeal(options) {
 	}
 	const output = path.resolve(requireOption(options, 'output'))
 	const seal = {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		runtime: 'electron',
 		repository: requireValue(process.env.GITHUB_REPOSITORY, 'GITHUB_REPOSITORY'),
 		commit: requireCommit(process.env.GITHUB_SHA, 'GITHUB_SHA'),
-		version: requireSemver(process.env.RELEASE_VERSION, 'RELEASE_VERSION'),
-		channel: requireChannel(process.env.RELEASE_CHANNEL, 'RELEASE_CHANNEL'),
+		version,
+		channel,
 		buildRunUrl: requireHttpsUrl(process.env.WENXUE_RELEASE_RUN_URL, 'WENXUE_RELEASE_RUN_URL'),
 		createdAt: requireIsoDate(process.env.WENXUE_RELEASE_CREATED_AT, 'WENXUE_RELEASE_CREATED_AT'),
 		releasePublicKeyFingerprint: embeddedReleasePublicKeyFingerprint,
@@ -48,13 +50,20 @@ async function createBuildSeal(options) {
 
 async function verifyBuildSeal(options) {
 	const releaseDir = requireOption(options, 'release-dir')
-	const artifactSet = await readReleaseArtifactSet(releaseDir)
+	const seal = JSON.parse(await readFile(path.resolve(requireOption(options, 'seal')), 'utf8'))
+	if (!isRecord(seal)) throw new Error('Release build seal must be an object')
+	if (seal.schemaVersion !== 3 && seal.schemaVersion !== 2) {
+		throw new Error('Unsupported release build seal version')
+	}
+	const artifactSet = await readReleaseArtifactSet(releaseDir, {
+		version: seal.version,
+		channel: seal.channel,
+		schemaVersion: seal.schemaVersion === 2 ? 1 : 2,
+	})
 	const embeddedReleasePublicKeyFingerprint = await readEmbeddedReleaseKeyFingerprint(releaseDir)
 	const configuredReleasePublicKeyFingerprint = releasePublicKeyFingerprint(
 		process.env.WENXUE_RELEASE_ED25519_PUBLIC_KEY,
 	)
-	const seal = JSON.parse(await readFile(path.resolve(requireOption(options, 'seal')), 'utf8'))
-	if (!isRecord(seal)) throw new Error('Release build seal must be an object')
 	assertOnlyKeys(seal, [
 		'schemaVersion',
 		'runtime',
@@ -76,7 +85,7 @@ async function verifyBuildSeal(options) {
 		buildRunUrl: requireHttpsUrl(requireOption(options, 'expected-run-url'), '--expected-run-url'),
 	}
 	if (
-		seal.schemaVersion !== 2 ||
+		(seal.schemaVersion !== 3 && seal.schemaVersion !== 2) ||
 		seal.runtime !== 'electron' ||
 		seal.repository !== expected.repository ||
 		seal.commit !== expected.commit ||

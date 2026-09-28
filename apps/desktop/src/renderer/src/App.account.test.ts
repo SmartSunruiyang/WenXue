@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
 	announcementOptions: vi.fn(),
 	releaseStart: vi.fn(),
 	releaseStop: vi.fn(),
+	releaseResume: vi.fn(),
 	fetch: vi.fn(),
 }))
 
@@ -46,6 +47,7 @@ vi.mock('./DesktopAnnouncementService', () => ({
 		}
 		start = mocks.announcementStart
 		stop = mocks.announcementStop
+		resume = async () => undefined
 		current = () => null
 		subscribe(listener: (snapshot: DesktopAnnouncementSnapshot) => void) {
 			listener({ current: null, queueLength: 0 })
@@ -58,6 +60,7 @@ vi.mock('./DesktopReleaseSignalService', () => ({
 	DesktopReleaseSignalService: class {
 		start = mocks.releaseStart
 		stop = mocks.releaseStop
+		resume = mocks.releaseResume
 	},
 }))
 
@@ -157,6 +160,8 @@ function bridgeFixture(): Window['wenxue'] {
 			check: async () => ({ ok: true, state: { phase: 'idle' } }),
 			download: async () => ({ ok: true, state: { phase: 'idle' } }),
 			openInstaller: async () => ({ ok: true, state: { phase: 'idle' } }),
+			openManualDownload: async () => ({ ok: true, state: { phase: 'idle' } }),
+			restartInstall: async () => ({ ok: true, state: { phase: 'idle' } }),
 			onStateChange: unsubscribe,
 		},
 		app: {
@@ -270,6 +275,56 @@ afterEach(async () => {
 })
 
 describe('App account integration', () => {
+	it('shows the last local install attempt in About even when no update is available', async () => {
+		window.wenxue.updates.getState = async () => ({
+			phase: 'idle',
+			lastInstallAttempt: { targetVersion: '0.1.1-beta.1', status: 'unconfirmed' },
+		})
+		await render()
+		await openAccount()
+		await click(strings.settings.sections.about)
+		expect(container.textContent).toContain('上次目标版本 v0.1.1beta.1')
+		expect(container.textContent).toContain(strings.update.lastInstallAttempt.unconfirmed)
+	})
+
+	it('routes an eligible manual download action through the typed update bridge', async () => {
+		const errorState = {
+			phase: 'error' as const,
+			message: '自动下载失败',
+			retryable: false,
+			manualDownloadAvailable: true,
+			release: {
+				releaseId: 'electron-stable-0.1.1',
+				version: '0.1.1',
+				channel: 'stable' as const,
+				title: '更新可用',
+				notes: '修复',
+				mode: 'optional' as const,
+				distribution: { mode: 'platform-unsigned' as const },
+				installAction: 'restart' as const,
+				size: 1024,
+			},
+		}
+		window.wenxue.updates.getState = async () => errorState
+		const openManualDownload = vi.fn(async () => ({ ok: true, state: errorState }))
+		window.wenxue.updates.openManualDownload = openManualDownload
+		await render()
+		await click('手动下载安装包')
+		expect(openManualDownload).toHaveBeenCalledOnce()
+	})
+
+	it('checks release policy when the launcher regains connectivity or focus without registering again', async () => {
+		await render()
+		const starts = mocks.releaseStart.mock.calls.length
+		await act(async () => {
+			window.dispatchEvent(new Event('online'))
+			window.dispatchEvent(new Event('focus'))
+			document.dispatchEvent(new Event('visibilitychange'))
+		})
+		expect(mocks.releaseResume).toHaveBeenCalledTimes(3)
+		expect(mocks.releaseStart).toHaveBeenCalledTimes(starts)
+	})
+
 	it('keeps a fresh account usable and hides tutorial replay when recordings are missing', async () => {
 		vi.stubGlobal('localStorage', { getItem: vi.fn().mockReturnValue(null), setItem: vi.fn() })
 		await render()

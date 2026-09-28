@@ -140,6 +140,13 @@
 			"source": "index.mjs",
 			"target": "clientUpdateEvents",
 			"triggerPath": "/v1/client/update-events"
+		},
+		{
+			"name": "public-desktop-downloads",
+			"directory": ".",
+			"source": "index.mjs",
+			"target": "publicDesktopDownloads",
+			"triggerPath": "/v1/public/desktop-downloads"
 		}
 	]
 }

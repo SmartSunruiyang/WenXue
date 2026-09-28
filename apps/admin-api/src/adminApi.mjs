@@ -40,12 +40,14 @@ const PUBLIC_RATE_LIMITS = {
 	// campus/office NATs therefore need a much wider read allowance than telemetry.
 	updatePolicy: { perIp: 5_000, global: 50_000 },
 	updateEvents: { perIp: 60, global: 2_000 },
+	desktopDownloads: { perIp: 120, global: 10_000 },
 }
 /** @type {Record<UpdateEventStage, ReadonlySet<string>>} */
 const UPDATE_EVENT_RESULTS = {
 	check: new Set(['success', 'failure']),
 	download: new Set(['start', 'success', 'failure']),
 	handoff: new Set(['start', 'success', 'failure']),
+	'target-started': new Set(['success']),
 }
 const REQUIRED_RELEASE_TEST_EVIDENCE = new Set([
 	'quality',
@@ -60,13 +62,13 @@ const REQUIRED_RELEASE_TEST_EVIDENCE = new Set([
 /** @typedef {'dev' | 'beta' | 'stable'} ReleaseChannel */
 /** @typedef {'optional' | 'mandatory'} UpdateMode */
 /** @typedef {'active' | 'paused' | 'withdrawn' | 'superseded'} ReleaseStatus */
-/** @typedef {'check' | 'download' | 'handoff'} UpdateEventStage */
+/** @typedef {'check' | 'download' | 'handoff' | 'target-started'} UpdateEventStage */
 /** @typedef {'start' | 'success' | 'failure'} UpdateEventResult */
 /** @typedef {{ platforms?: DesktopPlatform[], minVersion?: string, maxVersion?: string, userIds?: string[] }} AnnouncementAudience */
 /** @typedef {{ importance: AnnouncementImportance, title: string, body: string, detailUrl?: string, audience: AnnouncementAudience, expiresAt: string }} NormalizedAnnouncementInput */
 /** @typedef {{ _id: string, schemaVersion: number, status: 'published' | 'withdrawn', importance: AnnouncementImportance, title: string, body: string, detailUrl?: string, audience: AnnouncementAudience, publishedAt: string, expiresAt: string, publishedBy: string, withdrawnAt?: string, withdrawnBy?: string }} AnnouncementRecord */
 /** @typedef {{ platform: DesktopPlatform, arch: DesktopArchitecture, kind: string, fileName: string, url: string, sha512: string, size: number }} ReleaseArtifact */
-/** @typedef {{ mode: 'manual-unsigned' }} ReleaseDistribution */
+/** @typedef {{ mode: 'manual-unsigned' | 'platform-unsigned' }} ReleaseDistribution */
 /** @typedef {{ name: string, status: 'passed', url: string }} ReleaseTestEvidence */
 /** @typedef {{ _id: string, schemaVersion: number, runtime: DesktopRuntime, version: string, channel: ReleaseChannel, createdAt: string, manifestUrl: string, manifestSignature: string, artifacts: ReleaseArtifact[], sourceCoordinates: Record<string, unknown>, distribution: ReleaseDistribution, tests: ReleaseTestEvidence[], status: 'verified', registeredAt: string }} ReleaseCandidateRecord */
 /** @typedef {{ _id: string, runtime: DesktopRuntime, channel: ReleaseChannel, releaseId: string, status: ReleaseStatus, percentage: number, mode: UpdateMode, minSupportedVersion?: string, title: string, notes: string, publishedAt: string, publishedBy: string, updatedAt: string, updatedBy: string }} ReleaseRolloutRecord */
@@ -116,7 +118,7 @@ let nextAnnouncementReceiptCleanupAt = 0
  * createReleaseRollout(record: Record<string, unknown>): Promise<void>,
  * updateReleaseRollout(id: string, patch: Record<string, unknown>): Promise<unknown | null>,
  * incrementReleaseSignal(runtime: string, channel: string, updatedAt: string): Promise<unknown>,
- * commitReleasePublication(record: Record<string, unknown>, audit: Record<string, unknown>, legacyRolloutIds?: string[], versionGuard?: { candidateVersion: string, highestPublishedVersion?: string }): Promise<{ created: boolean, record: unknown }>,
+ * commitReleasePublication(record: Record<string, unknown>, audit: Record<string, unknown>, legacyRolloutIds?: string[], versionGuard?: { candidateVersion: string, highestPublishedVersion?: string, publicDownloadEligible?: boolean }): Promise<{ created: boolean, record: unknown }>,
  * commitReleaseState(record: Record<string, unknown>, audit: Record<string, unknown>, expectedStatus: string): Promise<{ outcome: string, record: unknown | null }>,
  * createReleaseEventWithinQuota(record: Record<string, unknown>, quota: { id: string, limit: number, expiresAt: string }): Promise<{ outcome: 'created' | 'updated' | 'duplicate' | 'quota-exceeded' }>,
  * listReleaseEvents(filter: { releaseId?: string, createdAfter?: string, createdBefore?: string, before?: { createdAt: string, id: string }, limit?: number }): Promise<unknown[]>,
@@ -153,7 +155,11 @@ export class AdminApiError extends Error {
  * }} input
  */
 export async function handleAdminRequest(input) {
+	/** @type {Record<string, string>} */
 	const corsHeaders = buildCorsHeaders(input.headers, input.env.allowedOrigins ?? ['*'])
+	if (normalizePath(input.path).replace(/^\/api(?=\/)/, '') === '/v1/public/desktop-downloads') {
+		corsHeaders['cache-control'] = 'no-store'
+	}
 	if (input.method.toUpperCase() === 'OPTIONS') {
 		return jsonResponse(null, 204, corsHeaders)
 	}
@@ -204,6 +210,12 @@ export async function handleAdminRequest(input) {
 				now,
 			})
 			return jsonResponse({ receipt }, 200, corsHeaders)
+		}
+
+		if (path === '/v1/public/desktop-downloads') {
+			if (method !== 'GET') throw new AdminApiError('Method not allowed', 405)
+			consumePublicRateLimit('desktopDownloads', input.headers, now())
+			return jsonResponse({ release: await publicDesktopDownloads(input.store) }, 200, corsHeaders)
 		}
 
 		if (path === '/v1/client/update-policy' && method === 'GET') {
@@ -960,6 +972,9 @@ async function publishRelease(input) {
 	if (!candidate || candidate.status !== 'verified') {
 		throw new AdminApiError('Verified release candidate not found', 404)
 	}
+	if (candidate.schemaVersion === 2 && mode === 'mandatory') {
+		throw new AdminApiError('Platform updates must be optional', 400)
+	}
 	if (minSupportedVersion && compareSemver(minSupportedVersion, candidate.version) >= 0) {
 		throw new AdminApiError('minSupportedVersion must be lower than candidate version', 400)
 	}
@@ -1020,6 +1035,7 @@ async function publishRelease(input) {
 	try {
 		committed = await input.store.commitReleasePublication(release, audit, legacyRolloutIds, {
 			candidateVersion: candidate.version,
+			publicDownloadEligible: percentage === 100 && isPublicDownloadCandidate(candidate),
 			...(highestPublishedVersion ? { highestPublishedVersion } : {}),
 		})
 	} catch (error) {
@@ -1060,7 +1076,10 @@ async function changeReleaseState(input) {
 	}
 	if (
 		action === 'withdraw' &&
-		(current.status === 'active' || current.status === 'paused' || current.status === 'withdrawn')
+		(current.status === 'active' ||
+			current.status === 'paused' ||
+			current.status === 'withdrawn' ||
+			current.status === 'superseded')
 	) {
 		expectedStatus = current.status === 'withdrawn' ? 'active' : current.status
 		nextStatus = 'withdrawn'
@@ -1097,10 +1116,96 @@ async function changeReleaseState(input) {
 	return stored
 }
 
+/** @param {ReleaseCandidateRecord} candidate */
+function isPublicDownloadCandidate(candidate) {
+	return (
+		candidate.runtime === 'electron' &&
+		candidate.channel === 'stable' &&
+		!SEMVER_PATTERN.exec(candidate.version)?.[4] &&
+		[
+			['darwin', 'arm64', 'dmg'],
+			['win32', 'x64', 'nsis'],
+		].every(([platform, arch, kind]) =>
+			candidate.artifacts.some(
+				(artifact) =>
+					artifact.platform === platform &&
+					artifact.arch === arch &&
+					artifact.kind === kind &&
+					!new URL(artifact.url).search &&
+					!new URL(artifact.url).hash,
+			),
+		)
+	)
+}
+
+/** @param {AdminStore} store */
+async function publicDesktopDownloads(store) {
+	const slot = await store.getReleaseActiveSlot('electron', 'stable')
+	if (
+		!isRecord(slot) ||
+		slot.recordType !== 'release-slot' ||
+		slot.runtime !== 'electron' ||
+		slot.channel !== 'stable' ||
+		typeof slot.publicDownloadRolloutId !== 'string' ||
+		!Array.isArray(slot.publicDownloadHistoryIds) ||
+		slot.publicDownloadHistoryIds.length > 20 ||
+		slot.publicDownloadHistoryIds.some((id) => typeof id !== 'string' || !id) ||
+		new Set(slot.publicDownloadHistoryIds).size !== slot.publicDownloadHistoryIds.length ||
+		!slot.publicDownloadHistoryIds.includes(slot.publicDownloadRolloutId)
+	)
+		return null
+	const record = await store.getReleaseRollout(slot.publicDownloadRolloutId)
+	const rollout = normalizeReleaseRollout(record)
+	if (
+		!rollout ||
+		!isRecord(record) ||
+		record.publicDownloadEligible !== true ||
+		rollout._id !== slot.publicDownloadRolloutId ||
+		rollout.runtime !== 'electron' ||
+		rollout.channel !== 'stable' ||
+		rollout.percentage !== 100 ||
+		!Number.isFinite(Date.parse(rollout.publishedAt)) ||
+		new Date(rollout.publishedAt).toISOString() !== rollout.publishedAt ||
+		(rollout.status !== 'active' && rollout.status !== 'superseded')
+	)
+		return null
+	const candidate = normalizeReleaseCandidateRecord(
+		await store.getReleaseCandidate(rollout.releaseId),
+	)
+	if (!candidate || candidate._id !== rollout.releaseId || !isPublicDownloadCandidate(candidate))
+		return null
+	return {
+		version: candidate.version,
+		publishedAt: rollout.publishedAt,
+		artifacts: candidate.artifacts
+			.filter(
+				(artifact) =>
+					(artifact.platform === 'darwin' &&
+						artifact.arch === 'arm64' &&
+						artifact.kind === 'dmg') ||
+					(artifact.platform === 'win32' && artifact.arch === 'x64' && artifact.kind === 'nsis'),
+			)
+			.map(({ platform, arch, kind, url, sha512, size }) => ({
+				platform,
+				arch,
+				kind,
+				url,
+				size,
+				sha512: /^[a-f0-9]{128}$/i.test(sha512)
+					? Buffer.from(sha512, 'hex').toString('base64')
+					: sha512,
+			})),
+	}
+}
+
 /**
  * @param {{ query: Record<string, string | undefined>, store: AdminStore, eventTokenSecret?: string, now: () => number }} input
  */
 async function buildClientUpdatePolicy(input) {
+	const protocolVersion = input.query.protocolVersion
+	if (protocolVersion !== undefined && protocolVersion !== '2') {
+		throw new AdminApiError('Unsupported update protocol version', 400)
+	}
 	const runtime = readRuntime(input.query.runtime)
 	const platform = readPlatform(input.query.platform)
 	const arch = readArchitecture(input.query.arch)
@@ -1137,6 +1242,8 @@ async function buildClientUpdatePolicy(input) {
 		await input.store.getReleaseCandidate(active.releaseId),
 	)
 	if (!candidate || candidate.status !== 'verified') return null
+	if (candidate.schemaVersion === 2 && protocolVersion !== '2') return null
+	if (candidate.schemaVersion === 2 && active.mode !== 'optional') return null
 	if (candidate.runtime !== runtime || candidate.channel !== channel) return null
 	if (compareSemver(candidate.version, version) <= 0) return null
 	const artifacts = candidate.artifacts.filter(
@@ -1178,6 +1285,7 @@ async function buildClientUpdatePolicy(input) {
 		manifestSignature: candidate.manifestSignature,
 		distribution: candidate.distribution,
 		artifacts,
+		...(candidate.schemaVersion === 2 ? { schemaVersion: 2 } : {}),
 		publishedAt: active.publishedAt,
 		checkedAt: new Date(checkedAtMs).toISOString(),
 		validUntil: new Date(checkedAtMs + UPDATE_POLICY_FRESHNESS_MS).toISOString(),
@@ -1201,6 +1309,8 @@ async function recordReleaseEvent(input) {
 		'result',
 		'errorCode',
 		'eventToken',
+		'targetVersion',
+		'artifactSha512',
 	])
 	for (const key of Object.keys(body)) {
 		if (!allowedKeys.has(key) || (key !== 'eventToken' && EVENT_SENSITIVE_PATTERN.test(key))) {
@@ -1218,6 +1328,21 @@ async function recordReleaseEvent(input) {
 	const result = readUpdateEventResult(stage, body.result)
 	const errorCode =
 		body.errorCode === undefined ? undefined : readIdentifier(body.errorCode, 'errorCode', 64)
+	if (
+		stage !== 'target-started' &&
+		(body.targetVersion !== undefined || body.artifactSha512 !== undefined)
+	) {
+		throw new AdminApiError('Target start fields are only allowed for target-started events', 400)
+	}
+	if (stage === 'target-started' && errorCode !== undefined) {
+		throw new AdminApiError('Target start confirmation cannot include an error code', 400)
+	}
+	const targetVersion =
+		stage === 'target-started' ? readSemver(body.targetVersion, 'targetVersion') : undefined
+	const artifactSha512 =
+		stage === 'target-started'
+			? readRequiredText(body.artifactSha512, 'artifactSha512', 128)
+			: undefined
 	verifyReleaseEventToken(
 		readRequiredText(body.eventToken, 'eventToken', 4_096),
 		{
@@ -1248,6 +1373,19 @@ async function recordReleaseEvent(input) {
 	) {
 		throw new AdminApiError('Verified release candidate does not match update event', 400)
 	}
+	if (stage === 'target-started') {
+		const installerKind = platform === 'darwin' ? 'dmg' : 'nsis'
+		const installer = candidate.artifacts.find(
+			(artifact) =>
+				artifact.platform === platform && artifact.arch === arch && artifact.kind === installerKind,
+		)
+		if (targetVersion !== candidate.version || artifactSha512 !== installer?.sha512) {
+			throw new AdminApiError(
+				'Target version or installer digest does not match verified candidate',
+				400,
+			)
+		}
+	}
 	const createdAtMs = input.now()
 	const event = {
 		_id: dispatchDocumentId(
@@ -1264,6 +1402,7 @@ async function recordReleaseEvent(input) {
 		stage,
 		result,
 		errorCode,
+		...(stage === 'target-started' ? { targetVersion, artifactSha512 } : {}),
 		createdAt: new Date(createdAtMs).toISOString(),
 		expiresAt: new Date(createdAtMs + UPDATE_EVENT_RETENTION_MS).toISOString(),
 	}
@@ -1317,6 +1456,7 @@ function buildReleaseHealth(releaseId, values, windowStartedAt, truncated = fals
 		check: { success: 0, failure: 0 },
 		download: { success: 0, failure: 0 },
 		handoff: { success: 0, failure: 0 },
+		targetStarted: { success: 0 },
 	}
 	let updatedAt
 	let sampleCount = 0
@@ -1326,7 +1466,11 @@ function buildReleaseHealth(releaseId, values, windowStartedAt, truncated = fals
 		if (!updatedAt || Date.parse(event.createdAt) > Date.parse(updatedAt)) {
 			updatedAt = event.createdAt
 		}
-		if (event.result === 'success' || event.result === 'failure') {
+		if (event.stage === 'target-started') {
+			// A start confirmation is one reported sample; absence is unknown, never a failure.
+			sampleCount += 1
+			stages.targetStarted.success += 1
+		} else if (event.result === 'success' || event.result === 'failure') {
 			sampleCount += 1
 			stages[event.stage][event.result] += 1
 		}
@@ -1658,11 +1802,17 @@ function normalizeReleaseCandidateInput(manifest, wrapperManifestUrl, manifestSi
 		'tests',
 		'artifacts',
 	])
-	if (manifest.schemaVersion !== 1) throw new AdminApiError('Unsupported manifest schema', 400)
+	if (manifest.schemaVersion !== 1 && manifest.schemaVersion !== 2) {
+		throw new AdminApiError('Unsupported manifest schema', 400)
+	}
+	const schemaVersion = manifest.schemaVersion
 	const id = readBoundedId(manifest.releaseId, 'releaseId')
 	const runtime = readRuntime(manifest.runtime)
 	const channel = readChannel(manifest.channel)
 	if (!runtime || !channel) throw new AdminApiError('Invalid release runtime or channel', 400)
+	if (schemaVersion === 2 && runtime !== 'electron') {
+		throw new AdminApiError('Platform release requires Electron runtime', 400)
+	}
 	const version = readSemver(manifest.version, 'version')
 	const createdAtMs = readIsoTimestamp(manifest.createdAt, 'createdAt')
 	const embeddedManifestUrl = readHttpsUrl(manifest.manifestUrl, 'manifest.manifestUrl', 2_048)
@@ -1675,12 +1825,19 @@ function normalizeReleaseCandidateInput(manifest, wrapperManifestUrl, manifestSi
 		throw new AdminApiError('manifestSignature must be base64', 400)
 	}
 	const sourceCoordinates = normalizeSourceCoordinates(manifest.sourceCoordinates)
-	const distribution = normalizeReleaseDistribution(manifest.distribution)
+	if (schemaVersion === 2 && !sourceCoordinates.releasePublicKeyFingerprint) {
+		throw new AdminApiError('Platform release requires public key fingerprint', 400)
+	}
+	const distribution = normalizeReleaseDistribution(manifest.distribution, schemaVersion)
 	const tests = normalizeReleaseTests(manifest.tests)
-	const artifacts = normalizeReleaseArtifacts(manifest.artifacts)
+	const artifacts = normalizeReleaseArtifacts(manifest.artifacts, schemaVersion, channel)
+	if (schemaVersion === 2) {
+		assertUnsignedReleaseUrl(embeddedManifestUrl, 'manifest.manifestUrl')
+		for (const test of tests) assertUnsignedReleaseUrl(test.url, 'test url')
+	}
 	return {
 		_id: id,
-		schemaVersion: 1,
+		schemaVersion,
 		runtime,
 		version,
 		channel,
@@ -1733,14 +1890,17 @@ function normalizeSourceCoordinates(value) {
 
 /**
  * @param {unknown} value
+ * @param {1 | 2} schemaVersion
+ * @returns {ReleaseDistribution}
  */
-function normalizeReleaseDistribution(value) {
+function normalizeReleaseDistribution(value, schemaVersion) {
 	if (!isRecord(value)) throw new AdminApiError('distribution must be an object', 400)
 	assertOnlyKeys(value, ['mode'])
-	if (value.mode !== 'manual-unsigned') {
-		throw new AdminApiError('distribution.mode must be manual-unsigned', 400)
+	const requiredMode = schemaVersion === 2 ? 'platform-unsigned' : 'manual-unsigned'
+	if (value.mode !== requiredMode) {
+		throw new AdminApiError(`distribution.mode must be ${requiredMode}`, 400)
 	}
-	return { mode: /** @type {'manual-unsigned'} */ ('manual-unsigned') }
+	return { mode: requiredMode }
 }
 
 /**
@@ -1773,11 +1933,21 @@ function normalizeReleaseTests(value) {
 
 /**
  * @param {unknown} value
+ * @param {1 | 2} schemaVersion
+ * @param {ReleaseChannel} channel
  * @returns {ReleaseArtifact[]}
  */
-function normalizeReleaseArtifacts(value) {
-	if (!Array.isArray(value) || (value.length !== 2 && value.length !== 3)) {
-		throw new AdminApiError('artifacts must contain two or three manual installers', 400)
+function normalizeReleaseArtifacts(value, schemaVersion, channel) {
+	if (
+		!Array.isArray(value) ||
+		(schemaVersion === 2 ? value.length !== 3 : value.length !== 2 && value.length !== 3)
+	) {
+		throw new AdminApiError(
+			schemaVersion === 2
+				? 'artifacts must contain three platform release files'
+				: 'artifacts must contain two or three manual installers',
+			400,
+		)
 	}
 	const artifacts = value.map((artifact) => {
 		if (!isRecord(artifact)) throw new AdminApiError('Invalid release artifact', 400)
@@ -1819,11 +1989,28 @@ function normalizeReleaseArtifacts(value) {
 		throw new AdminApiError('Artifact targets and kinds must be unique', 400)
 	}
 	const requiredTargets = new Set(['darwin:arm64:dmg', 'win32:x64:nsis'])
-	const allowedTargets = new Set([...requiredTargets, 'darwin:x64:dmg'])
+	if (schemaVersion === 2) requiredTargets.add('win32:x64:nsis-yaml')
+	const allowedTargets =
+		schemaVersion === 2 ? new Set(requiredTargets) : new Set([...requiredTargets, 'darwin:x64:dmg'])
 	for (const artifact of artifacts) {
 		const target = `${artifact.platform}:${artifact.arch}:${artifact.kind}`
 		if (!allowedTargets.has(target)) {
-			throw new AdminApiError(`Unexpected manual installer artifact: ${target}`, 400)
+			throw new AdminApiError(
+				`Unexpected ${schemaVersion === 2 ? 'platform release' : 'manual installer'} artifact: ${target}`,
+				400,
+			)
+		}
+		if (schemaVersion === 2) {
+			assertUnsignedReleaseUrl(artifact.url, 'artifact.url')
+			let urlFileName
+			try {
+				urlFileName = decodeURIComponent(new URL(artifact.url).pathname.split('/').at(-1) ?? '')
+			} catch {
+				throw new AdminApiError('Artifact URL contains invalid encoding', 400)
+			}
+			if (urlFileName !== artifact.fileName) {
+				throw new AdminApiError('Artifact URL must name its file', 400)
+			}
 		}
 		requiredTargets.delete(target)
 	}
@@ -1833,7 +2020,31 @@ function normalizeReleaseArtifacts(value) {
 			400,
 		)
 	}
+	if (schemaVersion === 2) {
+		const yaml = artifacts.find((artifact) => artifact.kind === 'nsis-yaml')
+		const nsis = artifacts.find((artifact) => artifact.kind === 'nsis')
+		const expectedName = channel === 'stable' ? 'latest.yml' : `${channel}.yml`
+		if (
+			!yaml ||
+			!nsis ||
+			yaml.fileName !== expectedName ||
+			new URL('.', yaml.url).href !== new URL('.', nsis.url).href
+		) {
+			throw new AdminApiError('NSIS metadata must match channel and installer directory', 400)
+		}
+	}
 	return artifacts
+}
+
+/** @param {string} value @param {string} name */
+function assertUnsignedReleaseUrl(value, name) {
+	const url = new URL(value)
+	if (url.username || url.password || url.search || url.hash || url.toString() !== value) {
+		throw new AdminApiError(
+			`${name} must be a canonical HTTPS URL without credentials, query, or hash`,
+			400,
+		)
+	}
 }
 
 /**
@@ -1842,7 +2053,13 @@ function normalizeReleaseArtifacts(value) {
  */
 function hasInstallableArtifactSet(artifacts, platform) {
 	const expectedKind = platform === 'darwin' ? 'dmg' : 'nsis'
-	return artifacts.length === 1 && artifacts[0]?.kind === expectedKind
+	return (
+		(artifacts.length === 1 && artifacts[0]?.kind === expectedKind) ||
+		(platform === 'win32' &&
+			artifacts.length === 2 &&
+			artifacts.some((artifact) => artifact.kind === 'nsis') &&
+			artifacts.some((artifact) => artifact.kind === 'nsis-yaml'))
+	)
 }
 
 /**
@@ -2081,7 +2298,7 @@ function readReleaseListFilter(query) {
 }
 
 /**
- * @param {'updatePolicy' | 'updateEvents'} operation
+ * @param {'updatePolicy' | 'updateEvents' | 'desktopDownloads'} operation
  * @param {Headers | Record<string, string | string[] | undefined>} headers
  * @param {number} now
  */
@@ -2293,7 +2510,8 @@ function releaseEventTokenSecret(value) {
  */
 function readUpdateEventStage(value) {
 	const stage = readUpdateEventStageOrNull(value)
-	if (!stage) throw new AdminApiError('stage must be check, download, or handoff', 400)
+	if (!stage)
+		throw new AdminApiError('stage must be check, download, handoff, or target-started', 400)
 	return stage
 }
 
@@ -2301,7 +2519,12 @@ function readUpdateEventStage(value) {
  * @param {unknown} value
  */
 function readUpdateEventStageOrNull(value) {
-	return value === 'check' || value === 'download' || value === 'handoff' ? value : null
+	return value === 'check' ||
+		value === 'download' ||
+		value === 'handoff' ||
+		value === 'target-started'
+		? value
+		: null
 }
 
 /**

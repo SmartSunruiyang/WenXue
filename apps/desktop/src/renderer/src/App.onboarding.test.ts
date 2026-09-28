@@ -34,6 +34,7 @@ vi.mock('./DesktopReleaseSignalService', () => ({
 	DesktopReleaseSignalService: class {
 		start = () => undefined
 		stop = () => undefined
+		resume = () => undefined
 	},
 }))
 
@@ -124,6 +125,8 @@ function bridgeFixture(): Window['wenxue'] {
 			check: async () => ({ ok: true, state: { phase: 'idle' } }),
 			download: async () => ({ ok: true, state: { phase: 'idle' } }),
 			openInstaller: async () => ({ ok: true, state: { phase: 'idle' } }),
+			openManualDownload: async () => ({ ok: true, state: { phase: 'idle' } }),
+			restartInstall: async () => ({ ok: true, state: { phase: 'idle' } }),
 			onStateChange: (listener) => {
 				updateListener = listener
 				return () => undefined

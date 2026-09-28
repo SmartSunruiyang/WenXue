@@ -4,12 +4,13 @@ import path from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
-import { assertReleaseTargetMatrix } from './release-artifact-set.mjs'
+import { assertReleaseTargetMatrix, updateMetadataFileName } from './release-artifact-set.mjs'
 
 const SMALL_REQUEST_TIMEOUT_MS = 30_000
 const ARTIFACT_REQUEST_TIMEOUT_MS = 20 * 60 * 1000
 const REQUEST_ATTEMPTS = 4
 const MAX_CONTROL_FILE_BYTES = 5 * 1024 * 1024
+const MAX_UPDATE_METADATA_BYTES = 64 * 1024
 const REQUIRED_TEST_EVIDENCE = new Set([
 	'quality',
 	'manual-installer-integrity',
@@ -46,24 +47,76 @@ export async function verifyPublishedCandidate(options, dependencies = {}) {
 	}
 	assertExpectedManifest(manifest, options, publicKeyFingerprint)
 	assertReleaseTests(manifest.tests)
-	assertReleaseTargetMatrix(manifest.artifacts)
+	assertReleaseTargetMatrix(manifest.artifacts, manifest.schemaVersion)
 
 	const baseUrl = new URL('./', manifestUrl)
+	let metadataBytes
 	for (const value of manifest.artifacts) {
 		if (!isRecord(value)) throw new Error('Published candidate contains an invalid artifact')
 		const artifactUrl = requireHttpsUrl(value.url, 'artifact URL', false)
 		assertInsideCandidatePath(artifactUrl, baseUrl)
-		if (typeof value.sha512 !== 'string' || !Number.isSafeInteger(value.size) || value.size <= 0) {
+		const expectedPath = `${baseUrl.pathname}${value.platform}/${value.arch}/${encodeURIComponent(value.fileName)}`
+		if (
+			new URL(artifactUrl).pathname !== expectedPath ||
+			typeof value.sha512 !== 'string' ||
+			!/^[A-Za-z0-9+/]{86}==$/.test(value.sha512) ||
+			!Number.isSafeInteger(value.size) ||
+			value.size <= 0
+		) {
 			throw new Error(`Artifact integrity metadata is invalid: ${artifactUrl}`)
 		}
-		await verifyRemoteArtifact(
-			artifactUrl,
-			value.sha512,
-			value.size,
-			fetchImpl,
-			requestAttempts,
-			retryDelay,
-		)
+		if (manifest.schemaVersion === 2 && value.kind === 'nsis-yaml') {
+			if (value.size > MAX_UPDATE_METADATA_BYTES) {
+				throw new Error('Published Windows update metadata exceeds the size limit')
+			}
+			metadataBytes = await fetchSmallBytes(
+				artifactUrl,
+				fetchImpl,
+				requestAttempts,
+				retryDelay,
+				MAX_UPDATE_METADATA_BYTES,
+			)
+			if (
+				metadataBytes.byteLength !== value.size ||
+				createHash('sha512').update(metadataBytes).digest('base64') !== value.sha512
+			) {
+				throw new Error('Published Windows update metadata failed integrity verification')
+			}
+		} else {
+			await verifyRemoteArtifact(
+				artifactUrl,
+				value.sha512,
+				value.size,
+				fetchImpl,
+				requestAttempts,
+				retryDelay,
+			)
+		}
+	}
+	if (manifest.schemaVersion === 2) {
+		const installer = manifest.artifacts.find((value) => value.kind === 'nsis')
+		const metadata = manifest.artifacts.find((value) => value.kind === 'nsis-yaml')
+		if (metadata.fileName !== updateMetadataFileName(manifest.channel)) {
+			throw new Error('Published Windows update metadata channel filename is invalid')
+		}
+		const parsed = JSON.parse(metadataBytes.toString('utf8'))
+		const exeName = encodeURIComponent(installer.fileName)
+		if (
+			!isRecord(parsed) ||
+			Object.keys(parsed).sort().join(',') !== 'files,path,sha512,version' ||
+			parsed.version !== manifest.version ||
+			!Array.isArray(parsed.files) ||
+			parsed.files.length !== 1 ||
+			!isRecord(parsed.files[0]) ||
+			Object.keys(parsed.files[0]).sort().join(',') !== 'sha512,size,url' ||
+			parsed.files[0].url !== exeName ||
+			parsed.path !== exeName ||
+			parsed.files[0].sha512 !== installer.sha512 ||
+			parsed.sha512 !== installer.sha512 ||
+			parsed.files[0].size !== installer.size
+		) {
+			throw new Error('Published Windows update metadata does not match signed NSIS artifact')
+		}
 	}
 
 	if (options.registrationOutput) {
@@ -90,10 +143,11 @@ export async function verifyPublishedCandidate(options, dependencies = {}) {
 
 function assertExpectedManifest(manifest, options, publicKeyFingerprint) {
 	if (
-		manifest.schemaVersion !== 1 ||
+		![1, 2].includes(manifest.schemaVersion) ||
 		manifest.runtime !== 'electron' ||
 		!isRecord(manifest.distribution) ||
-		manifest.distribution.mode !== 'manual-unsigned' ||
+		manifest.distribution.mode !==
+			(manifest.schemaVersion === 2 ? 'platform-unsigned' : 'manual-unsigned') ||
 		manifest.version !== options.expectedVersion ||
 		manifest.channel !== options.expectedChannel ||
 		manifest.releaseId !== `electron:${options.expectedChannel}:${options.expectedVersion}`
@@ -173,20 +227,31 @@ function readOptions(argv) {
 	}
 }
 
-async function fetchSmallBytes(url, fetchImpl, requestAttempts, retryDelay) {
+async function fetchSmallBytes(
+	url,
+	fetchImpl,
+	requestAttempts,
+	retryDelay,
+	maxBytes = MAX_CONTROL_FILE_BYTES,
+) {
 	return withRetries(
 		async () => {
 			const request = await fetchWithTimeout(url, SMALL_REQUEST_TIMEOUT_MS, fetchImpl)
 			try {
 				const contentLength = Number(request.response.headers.get('content-length'))
-				if (Number.isFinite(contentLength) && contentLength > MAX_CONTROL_FILE_BYTES) {
+				if (Number.isFinite(contentLength) && contentLength > maxBytes) {
 					throw new Error(`Published control file is too large: ${url}`)
 				}
-				const bytes = Buffer.from(await request.response.arrayBuffer())
-				if (bytes.byteLength > MAX_CONTROL_FILE_BYTES) {
-					throw new Error(`Published control file is too large: ${url}`)
+				if (!request.response.body) throw new Error(`Published control file has no body: ${url}`)
+				const chunks = []
+				let size = 0
+				for await (const chunk of request.response.body) {
+					const bytes = Buffer.from(chunk)
+					size += bytes.byteLength
+					if (size > maxBytes) throw new Error(`Published control file is too large: ${url}`)
+					chunks.push(bytes)
 				}
-				return bytes
+				return Buffer.concat(chunks, size)
 			} finally {
 				request.finish()
 			}

@@ -22,6 +22,74 @@ test('verifies the signed public manifest and every published artifact byte', as
 	})
 })
 
+test('verifies schema v2 Windows metadata and rejects a signed metadata mismatch', async () => {
+	const good = createFixture({ schemaVersion: 2 })
+	const metadataUrl = good.manifest.artifacts.find((value) => value.kind === 'nsis-yaml').url
+	let metadataRequests = 0
+	await withReleasePublicKey(good.publicKeyPem, async () => {
+		const result = await verifyPublishedCandidate(readOptions(), {
+			fetchImpl: (url) => {
+				if (String(url) === metadataUrl && ++metadataRequests > 1) {
+					return new Response('changed between verification and parsing')
+				}
+				return good.fetchImpl(url)
+			},
+			requestAttempts: 1,
+		})
+		assert.equal(result.manifest.artifacts.length, 3)
+		assert.equal(metadataRequests, 1)
+	})
+	const tampered = createFixture({ schemaVersion: 2 })
+	const tamperedUrl = tampered.manifest.artifacts.find((value) => value.kind === 'nsis-yaml').url
+	tampered.responses.set(tamperedUrl, Buffer.from('changed signed metadata bytes'))
+	await withReleasePublicKey(tampered.publicKeyPem, async () => {
+		await assert.rejects(
+			verifyPublishedCandidate(readOptions(), {
+				fetchImpl: tampered.fetchImpl,
+				requestAttempts: 1,
+			}),
+			/metadata failed integrity verification/i,
+		)
+	})
+	for (const mutation of [
+		(value) => {
+			value.version = '0.1.2'
+		},
+		(value) => {
+			value.files[0].url = '../other.exe'
+		},
+		(value) => {
+			value.files[0].size += 1
+		},
+	]) {
+		const bad = createFixture({ schemaVersion: 2, metadataMutation: mutation })
+		await withReleasePublicKey(bad.publicKeyPem, async () => {
+			await assert.rejects(
+				verifyPublishedCandidate(readOptions(), {
+					fetchImpl: bad.fetchImpl,
+					requestAttempts: 1,
+				}),
+				/Windows update metadata does not match/i,
+			)
+		})
+	}
+	const oversized = createFixture({
+		schemaVersion: 2,
+		metadataMutation: (value) => {
+			value.path = 'x'.repeat(65_536)
+		},
+	})
+	await withReleasePublicKey(oversized.publicKeyPem, async () => {
+		await assert.rejects(
+			verifyPublishedCandidate(readOptions(), {
+				fetchImpl: oversized.fetchImpl,
+				requestAttempts: 1,
+			}),
+			/metadata exceeds the size limit/i,
+		)
+	})
+})
+
 test('rejects a public artifact whose bytes differ from the signed manifest', async () => {
 	const fixture = createFixture()
 	const artifactUrl = fixture.manifest.artifacts[0].url
@@ -91,7 +159,7 @@ test('rejects signed public manifests with missing, extra, or mistyped targets',
 					fetchImpl: fixture.fetchImpl,
 					requestAttempts: 1,
 				}),
-				/target installers|release target/i,
+				/target artifacts|release target/i,
 			)
 		})
 	}
@@ -104,12 +172,23 @@ function createFixture(options = {}) {
 		artifact('darwin', 'arm64', 'dmg', 'WenXue-arm64.dmg', 'mac-arm64-dmg'),
 		artifact('win32', 'x64', 'nsis', 'WenXue.exe', 'win-installer'),
 	]
+	if (options.schemaVersion === 2 && !options.artifacts) {
+		const exe = artifacts[1]
+		const metadata = {
+			version,
+			files: [{ url: exe.fileName, sha512: exe.sha512, size: exe.size }],
+			path: exe.fileName,
+			sha512: exe.sha512,
+		}
+		options.metadataMutation?.(metadata)
+		artifacts.push(artifact('win32', 'x64', 'nsis-yaml', 'beta.yml', JSON.stringify(metadata)))
+	}
 	for (const value of artifacts) responses.set(value.url, value.bytes)
 	const publicKeyFingerprint = createHash('sha256')
 		.update(publicKey.export({ format: 'der', type: 'spki' }))
 		.digest('hex')
 	const manifest = {
-		schemaVersion: 1,
+		schemaVersion: options.schemaVersion ?? 1,
 		releaseId: `electron:beta:${version}`,
 		runtime: 'electron',
 		channel: 'beta',
@@ -123,7 +202,7 @@ function createFixture(options = {}) {
 			extensionVersion: '0.1.0',
 			releasePublicKeyFingerprint: publicKeyFingerprint,
 		},
-		distribution: { mode: 'manual-unsigned' },
+		distribution: { mode: options.schemaVersion === 2 ? 'platform-unsigned' : 'manual-unsigned' },
 		tests: options.tests ?? releaseTests(),
 		artifacts: artifacts.map(({ platform, arch, kind, fileName, url, sha512, size }) => ({
 			platform,

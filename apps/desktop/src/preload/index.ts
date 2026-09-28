@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld('wenxue', {
 		check: (reason: 'manual' | 'signal' = 'manual') => ipcRenderer.invoke('updates:check', reason),
 		download: () => ipcRenderer.invoke('updates:download'),
 		openInstaller: () => ipcRenderer.invoke('updates:openInstaller'),
+		openManualDownload: () => ipcRenderer.invoke('updates:openManualDownload'),
+		restartInstall: () => ipcRenderer.invoke('updates:restartInstall'),
 		onStateChange: (cb: (state: unknown) => void) => {
 			const listener = (_event: IpcRendererEvent, state: unknown) => cb(state)
 			ipcRenderer.on('updates:state-changed', listener)

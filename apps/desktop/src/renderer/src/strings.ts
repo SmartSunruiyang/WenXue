@@ -25,6 +25,18 @@ export const strings = {
 		errorDescription: '仍有浏览器未能安全关闭，请稍后重试。',
 		dismiss: '知道了',
 		communicationError: '暂时无法处理关闭请求，请重试。',
+		updateRestart: {
+			title: '关闭浏览器并重启更新？',
+			description:
+				'立即更新会先关闭正在运行的问学浏览器并退出工作台。请先保存浏览器中未保存的内容。',
+			confirm: '关闭浏览器并重启更新',
+		},
+		updateQuit: {
+			title: '退出并安装更新？',
+			description: '安装前需要关闭正在运行的问学浏览器。请先保存浏览器中未保存的内容。',
+			skip: '跳过安装并退出',
+			confirm: '关闭浏览器并安装',
+		},
 	},
 	brand: '问学 WenXue',
 	brandShort: '问学',
@@ -474,6 +486,12 @@ export const strings = {
 		checkError: '更新检查失败，请检查网络后重试。',
 		downloadError: '更新下载失败，请检查网络后重试。',
 		installError: '无法打开安装包，请稍后重试。',
+		manualDownloadError: '无法打开手动下载页面，请稍后重试。',
+		lastInstallAttempt: {
+			unconfirmed: '尚未确认目标版本启动，不能据此判断安装成功或失败。',
+			confirmed: '目标版本已启动。',
+			failed: '上次更新交接失败，可重新检查更新。',
+		},
 		checkAction: '检查更新',
 		checkingAction: '正在检查',
 		dismissWarning: '关闭更新提示',
