@@ -6,7 +6,9 @@ const chromeProfile = '.wxt/chrome-data'
 mkdirSync(chromeProfile, { recursive: true })
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
-const publicVersion = pkg.version.replace(/-beta(?=\.|$)/i, 'beta')
+const publicVersion = pkg.version
+	.replace(/-beta(?=\.|$)/i, 'beta')
+	.replace(/-preview(?=\.|$)/i, ' preview')
 const defaultGatewayBaseUrl =
 	'https://wenxue-llm-gateway-wenxue-d8gz76tacc3659f05-1427406869.ap-shanghai.run.wxcloudrun.com'
 const gatewayBaseUrl = resolveGatewayBaseUrl(process.env.WENXUE_GATEWAY_BASE_URL)

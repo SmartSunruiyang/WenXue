@@ -215,6 +215,29 @@ test('beta update dialogs show the public version label', () => {
 	assert.match(markup, /v0\.0\.1beta · beta/)
 })
 
+test('preview update dialogs retain the preview label and beta channel', () => {
+	const markup = renderToStaticMarkup(
+		h(UpdateDialog, {
+			presentation: 'preview',
+			state: {
+				phase: 'available',
+				release: {
+					releaseId: 'electron-beta-0.1.2-preview',
+					version: '0.1.2-preview',
+					channel: 'beta',
+					title: '问学预览版更新',
+					notes: '更新说明',
+					mode: 'optional',
+					distribution: { mode: 'platform-unsigned' },
+					size: 120_000_000,
+				},
+			},
+		}),
+	)
+	assert.match(markup, /v0\.1\.2 preview · beta/)
+	assert.doesNotMatch(markup, /stable/)
+})
+
 test('handed-off updates explain that installation completion is not observable', () => {
 	const markup = renderToStaticMarkup(
 		h(UpdateDialog, {

@@ -2977,7 +2977,7 @@ function readUpdateChannel(value: string): 'dev' | 'beta' | 'stable' {
 }
 
 function formatPublicVersion(version: string): string {
-	return version.replace(/-beta(?=\.|$)/i, 'beta')
+	return version.replace(/-beta(?=\.|$)/i, 'beta').replace(/-preview(?=\.|$)/i, ' preview')
 }
 
 function desktopPlatform(value: string): 'darwin' | 'win32' {

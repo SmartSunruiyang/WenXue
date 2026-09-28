@@ -1,7 +1,7 @@
 {
 	"name": "desktop",
 	"private": true,
-	"version": "0.1.1-beta.4",
+	"version": "0.1.2-preview",
 	"main": "./out/main/index.js",
 	"scripts": {
 		"dev": "electron-vite dev",

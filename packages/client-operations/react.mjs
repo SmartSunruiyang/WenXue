@@ -180,7 +180,7 @@ export function UpdateDialog({
 				h(
 					'span',
 					{ className: 'wx-ops-version' },
-					`v${release.version.replace(/-beta(?=\.|$)/i, 'beta')} · ${release.channel}`,
+					`v${release.version.replace(/-beta(?=\.|$)/i, 'beta').replace(/-preview(?=\.|$)/i, ' preview')} · ${release.channel}`,
 				),
 			h(
 				'p',

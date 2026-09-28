@@ -9,7 +9,7 @@ const DEFAULT_GATEWAY_BASE_URL =
 const gatewayBaseUrl = resolveGatewayBaseUrl(process.env.WENXUE_GATEWAY_BASE_URL)
 const desktopVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 	.version as string
-const defaultUpdateChannel = /-beta(?:\.|$)/i.test(desktopVersion) ? 'beta' : 'stable'
+const defaultUpdateChannel = /-(?:beta|preview)(?:\.|$)/i.test(desktopVersion) ? 'beta' : 'stable'
 const updateChannel = process.env.WENXUE_UPDATE_CHANNEL ?? defaultUpdateChannel
 
 function resolveGatewayBaseUrl(value: string | undefined): string {

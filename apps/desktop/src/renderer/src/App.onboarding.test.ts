@@ -212,6 +212,25 @@ afterEach(async () => {
 })
 
 describe('App onboarding integration', () => {
+	it('shows preview versions in the account menu and About', async () => {
+		window.wenxue.app.getVersions = async () => ({
+			app: '0.1.2-preview',
+			browser: '137',
+			extension: '0.1.2 preview',
+		})
+		await render()
+		await click(strings.onboarding.skip)
+		await click(strings.account.menuLabel)
+		const menu = document.querySelector('[role="menu"]')!
+		expect(menu.textContent).toContain('0.1.2 preview')
+		const aboutButton = Array.from(menu.querySelectorAll('button')).find((item) =>
+			item.textContent?.startsWith(strings.settings.sections.about),
+		)!
+		await act(async () => aboutButton.click())
+		expect(container.querySelector('.version-list')?.textContent).toContain('0.1.2 preview')
+		expect(container.querySelector('.version-list')?.textContent).not.toContain('0.1.2-preview')
+	})
+
 	it('lets users close an unavailable-update warning while keeping its detail in About', async () => {
 		await render()
 		const warning = '此构建未固定更新签名公钥，更新检查不可用。'
