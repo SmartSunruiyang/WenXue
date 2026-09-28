@@ -60,13 +60,49 @@ describe('buildControlWindowOptions', () => {
 			},
 		})
 		expect(options.transparent).toBeUndefined()
+		expect(options.backgroundMaterial).toBeUndefined()
 		expect(options.titleBarOverlay).toBeUndefined()
 		expect(options.icon).toBe('/icon.png')
 	})
 
-	it.each(['win32', 'linux'] as const)('keeps the opaque frameless window on %s', (platform) => {
+	it('uses native acrylic on Windows while preserving resizing and renderer isolation', () => {
 		const options = buildControlWindowOptions({
-			platform,
+			platform: 'win32',
+			iconPath: '/icon.png',
+			preloadPath: '/preload.js',
+		})
+
+		expect(options).toMatchObject({
+			title: '问学',
+			width: 1120,
+			height: 720,
+			minWidth: 920,
+			minHeight: 600,
+			resizable: true,
+			maximizable: true,
+			frame: false,
+			autoHideMenuBar: true,
+			titleBarStyle: 'hidden',
+			backgroundColor: '#00000000',
+			backgroundMaterial: 'acrylic',
+			webPreferences: {
+				preload: '/preload.js',
+				contextIsolation: true,
+				nodeIntegration: false,
+				sandbox: true,
+			},
+		})
+		expect(options.transparent).toBeUndefined()
+		expect(options.titleBarOverlay).toBeUndefined()
+		expect(options.trafficLightPosition).toBeUndefined()
+		expect(options.vibrancy).toBeUndefined()
+		expect(options.visualEffectState).toBeUndefined()
+		expect(options.icon).toBe('/icon.png')
+	})
+
+	it('keeps the opaque frameless window on Linux', () => {
+		const options = buildControlWindowOptions({
+			platform: 'linux',
 			iconPath: '/icon.png',
 			preloadPath: '/preload.js',
 		})
@@ -77,6 +113,7 @@ describe('buildControlWindowOptions', () => {
 		expect(options.titleBarOverlay).toBeUndefined()
 		expect(options.trafficLightPosition).toBeUndefined()
 		expect(options.backgroundColor).toBeUndefined()
+		expect(options.backgroundMaterial).toBeUndefined()
 		expect(options.vibrancy).toBeUndefined()
 		expect(options.visualEffectState).toBeUndefined()
 		expect(options.transparent).toBeUndefined()

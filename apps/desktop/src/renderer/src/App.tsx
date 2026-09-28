@@ -1046,8 +1046,14 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 
 	return (
 		<main
-			className={`app-shell ${shellInfo.platform === 'darwin' ? 'app-shell--macos' : ''} ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}
+			className={`app-shell ${shellInfo.platform === 'darwin' ? 'app-shell--macos' : shellInfo.platform === 'win32' ? 'app-shell--windows' : ''} ${shellInfo.frameless ? 'app-shell--frameless' : ''}`}
 		>
+			{shellInfo.platform === 'win32' ? (
+				<>
+					<div className="top-drag-zone drag-region" />
+					<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
+				</>
+			) : null}
 			<aside
 				className={`sidebar drag-region ${shellInfo.hasSystemTrafficLights ? 'sidebar--traffic' : ''}`}
 				aria-label="启动器导航"
@@ -1126,8 +1132,16 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 				aria-busy={logoutBusy}
 				className={`main-surface ${logoutBusy ? 'main-surface--busy' : ''}`}
 			>
-				<div className="top-drag-zone drag-region" />
-				<WindowControls onError={setMessage} shellInfo={shellInfo} setShellInfo={setShellInfo} />
+				{shellInfo.platform !== 'win32' ? (
+					<>
+						<div className="top-drag-zone drag-region" />
+						<WindowControls
+							onError={setMessage}
+							shellInfo={shellInfo}
+							setShellInfo={setShellInfo}
+						/>
+					</>
+				) : null}
 				{message ? (
 					<div aria-live="assertive" className="toast toast--error no-drag" role="alert">
 						<Info size={15} />
