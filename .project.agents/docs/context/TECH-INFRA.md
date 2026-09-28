@@ -258,6 +258,15 @@ extraResources:
 - 切换纪律：M3 已把内置模型运行时配置切到网关，`apiKey` 字段只注入插件侧当前 access token；M5 已删除本地百炼 Key 与本地直连兜底开关，旧 DashScope 直连 baseURL 仅用于自动迁移到网关默认配置。
 - 用量展示：M4 新增桌面 `UsageCloudClient`，通过主进程当前用户 session 调 `GET /v1/usage/summary`；成功后按 userId 写 `<userData>/token-usage-summary-cache.json`，失败时 `tokens:getSummary` 回退本地 `TokenUsageStore`。浏览器分组展示与导出使用本机当前画像名称，cloud 显示“未关联浏览器”；新归属需要更新客户端并重新启动画像，历史缺失 ID 的记录不能可靠回填。
 
+#### 7.1.1 邮箱验证码 HTML 模板
+
+- 中文源文件：[`apps/desktop/email-templates/verification-code.html`](../../../apps/desktop/email-templates/verification-code.html)，归属 ConsoleUI 认证流程的发布资产，不打包进客户端，也不由网关发送。
+- CloudBase 官方变量为 `{{.VerificationCode}}`（六位验证码）和 `{{.ExpireMinutes}}`（有效分钟数）；模板保持原样交给平台渲染，勿替换为预览值。变量契约见[官方验证码接口](https://docs.cloudbase.net/http-api/auth/auth-send-verification)。文案不依赖用途字段，覆盖当前 `ANY` 登录/注册及 `USER` 密码重置。
+- 品牌图使用永久 HTTPS 地址 `https://askwenxue.com/assets/wenxue-logo.png`，旁边使用 `https://askwenxue.com/assets/wenxue-slogan.png` 替代独立品牌文字并保留 alt；验证码不依赖图片加载。官网链接为 `https://askwenxue.com/`。
+- 配置入口：CloudBase 控制台 → 身份认证 → 登录方式 → 邮箱验证码 → 邮件模板。将同一 HTML 分别用于默认验证及登录/注册中文模板，对应 `EmailConfig.TemplateConfig.DefaultTpl.ZhCN` 和 `RegisterSignIn.ZhCN`；保留其他语言和现有 SMTP 配置。建议主题「问学 · 邮箱验证码」，不将验证码加入主题。
+- 本地浏览器预览使用替换变量后的副本（例如 `260926` / `10`），原始模板只保存平台变量。预览副本不是可发布源文件。
+- 2026-09-26 交付状态：已只读确认环境 `wenxue-d8gz76tacc3659f05` 的 email 身份源开启，两个中文字段仍为平台默认模板；本次交付仓库 HTML，尚未更新线上配置或触发真实邮件。后续配置后应回读上述两个字段，并通过用户指定邮箱分别核验验证流程、实际有效期与 QQ 邮箱 / Outlook / Apple Mail 等客户端显示。
+
 ### 7.2 后台管理（M4.6）
 
 - 前端：`apps/admin` 静态站点，使用 CloudBase Web SDK 的邮箱密码或内置管理员账号密码登录；路由守卫必须使用 `auth.getSession()`，不得使用已废弃且可能误判的 `getLoginState()`。仓库目标运行形态由 `wenxue-llm-gateway` 的 `/admin` target 提供构建产物；构建固定 `VITE_BASE_PATH=/admin/`、同源 AdminApi、当前 env/region，避免 shell 残留 `VITE_*` 污染 bundle。独立 CloudRun 静态容器保留作回滚。
