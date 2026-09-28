@@ -179,7 +179,9 @@ export function ReleasePage({
 		if (
 			action === 'withdraw' &&
 			!window.confirm(
-				`撤回 ${release.channel} 通道的版本发布？客户端将停止新的下载和安装包打开操作。`,
+				release.status === 'superseded'
+					? '撤回该旧版本的官网下载资格，不影响当前客户端更新策略。确认撤回？'
+					: `撤回 ${release.channel} 通道的版本发布及官网下载资格？客户端将停止新的下载和安装包打开操作。`,
 			)
 		) {
 			return
@@ -618,7 +620,9 @@ function ReleaseHistory({
 										恢复
 									</button>
 								)}
-								{(release.status === 'active' || release.status === 'paused') && (
+								{(release.status === 'active' ||
+									release.status === 'paused' ||
+									release.status === 'superseded') && (
 									<button
 										className="text-button danger"
 										type="button"

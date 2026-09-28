@@ -22,6 +22,7 @@ const ANNOUNCEMENT_RECEIPT_QUERY_CHUNK_SIZE = 50
 const ANNOUNCEMENT_RECEIPT_CLEANUP_LIMIT = 20
 const RELEASE_EVENT_CLEANUP_LIMIT = 20
 const RELEASE_SLOT_DOCUMENT_LIMIT = 6
+const PUBLIC_DOWNLOAD_HISTORY_LIMIT = 20
 const DOCUMENT_QUERY_PAGE_LIMIT = 500
 const RELEASE_SLOT_PUBLISHED_AT = '1970-01-01T00:00:00.000Z'
 const TRANSACTION_CONFLICT_RETRY_BASE_MS = 25
@@ -316,6 +317,26 @@ export function createCloudBaseAdminStore(input) {
 					) {
 						throw new DispatchConflictError('Release version must move forward')
 					}
+					const candidate = versionGuard?.publicDownloadEligible
+						? await transactionGet(
+								transaction,
+								DESKTOP_RELEASE_CANDIDATES_COLLECTION,
+								readString(release.releaseId) ?? '',
+							)
+						: null
+					const publicDownloadEligible =
+						release.percentage === 100 &&
+						Boolean(versionGuard?.publicDownloadEligible) &&
+						candidate?.version === versionGuard?.candidateVersion &&
+						isPublicDownloadRecord(release, candidate)
+					const publicDownloadHistoryIds = readPublicDownloadHistory(slot)
+					if (publicDownloadEligible) publicDownloadHistoryIds.unshift(releaseId)
+					publicDownloadHistoryIds.splice(PUBLIC_DOWNLOAD_HISTORY_LIMIT)
+					const publicDownloadRolloutId = publicDownloadEligible
+						? releaseId
+						: publicDownloadHistoryIds.includes(readString(slot?.publicDownloadRolloutId) ?? '')
+							? slot?.publicDownloadRolloutId
+							: null
 					const signal = await transactionGet(
 						transaction,
 						DESKTOP_RELEASE_SIGNAL_COLLECTION,
@@ -343,7 +364,10 @@ export function createCloudBaseAdminStore(input) {
 							updatedBy: release.publishedBy,
 						})
 					}
-					await transactionSet(transaction, DESKTOP_RELEASE_ROLLOUTS_COLLECTION, release)
+					await transactionSet(transaction, DESKTOP_RELEASE_ROLLOUTS_COLLECTION, {
+						...release,
+						...(publicDownloadEligible ? { publicDownloadEligible: true } : {}),
+					})
 					await transactionSet(transaction, ADMIN_DISPATCH_AUDIT_COLLECTION, audit)
 					await transactionSet(transaction, DESKTOP_RELEASE_ROLLOUTS_COLLECTION, {
 						_id: slotId,
@@ -351,6 +375,8 @@ export function createCloudBaseAdminStore(input) {
 						runtime: release.runtime,
 						channel: release.channel,
 						publishedAt: RELEASE_SLOT_PUBLISHED_AT,
+						publicDownloadRolloutId,
+						publicDownloadHistoryIds,
 						currentRolloutId: releaseId,
 						activeRolloutId: releaseId,
 						...(versionGuard ? { highestVersion: versionGuard.candidateVersion } : {}),
@@ -395,7 +421,12 @@ export function createCloudBaseAdminStore(input) {
 					const currentRolloutId = readString(slot?.currentRolloutId)
 					const activeRolloutId = readString(slot?.activeRolloutId)
 					const highestVersion = readString(slot?.highestVersion)
-					if (currentRolloutId && currentRolloutId !== releaseId) {
+					const historicalWithdrawal =
+						current.status === 'superseded' && updated.status === 'withdrawn'
+					if (current.status === 'superseded' && !historicalWithdrawal) {
+						throw new DispatchConflictError('Superseded release can only be withdrawn')
+					}
+					if (!historicalWithdrawal && currentRolloutId && currentRolloutId !== releaseId) {
 						throw new DispatchConflictError('Another rollout controls this channel')
 					}
 					if (updated.status === 'paused' && activeRolloutId && activeRolloutId !== releaseId) {
@@ -404,19 +435,72 @@ export function createCloudBaseAdminStore(input) {
 					if (updated.status === 'active' && activeRolloutId && activeRolloutId !== releaseId) {
 						throw new DispatchConflictError('Another rollout is active')
 					}
-					await transactionSet(transaction, DESKTOP_RELEASE_ROLLOUTS_COLLECTION, updated)
-					await transactionSet(transaction, ADMIN_DISPATCH_AUDIT_COLLECTION, audit)
+					const publicDownloadHistoryIds = readPublicDownloadHistory(slot).filter(
+						(id) => id !== releaseId,
+					)
+					if (updated.status === 'active' && current.publicDownloadEligible === true) {
+						const candidate = await transactionGet(
+							transaction,
+							DESKTOP_RELEASE_CANDIDATES_COLLECTION,
+							readString(current.releaseId) ?? '',
+						)
+						if (isPublicDownloadRecord(updated, candidate))
+							publicDownloadHistoryIds.unshift(releaseId)
+					}
+					publicDownloadHistoryIds.splice(PUBLIC_DOWNLOAD_HISTORY_LIMIT)
+					let publicDownloadRolloutId = null
+					for (const id of publicDownloadHistoryIds) {
+						const retained =
+							id === releaseId
+								? { ...current, ...updated }
+								: await transactionGet(transaction, DESKTOP_RELEASE_ROLLOUTS_COLLECTION, id)
+						if (
+							!retained ||
+							retained.publicDownloadEligible !== true ||
+							(retained.status !== 'active' && retained.status !== 'superseded')
+						)
+							continue
+						const candidate = await transactionGet(
+							transaction,
+							DESKTOP_RELEASE_CANDIDATES_COLLECTION,
+							readString(retained.releaseId) ?? '',
+						)
+						if (!isPublicDownloadRecord(retained, candidate)) continue
+						publicDownloadRolloutId = id
+						break
+					}
 					await transactionSet(transaction, DESKTOP_RELEASE_ROLLOUTS_COLLECTION, {
-						_id: slotId,
-						recordType: 'release-slot',
-						runtime: updated.runtime,
-						channel: updated.channel,
-						publishedAt: RELEASE_SLOT_PUBLISHED_AT,
-						currentRolloutId: updated.status === 'withdrawn' ? null : releaseId,
-						activeRolloutId: updated.status === 'active' ? releaseId : null,
-						...(highestVersion ? { highestVersion } : {}),
-						updatedAt: updated.updatedAt,
+						...updated,
+						...(current.publicDownloadEligible === true ? { publicDownloadEligible: true } : {}),
 					})
+					await transactionSet(transaction, ADMIN_DISPATCH_AUDIT_COLLECTION, audit)
+
+					if (!historicalWithdrawal || slot) {
+						await transactionSet(
+							transaction,
+							DESKTOP_RELEASE_ROLLOUTS_COLLECTION,
+							historicalWithdrawal
+								? {
+										...slot,
+										publicDownloadRolloutId,
+										publicDownloadHistoryIds,
+										updatedAt: updated.updatedAt,
+									}
+								: {
+										_id: slotId,
+										recordType: 'release-slot',
+										runtime: updated.runtime,
+										channel: updated.channel,
+										publishedAt: RELEASE_SLOT_PUBLISHED_AT,
+										publicDownloadRolloutId,
+										publicDownloadHistoryIds,
+										currentRolloutId: updated.status === 'withdrawn' ? null : releaseId,
+										activeRolloutId: updated.status === 'active' ? releaseId : null,
+										...(highestVersion ? { highestVersion } : {}),
+										updatedAt: updated.updatedAt,
+									},
+						)
+					}
 					await transactionSet(transaction, DESKTOP_RELEASE_SIGNAL_COLLECTION, {
 						...(signal ?? {}),
 						_id: signalId,
@@ -1214,4 +1298,67 @@ function cloudBaseDate(value, name) {
 	const timestamp = value instanceof Date ? value.getTime() : Date.parse(readString(value) ?? '')
 	if (!Number.isFinite(timestamp)) throw new Error(`${name} is invalid`)
 	return new Date(timestamp)
+}
+
+/** @param {Record<string, unknown> | null} slot @returns {string[]} */
+function readPublicDownloadHistory(slot) {
+	const ids = slot?.publicDownloadHistoryIds
+	if (
+		!Array.isArray(ids) ||
+		ids.length > PUBLIC_DOWNLOAD_HISTORY_LIMIT ||
+		ids.some((id) => typeof id !== 'string' || !id) ||
+		new Set(ids).size !== ids.length
+	)
+		return []
+	return [...ids]
+}
+
+/** @param {Record<string, unknown>} release @param {Record<string, unknown> | null} candidate */
+function isPublicDownloadRecord(release, candidate) {
+	if (
+		release.runtime !== 'electron' ||
+		release.channel !== 'stable' ||
+		release.percentage !== 100 ||
+		!candidate ||
+		candidate._id !== release.releaseId ||
+		candidate.status !== 'verified' ||
+		candidate.runtime !== 'electron' ||
+		candidate.channel !== 'stable' ||
+		typeof candidate.version !== 'string' ||
+		!SEMVER_PATTERN.test(candidate.version) ||
+		SEMVER_PATTERN.exec(candidate.version)?.[4] ||
+		!Array.isArray(candidate.artifacts)
+	)
+		return false
+	const artifacts = candidate.artifacts
+	return [
+		['darwin', 'arm64', 'dmg'],
+		['win32', 'x64', 'nsis'],
+	].every(
+		([platform, arch, kind]) =>
+			artifacts.filter(
+				(artifact) =>
+					artifact &&
+					artifact.platform === platform &&
+					artifact.arch === arch &&
+					artifact.kind === kind &&
+					typeof artifact.url === 'string' &&
+					validPublicDownloadUrl(artifact.url) &&
+					typeof artifact.sha512 === 'string' &&
+					(/^[A-Za-z0-9+/]{86}==$/.test(artifact.sha512) ||
+						/^[a-f0-9]{128}$/i.test(artifact.sha512)) &&
+					Number.isSafeInteger(artifact.size) &&
+					artifact.size > 0,
+			).length === 1,
+	)
+}
+
+/** @param {string} value */
+function validPublicDownloadUrl(value) {
+	try {
+		const url = new URL(value)
+		return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
+	} catch {
+		return false
+	}
 }

@@ -33,7 +33,7 @@
 | AnnouncementReceipt      | \_id=`announcementId:uid`、announcementId、uid、acknowledgedAt、expiresAt                                                                                                                                | N:1 → ClientAnnouncement；同一账号跨设备共享                                                                   | 是：CloudBase NoSQL `client_announcement_receipts`；ADMINONLY；`expiresAt` 为公告到期后 24 小时的 BSON Date，由 TTL 主清理并以限量清理兜底；客户端仅经鉴权 API 幂等写入 |
 | ReleaseCandidate         | \_id、schemaVersion、runtime、version、channel、manifestUrl/signature、artifacts、sourceCoordinates（含 releasePublicKeyFingerprint）、distribution.mode（schema 1=`manual-unsigned`；schema 2=`platform-unsigned`）、tests、status | 由可信发布工具注册；1:N → ReleaseRollout                                                                               | 是：CloudBase NoSQL `desktop_release_candidates`；ADMINONLY；版本候选不可覆盖                                                                                           |
 | ReleaseRollout           | \_id、runtime、channel、releaseId、status、percentage、mode、minSupportedVersion?、title、notes、publishedAt                                                                                             | N:1 → ReleaseCandidate；同 runtime/channel 仅一个 active                                                       | 是：CloudBase NoSQL `desktop_release_rollouts`；ADMINONLY；策略变化增加公开 release signal revision                                                                     |
-| ReleaseChannelSlot       | \_id=`release-slot:<runtime>:<channel>`、recordType=`release-slot`、currentRolloutId?、activeRolloutId?、highestVersion?、updatedAt                                                                      | 每 runtime/channel 一个；与 rollout/signal/audit 在同一交易内变更                                              | 是：与 rollout 共用 `desktop_release_rollouts`；内部保留文档，API/后台历史必须过滤；原子维护活动互斥与版本单调门禁                                                      |
+| ReleaseChannelSlot       | \_id=`release-slot:<runtime>:<channel>`、recordType=`release-slot`、currentRolloutId?、activeRolloutId?、highestVersion?、publicDownloadRolloutId?、publicDownloadHistoryIds?、updatedAt                                                                      | 每 runtime/channel 一个；与 rollout/signal/audit 在同一交易内变更                                              | 是：与 rollout 共用 `desktop_release_rollouts`；内部保留文档，API/后台历史必须过滤；原子维护活动互斥、版本单调门禁与明确保留的正式下载指针                                                      |
 | UpdateInstallAttempt    | schema、attemptId（本地唯一，不上传）、签名 manifest 与 signature、fromVersion、targetVersion、releaseId、channel/platform/arch、artifactSha512、eventInstallIdHash、eventToken、attemptedAt、expiresAt、handoff（`prepared`/`accepted`/`failed`） | DesktopUpdateService 写入，打包版下次启动读取；不关联账号 | `<userData>/update-install-attempt.json`；原子写，文件 mode `0600`；写入/删除经 DesktopUpdateService 串行队列；最多保留 7 天；不含 uid、硬件 ID 或安装路径 |
 
 扩展侧 `WenXueUserSession` 另保存可选 `browserId`，由启动器在校验账号与画像归属后交接；
@@ -451,6 +451,20 @@ OTP、验证证明与未提交资料仅驻留内存，不产生待注册账号�
 - 持有状态：无；持久状态在 CloudBase NoSQL；release slot 负责互斥/版本门禁，audit 不参与控制决策
 ```
 
+2026-09-29 公开稳定下载契约（P2.7/P6.3）：沿用 `ReleaseChannelSlot` 与现有发布/状态事务，增加
+`publicDownloadRolloutId` 和最多 20 项的 `publicDownloadHistoryIds`。仅 verified、Electron stable、
+无预发布后缀且包含当前双目标安装器的 100% 发布进入明确保留历史；灰度不切换官网指针。
+暂停/撤回移除该版本的可用历史资格，避免之后被标为 superseded 时复活；恢复当前全量发布可重新加入。
+首次合格全量发布在 rollout 内保存 `publicDownloadEligible: true` 作为明确登记标记；旧记录恢复不自动获得该标记，内部标记不进入公开响应。
+已被替代的 superseded 发布允许单独撤回，移除其官网下载资格并追加审计/signal；该事务保留当前通道的 active/current/highestVersion，不恢复旧版客户端策略。旧 superseded 发布不可 resume。
+回退仅沿显式保留历史读取仍合格的 active/superseded 记录，不扫描最大版本，也不自动从旧 slot 推测迁移。
+缺失、损坏或不合格指针返回无下载。beta 通道现有策略不参与官网指针。
+
+`GET /v1/public/desktop-downloads` 由组合 Gateway 转发 AdminApi，无须账号，只返回
+`{ release: null | { version, publishedAt, artifacts } }`；每项 artifact 为
+`{ platform, arch, kind, url, sha512, size }`，仅 Windows x64 NSIS 与 macOS arm64 DMG。
+不返回管理员、构建凭据、事件 token 或候选内部信息；响应与错误使用 no-store，并独立限流。
+
 2026-09-26 HTTP 入口契约：Functions Framework 将 JSON 请求体直接作为 event 传入，HTTP 元数据
 位于 context.httpContext。AdminApi 仅在 event 具有 body/rawBody 且全部顶层键都属于已支持的
 HTTP 包装字段时拆包；包含业务键的对象整体序列化，公告正文 body 即使看似 JSON 也不再拆解。
@@ -609,15 +623,15 @@ fork 应用层（apps/extension）：
 
 ### 2.5 官网域（apps/website）
 
-官网域是静态前端站点，与桌面域、插件域均无运行时依赖边；它只消费公开产品叙事、品牌资产与下载链接。
+官网域是静态前端站点，与桌面域、插件域均无运行时依赖边；它消费公开产品叙事、品牌资产与 AdminApi 的公开稳定下载响应。
 
 ```
 ## 模块名：WebsiteSite
 - 职责：问学对外官网首页、文档与隐私页面体验；白色底色的 DotField 首页、VariableProximity 主标题交互与 GSAP 入场、原 TiltHover 按钮和视频 / 教学步骤动效、原固定导航（默认透明，滚动后收束为悬浮胶囊；品牌 + 文档 + 隐私，右侧下载 + GitHub）、工具栏教学视频、下载 CTA；文档提供 hash 子页、站内内容搜索、分组导航、页内目录与前后篇链接；隐私页提供隐私协议 / 用户须知切换与章节锚点。首页与导航保留 UIUX §12 用户明确要求的原设计例外，文档与隐私沿用中性阅读视觉
 - 不负责：不启动浏览器；不注入插件；不存储 API Key；不调用 LLM；不读取插件/桌面本地数据
-- 输入：透明品牌资产、静态文案、构建期环境变量或静态下载链接（后续 CloudBase 托管时接入）
+- 输入：透明品牌资产、静态文案、同源 `/v1/public/desktop-downloads` 公开响应
 - 输出：静态 HTML/CSS/JS 站点（CloudBase 静态托管目标）
-- 关键类型/接口：无跨运行时接口；React + motion 组件仅持有本页交互状态
+- 关键类型/接口：公开稳定下载 HTTPS 契约；请求和解析由 WebsiteSite 内部下载状态逻辑负责，React 展示状态与发送意图；下载前重新核验，版本变化需再次选择，不用旧链接兜底
 - 持有状态：仅浏览器内瞬态 UI 状态（页面与章节、文档搜索、移动导航展开、演示步骤与演示任务选项）
 ```
 
@@ -763,6 +777,7 @@ graph TD
 	    end
 	    subgraph 官网域
 	        WebsiteSite --> WebsiteAssets["透明品牌资产"]
+	        WebsiteSite -->|公开稳定下载 HTTPS| AdminApi
 	    end
         subgraph 构建发布工具
             DesktopReleaseTooling --> DispatchContracts
@@ -773,7 +788,7 @@ graph TD
         end
 ```
 
-> 桌面域与插件域无运行时控制边（I3）；当前仅允许用户 session 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；后台管理域只依赖 CloudBase Web Auth 与 AdminApi，不直接读写 NoSQL；官网域也不连接任一运行时域。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`VisualObservation` 使用公开 LLMConfig 形状直接发 OpenAI-compatible 多模态请求，图片只在工具调用内存中存在；`chrome.tabs` 与 `chrome.webNavigation` 均为浏览器外部 API，分别供 ExtensionEntrypoints 截取当前可见视口和发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
+> 桌面域与插件域无运行时控制边（I3）；当前仅允许用户 session 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；后台管理域只依赖 CloudBase Web Auth 与 AdminApi，不直接读写 NoSQL；官网域只经公开稳定下载 HTTPS 契约依赖 AdminApi，不连接桌面或插件进程。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`VisualObservation` 使用公开 LLMConfig 形状直接发 OpenAI-compatible 多模态请求，图片只在工具调用内存中存在；`chrome.tabs` 与 `chrome.webNavigation` 均为浏览器外部 API，分别供 ExtensionEntrypoints 截取当前可见视口和发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
 
 `DispatchContracts` 是无 IO 的一方共享叶子模块；DesktopAnnouncementService 与
 DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后者只经 DesktopBridge 触发

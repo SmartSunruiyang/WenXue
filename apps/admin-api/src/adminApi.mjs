@@ -40,6 +40,7 @@ const PUBLIC_RATE_LIMITS = {
 	// campus/office NATs therefore need a much wider read allowance than telemetry.
 	updatePolicy: { perIp: 5_000, global: 50_000 },
 	updateEvents: { perIp: 60, global: 2_000 },
+	desktopDownloads: { perIp: 120, global: 10_000 },
 }
 /** @type {Record<UpdateEventStage, ReadonlySet<string>>} */
 const UPDATE_EVENT_RESULTS = {
@@ -117,7 +118,7 @@ let nextAnnouncementReceiptCleanupAt = 0
  * createReleaseRollout(record: Record<string, unknown>): Promise<void>,
  * updateReleaseRollout(id: string, patch: Record<string, unknown>): Promise<unknown | null>,
  * incrementReleaseSignal(runtime: string, channel: string, updatedAt: string): Promise<unknown>,
- * commitReleasePublication(record: Record<string, unknown>, audit: Record<string, unknown>, legacyRolloutIds?: string[], versionGuard?: { candidateVersion: string, highestPublishedVersion?: string }): Promise<{ created: boolean, record: unknown }>,
+ * commitReleasePublication(record: Record<string, unknown>, audit: Record<string, unknown>, legacyRolloutIds?: string[], versionGuard?: { candidateVersion: string, highestPublishedVersion?: string, publicDownloadEligible?: boolean }): Promise<{ created: boolean, record: unknown }>,
  * commitReleaseState(record: Record<string, unknown>, audit: Record<string, unknown>, expectedStatus: string): Promise<{ outcome: string, record: unknown | null }>,
  * createReleaseEventWithinQuota(record: Record<string, unknown>, quota: { id: string, limit: number, expiresAt: string }): Promise<{ outcome: 'created' | 'updated' | 'duplicate' | 'quota-exceeded' }>,
  * listReleaseEvents(filter: { releaseId?: string, createdAfter?: string, createdBefore?: string, before?: { createdAt: string, id: string }, limit?: number }): Promise<unknown[]>,
@@ -154,7 +155,11 @@ export class AdminApiError extends Error {
  * }} input
  */
 export async function handleAdminRequest(input) {
+	/** @type {Record<string, string>} */
 	const corsHeaders = buildCorsHeaders(input.headers, input.env.allowedOrigins ?? ['*'])
+	if (normalizePath(input.path).replace(/^\/api(?=\/)/, '') === '/v1/public/desktop-downloads') {
+		corsHeaders['cache-control'] = 'no-store'
+	}
 	if (input.method.toUpperCase() === 'OPTIONS') {
 		return jsonResponse(null, 204, corsHeaders)
 	}
@@ -205,6 +210,12 @@ export async function handleAdminRequest(input) {
 				now,
 			})
 			return jsonResponse({ receipt }, 200, corsHeaders)
+		}
+
+		if (path === '/v1/public/desktop-downloads') {
+			if (method !== 'GET') throw new AdminApiError('Method not allowed', 405)
+			consumePublicRateLimit('desktopDownloads', input.headers, now())
+			return jsonResponse({ release: await publicDesktopDownloads(input.store) }, 200, corsHeaders)
 		}
 
 		if (path === '/v1/client/update-policy' && method === 'GET') {
@@ -1024,6 +1035,7 @@ async function publishRelease(input) {
 	try {
 		committed = await input.store.commitReleasePublication(release, audit, legacyRolloutIds, {
 			candidateVersion: candidate.version,
+			publicDownloadEligible: percentage === 100 && isPublicDownloadCandidate(candidate),
 			...(highestPublishedVersion ? { highestPublishedVersion } : {}),
 		})
 	} catch (error) {
@@ -1064,7 +1076,10 @@ async function changeReleaseState(input) {
 	}
 	if (
 		action === 'withdraw' &&
-		(current.status === 'active' || current.status === 'paused' || current.status === 'withdrawn')
+		(current.status === 'active' ||
+			current.status === 'paused' ||
+			current.status === 'withdrawn' ||
+			current.status === 'superseded')
 	) {
 		expectedStatus = current.status === 'withdrawn' ? 'active' : current.status
 		nextStatus = 'withdrawn'
@@ -1099,6 +1114,88 @@ async function changeReleaseState(input) {
 	const stored = normalizeReleaseRollout(committed.record)
 	if (!stored) throw new AdminApiError('Release transaction returned invalid data', 500)
 	return stored
+}
+
+/** @param {ReleaseCandidateRecord} candidate */
+function isPublicDownloadCandidate(candidate) {
+	return (
+		candidate.runtime === 'electron' &&
+		candidate.channel === 'stable' &&
+		!SEMVER_PATTERN.exec(candidate.version)?.[4] &&
+		[
+			['darwin', 'arm64', 'dmg'],
+			['win32', 'x64', 'nsis'],
+		].every(([platform, arch, kind]) =>
+			candidate.artifacts.some(
+				(artifact) =>
+					artifact.platform === platform &&
+					artifact.arch === arch &&
+					artifact.kind === kind &&
+					!new URL(artifact.url).search &&
+					!new URL(artifact.url).hash,
+			),
+		)
+	)
+}
+
+/** @param {AdminStore} store */
+async function publicDesktopDownloads(store) {
+	const slot = await store.getReleaseActiveSlot('electron', 'stable')
+	if (
+		!isRecord(slot) ||
+		slot.recordType !== 'release-slot' ||
+		slot.runtime !== 'electron' ||
+		slot.channel !== 'stable' ||
+		typeof slot.publicDownloadRolloutId !== 'string' ||
+		!Array.isArray(slot.publicDownloadHistoryIds) ||
+		slot.publicDownloadHistoryIds.length > 20 ||
+		slot.publicDownloadHistoryIds.some((id) => typeof id !== 'string' || !id) ||
+		new Set(slot.publicDownloadHistoryIds).size !== slot.publicDownloadHistoryIds.length ||
+		!slot.publicDownloadHistoryIds.includes(slot.publicDownloadRolloutId)
+	)
+		return null
+	const record = await store.getReleaseRollout(slot.publicDownloadRolloutId)
+	const rollout = normalizeReleaseRollout(record)
+	if (
+		!rollout ||
+		!isRecord(record) ||
+		record.publicDownloadEligible !== true ||
+		rollout._id !== slot.publicDownloadRolloutId ||
+		rollout.runtime !== 'electron' ||
+		rollout.channel !== 'stable' ||
+		rollout.percentage !== 100 ||
+		!Number.isFinite(Date.parse(rollout.publishedAt)) ||
+		new Date(rollout.publishedAt).toISOString() !== rollout.publishedAt ||
+		(rollout.status !== 'active' && rollout.status !== 'superseded')
+	)
+		return null
+	const candidate = normalizeReleaseCandidateRecord(
+		await store.getReleaseCandidate(rollout.releaseId),
+	)
+	if (!candidate || candidate._id !== rollout.releaseId || !isPublicDownloadCandidate(candidate))
+		return null
+	return {
+		version: candidate.version,
+		publishedAt: rollout.publishedAt,
+		artifacts: candidate.artifacts
+			.filter(
+				(artifact) =>
+					(artifact.platform === 'darwin' &&
+						artifact.arch === 'arm64' &&
+						artifact.kind === 'dmg') ||
+					(artifact.platform === 'win32' && artifact.arch === 'x64' && artifact.kind === 'nsis'),
+			)
+			.map(({ platform, arch, kind, url, sha512, size }) => ({
+				platform,
+				arch,
+				kind,
+				url,
+				size,
+				sha512: /^[a-f0-9]{128}$/i.test(sha512)
+					? Buffer.from(sha512, 'hex').toString('base64')
+					: sha512,
+			})),
+	}
 }
 
 /**
@@ -2201,7 +2298,7 @@ function readReleaseListFilter(query) {
 }
 
 /**
- * @param {'updatePolicy' | 'updateEvents'} operation
+ * @param {'updatePolicy' | 'updateEvents' | 'desktopDownloads'} operation
  * @param {Headers | Record<string, string | string[] | undefined>} headers
  * @param {number} now
  */

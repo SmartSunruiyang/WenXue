@@ -100,6 +100,11 @@ export function clientUpdatePolicy(event, context) {
 }
 
 /** @param {unknown} event @param {CloudBaseContext} context */
+export function publicDesktopDownloads(event, context) {
+	return dispatch(event, context, '/v1/public/desktop-downloads')
+}
+
+/** @param {unknown} event @param {CloudBaseContext} context */
 export function clientUpdateEvents(event, context) {
 	return dispatch(event, context, '/v1/client/update-events')
 }

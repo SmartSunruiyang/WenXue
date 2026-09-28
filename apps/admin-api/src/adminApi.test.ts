@@ -289,7 +289,11 @@ function createStore(state: StoreState) {
 			record: Record<string, unknown>,
 			audit: Record<string, unknown>,
 			legacyRolloutIds: string[] = [],
-			versionGuard?: { candidateVersion: string; highestPublishedVersion?: string },
+			versionGuard?: {
+				candidateVersion: string
+				highestPublishedVersion?: string
+				publicDownloadEligible?: boolean
+			},
 		) {
 			const existing = state.releases.find((release) => release._id === record._id)
 			if (existing) return { created: false, record: existing }
@@ -2792,4 +2796,282 @@ describe('Dispatch contract compatibility', () => {
 			)
 		}
 	})
+})
+
+describe('public desktop downloads', () => {
+	function stateWithDownload() {
+		return createState({
+			candidates: [candidateRecord()],
+			releases: [rolloutRecord({ percentage: 100, publicDownloadEligible: true })],
+			releaseSignals: {
+				'electron:stable': {
+					recordType: 'release-slot',
+					runtime: 'electron',
+					channel: 'stable',
+					publicDownloadRolloutId: 'rollout-1',
+					publicDownloadHistoryIds: ['rollout-1'],
+				},
+			},
+		})
+	}
+
+	it('returns just two installers anonymously and strips all release internals', async () => {
+		const state = stateWithDownload()
+		const fetchImpl = vi.fn<typeof fetch>()
+		const response = await request('/v1/public/desktop-downloads', state, {
+			headers: {},
+			fetchImpl,
+		})
+		expect(response.statusCode).toBe(200)
+		expect(response.headers['cache-control']).toBe('no-store')
+		expect(fetchImpl).not.toHaveBeenCalled()
+		expect(parseBody(response)).toEqual({
+			release: {
+				version: '0.1.1',
+				publishedAt: '2026-07-01T01:00:00.000Z',
+				artifacts: [
+					createArtifact('darwin', 'arm64', 'dmg'),
+					createArtifact('win32', 'x64', 'nsis'),
+				].map(({ platform, arch, kind, url, sha512, size }) => ({
+					platform,
+					arch,
+					kind,
+					url,
+					sha512,
+					size,
+				})),
+			},
+		})
+	})
+
+	it('normalizes hex SHA-512 in the public projection without mutating the candidate', async () => {
+		const state = stateWithDownload()
+		const artifacts = state.candidates[0].artifacts as Record<string, unknown>[]
+		artifacts[0].sha512 = 'a'.repeat(128)
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(parseBody(response).release.artifacts[0].sha512).toBe(
+			Buffer.from('a'.repeat(128), 'hex').toString('base64'),
+		)
+		expect(artifacts[0].sha512).toBe('a'.repeat(128))
+	})
+
+	it.each([
+		[
+			'missing slot',
+			(state: StoreState) => {
+				state.releaseSignals = {}
+			},
+		],
+		[
+			'legacy slot',
+			(state: StoreState) => {
+				delete state.releaseSignals['electron:stable'].publicDownloadRolloutId
+			},
+		],
+		[
+			'missing history',
+			(state: StoreState) => {
+				delete state.releaseSignals['electron:stable'].publicDownloadHistoryIds
+			},
+		],
+		[
+			'dangling pointer',
+			(state: StoreState) => {
+				state.releaseSignals['electron:stable'].publicDownloadRolloutId = 'missing'
+			},
+		],
+		[
+			'pointer outside explicit history',
+			(state: StoreState) => {
+				state.releaseSignals['electron:stable'].publicDownloadHistoryIds = []
+			},
+		],
+		[
+			'missing release',
+			(state: StoreState) => {
+				state.releases = []
+			},
+		],
+		[
+			'missing candidate',
+			(state: StoreState) => {
+				state.candidates = []
+			},
+		],
+		[
+			'unverified candidate',
+			(state: StoreState) => {
+				state.candidates[0].status = 'pending'
+			},
+		],
+		[
+			'beta candidate',
+			(state: StoreState) => {
+				state.candidates[0].channel = 'beta'
+			},
+		],
+		[
+			'prerelease version',
+			(state: StoreState) => {
+				state.candidates[0].version = '0.1.1-beta.4'
+			},
+		],
+		[
+			'other runtime',
+			(state: StoreState) => {
+				state.candidates[0].runtime = 'chromium'
+			},
+		],
+		[
+			'gray release',
+			(state: StoreState) => {
+				state.releases[0].percentage = 25
+			},
+		],
+		[
+			'paused release',
+			(state: StoreState) => {
+				state.releases[0].status = 'paused'
+			},
+		],
+		[
+			'withdrawn release',
+			(state: StoreState) => {
+				state.releases[0].status = 'withdrawn'
+			},
+		],
+		[
+			'never explicitly enrolled',
+			(state: StoreState) => {
+				delete state.releases[0].publicDownloadEligible
+			},
+		],
+		[
+			'bad timestamp',
+			(state: StoreState) => {
+				state.releases[0].publishedAt = 'yesterday'
+			},
+		],
+		[
+			'bad hash',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].sha512 = 'bad'
+			},
+		],
+		[
+			'token URL',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].url += '?token=private'
+			},
+		],
+		[
+			'non-HTTPS URL',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].url =
+					'http://example.test/a.dmg'
+			},
+		],
+		[
+			'non-target installer',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].arch = 'x64'
+			},
+		],
+	] as const)('fails closed for %s', async (_name, change) => {
+		const state = stateWithDownload()
+		change(state)
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(response.statusCode).toBe(200)
+		expect(parseBody(response)).toEqual({ release: null })
+	})
+
+	it('allows a retained superseded full release', async () => {
+		const state = stateWithDownload()
+		state.releases[0].status = 'superseded'
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(parseBody(response).release.version).toBe('0.1.1')
+	})
+
+	it('applies a separate anonymous read rate limit and no-store to errors', async () => {
+		const state = createState()
+		const init = { headers: { 'x-forwarded-for': '192.0.2.12' } }
+		for (let index = 0; index < 120; index++) {
+			expect((await request('/v1/public/desktop-downloads', state, init)).statusCode).toBe(200)
+		}
+		const response = await request('/v1/public/desktop-downloads', state, init)
+		expect(response.statusCode).toBe(429)
+		expect(response.headers['cache-control']).toBe('no-store')
+		expect(response.headers['retry-after']).toBe('60')
+		const wrongMethod = await request('/v1/public/desktop-downloads', state, {
+			method: 'POST',
+			headers: {},
+		})
+		expect(wrongMethod.statusCode).toBe(405)
+		expect(wrongMethod.headers['cache-control']).toBe('no-store')
+	})
+})
+
+it('allows withdrawal of superseded releases through the admin boundary, but forbids their resume', async () => {
+	const state = createState({
+		releases: [
+			rolloutRecord({ status: 'superseded', percentage: 100, publicDownloadEligible: true }),
+		],
+	})
+	const resumed = await request('/admin/v1/release-state', state, {
+		method: 'POST',
+		body: { releaseId: 'rollout-1', action: 'resume' },
+	})
+	expect(resumed.statusCode).toBe(409)
+	const response = await request('/admin/v1/release-state', state, {
+		method: 'POST',
+		body: { releaseId: 'rollout-1', action: 'withdraw' },
+	})
+	expect(response.statusCode).toBe(200)
+	expect(parseBody(response).release.status).toBe('withdrawn')
+	expect(parseBody(response).release).not.toHaveProperty('publicDownloadEligible')
+})
+
+it.each([
+	['stable full', 'stable', '1.0.0', 100, true],
+	['stable gray', 'stable', '1.0.0', 25, false],
+	['beta full', 'beta', '1.0.0-beta.4', 100, false],
+	['prerelease stable', 'stable', '1.0.0-beta.4', 100, false],
+] as const)(
+	'marks only eligible full publications at the API boundary: %s',
+	async (_name, channel, version, percentage, eligible) => {
+		const candidate = candidateRecord(createReleaseManifest({ channel, version }))
+		const state = createState({ candidates: [candidate] })
+		const store = createStore(state)
+		const commitReleasePublication = vi.fn(store.commitReleasePublication)
+		const response = await request('/admin/v1/release-publish', state, {
+			method: 'POST',
+			body: {
+				candidateId: candidate._id,
+				title: 'Release',
+				notes: 'Notes',
+				mode: 'optional',
+				percentage,
+			},
+			store: { commitReleasePublication },
+		})
+		expect(response.statusCode).toBe(201)
+		expect(commitReleasePublication.mock.calls[0][3]).toMatchObject({
+			candidateVersion: version,
+			publicDownloadEligible: eligible,
+		})
+	},
+)
+
+it('sets no-store when the public download store fails without leaking details', async () => {
+	const response = await request('/v1/public/desktop-downloads', createState(), {
+		headers: {},
+		store: {
+			getReleaseActiveSlot: async () => {
+				throw new Error('secret database detail')
+			},
+		},
+	})
+	expect(response.statusCode).toBe(500)
+	expect(response.headers['cache-control']).toBe('no-store')
+	expect(response.body).not.toContain('secret')
 })

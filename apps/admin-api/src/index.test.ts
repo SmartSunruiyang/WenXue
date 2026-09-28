@@ -1,7 +1,14 @@
 import cloudbase from '@cloudbase/node-sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { announcements, clientUpdatePolicy, me, users, userStatus } from './index.mjs'
+import {
+	announcements,
+	clientUpdatePolicy,
+	me,
+	publicDesktopDownloads,
+	users,
+	userStatus,
+} from './index.mjs'
 
 const authCredentialNames = [
 	'TENCENTCLOUD_SECRETID',
@@ -325,4 +332,20 @@ describe('Admin API CloudBase adapter', () => {
 			channel: 'stable',
 		})
 	})
+})
+
+it('dispatches the public desktop download GET anonymously through the real store', async () => {
+	vi.stubEnv('CLOUDBASE_ADMIN_API_KEY', 'test-admin-key')
+	const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+		expect(String(input)).toContain(
+			'/desktop_release_rollouts/documents/release-slot%3Aelectron%3Astable',
+		)
+		return Response.json(null)
+	})
+	vi.stubGlobal('fetch', fetchImpl)
+	const response = await publicDesktopDownloads({}, { httpContext: { headers: {} } })
+	expect(response.statusCode).toBe(200)
+	expect(JSON.parse(response.body)).toEqual({ release: null })
+	expect(response.headers['cache-control']).toBe('no-store')
+	expect(fetchImpl).toHaveBeenCalledOnce()
 })
