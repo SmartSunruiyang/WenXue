@@ -92,6 +92,7 @@
 ### F9 用户认证与本地账号隔离
 
 - 当前登录采用 CloudBase 邮箱密码或邮箱验证码；新邮箱验证后提交完整资料才创建账号，并提供密码重置。
+- 登录入口说明「继续即表示你已阅读并同意问学的隐私协议和用户须知」，两项分别链接到正式官网 `https://askwenxue.com/#privacy/privacy-policy` 与 `https://askwenxue.com/#privacy/terms-of-use`，通过系统浏览器打开。
 - 内置网关以 CloudBase Auth 的 ACTIVE/BLOCKED 状态决定访问，历史 `user_accounts` 记录不承担认证授权。
 - 未登录不进入账号工作台和画像操作；公开版本检查与正式安装包下载不应要求用户先登录。
 - 启动器向插件交接现有会话，保持一次性 handoff、刷新和敏感信息边界；不新增机器 token 登录或用户名注册路径。
