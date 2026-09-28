@@ -2,7 +2,7 @@
 
 > 日期：2026-09-25
 >
-> 状态（2026-09-28）：P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。beta.1 与 beta.2 候选均登记 verified，但该状态只证明清单与原字节验证。beta.1/beta.2 DMG 镜像校验及发布 SHA/大小均有效；只读检查发现两版 DMG 内 App 的严格代码签名验证均失败，用户反馈 beta.1 拖入 Applications 后打开提示“已损坏”。两版保持未发布，不再用于安装/升级验收。修复版 beta.3 的 CI run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）四个 job 全绿，最终 DMG 内 App 严格签名门禁与本机 `verifyMacDmg` 均通过；prepare、五对象公开上传回读和候选登记成功，`electron:beta:0.1.1-beta.3` 为 verified。用户已反馈 beta.3 在 Mac 上正常打开；该反馈只确认首次打开，不证明 CfT 启动、资料/Profile 保留或自动升级。beta.4 CI run `36424859967`（source `eb5fbc3a6e8e5fe37c300515cbd1de3660e03d61`）四 jobs 全成功，最终 DMG 严格签名门禁、本机 prepare/prepare-upload、托管恢复与 register-upload 均通过，候选 `electron:beta:0.1.1-beta.4` 已 verified。用户确认覆盖全部符合资格 beta 用户后，root 于 21:20 CST 提交 beta/optional/100% rollout，当前发布中。Mac 已完成自动发现、后台下载、DMG 手动覆盖和 beta.4 目标启动；仅覆盖 P5.6 路径，不证明所有资料/Profile 项或完整 P5。CfT 账号交接的一次 15 秒 cold 超时发生在升级前的 beta.3，后续 warm/cold 测量成功，原因未复现。Windows 用户已确认从现有 beta.1 或 beta.2 正常退出再打开后为 beta.4，浏览器和资料正常；精确起始版本和 Windows build 未提供。后台最终检查 2/0、下载 2/0、交接 1/0、目标启动聚合计数 2。P4.5 的候选上传、复用、冲突拒绝和半成品恢复门禁已完成。详见[macOS 包签名故障日志](../../../log/2026-09-28-macos-bundle-signature.md)与[beta.4 rollout 验收日志](../../../log/2026-09-28-beta4-rollout-verification.md)。
+> 状态（2026-09-29）：P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。P6.3 的稳定下载指针与官网接入已上线并核验；stable 尚未发布，公开指针返回空，P6.4/P6.6 和完整后台操作仍待完成。beta.1 与 beta.2 候选均登记 verified，但该状态只证明清单与原字节验证。beta.1/beta.2 DMG 镜像校验及发布 SHA/大小均有效；只读检查发现两版 DMG 内 App 的严格代码签名验证均失败，用户反馈 beta.1 拖入 Applications 后打开提示“已损坏”。两版保持未发布，不再用于安装/升级验收。修复版 beta.3 的 CI run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）四个 job 全绿，最终 DMG 内 App 严格签名门禁与本机 `verifyMacDmg` 均通过；prepare、五对象公开上传回读和候选登记成功，`electron:beta:0.1.1-beta.3` 为 verified。用户已反馈 beta.3 在 Mac 上正常打开；该反馈只确认首次打开，不证明 CfT 启动、资料/Profile 保留或自动升级。beta.4 CI run `36424859967`（source `eb5fbc3a6e8e5fe37c300515cbd1de3660e03d61`）四 jobs 全成功，最终 DMG 严格签名门禁、本机 prepare/prepare-upload、托管恢复与 register-upload 均通过，候选 `electron:beta:0.1.1-beta.4` 已 verified。用户确认覆盖全部符合资格 beta 用户后，root 于 21:20 CST 提交 beta/optional/100% rollout，当前发布中。Mac 已完成自动发现、后台下载、DMG 手动覆盖和 beta.4 目标启动；仅覆盖 P5.6 路径，不证明所有资料/Profile 项或完整 P5。CfT 账号交接的一次 15 秒 cold 超时发生在升级前的 beta.3，后续 warm/cold 测量成功，原因未复现。Windows 用户已确认从现有 beta.1 或 beta.2 正常退出再打开后为 beta.4，浏览器和资料正常；精确起始版本和 Windows build 未提供。后台最终检查 2/0、下载 2/0、交接 1/0、目标启动聚合计数 2。P4.5 的候选上传、复用、冲突拒绝和半成品恢复门禁已完成。详见[macOS 包签名故障日志](../../../log/2026-09-28-macos-bundle-signature.md)与[beta.4 rollout 验收日志](../../../log/2026-09-28-beta4-rollout-verification.md)。
 >
 > 产品边界已由用户在本会话确认；本文件将其整理为需求、设计约束、实施任务与验收门禁。详细接口和数据变更在 P2 登记到上游架构后再实现，不将计划中的建议冒充已经落地的能力。
 
@@ -247,7 +247,7 @@ flowchart LR
 
 - [ ] P6.1 展示候选的平台能力、版本、构建来源、测试证据和未签名说明；缺失必要产物或证据时禁止发布并解释原因。
 - [ ] P6.2 校验发布、灰度扩大、暂停、恢复、撤回的状态流转、幂等和操作审计；界面只有收到成功结果或可靠回查后才显示已生效。
-- [ ] P6.3 将当前正式下载指针与 rollout 规则实现为同源记录；官网按系统推荐并允许显式选择 Windows x64 与 macOS arm64 两个目标，不独立硬编码最新版本或安装包 URL。
+- [x] P6.3 将当前正式下载指针与 rollout 规则实现为同源记录；官网按系统推荐并允许显式选择 Windows x64 与 macOS arm64 两个目标，不独立硬编码最新版本或安装包 URL。2026-09-29 验收：CloudRun `wenxue-llm-gateway` DeployId 040、RunId `1xBGo9gKZohPJr`（BuildId `2607759180`）normal 100%，部署配置保持不变；两个正式域名 GET 均返回 `{release:null}`、200 和 `no-store`，官网资源和 Admin bundle `index-Bh13JW83.js`（1,027,940 字节）公网字节与构建一致。线上 CUA 确认无正式版本时下载禁用、平台选择和重新获取可用。新建后台 tab 登录后记录仍为 beta.4 optional 100%、状态发布中。没有发布 stable；七项 beta.4 策略只读回归匹配旧基线。证据详见[公开下载日志](../../../log/2026-09-29-public-desktop-downloads.md)及脱敏目录 `/Users/outas/Downloads/WenXue-public-download-20260929`。这只验收稳定指针接入，不涵盖 P6.4 的缓存失效/完整状态流转或 P6.6 操作手册。
 - [ ] P6.4 制定策略/公开下载响应的缓存策略与更新方式；验证暂停、撤回、全量切换后 API/CDN/官网不会继续返回错误的候选，直达源站和正式域名结果一致。
 - [ ] P6.5 后台分别展示下载、安装交接、目标版本启动及错误；样本不全明确显示未知，匿名上报不自动触发放量。
 - [ ] P6.6 编写后续每次发版的简短操作步骤：版本变更 → 测试 → 构建注册 → 验收 → 后台灰度 → 全量；附暂停、撤回、发布更高修复版本的步骤。
@@ -341,7 +341,7 @@ Windows x64 与 macOS arm64 两目标打包通过候选工作流执行，主进�
 | 已分发旧版原始安装包                             | P1 收集，P7 迁移    | 已哈希核验本地 arm64 0.1.0 DMG；其他旧包与实际用户分发情况待确认           |
 | 正式平台签名                                     | 后续独立阶段        | 用户明确暂不办理，不作为本阶段 Windows/Mac 手动交付的前置条件              |
 
-**P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。** 截至 2026-09-28，beta.4 已在 beta 通道 optional 100% 发布；Windows 正常退出升级和 Mac 自动下载后手动覆盖均通过，P4.5 候选复用/冲突/恢复门禁完成。beta.1/beta.2 的 Mac 包签名缺陷已由 beta.3 的最终 DMG 门禁修复，原候选不覆盖、不重新用于 Mac 验收。CI 临时产物已按长期授权在完整备份并校验后清理，CloudBase 文件和本机证据保留。当前权威验收结果见[beta.4 rollout 日志](../../../log/2026-09-28-beta4-rollout-verification.md)，此前各阶段文字仅保留历史语境。P4.4 证据模型、P6 官网与完整后台操作、P7 两跳及异常演练和首个 stable 发布仍待；2026-09-29 开始推进公开稳定下载指针与官网接入。
+**P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。** 截至 2026-09-29，beta.4 仍为 beta 通道 optional 100%、状态发布中；Windows 正常退出升级和 Mac 自动下载后手动覆盖均通过，P4.5 候选复用/冲突/恢复门禁完成。稳定下载指针和官网接入已完成并上线（P6.3）；无 stable 正式发布，公开接口返回 `{release:null}`。beta.1/beta.2 的 Mac 包签名缺陷已由 beta.3 的最终 DMG 门禁修复，原候选不覆盖、不重新用于 Mac 验收。CI 临时产物已按长期授权在完整备份并校验后清理，CloudBase 文件和本机证据保留。当前权威验收结果见[beta.4 rollout 日志](../../../log/2026-09-28-beta4-rollout-verification.md)和[公开下载日志](../../../log/2026-09-29-public-desktop-downloads.md)，此前各阶段文字仅保留历史语境。P4.4 证据模型、P6.2/P6.4/P6.5/P6.6 完整后台和缓存验证、P7 两跳及异常演练、stable 发布仍待。
 
 ## 8. 技术核验来源
 

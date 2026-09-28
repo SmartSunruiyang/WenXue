@@ -2,10 +2,10 @@
 
 ## 范围与版本控制
 
-- 基线：`605ba1f`，工作树 `codex/release-notifications-updates`。
+- 实现基线：`605ba1f`；功能提交：`7808ff5`（已推送 `main`），工作树 `codex/release-notifications-updates`。
 - 对应 P2.7、P6.3、P6.4 的接口/实现，以及 P6.2 的历史版本撤回边界；不创建 stable 候选，不改变 beta.4 rollout。
-- 本段代码及同步文档尚未提交：正在由根 Agent 封存、上线；提交与部署结果随后追加。
-- 主 Agent 负责方案、独立审查与验收；Sol 编写服务端/官网/后台代码及测试，Luna 校准计划历史记录。
+- 功能代码与随附设计文档已包含于 `7808ff5`；本次文档提交补记上线与验收结果。
+- 主 Agent 负责方案、独立审查与验收；Sol 编写代码及测试，Luna 校准计划并补记部署文档。
 
 ## 改动
 
@@ -24,9 +24,14 @@
 - `git diff --check` 通过。文档保留既有表格排版；Prettier 文档检查提示 ARCHITECTURE/PRD/计划存在排版差异，未为消除提示重排全文。
 - 脱敏证据目录：`/Users/outas/Downloads/WenXue-public-download-20260929`，含联合测试日志与上线前官网 HTML。
 
-## 部署准备与后续
+## 上线与验收
 
 - 上线前网关 039；保留既有 0.25 CPU / 0.5 GB、1–2 实例、访问类型、环境变量和 VPC，不增加套餐或运行规格。
-- 已为 askwenxue.com 与默认 app.tcloudbase.com 域名新增唯一 `/v1/public/desktop-downloads` CBR 路由，使用公开接口、开启路径透传；其余路由不变。具体线上验证结果随后记录。
-- 当前只有 beta.4 实机升级证据，没有 stable 全量正式版本。预期上线后的公开响应为 `{release:null}`，官网暂不可下载；不把 beta.4 伪装成正式版。
+- CloudRun `wenxue-llm-gateway` DeployId 040、BuildId `2607759180` / RunId `1xBGo9gKZohPJr` 部署为 normal 100%。配置对比中 CPU、内存、实例数、Env、VPC、端口、策略和开放访问类型均未变化；未增加计算规格。askwenxue.com 与默认 `app.tcloudbase.com` 的公开 GET 均为 200、`{release:null}` 并带 `no-store`；POST 为 405 且 `no-store`。`/healthz` 为 200，未授权 `/api/admin/v1/releases` 为 401。
+- 官网四个资源和 `index.html` 已上传，公网字节与构建一致。新 Admin bundle `/admin/assets/index-Bh13JW83.js` 大小 1,027,940 字节，与部署 staging 完全一致。线上 CUA 确认没有正式版时下载按钮禁用、Windows 选择正确、重新获取可用。新建独立后台 tab 后成功登录并载入；beta.4 记录仍显示 optional 100%，检查 2、下载 2、交接 1、目标启动 2，状态“发布中”。未修改发布策略，未触碰原 tab 草稿。
+- 七项 beta.4 只读策略回归与旧基线一致；`/Users/outas/Downloads/WenXue-public-download-20260929/policy-regression.json` 为正确检查证据。`http-probes.json` 中 `/health` 与 `/v1/admin/releases` 的 404 是对官网源站错误路径的探索结果，不代表服务退化；正确健康及管理接口结果记录于前述回归文件。
+- 没有 stable 正式版本发布；官网公开接口当前返回空指针，不把 beta.4 伪装成正式版。无新 CI，未改 beta.4 rollout。部署配置布尔对比和网页资源核验详见脱敏 `deployment-verification.json`。
+
+## 后续
+
 - P6.4 完整灰度/全量/暂停/撤回的真实 stable 演练，P6.2 同候选灰度扩大，P4.4 验收证据模型及 P7 实机异常矩阵仍待完成。

@@ -1,10 +1,12 @@
 # 问学 WenXue — 技术基础设施文档（Tech Infra）
 
-> 2026-09-27：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。P2 的 AdminApi schema 2、CI seal v3 与本机发布脚本已实现；桌面候选 `0.1.1-beta.1` 已由 GitHub Actions run `36260499160` 构建并成功登记为 verified candidate，尚未创建 rollout 或完成安装/升级验收。P5 两端实机验收仍待完成。
+> 当前状态（2026-09-29）：稳定下载指针与官网入口已上线，CloudRun `wenxue-llm-gateway` BuildId `2607759180` / RunId `1xBGo9gKZohPJr` normal 100%；源站及两个正式域名对公开下载 GET 返回 200、`{release:null}` 并禁用缓存，官网资源公网字节与构建一致。尚无 stable 正式版本。beta.4 仍为 beta/optional/100%、状态发布中；只读策略回归与原基线一致。没有新 CI、没有改 beta.4 rollout，也未增加计算规格；Env、VPC、访问类型保持。P6.3 已验收，P6.4/P6.6、完整后台操作和首个 stable 发布仍待。详细证据见[2026-09-29 公开下载日志](../../log/2026-09-29-public-desktop-downloads.md)。
 
-> P1 历史核验见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。组合服务 039 已上线；后台定向公告创建成功，Mac 测试 A 已由用户目视看到弹窗并点击确认。服务端回执独立核验、公告在线时延和跨设备去重仍待验收。`0.1.1-beta.1` 候选已登记并在后台显示 Ed25519 verified；尚无 rollout。正式域名不能直接替代客户端的完整网关 origin。以下带日期的历史快照不作为当前就绪证明。
+> 历史快照（2026-09-27）：当前产品继续使用 Electron + CfT，Chromium 重构方案已废弃。P2 的 AdminApi schema 2、CI seal v3 与本机发布脚本已实现；桌面候选 `0.1.1-beta.1` 已由 GitHub Actions run `36260499160` 构建并成功登记为 verified candidate，尚未创建 rollout 或完成安装/升级验收。P5 两端实机验收仍待完成。
 
-> 2026-09-26：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；P2 本地验证与构建/部署状态见[本次执行日志](../../log/2026-09-26-release-key-and-protocol.md)。2026-09-27 新候选 CI、公开托管回读和候选登记结果见[候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。
+> 历史快照（2026-09-26 及 P1 核验）：见[发布就绪报告](../../log/2026-09-25-p1-release-readiness.md)。组合服务 039 已上线；后台定向公告创建成功，Mac 测试 A 已由用户目视看到弹窗并点击确认。服务端回执独立核验、公告在线时延和跨设备去重仍待验收。`0.1.1-beta.1` 候选已登记并在后台显示 Ed25519 verified；尚无 rollout。正式域名不能直接替代客户端的完整网关 origin。下列带日期内容均保留为历史记录，不作为当前就绪证明。
+
+> 历史快照（2026-09-26）：本轮构建与验收范围收敛为 Windows x64 / macOS arm64，Intel Mac 暂缓；P2 本地验证与构建/部署状态见[本次执行日志](../../log/2026-09-26-release-key-and-protocol.md)。2026-09-27 新候选 CI、公开托管回读和候选登记结果见[候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。
 
 | 项       | 内容               |
 | -------- | ------------------ |
