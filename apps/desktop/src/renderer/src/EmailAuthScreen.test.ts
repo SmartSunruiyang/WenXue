@@ -68,11 +68,12 @@ async function submit() {
 			.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
 	})
 }
-async function selectAvatar() {
-	const avatar = new File(['avatar'], 'avatar.png', { type: 'image/png' })
+async function selectAvatar(
+	avatar: File | null = new File(['avatar'], 'avatar.png', { type: 'image/png' }),
+) {
 	const target = container.querySelector<HTMLInputElement>('input[type="file"]')!
 	await act(async () => {
-		Object.defineProperty(target, 'files', { configurable: true, value: [avatar] })
+		Object.defineProperty(target, 'files', { configurable: true, value: avatar ? [avatar] : [] })
 		target.dispatchEvent(new Event('change', { bubbles: true }))
 	})
 	return avatar
@@ -393,6 +394,69 @@ describe('email authentication screens', () => {
 			password: editedPassword,
 			avatar,
 		})
+	})
+
+	it('preserves the registration avatar when the file picker is cancelled', async () => {
+		const { registration } = registrationFixture()
+		await verifyEmail()
+		await enterProfile()
+		const avatar = await selectAvatar()
+		await selectAvatar(null)
+		expect(container.querySelector<HTMLImageElement>('.email-auth__avatar img')?.src).toBe(
+			'blob:avatar-preview',
+		)
+		expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+		await submit()
+		expect(registration.complete).toHaveBeenCalledWith({ nickname: '', password, avatar })
+	})
+
+	it.each([
+		[
+			'type',
+			() => new File(['text'], 'invalid.txt', { type: 'text/plain' }),
+			strings.auth.emailErrors.avatarType,
+		],
+		[
+			'size',
+			() => new File([new Uint8Array(2 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' }),
+			strings.auth.emailErrors.avatarSize,
+		],
+	] as const)(
+		'rejects an invalid registration avatar %s without discarding the prior draft',
+		async (_, invalidFile, error) => {
+			const { registration } = registrationFixture()
+			await verifyEmail()
+			await enterProfile()
+			await input('nickname', '保留昵称')
+			const avatar = await selectAvatar()
+			await selectAvatar(invalidFile())
+			expect(container.querySelector('[role="alert"]')?.textContent).toBe(error)
+			expect(container.querySelector<HTMLImageElement>('.email-auth__avatar img')?.src).toBe(
+				'blob:avatar-preview',
+			)
+			expect(URL.createObjectURL).toHaveBeenCalledOnce()
+			expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+			await submit()
+			expect(registration.complete).toHaveBeenCalledWith({ nickname: '保留昵称', password, avatar })
+		},
+	)
+
+	it('shows the default avatar for a broken preview and displays the next selected image', async () => {
+		registrationFixture()
+		await verifyEmail()
+		await enterProfile()
+		await selectAvatar()
+		await act(async () =>
+			container.querySelector('.email-auth__avatar img')!.dispatchEvent(new Event('error')),
+		)
+		expect(container.querySelector('.email-auth__avatar img')).toBeNull()
+		expect(container.querySelector('.email-auth__avatar svg')).not.toBeNull()
+		vi.mocked(URL.createObjectURL).mockReturnValueOnce('blob:replacement-preview')
+		await selectAvatar()
+		expect(container.querySelector<HTMLImageElement>('.email-auth__avatar img')?.src).toBe(
+			'blob:replacement-preview',
+		)
+		expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:avatar-preview')
 	})
 
 	it.each(['password', 'profile'] as const)(

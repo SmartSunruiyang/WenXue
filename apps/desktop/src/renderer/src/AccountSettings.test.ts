@@ -43,11 +43,12 @@ async function changeNickname(value: string) {
 	})
 }
 
-async function selectAvatar() {
-	const avatar = new File(['image'], 'new.png', { type: 'image/png' })
+async function selectAvatar(
+	avatar: File | null = new File(['image'], 'new.png', { type: 'image/png' }),
+) {
 	await act(async () => {
 		const field = container.querySelector<HTMLInputElement>('input[type="file"]')!
-		Object.defineProperty(field, 'files', { configurable: true, value: [avatar] })
+		Object.defineProperty(field, 'files', { configurable: true, value: avatar ? [avatar] : [] })
 		field.dispatchEvent(new Event('change', { bubbles: true }))
 	})
 	return avatar
@@ -116,6 +117,53 @@ describe('account settings', () => {
 		expect(container.querySelector('[role="alert"]')?.textContent).toBe(copy.errors.save)
 		expect(button(copy.save).disabled).toBe(false)
 	})
+
+	it('falls back when the saved avatar fails to load and displays a newly selected avatar', async () => {
+		await act(async () => container.querySelector('img')!.dispatchEvent(new Event('error')))
+		expect(container.querySelector('.account-settings__avatar img')).toBeNull()
+		expect(container.querySelector('.account-settings__avatar svg')).not.toBeNull()
+		await selectAvatar()
+		expect(container.querySelector('img')?.src).toBe('blob:avatar-preview')
+		await act(async () => container.querySelector('img')!.dispatchEvent(new Event('error')))
+		expect(container.querySelector('.account-settings__avatar img')).toBeNull()
+		expect(container.querySelector('.account-settings__avatar svg')).not.toBeNull()
+	})
+
+	it('preserves the selected avatar when the file picker is cancelled', async () => {
+		const avatar = await selectAvatar()
+		await selectAvatar(null)
+		expect(container.querySelector('img')?.src).toBe('blob:avatar-preview')
+		expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+		await save()
+		expect(onSave).toHaveBeenCalledWith({ nickname: user.nickname, avatar })
+	})
+
+	it.each([
+		[
+			'type',
+			() => new File(['text'], 'invalid.txt', { type: 'text/plain' }),
+			strings.auth.emailErrors.avatarType,
+		],
+		[
+			'size',
+			() => new File([new Uint8Array(2 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' }),
+			strings.auth.emailErrors.avatarSize,
+		],
+	] as const)(
+		'rejects an invalid avatar %s without discarding valid profile drafts',
+		async (_, invalidFile, error) => {
+			await changeNickname('保留昵称')
+			const avatar = await selectAvatar()
+			await selectAvatar(invalidFile())
+			expect(container.querySelector('[role="alert"]')?.textContent).toBe(error)
+			expect(container.querySelector('img')?.src).toBe('blob:avatar-preview')
+			expect(input('nickname').value).toBe('保留昵称')
+			expect(URL.createObjectURL).toHaveBeenCalledOnce()
+			expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+			await save()
+			expect(onSave).toHaveBeenCalledWith({ nickname: '保留昵称', avatar })
+		},
+	)
 
 	it('preserves unsaved changes across same-account session refreshes and clears after save', async () => {
 		await changeNickname('我的草稿')

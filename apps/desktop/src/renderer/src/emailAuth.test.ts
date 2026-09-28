@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 	signIn: vi.fn(),
 	signInWithPassword: vi.fn(),
 	getSession: vi.fn(),
+	refreshUser: vi.fn(),
 	signOut: vi.fn(),
 	resetPassword: vi.fn(),
 	updateUserBasicInfo: vi.fn(),
@@ -68,7 +69,14 @@ beforeEach(async () => {
 	mocks.getSession.mockResolvedValue({ data: data(), error: null })
 	mocks.signOut.mockResolvedValue({ error: null })
 	mocks.resetPassword.mockResolvedValue(undefined)
-	mocks.updateUserBasicInfo.mockResolvedValue(undefined)
+	mocks.refreshUser.mockImplementation(() => mocks.getSession())
+	mocks.updateUserBasicInfo.mockImplementation(async (profile: { picture?: string }) => {
+		const current = await mocks.getSession()
+		const user = current.data.session.user
+		mocks.getSession.mockResolvedValue({
+			data: data(user.id, user.email, profile.picture, user.user_metadata.name),
+		})
+	})
 	mocks.uploadFile.mockResolvedValue({ fileID: FILE_ID })
 	mocks.getTempFileURL.mockResolvedValue({
 		fileList: [{ fileID: FILE_ID, tempFileURL: 'https://storage.example/avatar.png?temporary' }],
@@ -560,6 +568,68 @@ describe('existing accounts and password reset', () => {
 })
 
 describe('avatar retry and concurrent auth safety', () => {
+	it.each(['missing-reference', 'missing-url', 'readback-error'])(
+		'does not finish registration when the saved avatar has %s',
+		async (failure) => {
+			const { registration: form } = await registration()
+			const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+			if (failure === 'missing-reference') mocks.refreshUser.mockResolvedValueOnce({ data: data() })
+			if (failure === 'missing-url') mocks.getTempFileURL.mockResolvedValueOnce({ fileList: [] })
+			if (failure === 'readback-error')
+				mocks.refreshUser.mockResolvedValueOnce({ error: { message: 'access-secret' } })
+			await expect(form.complete({ ...INPUT, avatar })).rejects.toThrow(
+				strings.auth.emailErrors.avatarUpload,
+			)
+			expect(form.state).toBe('avatar-pending')
+			await expect(form.complete({ ...INPUT, avatar })).resolves.toMatchObject({
+				nickname: INPUT.nickname,
+				avatarUrl: 'https://storage.example/avatar.png?temporary',
+			})
+			expect(mocks.signUp).toHaveBeenCalledOnce()
+			expect(mocks.uploadFile).toHaveBeenCalledOnce()
+		},
+	)
+
+	it('clears an already-written registration avatar when removal follows failed readback', async () => {
+		const { registration: form } = await registration()
+		mocks.refreshUser.mockResolvedValueOnce({ error: { message: 'readback failed' } })
+		await expect(
+			form.complete({
+				...INPUT,
+				avatar: new File(['image'], 'avatar.png', { type: 'image/png' }),
+			}),
+		).rejects.toThrow(strings.auth.emailErrors.avatarUpload)
+		mocks.updateUserBasicInfo.mockRejectedValueOnce(new Error('clear failed'))
+		await expect(form.complete(INPUT)).rejects.toThrow(strings.auth.emailErrors.avatarUpload)
+		expect(form.state).toBe('avatar-pending')
+		await expect(form.complete(INPUT)).resolves.toMatchObject({
+			userId: 'user-1',
+			nickname: INPUT.nickname,
+			avatarUrl: undefined,
+		})
+		expect(mocks.updateUserBasicInfo).toHaveBeenLastCalledWith({ picture: '' })
+		expect(form.state).toBe('complete')
+		expect(mocks.signUp).toHaveBeenCalledOnce()
+		expect(mocks.uploadFile).toHaveBeenCalledOnce()
+		await expect(service.getLauncherSession()).resolves.toMatchObject({ avatarUrl: undefined })
+	})
+
+	it('refuses to write the registered avatar into an account switched during upload', async () => {
+		const { registration: form } = await registration()
+		mocks.uploadFile.mockImplementationOnce(async () => {
+			mocks.getSession.mockResolvedValue({ data: data('other-user') })
+			return { fileID: FILE_ID }
+		})
+		await expect(
+			form.complete({
+				...INPUT,
+				avatar: new File(['image'], 'avatar.png', { type: 'image/png' }),
+			}),
+		).rejects.toThrow(strings.auth.emailErrors.avatarUpload)
+		expect(mocks.updateUserBasicInfo).not.toHaveBeenCalled()
+		expect(form.state).toBe('avatar-pending')
+	})
+
 	it('keeps the generated display name and UID through account confirmation and avatar retries', async () => {
 		const random = vi.spyOn(Math, 'random').mockReturnValue(0.0042)
 		const { registration: form } = await registration()

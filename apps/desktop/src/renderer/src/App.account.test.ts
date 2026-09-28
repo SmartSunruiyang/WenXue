@@ -326,6 +326,33 @@ describe('App account integration', () => {
 		expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:account-draft')
 	})
 
+	it('replaces broken account avatars with the default and retries after a profile update', async () => {
+		await render()
+		await act(async () => homeAvatar().dispatchEvent(new Event('error')))
+		expect(homeAvatar().getAttribute('src')).toBe('logo.png')
+		expect(homeAvatar().classList.contains('user-avatar')).toBe(false)
+		await click(strings.account.menuLabel)
+		const menu = document.querySelector('[role="menu"]')!
+		await act(async () => menu.querySelector('img')!.dispatchEvent(new Event('error')))
+		expect(menu.querySelector('img')?.getAttribute('src')).toBe('logo.png')
+		expect(menu.querySelector('strong')?.textContent).toBe(session.nickname)
+		await click(strings.settings.sections.account, menu)
+		const updated = {
+			...toPublicUser(session),
+			nickname: '新昵称',
+			avatarUrl: 'https://storage.example/recovered.png',
+		}
+		mocks.updateProfile.mockResolvedValue(updated)
+		await editProfile()
+		await click(strings.account.save)
+		expect(homeAvatar().src).toBe(updated.avatarUrl)
+		expect(homeAvatar().classList.contains('user-avatar')).toBe(true)
+		await click(strings.account.menuLabel)
+		expect(document.querySelector<HTMLImageElement>('[role="menu"] img')?.src).toBe(
+			updated.avatarUrl,
+		)
+	})
+
 	it('disables logout in my settings and the account menu while saving', async () => {
 		let finish!: (user: LauncherPublicUser) => void
 		mocks.updateProfile.mockImplementation(

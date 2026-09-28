@@ -327,7 +327,7 @@ ConsoleUI 内部 `OnboardingTour.tsx` 展示本地实机录制的分步教程与
 
 ConsoleUI 的 `cloudbase.ts` 封装邮箱挑战、验证码登录、延迟注册、密码登录、忘记密码及头像存储。
 账号设置复用该适配器更新 CloudBase Auth 的昵称和永久头像引用，保存前后验证同一 UID，向 App 返回
-无凭据的公开资料。`AccountSettings` 为 ConsoleUI 内部资料视图；内部 `DesktopOverlays` 提供自绘
+无凭据的公开资料。恢复登录先以 `getSession` 验证有效非匿名会话，再经 `refreshUser` 读取同一 UID 的云端资料；保存后显式回读并确认昵称与永久头像引用，不把本地缓存视作保存成功。`AccountSettings` 为 ConsoleUI 内部资料视图；内部 `DesktopOverlays` 提供自绘
 菜单、选择器与询问弹窗，复用统一键盘、焦点、Portal 与减少动态效果行为，不新增业务模块或依赖。
 窗口关闭询问由 MainBootstrap 保留关闭决策，经 DesktopBridge 事件和类型化应答呈现于 ConsoleUI，
 取消或 renderer 失效时不执行关闭；安全关闭失败通过同一应用内弹层说明并允许用户重试。
@@ -337,7 +337,8 @@ ConsoleUI 的 `cloudbase.ts` 封装邮箱挑战、验证码登录、延迟注册
 `validateLauncherPassword` 供密码步骤与重置表单共用校验。`getVerification` 与默认 `verify` 只返回临时证明，
 新邮箱仅在第二步最终资料/密码校验通过并提交后调用 `signUp` 创建 Auth 用户；取消后从邮箱验证重新开始。
 OTP、验证证明与未提交资料仅驻留内存，不产生待注册账号；头像选择阶段只本地预览，完成注册后才通过
-用户会话上传 `avatars/<uid>/...`，用永久 fileID 更新 Auth `picture`，显示时解析短期 URL。
+用户会话上传 `avatars/<uid>/...`，上传后再次验证同一 UID，用永久 fileID 更新 Auth `picture`，显示时解析短期 URL。注册完成前须回读确认 fileID 且取得可显示 URL，否则保持头像待保存、复用已上传文件重试。
+`validateLauncherAvatar` 在注册与设置选图时共用 MIME/2 MB 校验，提交边界重复执行；无效选择不覆盖已选草稿。
 注册句柄显式区分资料未提交、需重新验证邮箱、账号确认中、头像待保存、需重新登录和完成；UI 不从凭据过期时间推断阶段。
 建号后的网络或 5xx 错误只重试同一 UID 的网关确认，成功后才上传头像；401/403 结束无效流程并返回密码登录。
 头像失败重试沿用已创建 UID，不重复注册。忘记密码验证完整邮箱后调用 `resetPassword`，成功返回密码登录。

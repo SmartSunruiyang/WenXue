@@ -1061,11 +1061,7 @@ function DesktopApp({ closePromptOpen }: { closePromptOpen: boolean }) {
 					ref={avatarButtonRef}
 					type="button"
 				>
-					<img
-						className={authUser.avatarUrl ? 'user-avatar' : undefined}
-						src={authUser.avatarUrl || 'logo.png'}
-						alt=""
-					/>
+					<AccountAvatar key={authUser.userId} user={authUser} />
 				</button>
 				<nav className="sidebar-nav no-drag">
 					<RailButton
@@ -1427,6 +1423,22 @@ function RailButton({ active, children, icon: Icon, label, onClick }: RailButton
 	)
 }
 
+function AccountAvatar({ user }: { user: LauncherPublicUser }) {
+	const [failedAvatarUrl, setFailedAvatarUrl] = useState<string>()
+	const avatarUrl = user.avatarUrl !== failedAvatarUrl ? user.avatarUrl : undefined
+	return (
+		<img
+			key={avatarUrl}
+			className={avatarUrl ? 'user-avatar' : undefined}
+			src={avatarUrl || 'logo.png'}
+			alt=""
+			onError={() => {
+				if (avatarUrl) setFailedAvatarUrl(avatarUrl)
+			}}
+		/>
+	)
+}
+
 function AvatarMenu({
 	open,
 	anchorRef,
@@ -1461,11 +1473,7 @@ function AvatarMenu({
 		>
 			<div className="avatar-menu__head">
 				<div className="avatar-menu__mark">
-					<img
-						className={user.avatarUrl ? 'user-avatar' : undefined}
-						src={user.avatarUrl || 'logo.png'}
-						alt=""
-					/>
+					<AccountAvatar key={user.userId} user={user} />
 				</div>
 				<div>
 					<strong title={user.nickname}>{user.nickname || user.email || user.userId}</strong>
