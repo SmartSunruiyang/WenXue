@@ -95,7 +95,7 @@ textarea {
 	--wx-window-control-safe: 148px;
 }
 
-.app-shell.app-shell--macos {
+.app-shell:is(.app-shell--macos, .app-shell--windows) {
 	--wx-sidebar-width: 72px;
 	--wx-shell-inset: 8px;
 	--wx-shell-radius: 16px;
@@ -105,13 +105,13 @@ textarea {
 	box-shadow: inset 0 0 0 1px var(--wx-shell-highlight);
 }
 
-.app-shell--macos .sidebar {
+:is(.app-shell--macos, .app-shell--windows) .sidebar {
 	border-right: 0;
 	background: transparent;
 }
 
-.app-shell--macos .main-surface {
-	margin: var(--wx-shell-inset) var(--wx-shell-inset) var(--wx-shell-inset) 0;
+:is(.app-shell--macos, .app-shell--windows) .main-surface {
+	margin: var(--wx-shell-top, var(--wx-shell-inset)) var(--wx-shell-inset) var(--wx-shell-inset) 0;
 	border-radius: var(--wx-shell-radius);
 	background: var(--wx-surface);
 	box-shadow:
@@ -119,8 +119,47 @@ textarea {
 		0 2px 6px var(--wx-shadow);
 }
 
-.app-shell--macos .page-header {
+:is(.app-shell--macos, .app-shell--windows) .page-header {
 	flex-shrink: 0;
+}
+
+.app-shell.app-shell--windows {
+	--wx-shell-inset: 6px;
+	--wx-shell-top: 44px;
+}
+
+.app-shell--windows > .top-drag-zone {
+	height: var(--wx-shell-top);
+}
+
+.app-shell--windows > .window-controls {
+	background: transparent;
+	box-shadow: none;
+}
+
+.app-shell--windows .avatar-button {
+	margin-top: 48px;
+}
+
+.app-shell--windows .sidebar-bottom {
+	padding-bottom: 16px;
+}
+
+.app-shell--windows .page {
+	padding-top: 32px;
+	padding-bottom: 20px;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+	.app-shell.app-shell--windows {
+		background: var(--wx-background-deep);
+	}
+}
+
+@media (forced-colors: active) {
+	.app-shell.app-shell--windows {
+		background: Canvas;
+	}
 }
 
 .auth-shell {

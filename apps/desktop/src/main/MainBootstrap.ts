@@ -292,7 +292,7 @@ export async function startMainBootstrap(): Promise<void> {
 		currentWindow.focus()
 	})
 	await electron.app.whenReady()
-	if (process.platform === 'darwin') {
+	if (process.platform === 'darwin' || process.platform === 'win32') {
 		electron.nativeTheme.themeSource = 'light'
 	}
 
@@ -603,6 +603,9 @@ export function buildControlWindowOptions(input: {
 					vibrancy: 'under-window',
 					visualEffectState: 'active',
 				}
+			: {}),
+		...(input.platform === 'win32'
+			? { backgroundColor: '#00000000', backgroundMaterial: 'acrylic' }
 			: {}),
 		...(input.iconPath ? { icon: input.iconPath } : {}),
 		webPreferences: {
