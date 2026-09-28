@@ -381,7 +381,9 @@ extraResources:
 
 ## 8. 构建、CI 与分发
 
-最近登记的桌面候选版本为合法 SemVer `0.1.1-beta.4`，通道为 `beta`；CI、本机最终 DMG 严格签名验证、五对象公网回读与候选登记均通过。真实托管的部分上传恢复和全部对象复用验证通过。用户确认后，root 于 2026-09-28 21:20 CST 提交 beta/optional/100% rollout，覆盖所有符合资格的 beta 用户，当前发布中。Mac beta.4 自动发现、后台下载、DMG 手动覆盖及目标版本启动路径已实测；应用与插件 About 均显示 beta.4。升级前 beta.3 的 CfT 账号交接曾有一次 15 秒超时，随后 warm 和两次 cold 成功，原因未复现；beta.4 此次交接 2.052 秒成功。Profile 前后均有两项、原 Profile 和已开标签仍在，但未逐项核对历史、书签和站点登录。Windows 用户从 beta.1 或 beta.2 下载时曾报告约 50 KB/s，随后恢复；用户已确认正常退出、再次打开后为 beta.4，浏览器和资料正常。精确起始版本与 Windows build 未提供，不将此算为两个起始版本均验收。桌面包、插件包与官网包需分别读取各自 package metadata，不能由桌面版本推断三者统一。Chrome 插件清单的 `version` 为数值 `0.1.1`，`version_name` 使用其品牌版本字符串；
+2026-09-29 当前公开预览版为 `0.1.2-preview`：源码 `9c18c497cd51daf3d14bf7713119476c495962d9`、标签 `v0.1.2-preview`、Actions run `36478867358` 四项 job 全通过；Windows x64 NSIS 与 macOS arm64 DMG 已签署候选清单、完成官网托管公网全量回读并登记 verified。04:38 CST 已发布 beta / optional / 100%，04:39 CST 向全部登录用户发布更新公告，本机客户端已观察到公告。官网明确展示预览版，公开下载与双平台更新策略回查一致；旧协议与 stable 通道不接收该 schema 2 beta 策略，可从官网手动安装。后端 041 normal / 100%，既有运行规格与配置未变化。本版尚未完成双平台干净机器安装与资料保留实测，不能将构建或 verified 等同于实机验收。证据和合并说明见[发布记录](../../log/2026-09-29-release-012-preview.md)。
+
+上一轮登记的桌面候选版本为合法 SemVer `0.1.1-beta.4`，通道为 `beta`；CI、本机最终 DMG 严格签名验证、五对象公网回读与候选登记均通过。真实托管的部分上传恢复和全部对象复用验证通过。用户确认后，root 于 2026-09-28 21:20 CST 提交 beta/optional/100% rollout，覆盖所有符合资格的 beta 用户，当时发布中，现已被 0.1.2-preview 取代。Mac beta.4 自动发现、后台下载、DMG 手动覆盖及目标版本启动路径已实测；应用与插件 About 均显示 beta.4。升级前 beta.3 的 CfT 账号交接曾有一次 15 秒超时，随后 warm 和两次 cold 成功，原因未复现；beta.4 此次交接 2.052 秒成功。Profile 前后均有两项、原 Profile 和已开标签仍在，但未逐项核对历史、书签和站点登录。Windows 用户从 beta.1 或 beta.2 下载时曾报告约 50 KB/s，随后恢复；用户已确认正常退出、再次打开后为 beta.4，浏览器和资料正常。精确起始版本与 Windows build 未提供，不将此算为两个起始版本均验收。桌面包、插件包与官网包需分别读取各自 package metadata，不能由桌面版本推断三者统一。Chrome 插件清单的 `version` 为数值 `0.1.1`，`version_name` 使用其品牌版本字符串；
 CfT 与 vendor 库保留各自独立版本。桌面构建未显式提供 `WENXUE_UPDATE_CHANNEL` 时，从包版本的
 `-beta` 或 `-preview` 标识选择 beta 更新通道；CI 显式通道优先。
 
