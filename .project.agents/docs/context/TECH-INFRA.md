@@ -370,7 +370,7 @@ extraResources:
 
 ## 8. 构建、CI 与分发
 
-最近登记的桌面候选版本为合法 SemVer `0.1.1-beta.3`，通道为 `beta`；CI 和本机最终 DMG 严格签名验证、候选登记均通过，用户反馈 Mac 上首次打开正常。该反馈只确认首次打开，不证明 CfT 启动、资料/Profile 保留或自动升级；尚未创建 rollout，不能据 verified 宣称实机升级验收完成。beta.1/beta.2 因 App bundle 签名结构缺陷仍不可用于验收。桌面包、插件包与官网包需分别读取各自 package metadata，不能由桌面版本推断三者统一。Chrome 插件清单的 `version` 为数值 `0.1.1`，`version_name` 使用其品牌版本字符串；
+最近登记的桌面候选版本为合法 SemVer `0.1.1-beta.4`，通道为 `beta`；CI、本机最终 DMG 严格签名验证、五对象公网回读与候选登记均通过。真实托管的部分上传恢复和全部对象复用验证通过。尚未创建 rollout，beta/optional/100% 草案的发布范围待用户确认，不能据 verified 宣称实机升级验收完成。Mac 当前起点为已确认首次打开的 beta.3；一次 CfT 账号交接超时后，重试及两次真正冷启动均成功，原因未复现，不能据此宣称完整资料保留或稳定性验收完成。beta.1/beta.2 的 Mac 包因签名结构缺陷不再用于安装；用户现有 Windows beta.1 或 beta.2 可作为升级起点，精确版本待实测记录。桌面包、插件包与官网包需分别读取各自 package metadata，不能由桌面版本推断三者统一。Chrome 插件清单的 `version` 为数值 `0.1.1`，`version_name` 使用其品牌版本字符串；
 CfT 与 vendor 库保留各自独立版本。桌面构建未显式提供 `WENXUE_UPDATE_CHANNEL` 时，从包版本的
 `-beta` 标识选择 beta 更新通道；CI 显式通道优先。
 

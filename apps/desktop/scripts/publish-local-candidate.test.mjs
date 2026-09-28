@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile as execFileCallback } from 'node:child_process'
-import { generateKeyPairSync, sign } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -616,6 +616,18 @@ test('prepare-upload lists five exact CloudBase hosting paths and resumes matchi
 		})
 		assert.equal(resumed[0].disposition, 'reuse')
 		assert.ok(resumed.slice(1).every((item) => item.disposition === 'upload'))
+		const sameSizeConflict = await readFile(plan[1].localPath)
+		sameSizeConflict[0] ^= 1
+		assert.equal(sameSizeConflict.byteLength, plan[1].size)
+		assert.notEqual(createHash('sha512').update(sameSizeConflict).digest('base64'), plan[1].sha512)
+		remote.set(plan[1].publicUrl, sameSizeConflict)
+		await assert.rejects(
+			runLocalCandidate('prepare-upload', options, {
+				exec: value.fakeExec,
+				fetchImpl,
+			}),
+			/differs from local candidate bytes/i,
+		)
 		remote.set(plan[1].publicUrl, Buffer.from('wrong existing bytes'))
 		await assert.rejects(
 			runLocalCandidate('prepare-upload', options, {
