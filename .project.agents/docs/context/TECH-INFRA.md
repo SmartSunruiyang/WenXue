@@ -370,7 +370,7 @@ extraResources:
 
 ## 8. 构建、CI 与分发
 
-当前桌面候选版本为合法 SemVer `0.1.1-beta.1`，通道为 `beta`。桌面包、插件包与官网包需分别读取各自 package metadata，不能由桌面版本推断三者统一。Chrome 插件清单的 `version` 为数值 `0.1.1`，`version_name` 使用其品牌版本字符串；
+最近登记的桌面候选版本为合法 SemVer `0.1.1-beta.2`，通道为 `beta`；因 macOS App bundle 严格代码签名验证失败，该版本当前不可用于 macOS 安装/升级验收或 rollout。桌面包、插件包与官网包需分别读取各自 package metadata，不能由桌面版本推断三者统一。Chrome 插件清单的 `version` 为数值 `0.1.1`，`version_name` 使用其品牌版本字符串；
 CfT 与 vendor 库保留各自独立版本。桌面构建未显式提供 `WENXUE_UPDATE_CHANNEL` 时，从包版本的
 `-beta` 标识选择 beta 更新通道；CI 显式通道优先。
 
@@ -456,6 +456,7 @@ pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
   [CI 预检记录](../../log/2026-09-26-ci-preflight.md)及[本轮候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。随后首轮 run `36188670852` 的 quality、macos、
   windows、seal-artifacts 全部成功；此首轮版本 `0.0.1-beta` 仅为构建试跑，详见
   [首次 CI 验收记录](../../log/2026-09-26-first-ci-build.md)。随后 run `36260499160` 四个 job 全部成功，本机 `prepare` 与 `prepare-upload` 通过；manageHosting 先上传 DMG，再批量上传 `beta.yml`、EXE 和 signature，最后上传 manifest，共五对象。`register-upload` 从公开 URL 验证签名和每个对象原字节、大小及 SHA-512 后返回 `candidateId=electron:beta:0.1.1-beta.1`、`status=verified`。该 verified candidate 尚未创建 rollout，未完成实际安装或升级验收；旧 run 三个 artifact 已删除，新 run artifacts 保留。详见[本轮候选登记日志](../../log/2026-09-27-beta-candidate-registration.md)。
+- 2026-09-28 后续 beta.2 run `36271403682`（commit `1534b7c18a16ba7b92735a10cdd346c8ee3f8677`）的 quality、macOS、Windows、seal-artifacts 四个 job 全成功；本机 `prepare`、`prepare-upload`、五对象 hosting 上传与 `register-upload` 公网全量回读成功，候选登记为 verified。事后用户报告 beta.1 App 拖入 Applications 后打开提示“已损坏”。beta.1/beta.2 DMG 的 SHA-512/尺寸都与发布记录一致，`hdiutil verify` 均为 VALID；只读挂载后两版 DMG 内 App 的 `codesign --verify --deep --strict` 均失败，beta.1 `spctl` 也失败。beta.1 为 `Identifier=Electron`、adhoc/linker-signed，Info.plist 未绑定且无 sealed resources。由此确认阻塞在 App bundle 签名结构，不是候选清单或 DMG 字节完整性；verified 不证明 macOS 安装可用。beta.1/beta.2 保持未发布，不再用于安装/升级验收。独立旧 App 副本经 builder 26.15.3 的 `MacPackager.sign` identity `'-'` 流程重签后，根 Agent 的 `codesign --verify --deep --strict --verbose=2` exit 0，显示 ad-hoc 签名、Info.plist entries 31、Sealed Resources v2 files 391；`spctl assess` exit 3/rejected，因未提供 Developer ID/公证信任，属预期。该实证未启动 GUI，也不代表最终 DMG 或首次启动验收通过。修复配置已落地；最终 DMG 的版本、应用标识和严格 codesign 门禁已接入 CI，macOS job 同时运行该门禁的正反例回归。根 Agent 独立通过相关 7 项测试及 release lint；新版本 `0.1.1-beta.3` 的完整 CI 尚待验证，不覆盖既有候选。见[macOS 包签名故障日志](../../log/2026-09-28-macos-bundle-signature.md)。
 
 #### 8.2.1 免费私有仓库的操作顺序
 
