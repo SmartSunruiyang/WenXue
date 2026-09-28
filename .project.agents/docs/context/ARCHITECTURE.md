@@ -455,14 +455,20 @@ OTP、验证证明与未提交资料仅驻留内存，不产生待注册账号�
 - 持有状态：无；持久状态在 CloudBase NoSQL；release slot 负责互斥/版本门禁，audit 不参与控制决策
 ```
 
-2026-09-29 公开稳定下载契约（P2.7/P6.3）：沿用 `ReleaseChannelSlot` 与现有发布/状态事务，增加
+2026-09-29 公开桌面下载契约（P2.7/P6.3）：沿用 `ReleaseChannelSlot` 与现有发布/状态事务，增加
 `publicDownloadRolloutId` 和最多 20 项的 `publicDownloadHistoryIds`。仅 verified、Electron stable、
 无预发布后缀且包含当前双目标安装器的 100% 发布进入明确保留历史；灰度不切换官网指针。
 暂停/撤回移除该版本的可用历史资格，避免之后被标为 superseded 时复活；恢复当前全量发布可重新加入。
 首次合格全量发布在 rollout 内保存 `publicDownloadEligible: true` 作为明确登记标记；旧记录恢复不自动获得该标记，内部标记不进入公开响应。
 已被替代的 superseded 发布允许单独撤回，移除其官网下载资格并追加审计/signal；该事务保留当前通道的 active/current/highestVersion，不恢复旧版客户端策略。旧 superseded 发布不可 resume。
 回退仅沿显式保留历史读取仍合格的 active/superseded 记录，不扫描最大版本，也不自动从旧 slot 推测迁移。
-缺失、损坏或不合格指针返回无下载。beta 通道现有策略不参与官网指针。
+stable 指针缺失、损坏或不合格时不猜测其他 stable。
+
+2026-09-29 预览版下载：优先读取上述有效 stable；没有可用 stable 时，可读取 beta slot 的
+`activeRolloutId`，要求与 `currentRolloutId` 一致，rollout 为 Electron / beta / active / 100% / optional，
+候选 verified 且合法 SemVer 预发布首段为 `preview`，包含完整双目标无查询参数/片段的 HTTPS 安装器。
+preview 不进入 `publicDownloadRolloutId` 或保留历史，不扫描候选；暂停、撤回、被替代或不合格即无下载。
+普通 beta、rc、dev 不参与官网公开下载。
 
 `GET /v1/public/desktop-downloads` 由组合 Gateway 转发 AdminApi，无须账号，只返回
 `{ release: null | { version, publishedAt, artifacts } }`；每项 artifact 为
@@ -627,7 +633,7 @@ fork 应用层（apps/extension）：
 
 ### 2.5 官网域（apps/website）
 
-官网域是静态前端站点，与桌面域、插件域均无运行时依赖边；它消费公开产品叙事、品牌资产与 AdminApi 的公开稳定下载响应。
+官网域是静态前端站点，与桌面域、插件域均无运行时依赖边；它消费公开产品叙事、品牌资产与 AdminApi 的公开桌面下载响应。
 
 ```
 ## 模块名：WebsiteSite
@@ -635,7 +641,7 @@ fork 应用层（apps/extension）：
 - 不负责：不启动浏览器；不注入插件；不存储 API Key；不调用 LLM；不读取插件/桌面本地数据
 - 输入：透明品牌资产、静态文案、同源 `/v1/public/desktop-downloads` 公开响应
 - 输出：静态 HTML/CSS/JS 站点（CloudBase 静态托管目标）
-- 关键类型/接口：公开稳定下载 HTTPS 契约；请求和解析由 WebsiteSite 内部下载状态逻辑负责，React 展示状态与发送意图；下载前重新核验，版本变化需再次选择，不用旧链接兜底
+- 关键类型/接口：公开桌面下载 HTTPS 契约；请求和解析由 WebsiteSite 内部下载状态逻辑负责，React 展示状态与发送意图；下载前重新核验，版本变化需再次选择，不用旧链接兜底；stable 标注“正式版”，preview 标注“预览版”，加载/空态/错误使用中性下载文案
 - 持有状态：仅浏览器内瞬态 UI 状态（页面与章节、文档搜索、移动导航展开、演示步骤与演示任务选项）
 ```
 
@@ -781,7 +787,7 @@ graph TD
 	    end
 	    subgraph 官网域
 	        WebsiteSite --> WebsiteAssets["透明品牌资产"]
-	        WebsiteSite -->|公开稳定下载 HTTPS| AdminApi
+	        WebsiteSite -->|公开桌面下载 HTTPS| AdminApi
 	    end
         subgraph 构建发布工具
             DesktopReleaseTooling --> DispatchContracts
@@ -792,7 +798,7 @@ graph TD
         end
 ```
 
-> 桌面域与插件域无运行时控制边（I3）；当前仅允许用户 session 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；后台管理域只依赖 CloudBase Web Auth 与 AdminApi，不直接读写 NoSQL；官网域只经公开稳定下载 HTTPS 契约依赖 AdminApi，不连接桌面或插件进程。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`VisualObservation` 使用公开 LLMConfig 形状直接发 OpenAI-compatible 多模态请求，图片只在工具调用内存中存在；`chrome.tabs` 与 `chrome.webNavigation` 均为浏览器外部 API，分别供 ExtensionEntrypoints 截取当前可见视口和发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
+> 桌面域与插件域无运行时控制边（I3）；当前仅允许用户 session 的一次性 handoff 和已脱敏遥测豁免。云端后端通过 OpenAI-compatible HTTPS 契约服务插件内置模型，不依赖插件实现细节；后台管理域只依赖 CloudBase Web Auth 与 AdminApi，不直接读写 NoSQL；官网域只经公开桌面下载 HTTPS 契约依赖 AdminApi，不连接桌面或插件进程。vendor 包之间的内部边以上游 package.json 为准（图中仅画已确认的 core→llms）；我们自己的代码不得新增指向 vendor 包私有实现的边。`chaoxing/*` 指向 `@page-agent/llms` 的边仅消费其公开导出 `zodToOpenAITool`（不 reach into 私有实现，I5）；指向 `@page-agent/page-controller` 的边表示其内容脚本 RPC 与 `RemotePageController` 同传输（该传输属 page-controller 层）。`VisualObservation` 使用公开 LLMConfig 形状直接发 OpenAI-compatible 多模态请求，图片只在工具调用内存中存在；`chrome.tabs` 与 `chrome.webNavigation` 均为浏览器外部 API，分别供 ExtensionEntrypoints 截取当前可见视口和发现 frame 元数据。手工验证：所有箭头自高层指向低层，无环。
 
 `DispatchContracts` 是无 IO 的一方共享叶子模块；DesktopAnnouncementService 与
 DesktopReleaseSignalService 只在 renderer 持有 CloudBase Web SDK watch，后者只经 DesktopBridge 触发

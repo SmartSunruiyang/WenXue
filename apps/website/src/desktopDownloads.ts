@@ -29,7 +29,7 @@ export function parseDesktopDownloads(value: unknown): DesktopRelease | null {
 	if (
 		!record(release) ||
 		typeof release.version !== 'string' ||
-		!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(
+		!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-preview(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(
 			release.version,
 		) ||
 		typeof release.publishedAt !== 'string' ||
@@ -95,6 +95,9 @@ export function selectedArtifact(release: DesktopRelease, target: DownloadTarget
 export function formatPackageSize(size: number): string {
 	return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
+export function desktopReleaseLabel(version: string): string {
+	return version.split('+')[0].includes('-') ? '预览版' : '正式版'
+}
 
 export class DesktopDownloads {
 	private state: DownloadState
@@ -147,7 +150,7 @@ export class DesktopDownloads {
 		) {
 			this.setState({
 				...this.state,
-				message: '正式版本已更新，请确认版本和安装包后再次点击下载。',
+				message: '下载版本已更新，请确认版本和安装包后再次点击下载。',
 			})
 			return
 		}
@@ -176,7 +179,7 @@ export class DesktopDownloads {
 					...this.state,
 					phase: 'error',
 					release: null,
-					message: '无法获取当前正式下载信息，请检查网络后重试。',
+					message: '无法获取当前下载信息，请检查网络后重试。',
 				})
 			return null
 		} finally {

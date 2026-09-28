@@ -1122,24 +1122,34 @@ function isPublicDownloadCandidate(candidate) {
 		candidate.runtime === 'electron' &&
 		candidate.channel === 'stable' &&
 		!SEMVER_PATTERN.exec(candidate.version)?.[4] &&
-		[
-			['darwin', 'arm64', 'dmg'],
-			['win32', 'x64', 'nsis'],
-		].every(([platform, arch, kind]) =>
-			candidate.artifacts.some(
-				(artifact) =>
-					artifact.platform === platform &&
-					artifact.arch === arch &&
-					artifact.kind === kind &&
-					!new URL(artifact.url).search &&
-					!new URL(artifact.url).hash,
-			),
-		)
+		hasPublicDownloadInstallers(candidate)
+	)
+}
+
+/** @param {ReleaseCandidateRecord} candidate */
+function hasPublicDownloadInstallers(candidate) {
+	return [
+		['darwin', 'arm64', 'dmg'],
+		['win32', 'x64', 'nsis'],
+	].every(([platform, arch, kind]) =>
+		candidate.artifacts.some(
+			(artifact) =>
+				artifact.platform === platform &&
+				artifact.arch === arch &&
+				artifact.kind === kind &&
+				!new URL(artifact.url).search &&
+				!new URL(artifact.url).hash,
+		),
 	)
 }
 
 /** @param {AdminStore} store */
 async function publicDesktopDownloads(store) {
+	return (await stableDesktopDownloads(store)) ?? (await previewDesktopDownloads(store))
+}
+
+/** @param {AdminStore} store */
+async function stableDesktopDownloads(store) {
 	const slot = await store.getReleaseActiveSlot('electron', 'stable')
 	if (
 		!isRecord(slot) ||
@@ -1174,9 +1184,55 @@ async function publicDesktopDownloads(store) {
 	)
 	if (!candidate || candidate._id !== rollout.releaseId || !isPublicDownloadCandidate(candidate))
 		return null
+	return toPublicDesktopDownload(candidate, rollout.publishedAt)
+}
+
+/** @param {AdminStore} store */
+async function previewDesktopDownloads(store) {
+	const slot = await store.getReleaseActiveSlot('electron', 'beta')
+	if (
+		!isRecord(slot) ||
+		slot.recordType !== 'release-slot' ||
+		slot.runtime !== 'electron' ||
+		slot.channel !== 'beta' ||
+		typeof slot.activeRolloutId !== 'string' ||
+		!slot.activeRolloutId ||
+		slot.currentRolloutId !== slot.activeRolloutId
+	)
+		return null
+	const rollout = normalizeReleaseRollout(await store.getReleaseRollout(slot.activeRolloutId))
+	if (
+		!rollout ||
+		rollout._id !== slot.activeRolloutId ||
+		rollout.runtime !== 'electron' ||
+		rollout.channel !== 'beta' ||
+		rollout.status !== 'active' ||
+		rollout.percentage !== 100 ||
+		rollout.mode !== 'optional' ||
+		!Number.isFinite(Date.parse(rollout.publishedAt)) ||
+		new Date(rollout.publishedAt).toISOString() !== rollout.publishedAt
+	)
+		return null
+	const candidate = normalizeReleaseCandidateRecord(
+		await store.getReleaseCandidate(rollout.releaseId),
+	)
+	if (
+		!candidate ||
+		candidate._id !== rollout.releaseId ||
+		candidate.runtime !== 'electron' ||
+		candidate.channel !== 'beta' ||
+		SEMVER_PATTERN.exec(candidate.version)?.[4]?.split('.')[0] !== 'preview' ||
+		!hasPublicDownloadInstallers(candidate)
+	)
+		return null
+	return toPublicDesktopDownload(candidate, rollout.publishedAt)
+}
+
+/** @param {ReleaseCandidateRecord} candidate @param {string} publishedAt */
+function toPublicDesktopDownload(candidate, publishedAt) {
 	return {
 		version: candidate.version,
-		publishedAt: rollout.publishedAt,
+		publishedAt,
 		artifacts: candidate.artifacts
 			.filter(
 				(artifact) =>

@@ -2799,6 +2799,47 @@ describe('Dispatch contract compatibility', () => {
 })
 
 describe('public desktop downloads', () => {
+	function stateWithPreview() {
+		return createState({
+			candidates: [
+				candidateRecord(
+					createPlatformManifest('a'.repeat(64), {
+						releaseId: 'electron-beta-0.1.2-preview',
+						channel: 'beta',
+						version: '0.1.2-preview',
+						manifestUrl: 'https://updates.example.test/electron/beta/0.1.2-preview/manifest.json',
+						artifacts: createPlatformManifest('a'.repeat(64)).artifacts.map((artifact) =>
+							artifact.kind === 'nsis-yaml'
+								? {
+										...artifact,
+										fileName: 'beta.yml',
+										url: 'https://updates.example.test/artifacts/beta.yml',
+									}
+								: artifact,
+						),
+					}),
+				),
+			],
+			releases: [
+				rolloutRecord({
+					_id: 'preview-rollout',
+					releaseId: 'electron-beta-0.1.2-preview',
+					channel: 'beta',
+					percentage: 100,
+				}),
+			],
+			releaseSignals: {
+				'electron:beta': {
+					recordType: 'release-slot',
+					runtime: 'electron',
+					channel: 'beta',
+					currentRolloutId: 'preview-rollout',
+					activeRolloutId: 'preview-rollout',
+				},
+			},
+		})
+	}
+
 	function stateWithDownload() {
 		return createState({
 			candidates: [candidateRecord()],
@@ -2814,6 +2855,174 @@ describe('public desktop downloads', () => {
 			},
 		})
 	}
+
+	it('publishes just current full optional preview installers when there is no stable download', async () => {
+		const state = stateWithPreview()
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(response.statusCode).toBe(200)
+		expect(response.headers['cache-control']).toBe('no-store')
+		expect(parseBody(response)).toEqual({
+			release: {
+				version: '0.1.2-preview',
+				publishedAt: '2026-07-01T01:00:00.000Z',
+				artifacts: [
+					createArtifact('darwin', 'arm64', 'dmg'),
+					createArtifact('win32', 'x64', 'nsis'),
+				].map(({ platform, arch, kind, url, sha512, size }) => ({
+					platform,
+					arch,
+					kind,
+					url,
+					sha512,
+					size,
+				})),
+			},
+		})
+	})
+
+	it('prioritizes retained stable downloads over newer active previews', async () => {
+		const state = stateWithDownload()
+		state.releases[0].status = 'superseded'
+		const preview = stateWithPreview()
+		state.candidates.push(...preview.candidates)
+		state.releases.push(...preview.releases)
+		Object.assign(state.releaseSignals, preview.releaseSignals)
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(parseBody(response).release.version).toBe('0.1.1')
+	})
+
+	it.each([
+		[
+			'missing active pointer',
+			(state: StoreState) => {
+				delete state.releaseSignals['electron:beta'].activeRolloutId
+			},
+		],
+		[
+			'different current pointer',
+			(state: StoreState) => {
+				state.releaseSignals['electron:beta'].currentRolloutId = 'other'
+			},
+		],
+		[
+			'malformed slot',
+			(state: StoreState) => {
+				state.releaseSignals['electron:beta'].channel = 'dev'
+			},
+		],
+		[
+			'dangling active pointer',
+			(state: StoreState) => {
+				state.releases = []
+			},
+		],
+		[
+			'missing candidate',
+			(state: StoreState) => {
+				state.candidates = []
+			},
+		],
+		[
+			'unverified candidate',
+			(state: StoreState) => {
+				state.candidates[0].status = 'pending'
+			},
+		],
+		[
+			'non-electron candidate',
+			(state: StoreState) => {
+				state.candidates[0].runtime = 'chromium'
+			},
+		],
+		[
+			'non-beta candidate',
+			(state: StoreState) => {
+				state.candidates[0].channel = 'dev'
+			},
+		],
+		[
+			'non-beta rollout',
+			(state: StoreState) => {
+				state.releases[0].channel = 'stable'
+			},
+		],
+		[
+			'gray release',
+			(state: StoreState) => {
+				state.releases[0].percentage = 25
+			},
+		],
+		[
+			'mandatory release',
+			(state: StoreState) => {
+				state.releases[0].mode = 'mandatory'
+			},
+		],
+		[
+			'paused release',
+			(state: StoreState) => {
+				state.releases[0].status = 'paused'
+			},
+		],
+		[
+			'withdrawn release',
+			(state: StoreState) => {
+				state.releases[0].status = 'withdrawn'
+			},
+		],
+		[
+			'superseded release',
+			(state: StoreState) => {
+				state.releases[0].status = 'superseded'
+			},
+		],
+		[
+			'bad timestamp',
+			(state: StoreState) => {
+				state.releases[0].publishedAt = 'yesterday'
+			},
+		],
+		[
+			'bad hash',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].sha512 = 'bad'
+			},
+		],
+		[
+			'token URL',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].url += '?token=private'
+			},
+		],
+		[
+			'non-target installer',
+			(state: StoreState) => {
+				;(state.candidates[0].artifacts as Record<string, unknown>[])[0].arch = 'x64'
+			},
+		],
+	] as const)('does not expose preview for %s', async (_name, change) => {
+		const state = stateWithPreview()
+		change(state)
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(parseBody(response)).toEqual({ release: null })
+	})
+
+	it.each(['0.1.2', '0.1.2-beta.4', '0.1.2-rc.1', '0.1.2-previewish', '0.1.2-preview.01'])(
+		'refuses non-preview or invalid preview version %s',
+		async (version) => {
+			const state = stateWithPreview()
+			state.candidates[0].version = version
+			const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+			expect(parseBody(response)).toEqual({ release: null })
+		},
+	)
+
+	it('accepts numbered preview versions with SemVer build metadata', async () => {
+		const state = stateWithPreview()
+		state.candidates[0].version = '0.1.2-preview.1+build.2'
+		const response = await request('/v1/public/desktop-downloads', state, { headers: {} })
+		expect(parseBody(response).release.version).toBe('0.1.2-preview.1+build.2')
+	})
 
 	it('returns just two installers anonymously and strips all release internals', async () => {
 		const state = stateWithDownload()

@@ -13,7 +13,7 @@ import PrivacyPage from './PrivacyPage'
 import SiteNavbar, { websiteSloganSrc } from './SiteNavbar'
 import TiltHover from './TiltHover'
 import VariableProximity from './VariableProximity'
-import { formatPackageSize, selectedArtifact } from './desktopDownloads'
+import { desktopReleaseLabel, formatPackageSize, selectedArtifact } from './desktopDownloads'
 import { parseSiteRoute } from './siteRoute'
 import { useDesktopDownloads } from './useDesktopDownloads'
 
@@ -296,12 +296,12 @@ function HomePage() {
 						<img src="/assets/wenxue-logo.png" alt="" aria-hidden="true" />
 						<span>
 							{downloadState.release
-								? `v${downloadState.release.version}`
+								? `${desktopReleaseLabel(downloadState.release.version)} v${downloadState.release.version}`
 								: downloadState.phase === 'error'
 									? '版本信息暂不可用'
 									: downloadState.phase === 'loading' || downloadState.phase === 'checking'
-										? '正在获取正式版本'
-										: '正式版本准备中'}
+										? '正在获取下载版本'
+										: '下载版本准备中'}
 						</span>
 					</div>
 					<h1 className="hero-title-proximity reveal-title" ref={heroTitleRef}>
@@ -406,7 +406,8 @@ function HomePage() {
 					<div className="download-status" role="status" aria-live="polite">
 						{downloadState.release ? (
 							<p>
-								正式版 v{downloadState.release.version} ·{' '}
+								{desktopReleaseLabel(downloadState.release.version)} v
+								{downloadState.release.version} ·{' '}
 								{formatPackageSize(
 									selectedArtifact(downloadState.release, downloadState.target).size,
 								)}{' '}
@@ -417,10 +418,10 @@ function HomePage() {
 								{downloadState.phase === 'error'
 									? downloadState.message
 									: downloadState.phase === 'empty'
-										? '正式版本准备中，暂不可下载。'
+										? '下载版本准备中，暂不可下载。'
 										: downloadState.phase === 'checking'
 											? '正在重新验证当前安装包…'
-											: '正在获取正式下载信息…'}
+											: '正在获取下载信息…'}
 							</p>
 						)}
 						{downloadState.release && downloadState.message && <p>{downloadState.message}</p>}

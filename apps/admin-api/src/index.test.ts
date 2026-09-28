@@ -337,8 +337,8 @@ describe('Admin API CloudBase adapter', () => {
 it('dispatches the public desktop download GET anonymously through the real store', async () => {
 	vi.stubEnv('CLOUDBASE_ADMIN_API_KEY', 'test-admin-key')
 	const fetchImpl = vi.fn<typeof fetch>(async (input) => {
-		expect(String(input)).toContain(
-			'/desktop_release_rollouts/documents/release-slot%3Aelectron%3Astable',
+		expect(String(input)).toMatch(
+			/\/desktop_release_rollouts\/documents\/release-slot%3Aelectron%3A(stable|beta)/,
 		)
 		return Response.json(null)
 	})
@@ -347,5 +347,5 @@ it('dispatches the public desktop download GET anonymously through the real stor
 	expect(response.statusCode).toBe(200)
 	expect(JSON.parse(response.body)).toEqual({ release: null })
 	expect(response.headers['cache-control']).toBe('no-store')
-	expect(fetchImpl).toHaveBeenCalledOnce()
+	expect(fetchImpl).toHaveBeenCalledTimes(2)
 })

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
 	DesktopDownloads,
+	desktopReleaseLabel,
 	fetchDesktopDownloads,
 	parseDesktopDownloads,
 	recommendDownloadTarget,
@@ -32,10 +33,16 @@ const release: DesktopRelease = {
 }
 const response = (value: unknown) => ({ release: value })
 
-test('only a complete stable release with HTTPS installers is accepted', () => {
+test('only a complete stable or preview release with HTTPS installers is accepted', () => {
 	assert.equal(parseDesktopDownloads(response(null)), null)
 	assert.deepEqual(parseDesktopDownloads(response(release)), release)
-	for (const version of ['1.2.3-beta.4', '1.2.3-rc.1', '01.2.3']) {
+	for (const version of [
+		'1.2.3-beta.4',
+		'1.2.3-rc.1',
+		'01.2.3',
+		'1.2.3-previewish',
+		'1.2.3-preview.01',
+	]) {
 		assert.throws(() => parseDesktopDownloads(response({ ...release, version })))
 	}
 	for (const url of [
@@ -79,6 +86,37 @@ test('only a complete stable release with HTTPS installers is accepted', () => {
 			}),
 		),
 	)
+})
+
+test('preview versions are accepted and labeled distinctly from stable versions', () => {
+	for (const version of ['0.1.2-preview', '0.1.2-preview.1+build.2']) {
+		const preview = { ...release, version }
+		assert.deepEqual(parseDesktopDownloads(response(preview)), preview)
+		assert.equal(desktopReleaseLabel(version), '预览版')
+	}
+	assert.equal(desktopReleaseLabel('0.1.2'), '正式版')
+	assert.equal(desktopReleaseLabel('0.1.2+build-with-dashes'), '正式版')
+})
+
+test('preview download requires revalidation and changing to stable requires another click', async () => {
+	const preview = { ...release, version: '0.1.2-preview' }
+	let current: DesktopRelease | null = preview
+	const downloads = new DesktopDownloads(async () => current, 'Windows')
+	await downloads.refresh()
+	const navigations: string[] = []
+	await downloads.download((url) => navigations.push(url))
+	assert.deepEqual(navigations, [preview.artifacts[1].url])
+	current = release
+	await downloads.download((url) => navigations.push(url))
+	assert.equal(navigations.length, 1)
+	assert.match(downloads.getSnapshot().message, /再次点击/)
+	assert.equal(desktopReleaseLabel(downloads.getSnapshot().release!.version), '正式版')
+	await downloads.download((url) => navigations.push(url))
+	assert.equal(navigations.length, 2)
+	current = null
+	await downloads.download((url) => navigations.push(url))
+	assert.equal(navigations.length, 2)
+	assert.equal(downloads.getSnapshot().phase, 'empty')
 })
 
 test('public request bypasses caches and does not send credentials', async () => {
