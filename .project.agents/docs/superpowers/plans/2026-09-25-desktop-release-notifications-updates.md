@@ -2,7 +2,7 @@
 
 > 日期：2026-09-25
 >
-> 状态（2026-09-28）：P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。beta.1 与 beta.2 候选均登记 verified，但该状态只证明清单与原字节验证。beta.1/beta.2 DMG 镜像校验及发布 SHA/大小均有效；只读检查发现两版 DMG 内 App 的严格代码签名验证均失败，用户反馈 beta.1 拖入 Applications 后打开提示“已损坏”。两版保持未发布，不再用于安装/升级验收。修复版 beta.3 的 CI run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）四个 job 全绿，最终 DMG 内 App 严格签名门禁与本机 `verifyMacDmg` 均通过；prepare、五对象公开上传回读和候选登记成功，`electron:beta:0.1.1-beta.3` 为 verified。ad-hoc 签名不提供 Developer ID/公证信任；首次打开反馈尚未收到，且未创建 rollout，因此不代表首启或升级验收完成。P4.5 的复用/冲突/恢复演练、P5 实机验收及其他整体阶段仍未完成，不勾选。用户此前 Windows/macOS 安装反馈的具体设备与起始版本仍待对齐；本机 macOS 26.5 arm64 的当前 App 版本曾核对为 `0.0.1-beta`。详见[macOS 包签名故障日志](../../../log/2026-09-28-macos-bundle-signature.md)。
+> 状态（2026-09-28）：P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。beta.1 与 beta.2 候选均登记 verified，但该状态只证明清单与原字节验证。beta.1/beta.2 DMG 镜像校验及发布 SHA/大小均有效；只读检查发现两版 DMG 内 App 的严格代码签名验证均失败，用户反馈 beta.1 拖入 Applications 后打开提示“已损坏”。两版保持未发布，不再用于安装/升级验收。修复版 beta.3 的 CI run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）四个 job 全绿，最终 DMG 内 App 严格签名门禁与本机 `verifyMacDmg` 均通过；prepare、五对象公开上传回读和候选登记成功，`electron:beta:0.1.1-beta.3` 为 verified。用户已反馈 beta.3 在 Mac 上正常打开；该反馈只确认首次打开，不证明 CfT 启动、资料/Profile 保留或自动升级。没有 rollout。beta.4 三包版本同步和所需测试已完成，但未触发 CI、没有已构建候选，候选注册、实际发布范围和 beta.3→beta.4 实机升级仍待完成；Windows 当前起始版本反馈为 beta.1 或 beta.2，尚未精确到单一版本。P4.5 的复用/冲突/恢复演练、P5 实机验收及其他整体阶段仍未完成，不勾选。详见[macOS 包签名故障日志](../../../log/2026-09-28-macos-bundle-signature.md)与[beta.4 升级演练日志](../../../log/2026-09-28-beta4-upgrade-rehearsal.md)。
 >
 > 产品边界已由用户在本会话确认；本文件将其整理为需求、设计约束、实施任务与验收门禁。详细接口和数据变更在 P2 登记到上游架构后再实现，不将计划中的建议冒充已经落地的能力。
 
@@ -209,7 +209,7 @@ flowchart LR
 - [x] P4.2 让 Windows 构建生成实际所需更新元数据和关联文件，并由 CI 保留原字节及 seal artifact；本机复核、签名，经 CloudBase 静态托管上传并公开回读。run `36260499160` 成功生成 DMG、NSIS 与 `beta.yml`，CI seal v3 与本机 prepare/prepare-upload 通过；manageHosting 上传五个对象后，register-upload 完成公开回读和登记。Mac 本阶段仍为手动 DMG，不为未承诺的自动安装增加 ZIP 发布要求。
 - [x] P4.3 将产物的版本、channel、平台/架构、网关、公钥指纹和同一提交绑定；Windows x64 与 macOS arm64 两个目标均构建成功并由本机验证后才注册 verified 候选。版本不一致、缺包或签名失败均不能发布。候选 `0.1.1-beta.1` 绑定 commit `6fb2731a9e303e2ead81567b78d06c69b42e9a0c`、run `36260499160`；N+1 候选 `0.1.1-beta.2` 绑定 commit `1534b7c18a16ba7b92735a10cdd346c8ee3f8677`、run `36271403682`。两候选均按公钥指纹和双目标原字节公开回读后注册为 verified；候选登记不代表 rollout 已发布或实机升级完成。
 - [ ] P4.4 更新候选验收证据模型，区分自动化完整性检查与真实安装/升级测试；保留受信 CI run/产物哈希绑定，不能只改证据名称就宣称经过安装测试。
-- [ ] P4.5 **部分完成；beta.1/beta.2 保持阻塞，beta.3 已通过构建与候选完整性门禁**：beta.1 run `36260499160` 与 beta.2 run `36271403682` 的 DMG 内 App 严格签名验证失败，二者不用于安装/升级验收。beta.3 run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）四个 job 全成功，CI 最终 DMG 版本、应用标识与严格签名验证通过；本机 `verifyMacDmg` exit 0，prepare/prepare-upload、五对象上传、register-upload 公网回读与签名校验成功，候选 `electron:beta:0.1.1-beta.3` 登记为 verified。首次打开反馈尚未收到，未创建 rollout；重复复用、异哈希冲突拒绝和半成品恢复演练仍未完成，checkbox 保持未勾选。详见[macOS 包签名故障日志](../../../log/2026-09-28-macos-bundle-signature.md)。
+- [ ] P4.5 **部分完成；beta.1/beta.2 保持阻塞，beta.3 已通过构建与候选完整性门禁**：beta.1 run `36260499160` 与 beta.2 run `36271403682` 的 DMG 内 App 严格签名验证失败，二者不用于安装/升级验收。beta.3 run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）四个 job 全成功，CI 最终 DMG 版本、应用标识与严格签名验证通过；本机 `verifyMacDmg` exit 0，prepare/prepare-upload、五对象上传、register-upload 公网回读与签名校验成功，候选 `electron:beta:0.1.1-beta.3` 登记为 verified。用户确认 beta.3 在 Mac 正常首次打开；该反馈不验证 CfT、资料/Profile 保留或自动升级。beta.3 未创建 rollout；重复复用、异哈希冲突拒绝和半成品恢复演练仍未完成。beta.4 三包版本同步及必要测试已完成，CI/候选/实机升级待完成，checkbox 保持未勾选。详见[macOS 包签名故障日志](../../../log/2026-09-28-macos-bundle-signature.md)和[beta.4 升级演练日志](../../../log/2026-09-28-beta4-upgrade-rehearsal.md)。
 - [ ] P4.6 准备可重复生成的旧版、过渡版 N、后续版 N+1；具体版本在执行时按真实最高发布版本分配，不把历史示例 `0.1.0 → 0.1.1` 当成当前必用版本。
 
 出口：后台能看到 Windows x64 与 macOS arm64 两目标齐备且证据绑定的真实候选；仅注册候选不自动创建正式 rollout。后续客户端改动需要在冻结提交重新构建，不能复用与源码不一致的旧产物。
@@ -218,7 +218,7 @@ flowchart LR
 
 关联需求：R5–R9。
 
-阻塞注记（2026-09-28）：beta.1/beta.2 的 macOS DMG 内 App 严格代码签名验证失败，不用于升级验收或发布。beta.3 的最终 DMG 签名门禁和候选登记已通过，但尚无首次打开反馈或 rollout；Gatekeeper 交互不能替代实机验收。P5 保持未勾选，详见[故障日志](../../../log/2026-09-28-macos-bundle-signature.md)。
+阻塞注记（2026-09-28）：beta.1/beta.2 的 macOS DMG 内 App 严格代码签名验证失败，不用于升级验收或发布。用户已确认 beta.3 在 Mac 正常首次打开，但这不证明 CfT 启动、资料/Profile 保留或自动升级；beta.3 尚无 rollout。下一步 beta.3→beta.4 验收及发布范围确认待完成。Gatekeeper 交互不能替代实机验收；P5 保持未勾选，详见[故障日志](../../../log/2026-09-28-macos-bundle-signature.md)。
 
 主要范围：`apps/desktop/package.json`、锁文件、`DesktopUpdateService.ts`、`DesktopBridge`、`BrowserSupervisor`、`MainBootstrap`、`DesktopReleaseSignalService.ts` 和更新展示；复用现有模块边界。
 
