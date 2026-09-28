@@ -2,7 +2,7 @@
 
 > 日期：2026-09-25
 >
-> 状态（2026-09-28）：P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。beta.1 与 beta.2 候选均登记 verified，但该状态只证明清单与原字节验证。beta.1/beta.2 DMG 镜像校验及发布 SHA/大小均有效；只读检查发现两版 DMG 内 App 的严格代码签名验证均失败，用户反馈 beta.1 拖入 Applications 后打开提示“已损坏”。两版保持未发布，不再用于安装/升级验收。修复版 beta.3 的 CI run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）四个 job 全绿，最终 DMG 内 App 严格签名门禁与本机 `verifyMacDmg` 均通过；prepare、五对象公开上传回读和候选登记成功，`electron:beta:0.1.1-beta.3` 为 verified。用户已反馈 beta.3 在 Mac 上正常打开；该反馈只确认首次打开，不证明 CfT 启动、资料/Profile 保留或自动升级。beta.4 CI run `36424859967`（source `eb5fbc3a6e8e5fe37c300515cbd1de3660e03d61`）四 jobs 全成功，最终 DMG 严格签名门禁、本机 prepare/prepare-upload、五对象上传恢复与 register-upload 均通过，候选 `electron:beta:0.1.1-beta.4` 已 verified 并在后台可见。当前无 rollout；optional/beta/100% 草案涉及所有符合资格的 beta 用户（并非仅测试账号），明确范围批准待用户答复。Windows 仍从 beta.1 或 beta.2 待实测；Mac beta.3 首开正常，但 CfT 交接一次 cold 15 秒失败、后续 warm/cold 三次成功，原因未复现，不等于资料或升级验收。P4.5 的候选上传、复用、冲突拒绝与半成品恢复门禁已通过；真实托管恢复与 mock 冲突/缺文件拒绝分别留证。P5 实机验收及其他阶段仍未完成。详见[macOS 包签名故障日志](../../../log/2026-09-28-macos-bundle-signature.md)与[beta.4 升级演练日志](../../../log/2026-09-28-beta4-upgrade-rehearsal.md)。
+> 状态（2026-09-28）：P0 已完成；P1、P2、P3、P4、P5、P6、P7 整体仍未完成。beta.1 与 beta.2 候选均登记 verified，但该状态只证明清单与原字节验证。beta.1/beta.2 DMG 镜像校验及发布 SHA/大小均有效；只读检查发现两版 DMG 内 App 的严格代码签名验证均失败，用户反馈 beta.1 拖入 Applications 后打开提示“已损坏”。两版保持未发布，不再用于安装/升级验收。修复版 beta.3 的 CI run `36383077750`（source `4708213cf5afac26e22f3ba48731e86f4f893e2d`）四个 job 全绿，最终 DMG 内 App 严格签名门禁与本机 `verifyMacDmg` 均通过；prepare、五对象公开上传回读和候选登记成功，`electron:beta:0.1.1-beta.3` 为 verified。用户已反馈 beta.3 在 Mac 上正常打开；该反馈只确认首次打开，不证明 CfT 启动、资料/Profile 保留或自动升级。beta.4 CI run `36424859967`（source `eb5fbc3a6e8e5fe37c300515cbd1de3660e03d61`）四 jobs 全成功，最终 DMG 严格签名门禁、本机 prepare/prepare-upload、托管恢复与 register-upload 均通过，候选 `electron:beta:0.1.1-beta.4` 已 verified。用户确认覆盖全部符合资格 beta 用户后，root 于 21:20 CST 提交 beta/optional/100% rollout，当前发布中。Mac 已完成自动发现、后台下载、DMG 手动覆盖和 beta.4 目标启动；仅覆盖 P5.6 路径，不证明所有资料/Profile 项或完整 P5。CfT 账号交接的一次 15 秒 cold 超时发生在升级前的 beta.3，后续 warm/cold 测量成功，原因未复现。Windows 用户已确认从现有 beta.1 或 beta.2 正常退出再打开后为 beta.4，浏览器和资料正常；精确起始版本和 Windows build 未提供。后台最终检查 2/0、下载 2/0、交接 1/0、目标启动聚合计数 2。P4.5 的候选上传、复用、冲突拒绝和半成品恢复门禁已完成。详见[macOS 包签名故障日志](../../../log/2026-09-28-macos-bundle-signature.md)与[beta.4 rollout 验收日志](../../../log/2026-09-28-beta4-rollout-verification.md)。
 >
 > 产品边界已由用户在本会话确认；本文件将其整理为需求、设计约束、实施任务与验收门禁。详细接口和数据变更在 P2 登记到上游架构后再实现，不将计划中的建议冒充已经落地的能力。
 
@@ -218,16 +218,16 @@ flowchart LR
 
 关联需求：R5–R9。
 
-阻塞注记（2026-09-28）：beta.1/beta.2 的 macOS DMG 内 App 严格代码签名验证失败，不用于升级验收或发布。beta.3 首次打开正常；beta.4 已 verified，但尚无 rollout。Mac 的 CfT 交接有一次 15 秒 cold 失败，随后 warm/cold 测量成功，原因未复现；Windows beta.1 或 beta.2→beta.4 尚未实测。发布草案为 optional beta 100%，会覆盖所有符合资格的 beta 用户，具体范围批准待答复。Gatekeeper 交互不能替代实机验收；P5 保持未勾选，详见[故障日志](../../../log/2026-09-28-macos-bundle-signature.md)和[beta.4 演练日志](../../../log/2026-09-28-beta4-upgrade-rehearsal.md)。
+阻塞注记（2026-09-28）：beta.1/beta.2 的 macOS DMG 内 App 严格代码签名验证失败，不用于升级验收或发布。用户已批准将 beta.4 以 optional、beta 通道、100% 向所有符合资格的 beta 用户发布；当前 rollout 正在发布。Mac beta.4 自动下载、DMG 手动覆盖和目标版本启动路径已通过，P5.6 仅在该范围内勾选；CfT 的 15 秒 cold 超时发生在升级前的 beta.3，随后重试/测量成功，原因未复现，资料/Profile 未全面核对。Windows U4 正常退出安装已由用户确认到 beta.4，浏览器和资料正常；其他退出、占用和策略保护场景仍待实测。Gatekeeper 交互不能替代其余实机验收；P5 整体保持未完成，详见[rollout 验收日志](../../../log/2026-09-28-beta4-rollout-verification.md)。
 
 主要范围：`apps/desktop/package.json`、锁文件、`DesktopUpdateService.ts`、`DesktopBridge`、`BrowserSupervisor`、`MainBootstrap`、`DesktopReleaseSignalService.ts` 和更新展示；复用现有模块边界。
 
-- [ ] P5.1 接入与锁定 builder 兼容的 electron-updater，仅在 Windows 分支使用；封装在现有更新模块内，渲染进程不得操作文件、安装器或 Node API。
+- [x] P5.1 接入与锁定 builder 兼容的 electron-updater，仅在 Windows 分支使用；封装在现有更新模块内，渲染进程不得操作文件、安装器或 Node API。实现使用 6.8.9 / NsisUpdater，既有自动化与候选构建通过；本轮 Windows U4 正常退出安装由用户确认升级到 beta.4。
 - [ ] P5.2 让启动、定时、发布信号、联网恢复和手动检查统一进入策略门禁；验签且命中资格后自动下载，支持失败重试、并发去重、取消以及完整缓存恢复。
 - [ ] P5.3 实现受控更新元数据适配；真正的下载 URL、大小、SHA-512 与已授权候选一致才允许下载。避免 updater 自动下载或已缓存文件路径提前绕过该检查。
 - [ ] P5.4 接入正常退出/立即更新的异步协调，区分窗口关闭、保留 CfT 的启动器退出、完整退出、关机/注销；处理重入、用户取消、关闭超时和 app 重启后旧 CfT 占用。安装前按 §3.3 复核，禁止裸开默认退出安装。
 - [ ] P5.5 Windows 验证当前用户安装、安装目录、未签名包生成配置及实际系统限制；仅 schema 2 error 且仍有对应已验签候选时允许“手动下载安装包”。每次点击独占在线复核策略、签名与安装器 artifactSha512 匹配后，仅打开已签 manifest 的 HTTPS URL；入口可按最近状态展示，撤回、离线或不匹配时点击后拒绝打开。此入口不操作缓存、不自动退出、不写 attempt 或表示已安装；不承诺跳过 UAC、SmartScreen 或组织策略。
-- [ ] P5.6 Mac 自动下载且校验通过后提供打开 DMG/稍后操作；打开前复核有效策略和浏览器状态，说明覆盖步骤与未签名提示。应用不执行绕过系统安全机制或后台替换应用的命令。
+- [x] P5.6 Mac 自动下载且校验通过后提供打开 DMG/稍后操作；打开前复核有效策略和浏览器状态，说明覆盖步骤与未签名提示。应用不执行绕过系统安全机制或后台替换应用的命令。beta.4 实测中 Mac 自动发现并下载，应用打开已验证 DMG 后交给用户手动覆盖；交接记录 accepted，原进程正常退出，用户确认完成后本机 Info.plist、About 与 `codesign --verify --deep --strict` exit 0 确认应用签名有效、应用和插件均为 beta.4。CfT 正常退出后 `ps` 显示内置 CfT 主进程为 0，新版问学仍打开。此项仅验收该手动交接和目标启动路径，不代表 P5 整体完成或历史、书签、站点登录等资料均逐项核验。证据见[rollout 验收日志](../../../log/2026-09-28-beta4-rollout-verification.md)。
 - [ ] P5.7 实现 ARCHITECTURE §3.2/§4 的原子 attempt 记录、重启后严格目标版本及服务端对历史候选中对应平台 artifactSha512 的核验、幂等匿名上报和后台分阶段统计；旧版重启仅显示未确认，绝不伪造 installed 或上报失败。测试重试/终止条件、过期损坏、stop 清理及旧客户端未知状态。
 - [ ] P5.8 为状态机、IPC、策略并发、撤回缓存、篡改和进程协调添加必要回归测试；用 P4 流水线重新构建本阶段代码并完成 Windows x64 与 macOS arm64 安装实验。
 
