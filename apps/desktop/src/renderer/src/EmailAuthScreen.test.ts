@@ -162,27 +162,50 @@ afterEach(async () => {
 })
 
 describe('email authentication screens', () => {
-	it('shows the welcome title, account icon and Chinese privacy link with the approved email entries', () => {
+	it('shows the welcome title, account icon and Chinese legal links with the approved email entries', () => {
 		expect(container.querySelector('h1')?.textContent).toBe('欢迎回来')
 		expect(button('使用账号密码登录').querySelector('svg[aria-hidden="true"]')).toBeTruthy()
 		expect(button(strings.auth.email.continueEmail)).toBeTruthy()
 		expect(container.querySelector('input[type="email"]')).toBeTruthy()
-		const privacy = container.querySelector<HTMLAnchorElement>('a')!
-		expect(privacy.textContent).toBe('隐私协议')
-		expect(privacy.href).toBe('https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/')
-		expect(privacy.parentElement?.textContent).toMatch(/继续.*隐私协议/)
+		const legalNotice = container.querySelector('.email-auth__privacy')!
+		expect(
+			Array.from(legalNotice.querySelectorAll('a')).map((link) => ({
+				label: link.textContent,
+				href: link.href,
+				target: link.target,
+				rel: link.rel,
+			})),
+		).toEqual([
+			{
+				label: '隐私协议',
+				href: 'https://askwenxue.com/#privacy/privacy-policy',
+				target: '_blank',
+				rel: 'noreferrer',
+			},
+			{
+				label: '用户须知',
+				href: 'https://askwenxue.com/#privacy/terms-of-use',
+				target: '_blank',
+				rel: 'noreferrer',
+			},
+		])
+		expect(legalNotice.textContent).toBe('继续即表示你已阅读并同意问学的隐私协议和用户须知。')
 		expect(container.textContent).not.toMatch(/手机号|用户名|Google|注册账号/)
 	})
 
-	it('opens the privacy link through the supplied desktop intent', async () => {
+	it.each([
+		['隐私协议', 'https://askwenxue.com/#privacy/privacy-policy'],
+		['用户须知', 'https://askwenxue.com/#privacy/terms-of-use'],
+	])('opens the %s link through the supplied desktop intent', async (label, href) => {
 		const onOpenExternal = vi.fn()
 		await renderScreen(onOpenExternal)
+		const link = Array.from(container.querySelectorAll('a')).find(
+			(item) => item.textContent === label,
+		)!
 		const event = new MouseEvent('click', { bubbles: true, cancelable: true })
-		await act(async () => container.querySelector('a')!.dispatchEvent(event))
+		await act(async () => link.dispatchEvent(event))
 		expect(event.defaultPrevented).toBe(true)
-		expect(onOpenExternal).toHaveBeenCalledWith(
-			'https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/',
-		)
+		expect(onOpenExternal).toHaveBeenCalledWith(href)
 	})
 
 	it('shows the form immediately when reduced motion is requested', () => {

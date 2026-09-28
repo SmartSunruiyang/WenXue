@@ -614,7 +614,7 @@ export function EmailAuthScreen({
 								<p className="email-auth__privacy">
 									{copy.privacyBefore}
 									<a
-										href="https://wenxue-d8gz76tacc3659f05-1427406869.tcloudbaseapp.com/"
+										href="https://askwenxue.com/#privacy/privacy-policy"
 										target="_blank"
 										rel="noreferrer"
 										onClick={(event) => {
@@ -624,6 +624,19 @@ export function EmailAuthScreen({
 										}}
 									>
 										{copy.privacyLink}
+									</a>
+									{copy.privacySeparator}
+									<a
+										href="https://askwenxue.com/#privacy/terms-of-use"
+										target="_blank"
+										rel="noreferrer"
+										onClick={(event) => {
+											if (!onOpenExternal) return
+											event.preventDefault()
+											onOpenExternal(event.currentTarget.href)
+										}}
+									>
+										{copy.termsLink}
 									</a>
 									{copy.privacyAfter}
 								</p>
