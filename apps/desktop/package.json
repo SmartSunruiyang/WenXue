@@ -13,7 +13,8 @@
 		"typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
 		"test": "vitest run && node --test scripts/*.test.mjs",
 		"fetch-browser": "tsx scripts/fetch-browser.ts",
-		"generate-icons": "swift scripts/generate-app-icons.swift"
+		"generate-icons": "swift scripts/generate-app-icons.swift",
+		"generate-icons:win": "swift scripts/generate-app-icons.swift --windows"
 	},
 	"dependencies": {
 		"@cloudbase/js-sdk": "^2.30.0",

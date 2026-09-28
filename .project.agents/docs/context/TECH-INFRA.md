@@ -396,6 +396,14 @@ pnpm -F desktop build                # electron-vite 构建
 pnpm -F desktop dist:mac / dist:win  # electron-builder 出 dmg / nsis
 ```
 
+Windows 安装包的品牌资源由 `apps/desktop/scripts/generate-app-icons.swift` 维护：在 macOS
+执行 `pnpm -F desktop generate-icons:win`，生成独立绘制的多尺寸 PNG、32-bit ICO 及 NSIS
+24-bit BMP。素材入库后，Windows 构建直接消费，不要求 Swift / AppKit。
+`win.icon`、`nsis.installerIcon` 与 `nsis.uninstallerIcon` 共用 Windows ICO；assisted
+安装器（`oneClick: false`）显式使用 150×57 header 与 164×314 sidebar，卸载器复用 sidebar。
+sidebar 仅在 NSIS 对应欢迎 / 完成页面出现，不为展示图片增设页面或改变安装行为。
+规格、官方依据与清单见 [`desktop-app-icons.md`](../../assets/desktop-app-icons.md)。
+
 ### 8.2 CI（GitHub Actions，Demo 期最小集）
 
 - 发布构建门禁：lint + typecheck + `pnpm -r test`；当前仅配置手动发布构建，不把它表述为已启用的 PR 门禁。

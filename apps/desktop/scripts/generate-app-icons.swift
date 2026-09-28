@@ -16,11 +16,13 @@ private let resourcesDirectory = packageRoot.appendingPathComponent("resources",
 private let sourceURL = resourcesDirectory.appendingPathComponent("icon.png")
 private let macMasterURL = resourcesDirectory.appendingPathComponent("app-icon-macos-1024.png")
 private let macIcnsURL = resourcesDirectory.appendingPathComponent("app-icon-macos.icns")
-private let windowsMasterURL = resourcesDirectory.appendingPathComponent("app-icon-windows-256.png")
 private let windowsIcoURL = resourcesDirectory.appendingPathComponent("app-icon-windows.ico")
+private let brandAssetsDirectory = packageRoot
+	.deletingLastPathComponent()
+	.deletingLastPathComponent()
+	.appendingPathComponent(".project.agents/assets", isDirectory: true)
 
 private let macStyle = IconStyle(visibleFraction: 824 / 1024, shadow: true)
-private let windowsStyle = IconStyle(visibleFraction: 40 / 48, shadow: false)
 
 private func signedPower(_ value: CGFloat, exponent: CGFloat) -> CGFloat {
 	let magnitude = CGFloat(pow(Double(abs(value)), Double(exponent)))
@@ -197,24 +199,158 @@ private func generateMacIcons(source: CGImage) throws {
 	}
 }
 
-private func generateWindowsIcons(source: CGImage) throws {
-	let sizes = [16, 20, 24, 32, 40, 48, 64, 256]
-	let frames = try sizes.map { size in
-		(size: size, data: try renderIcon(source: source, size: size, style: windowsStyle))
+private func loadImage(at url: URL) throws -> CGImage {
+	guard
+		let image = NSImage(contentsOf: url),
+		let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+	else {
+		throw NSError(
+			domain: "WenXueIconGenerator", code: 4,
+			userInfo: [NSLocalizedDescriptionKey: "Unable to read \(url.path)"],
+		)
 	}
-	try frames.last!.data.write(to: windowsMasterURL, options: .atomic)
+	return cgImage
+}
+
+private func makeWindowsContext(width: Int, height: Int) throws -> CGContext {
+	guard let context = CGContext(
+		data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+		space: CGColorSpace(name: CGColorSpace.sRGB)!,
+		bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+	) else {
+		throw NSError(domain: "WenXueIconGenerator", code: 5)
+	}
+	context.setAllowsAntialiasing(true)
+	context.setShouldAntialias(true)
+	context.interpolationQuality = .high
+	context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+	return context
+}
+
+private func drawWindowsIcon(glyph: CGImage, in context: CGContext, size: Int) {
+	let length = CGFloat(size)
+	let inset = max(1, (length / 24).rounded())
+	let borderWidth = max(1, length / 96)
+	let plateRect = CGRect(x: inset, y: inset, width: length - 2 * inset, height: length - 2 * inset)
+	let radius = max(1, length / 24)
+	let plate = CGPath(
+		roundedRect: plateRect.insetBy(dx: borderWidth / 2, dy: borderWidth / 2),
+		cornerWidth: radius, cornerHeight: radius, transform: nil,
+	)
+	context.addPath(plate)
+	context.setFillColor(NSColor.white.cgColor)
+	context.setStrokeColor(NSColor(srgbRed: 0.84, green: 0.84, blue: 0.84, alpha: 1).cgColor)
+	context.setLineWidth(borderWidth)
+	context.drawPath(using: .fillStroke)
+
+	let glyphHeight = (length * 0.72).rounded()
+	let glyphWidth = (glyphHeight * CGFloat(glyph.width) / CGFloat(glyph.height)).rounded()
+	let glyphRect = CGRect(
+		x: ((length - glyphWidth) / 2).rounded(), y: ((length - glyphHeight) / 2).rounded(),
+		width: glyphWidth, height: glyphHeight,
+	)
+	context.draw(glyph, in: glyphRect)
+}
+
+private func renderWindowsIcon(glyph: CGImage, size: Int) throws -> Data {
+	let context = try makeWindowsContext(width: size, height: size)
+	drawWindowsIcon(glyph: glyph, in: context, size: size)
+	guard
+		let image = context.makeImage(),
+		let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+	else {
+		throw NSError(domain: "WenXueIconGenerator", code: 6)
+	}
+	return data
+}
+
+private func createBitmap24(context: CGContext) throws -> Data {
+	guard let pixels = context.data?.assumingMemoryBound(to: UInt8.self) else {
+		throw NSError(domain: "WenXueIconGenerator", code: 7)
+	}
+	let width = context.width
+	let height = context.height
+	let rowBytes = (width * 3 + 3) & ~3
+	let pixelBytes = rowBytes * height
+	var result = Data([0x42, 0x4D])
+	appendLittleEndian(UInt32(54 + pixelBytes), to: &result)
+	appendLittleEndian(UInt32(0), to: &result)
+	appendLittleEndian(UInt32(54), to: &result)
+	appendLittleEndian(UInt32(40), to: &result)
+	appendLittleEndian(Int32(width), to: &result)
+	appendLittleEndian(Int32(height), to: &result)
+	appendLittleEndian(UInt16(1), to: &result)
+	appendLittleEndian(UInt16(24), to: &result)
+	appendLittleEndian(UInt32(0), to: &result)
+	appendLittleEndian(UInt32(pixelBytes), to: &result)
+	appendLittleEndian(Int32(3780), to: &result)
+	appendLittleEndian(Int32(3780), to: &result)
+	appendLittleEndian(UInt32(0), to: &result)
+	appendLittleEndian(UInt32(0), to: &result)
+
+	// Positive-height BMP rows are stored bottom first; Quartz's bitmap buffer is top first.
+	for y in (0..<height).reversed() {
+		for x in 0..<width {
+			let pixel = y * context.bytesPerRow + x * 4
+			result.append(contentsOf: [pixels[pixel + 2], pixels[pixel + 1], pixels[pixel]])
+		}
+		result.append(contentsOf: repeatElement(UInt8(0), count: rowBytes - width * 3))
+	}
+	return result
+}
+
+private func generateInstallerBitmaps(glyph: CGImage, slogan: CGImage) throws {
+	let header = try makeWindowsContext(width: 150, height: 57)
+	header.setFillColor(NSColor.white.cgColor)
+	header.fill(CGRect(x: 0, y: 0, width: 150, height: 57))
+	header.draw(glyph, in: CGRect(x: 8, y: 16, width: 23, height: 25))
+	header.draw(slogan, in: CGRect(x: 36, y: 10, width: 108, height: 36))
+	try createBitmap24(context: header).write(
+		to: resourcesDirectory.appendingPathComponent("installer-header-150x57.bmp"), options: .atomic,
+	)
+
+	let sidebar = try makeWindowsContext(width: 164, height: 314)
+	sidebar.setFillColor(NSColor(srgbRed: 0.975, green: 0.975, blue: 0.975, alpha: 1).cgColor)
+	sidebar.fill(CGRect(x: 0, y: 0, width: 164, height: 314))
+	sidebar.draw(glyph, in: CGRect(x: 44, y: 167, width: 77, height: 84))
+	sidebar.draw(slogan, in: CGRect(x: 4, y: 107, width: 156, height: 52))
+	try createBitmap24(context: sidebar).write(
+		to: resourcesDirectory.appendingPathComponent("installer-sidebar-164x314.bmp"), options: .atomic,
+	)
+}
+
+private func generateWindowsAssets() throws {
+	let logo = try loadImage(at: brandAssetsDirectory.appendingPathComponent("nobottomlogo.png"))
+	let slogan = try loadImage(at: brandAssetsDirectory.appendingPathComponent("nobottomslogen.png"))
+	// Crop only the source's transparent padding so every size retains the original mark.
+	guard let glyph = logo.cropping(to: CGRect(x: 87, y: 37, width: 1079, height: 1179)) else {
+		throw NSError(domain: "WenXueIconGenerator", code: 8)
+	}
+	let sizes = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128, 256]
+	let frames = try sizes.map { size in
+		(size: size, data: try renderWindowsIcon(glyph: glyph, size: size))
+	}
+	for frame in frames {
+		try frame.data.write(
+			to: resourcesDirectory.appendingPathComponent("app-icon-windows-\(frame.size).png"),
+			options: .atomic,
+		)
+	}
 	try createWindowsIco(frames: frames).write(to: windowsIcoURL, options: .atomic)
+	try generateInstallerBitmaps(glyph: glyph, slogan: slogan)
+	print("Generated Windows ICO, \(frames.count) PNG sizes, and NSIS header/sidebar BMPs")
 }
 
-guard
-	let sourceImage = NSImage(contentsOf: sourceURL),
-	let source = sourceImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
-else {
-	fatalError("Unable to read \(sourceURL.path)")
+let arguments = Array(CommandLine.arguments.dropFirst())
+guard arguments.isEmpty || arguments == ["--mac"] || arguments == ["--windows"] else {
+	fputs("Usage: swift generate-app-icons.swift [--mac | --windows]\n", stderr)
+	exit(1)
 }
 
-try generateMacIcons(source: source)
-try generateWindowsIcons(source: source)
-
-print("Generated \(macMasterURL.lastPathComponent), \(macIcnsURL.lastPathComponent), " +
-	"\(windowsMasterURL.lastPathComponent), and \(windowsIcoURL.lastPathComponent)")
+if arguments.isEmpty || arguments == ["--mac"] {
+	try generateMacIcons(source: loadImage(at: sourceURL))
+	print("Generated \(macMasterURL.lastPathComponent) and \(macIcnsURL.lastPathComponent)")
+}
+if arguments.isEmpty || arguments == ["--windows"] {
+	try generateWindowsAssets()
+}
