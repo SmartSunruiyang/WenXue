@@ -37,3 +37,8 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
+  installerIcon: resources/app-icon-windows.ico
+  uninstallerIcon: resources/app-icon-windows.ico
+  installerHeader: resources/installer-header-150x57.bmp
+  installerSidebar: resources/installer-sidebar-164x314.bmp
+  uninstallerSidebar: resources/installer-sidebar-164x314.bmp
