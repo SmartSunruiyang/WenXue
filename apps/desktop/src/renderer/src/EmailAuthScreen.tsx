@@ -10,6 +10,7 @@ import {
 	sendLauncherEmailCode,
 	sendLauncherPasswordResetCode,
 	signInLauncher,
+	validateLauncherAvatar,
 	validateLauncherPassword,
 	validateLauncherRegistration,
 	type LauncherAuthSession,
@@ -58,6 +59,7 @@ export function EmailAuthScreen({
 	const [confirmation, setConfirmation] = useState('')
 	const [avatar, setAvatar] = useState<File | undefined>()
 	const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+	const [failedAvatarPreview, setFailedAvatarPreview] = useState<string | null>(null)
 	const [busy, setBusy] = useState(false)
 	const [localError, setLocalError] = useState<string | null>(null)
 	const [notice, setNotice] = useState<string | null>(null)
@@ -119,8 +121,14 @@ export function EmailAuthScreen({
 	)
 
 	const selectAvatar = (file?: File) => {
+		const validationError = validateLauncherAvatar(file)
+		if (validationError) {
+			setLocalError(validationError)
+			return
+		}
 		setAvatar(file)
 		setAvatarPreview(file ? URL.createObjectURL(file) : null)
+		setLocalError(null)
 	}
 
 	useEffect(() => {
@@ -496,8 +504,13 @@ export function EmailAuthScreen({
 											onClick={() => avatarInputRef.current?.click()}
 											type="button"
 										>
-											{avatarPreview ? (
-												<img alt={copy.avatarPreview} src={avatarPreview} />
+											{avatarPreview && avatarPreview !== failedAvatarPreview ? (
+												<img
+													key={avatarPreview}
+													alt={copy.avatarPreview}
+													src={avatarPreview}
+													onError={() => setFailedAvatarPreview(avatarPreview)}
+												/>
 											) : (
 												<UserRound aria-hidden size={28} />
 											)}
@@ -528,7 +541,11 @@ export function EmailAuthScreen({
 											type="file"
 											accept="image/png,image/jpeg,image/webp"
 											disabled={busy}
-											onChange={(event) => selectAvatar(event.target.files?.[0])}
+											onChange={(event) => {
+												const file = event.target.files?.[0]
+												if (file) selectAvatar(file)
+												event.target.value = ''
+											}}
 										/>
 									</div>
 									<label className="auth-field" htmlFor={`${id}-nickname`}>

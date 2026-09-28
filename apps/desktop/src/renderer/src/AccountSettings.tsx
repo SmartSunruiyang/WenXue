@@ -1,6 +1,6 @@
 import { Camera, Copy, LogOut, UserRound } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
-import type { LauncherPublicUser } from './cloudbase'
+import { validateLauncherAvatar, type LauncherPublicUser } from './cloudbase'
 import { strings } from './strings'
 
 export interface AccountSettingsProps {
@@ -29,6 +29,7 @@ function AccountProfileForm({
 	const [nicknameDraft, setNicknameDraft] = useState<string | null>(null)
 	const [avatar, setAvatar] = useState<File>()
 	const [preview, setPreview] = useState<string>()
+	const [failedAvatarUrl, setFailedAvatarUrl] = useState<string>()
 	const [saving, setSaving] = useState(false)
 	const [error, setError] = useState<string | null>(null)
 	const [notice, setNotice] = useState<string | null>(null)
@@ -53,6 +54,12 @@ function AccountProfileForm({
 	)
 
 	const selectAvatar = (file?: File) => {
+		const validationError = validateLauncherAvatar(file)
+		if (validationError) {
+			setError(validationError)
+			setNotice(null)
+			return
+		}
 		setAvatar(file)
 		setPreview(file ? URL.createObjectURL(file) : undefined)
 		setError(null)
@@ -96,8 +103,13 @@ function AccountProfileForm({
 			>
 				<div className="account-settings__avatar-row">
 					<div className="account-settings__avatar">
-						{avatarUrl ? (
-							<img src={avatarUrl} alt={copy.avatarAlt} />
+						{avatarUrl && avatarUrl !== failedAvatarUrl ? (
+							<img
+								key={avatarUrl}
+								src={avatarUrl}
+								alt={copy.avatarAlt}
+								onError={() => setFailedAvatarUrl(avatarUrl)}
+							/>
 						) : (
 							<UserRound size={28} aria-hidden="true" />
 						)}

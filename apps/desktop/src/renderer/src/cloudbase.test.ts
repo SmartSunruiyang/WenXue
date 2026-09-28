@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 	signInWithPassword: vi.fn(),
 	signOut: vi.fn(),
 	getSession: vi.fn(),
+	refreshUser: vi.fn(),
 	refreshSession: vi.fn(),
 	getTempFileURL: vi.fn(),
 	uploadFile: vi.fn(),
@@ -44,6 +45,7 @@ beforeEach(async () => {
 	mocks.watch.mockReturnValue({ close: vi.fn() })
 	mocks.signOut.mockResolvedValue({ error: null })
 	mocks.getSession.mockResolvedValue({ data: null, error: null })
+	mocks.refreshUser.mockImplementation(() => mocks.getSession())
 	mocks.signInWithPassword.mockResolvedValue({ data: sessionData(), error: null })
 	service = await import('./cloudbase')
 })
@@ -97,6 +99,34 @@ describe('account profile updates', () => {
 		})
 		expect(mocks.updateUserBasicInfo).toHaveBeenCalledWith({ name: '新昵称', picture: fileID })
 		expect(JSON.stringify(mocks.updateUserBasicInfo.mock.calls)).not.toContain('temporary')
+	})
+
+	it('reads back the cloud profile instead of accepting stale local session fields', async () => {
+		mocks.refreshUser.mockResolvedValueOnce({ data: sessionData() })
+		await expect(service.updateLauncherProfile(input)).rejects.toThrow(strings.account.errors.save)
+		expect(mocks.refreshUser).toHaveBeenCalledOnce()
+	})
+
+	it('retains an uploaded avatar across a failed cloud readback and retries safely', async () => {
+		const avatar = new File(['image'], 'avatar.png', { type: 'image/png' })
+		mocks.refreshUser.mockResolvedValueOnce({ error: { message: 'access-secret' } })
+		await expect(service.updateLauncherProfile({ ...input, avatar })).rejects.toThrow(
+			strings.account.errors.save,
+		)
+		await expect(service.updateLauncherProfile({ ...input, avatar })).resolves.toMatchObject({
+			nickname: input.nickname,
+			avatarUrl,
+		})
+		expect(mocks.uploadFile).toHaveBeenCalledOnce()
+	})
+
+	it('rejects another account returned by cloud profile refresh', async () => {
+		mocks.refreshUser.mockResolvedValueOnce({
+			data: sessionData({ user: { id: 'other-user', email: EMAIL } }),
+		})
+		await expect(service.updateLauncherProfile(input)).rejects.toThrow(
+			strings.auth.emailErrors.sessionChanged,
+		)
 	})
 
 	it('retains the upload for a profile-save retry and never signs in or creates an account', async () => {
@@ -345,6 +375,31 @@ describe('email credentials and public sessions', () => {
 			)?.avatarUrl,
 		).toBeUndefined()
 	})
+	it('restores the latest cloud profile instead of a previous login cache', async () => {
+		mocks.getSession.mockResolvedValue({ data: sessionData() })
+		mocks.refreshUser.mockResolvedValue({
+			data: sessionData({
+				user: {
+					id: 'user-1',
+					email: EMAIL,
+					user_metadata: {
+						name: '另一台设备保存的昵称',
+						picture: 'https://storage.example/fresh.png',
+					},
+				},
+			}),
+		})
+		await expect(service.getLauncherSession()).resolves.toMatchObject({
+			nickname: '另一台设备保存的昵称',
+			avatarUrl: 'https://storage.example/fresh.png',
+		})
+	})
+
+	it('never reads a public-key user as an authenticated profile', async () => {
+		await expect(service.getLauncherSession()).resolves.toBeNull()
+		expect(mocks.refreshUser).not.toHaveBeenCalled()
+	})
+
 	it('resolves a permanent avatar fileID for display without modifying the saved profile', async () => {
 		const fileID = 'cloud://environment.bucket/avatars/user-1/avatar.png'
 		mocks.getSession.mockResolvedValue({
